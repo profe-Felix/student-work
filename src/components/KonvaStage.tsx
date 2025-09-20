@@ -10,28 +10,30 @@ export type Stroke = {
   t1?: number
 }
 
-export default function KonvaStage({ width, height, color, size, onStroke }:{
+export default function KonvaStage({ width, height, color, size, onStroke, disabled=false }:{
   width: number
   height: number
   color: string
   size: number
   onStroke: (s: Stroke) => void
+  disabled?: boolean
 }){
   const [strokes, setStrokes] = useState<Stroke[]>([])
   const [current, setCurrent] = useState<Stroke|null>(null)
 
   const handleDown = (e:any)=>{
+    if(disabled) return
     const pos = e.target.getStage().getPointerPosition()
     const s: Stroke = { tool:'pen', color, size, points:[pos.x, pos.y], t0: performance.now() }
     setCurrent(s)
   }
   const handleMove = (e:any)=>{
-    if(!current) return
+    if(disabled || !current) return
     const pos = e.target.getStage().getPointerPosition()
     setCurrent({ ...current, points:[...current.points, pos.x, pos.y] })
   }
   const handleUp = ()=>{
-    if(!current) return
+    if(disabled || !current) return
     const s = { ...current, t1: performance.now() }
     setStrokes(prev=>[...prev, s])
     onStroke(s)
@@ -39,7 +41,7 @@ export default function KonvaStage({ width, height, color, size, onStroke }:{
   }
 
   return (
-    <Stage width={width} height={height} onMouseDown={handleDown} onMousemove={handleMove} onMouseup={handleUp}
+    <Stage width={width} height={height} listening={!disabled} onMouseDown={handleDown} onMousemove={handleMove} onMouseup={handleUp}
            onTouchStart={handleDown} onTouchMove={handleMove} onTouchEnd={handleUp}>
       <Layer>
         {strokes.map((s,i)=> (
