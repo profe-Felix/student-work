@@ -22,7 +22,8 @@ export default function PdfCanvas({ url, pageIndex, onReady }:{
       try{
         const pdf = await getDocument(url).promise
         const page = await pdf.getPage(pageIndex+1)
-        const viewport = page.getViewport({ scale: 1.5 })
+        const scale = (window.devicePixelRatio && window.devicePixelRatio > 1) ? 2 : 1.5
+        const viewport = page.getViewport({ scale })
         const canvas = canvasRef.current!
         const ctx = canvas.getContext('2d')!
         canvas.width = viewport.width

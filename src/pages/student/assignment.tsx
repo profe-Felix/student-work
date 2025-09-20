@@ -33,8 +33,22 @@ export default function StudentAssignment(){
         <span style={{ margin: '0 8px' }}>Page {pageIndex+1}</span>
         <button onClick={()=>setPageIndex(p=>p+1)}>Next</button>
       </div>
-      <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
-      <KonvaStage width={canvasSize.w} height={canvasSize.h} color={color} size={size} onStroke={onStroke} />
+      {/* Stack PDF (bottom) and Konva (top) */}
+      <div
+        style={{
+          position: 'relative',
+          width: `${canvasSize.w}px`,
+          height: `${canvasSize.h}px`,
+          touchAction: 'none'
+        }}
+      >
+        <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
+          <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
+        </div>
+        <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
+          <KonvaStage width={canvasSize.w} height={canvasSize.h} color={color} size={size} onStroke={onStroke} />
+        </div>
+      </div>
       <div style={{ display:'flex', gap:8, marginTop:8 }}>
         <label>Color <input type="color" value={color} onChange={e=>setColor(e.target.value)} /></label>
         <label>Size
