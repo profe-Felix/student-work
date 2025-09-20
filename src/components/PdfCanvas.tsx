@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { GlobalWorkerOptions, getDocument, PDFDocumentProxy } from 'pdfjs-dist'
-// @ts-ignore - vite asset import for worker
-import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url'
+// Vite: import the worker as a real worker URL so it loads on GitHub Pages
+// @ts-ignore
+import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?worker&url'
 
 GlobalWorkerOptions.workerSrc = workerSrc
 
