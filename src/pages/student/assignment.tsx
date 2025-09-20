@@ -5,7 +5,7 @@ import type { Stroke } from '../../components/KonvaStage'
 import AudioRecorder from '../../components/AudioRecorder'
 
 export default function StudentAssignment(){
-  const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }sample.pdf`) // replace with assignment PDF
+  const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`) // replace with assignment PDF
   const [pageIndex, setPageIndex] = useState(0)
   const [canvasSize, setCanvasSize] = useState({w: 800, h: 600})
   const [color, setColor] = useState('#1F75FE')
