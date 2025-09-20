@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import PdfCanvas from '../../components/PdfCanvas'
-import KonvaStage, { Stroke } from '../../components/KonvaStage'
+import DrawCanvas from '../../components/DrawCanvas'
+import type { Stroke } from '../../components/KonvaStage'
 import AudioRecorder from '../../components/AudioRecorder'
 
 export default function StudentAssignment(){
