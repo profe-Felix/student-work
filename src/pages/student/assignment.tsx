@@ -28,7 +28,7 @@ export default function StudentAssignment(){
   }
 
   return (
-    <div style={{ padding: 12, paddingBottom: 96 }}><h2>Student Assignment (Hosted)</h2>
+    <div style={{ padding: 12, paddingBottom: 120 }}><h2>Student Assignment (Hosted)</h2>
       <div style={{ marginBottom: 8 }}>
         <button onClick={()=>setPageIndex(p=>Math.max(0,p-1))}>Prev</button>
         <span style={{ margin: '0 8px' }}>Page {pageIndex+1}</span>
@@ -46,8 +46,8 @@ export default function StudentAssignment(){
         <div style={{ position: 'absolute', inset: 0, zIndex: 0, overflow:'hidden' }}>
           <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
         </div>
-        <div style={{ position: 'absolute', inset: 0, zIndex: 10, pointerEvents:'auto' }}>
-          <KonvaStage width={canvasSize.w} height={canvasSize.h} color={color} size={size} onStroke={onStroke} />
+        <div style={{ position: 'absolute', inset: 0, zIndex: 10, pointerEvents: handMode ? 'none' : 'auto' }}>
+          <KonvaStage width={canvasSize.w} height={canvasSize.h} color={color} size={size} onStroke={onStroke} disabled={handMode} />
         </div>
       </div>
       <div style={{ display:'flex', gap:8, marginTop:8 }}>
