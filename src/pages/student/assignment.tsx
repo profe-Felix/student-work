@@ -9,6 +9,7 @@ export default function StudentAssignment(){
   const [canvasSize, setCanvasSize] = useState({w: 800, h: 600})
   const [color, setColor] = useState('#1F75FE')
   const [size, setSize] = useState(6)
+  const [handMode, setHandMode] = useState(true) // start in scroll mode
   const strokes = useRef<Stroke[]>([])
   const audioBlob = useRef<Blob|null>(null)
 
@@ -27,7 +28,7 @@ export default function StudentAssignment(){
   }
 
   return (
-    <div style={{ padding: 12 }}><h2>Student Assignment (Hosted)</h2>
+    <div style={{ padding: 12, paddingBottom: 96 }}><h2>Student Assignment (Hosted)</h2>
       <div style={{ marginBottom: 8 }}>
         <button onClick={()=>setPageIndex(p=>Math.max(0,p-1))}>Prev</button>
         <span style={{ margin: '0 8px' }}>Page {pageIndex+1}</span>
@@ -61,6 +62,20 @@ export default function StudentAssignment(){
         <AudioRecorder maxSec={180} onBlob={onAudio} />
         <button onClick={submit} style={{ background:'#22c55e', color:'#fff', padding:'6px 12px', borderRadius:8 }}>Submit</button>
       </div>
+    
+      {/* Floating Hand/Draw toggle */}
+      <button
+        onClick={()=>setHandMode(m=>!m)}
+        style={{
+          position:'fixed', right:12, top:12, zIndex: 10000,
+          background: handMode ? '#f3f4f6' : '#34d399',
+          color: handMode ? '#111827' : '#064e3b',
+          border:'1px solid #e5e7eb', borderRadius: 9999, padding: '10px 14px',
+          boxShadow:'0 2px 8px rgba(0,0,0,0.15)'
+        }}
+      >
+        {handMode ? '✋ Scroll' : '✍️ Draw'}
+      </button>
     </div>
   )
 }
