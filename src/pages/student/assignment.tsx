@@ -27,7 +27,7 @@ export default function StudentAssignment(){
   }
 
   return (
-    <div style={{ padding: 12 }}>
+    <div style={{ padding: 12 }}><h2>Student Assignment (Hosted)</h2>
       <div style={{ marginBottom: 8 }}>
         <button onClick={()=>setPageIndex(p=>Math.max(0,p-1))}>Prev</button>
         <span style={{ margin: '0 8px' }}>Page {pageIndex+1}</span>
