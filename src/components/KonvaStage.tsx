@@ -45,7 +45,7 @@ export default function KonvaStage({ width, height, color, size, onStroke, disab
   }
 
   return (
-    <Stage width={width} height={height} listening={!disabled} onMouseDown={handleDown} onMousemove={handleMove} onMouseup={handleUp}
+    <Stage width={width} height={height} listening={!disabled} preventDefault={false} onMouseDown={handleDown} onMousemove={handleMove} onMouseup={handleUp}
            onTouchStart={handleDown} onTouchMove={handleMove} onTouchEnd={handleUp}>
       <Layer>
         {strokes.map((s,i)=> (
