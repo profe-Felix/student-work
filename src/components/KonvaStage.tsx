@@ -23,12 +23,16 @@ export default function KonvaStage({ width, height, color, size, onStroke, disab
 
   const handleDown = (e:any)=>{
     if(disabled) return
+    const evt = e.evt as TouchEvent | MouseEvent
+    if('touches' in evt && evt.touches && evt.touches.length > 1) return // two-finger: scroll, not draw
     const pos = e.target.getStage().getPointerPosition()
     const s: Stroke = { tool:'pen', color, size, points:[pos.x, pos.y], t0: performance.now() }
     setCurrent(s)
   }
   const handleMove = (e:any)=>{
     if(disabled || !current) return
+    const evt = e.evt as TouchEvent | MouseEvent
+    if('touches' in evt && evt.touches && evt.touches.length > 1) return
     const pos = e.target.getStage().getPointerPosition()
     setCurrent({ ...current, points:[...current.points, pos.x, pos.y] })
   }

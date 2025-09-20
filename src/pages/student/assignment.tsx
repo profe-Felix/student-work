@@ -9,7 +9,6 @@ export default function StudentAssignment(){
   const [canvasSize, setCanvasSize] = useState({w: 800, h: 600})
   const [color, setColor] = useState('#1F75FE')
   const [size, setSize] = useState(6)
-  const [handMode, setHandMode] = useState(false)
   const strokes = useRef<Stroke[]>([])
   const audioBlob = useRef<Blob|null>(null)
 
