@@ -42,10 +42,10 @@ export default function StudentAssignment(){
           touchAction: 'none'
         }}
       >
-        <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
+        <div style={{ position: 'absolute', inset: 0, zIndex: 0, overflow:'hidden' }}>
           <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
         </div>
-        <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
+        <div style={{ position: 'absolute', inset: 0, zIndex: 10, pointerEvents:'auto' }}>
           <KonvaStage width={canvasSize.w} height={canvasSize.h} color={color} size={size} onStroke={onStroke} />
         </div>
       </div>
