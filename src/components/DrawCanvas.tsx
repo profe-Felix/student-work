@@ -1,44 +1,45 @@
 import { useEffect, useRef } from 'react'
 
+type Tool = 'pen' | 'highlighter' | 'eraser'
+
 /**
- * iPad-friendly drawing:
- * - Single finger draws (w/ small delay to avoid accidental dot when intending 2-finger scroll)
- * - Two fingers: detected via touchstart on the canvas → canvas releases immediately so the panel scrolls/pinches
- * - Apple Pencil: draws instantly (no delay), ignores 2-finger state
+ * Pencil-friendly drawing with 2-finger pan:
+ * - Pen, Highlighter (alpha), Eraser (destination-out)
+ * - Apple Pencil: draws immediately
+ * - Touch: one-finger draw (with tiny delay to avoid accidental dot when intent is 2-finger scroll)
+ * - Two-finger pan handled by parent panel (manual), canvas releases when needed
  * - Pixel-accurate (devicePixelRatio)
- * - No resize during a stroke
  */
 export default function DrawCanvas({
-  width,   // CSS width (from PDF)
-  height,  // CSS height (from PDF)
+  width,   // CSS width (from PDF canvas CSS size)
+  height,  // CSS height (from PDF canvas CSS size)
   color,
   size,
-  mode // 'scroll' | 'draw'
+  mode,            // 'scroll' | 'draw'
+  tool = 'pen'     // 'pen' | 'highlighter' | 'eraser'
 }:{
   width: number
   height: number
   color: string
   size: number
   mode: 'scroll' | 'draw'
+  tool?: Tool
 }){
   const canvasRef    = useRef<HTMLCanvasElement>(null)
   const ctxRef       = useRef<CanvasRenderingContext2D | null>(null)
 
   const drawing      = useRef(false)
-  const usingPen     = useRef(false)
+  const usingPen     = useRef(false)          // Apple Pencil
   const activeId     = useRef<number | null>(null)
 
-  const touchCount   = useRef(0)       // active touch pointers
-  const gesturing    = useRef(false)   // true when 2+ touches *as seen by touchstart/touchend*
-
-  // Pending single-finger start (to allow 2nd finger to land)
+  // Pending single-finger start (to allow second finger to land for 2-finger pan)
   const pendingId    = useRef<number | null>(null)
   const pendingPos   = useRef<{x:number,y:number} | null>(null)
   const pendingTO    = useRef<number | null>(null)
   const PENDING_MS   = 60
   const MOVE_THRESH  = 8
 
-  // ----- sizing -----
+  // --- size/backing store ---
   const resizeBackingStore = ()=>{
     const c = canvasRef.current!
     const dpr = Math.max(1, window.devicePixelRatio || 1)
@@ -49,11 +50,11 @@ export default function DrawCanvas({
     c.style.width  = `${width}px`
     c.style.height = `${height}px`
     const ctx = c.getContext('2d')!
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // draw in CSS pixels
     ctxRef.current = ctx
   }
 
-  // ----- interaction policy (must be set BEFORE touches begin) -----
+  // --- interaction policy (set BEFORE touches begin) ---
   const applyPolicy = ()=>{
     const c = canvasRef.current!
     if (!c) return
@@ -62,16 +63,12 @@ export default function DrawCanvas({
       c.style.touchAction   = 'auto'
       return
     }
-    // Draw mode: keep single-finger from scrolling; release only for real 2-finger
-    if (gesturing.current && !usingPen.current) {
-      c.style.pointerEvents = 'none'
-      c.style.touchAction   = 'auto'
-    } else {
-      c.style.pointerEvents = 'auto'
-      c.style.touchAction   = 'none'
-    }
+    // Draw mode: single-finger should never scroll; toolbar/panel handles 2-finger pan
+    c.style.pointerEvents = 'auto'
+    c.style.touchAction   = 'none'
   }
 
+  // Apply sizing/policy on prop changes (never mid-stroke)
   useEffect(()=>{
     if (!drawing.current) {
       resizeBackingStore()
@@ -91,16 +88,39 @@ export default function DrawCanvas({
     }
     const ctx = () => ctxRef.current!
 
+    // ---- stroke style per tool ----
+    const applyToolStyle = ()=>{
+      const k = ctx()
+      k.lineCap = 'round'
+      k.lineJoin = 'round'
+
+      if (tool === 'eraser') {
+        k.globalCompositeOperation = 'destination-out'
+        k.globalAlpha = 1
+        k.strokeStyle = '#000'
+        k.lineWidth   = size * 2 // eraser a bit larger feels nicer
+      } else if (tool === 'highlighter') {
+        k.globalCompositeOperation = 'source-over'
+        k.globalAlpha = 0.35
+        k.strokeStyle = color
+        k.lineWidth   = size * 2 // highlighter is broader
+      } else {
+        // pen
+        k.globalCompositeOperation = 'source-over'
+        k.globalAlpha = 1
+        k.strokeStyle = color
+        k.lineWidth   = size
+      }
+    }
+
     // ---- stroke helpers ----
     const begin = (x:number, y:number)=>{
+      applyToolStyle()
       const k = ctx()
-      k.strokeStyle = color
-      k.lineWidth   = size
-      k.lineCap     = 'round'
-      k.lineJoin    = 'round'
       k.beginPath()
       k.moveTo(x, y)
-      k.lineTo(x + 0.001, y + 0.001) // dot for taps
+      // tiny segment so taps leave a dot
+      k.lineTo(x + 0.001, y + 0.001)
       k.stroke()
     }
     const lineTo = (x:number, y:number)=>{
@@ -109,48 +129,26 @@ export default function DrawCanvas({
       k.stroke()
     }
 
-    // ---- FAST 2-finger detection (touchstart/touchend on the canvas) ----
-    // This fires earlier than pointer events on iPad Safari.
-    const onTouchStartFast = (e: TouchEvent)=>{
-      if (mode !== 'draw') return
-      if (e.touches.length >= 2) {
-        gesturing.current = true
-        // Kill any pending single-finger start immediately
-        if (pendingTO.current) { window.clearTimeout(pendingTO.current) }
-        pendingTO.current = null
-        pendingId.current = null
-        pendingPos.current = null
-        applyPolicy() // canvas -> pointer-events:none so the panel can scroll/pinch
-      }
+    // Pending helpers
+    const clearPending = ()=>{
+      if (pendingTO.current) { window.clearTimeout(pendingTO.current) }
+      pendingTO.current = null
+      pendingId.current = null
+      pendingPos.current = null
     }
-    const onTouchEndFast = (_e: TouchEvent)=>{
-      if (mode !== 'draw') return
-      // When touches drop below 2, clear gesture flag shortly (gives Safari time)
-      // Tiny timeout avoids flicker while fingers leave
-      setTimeout(()=>{
-        gesturing.current = false
-        applyPolicy()
-      }, 20)
+    const commitPending = ()=>{
+      if (pendingId.current === null || !pendingPos.current) return
+      drawing.current  = true
+      activeId.current = pendingId.current
+      begin(pendingPos.current.x, pendingPos.current.y)
+      clearPending()
     }
 
-    c.addEventListener('touchstart', onTouchStartFast, { passive: true })
-    c.addEventListener('touchend',   onTouchEndFast,   { passive: true })
-    c.addEventListener('touchcancel',onTouchEndFast,   { passive: true })
-
-    // ---- Pointer Events (pen/touch/mouse) ----
+    // Pointer handlers (pen/touch/mouse)
     const onPointerDown = (e: PointerEvent)=>{
-      // Maintain a rough touch count (pointer-based)
-      if (e.pointerType === 'touch') {
-        touchCount.current += 1
-      }
-
       if (mode !== 'draw') return
 
       usingPen.current = (e.pointerType === 'pen')
-
-      // If a real 2-finger gesture is active and not Pencil → do not start drawing
-      if (gesturing.current && !usingPen.current) return
-
       const p = toLocal(e.clientX, e.clientY)
 
       if (usingPen.current || e.pointerType === 'mouse') {
@@ -163,20 +161,16 @@ export default function DrawCanvas({
         return
       }
 
-      // TOUCH (single finger): delay to see if a second finger lands
+      // TOUCH (single finger): delay to see if a second finger lands (panel handles 2-finger)
       pendingId.current  = e.pointerId
       pendingPos.current = p
       if (pendingTO.current) window.clearTimeout(pendingTO.current)
       pendingTO.current = window.setTimeout(()=>{
-        if (!gesturing.current && pendingId.current === e.pointerId) {
-          drawing.current  = true
-          activeId.current = e.pointerId
-          begin(pendingPos.current!.x, pendingPos.current!.y)
+        // If still pending, commit to draw
+        if (pendingId.current === e.pointerId) {
+          commitPending()
           c.setPointerCapture?.(e.pointerId)
         }
-        pendingId.current = null
-        pendingPos.current = null
-        pendingTO.current = null
       }, PENDING_MS)
     }
 
@@ -186,28 +180,14 @@ export default function DrawCanvas({
         const r = rect()
         const dx = e.clientX - (r.left + pendingPos.current.x)
         const dy = e.clientY - (r.top  + pendingPos.current.y)
-        if (Math.hypot(dx, dy) >= MOVE_THRESH && !gesturing.current) {
-          drawing.current  = true
-          activeId.current = e.pointerId
-          begin(pendingPos.current.x, pendingPos.current.y)
+        if (Math.hypot(dx, dy) >= MOVE_THRESH) {
+          commitPending()
           c.setPointerCapture?.(e.pointerId)
-          pendingId.current = null
-          pendingPos.current = null
-          if (pendingTO.current) { window.clearTimeout(pendingTO.current); pendingTO.current = null }
         }
       }
 
       if (!drawing.current) return
       if (activeId.current !== null && e.pointerId !== activeId.current) return
-
-      // If gesture begins mid-stroke (second finger lands) and not Pencil, abort
-      if (gesturing.current && !usingPen.current) {
-        drawing.current = false
-        activeId.current = null
-        c.releasePointerCapture?.(e.pointerId)
-        applyPolicy()
-        return
-      }
 
       const p = toLocal(e.clientX, e.clientY)
       lineTo(p.x, p.y)
@@ -215,17 +195,9 @@ export default function DrawCanvas({
     }
 
     const endStroke = (e: PointerEvent)=>{
-      // Update touch count
-      if (e.pointerType === 'touch') {
-        touchCount.current = Math.max(0, touchCount.current - 1)
-      }
-
-      // Cancel pending start if this pointer was pending
+      // Cancel pending start if this was the pending pointer
       if (pendingId.current !== null && e.pointerId === pendingId.current) {
-        if (pendingTO.current) { window.clearTimeout(pendingTO.current) }
-        pendingId.current = null
-        pendingPos.current = null
-        pendingTO.current = null
+        clearPending()
       }
 
       if (drawing.current && activeId.current !== null && e.pointerId === activeId.current) {
@@ -235,7 +207,7 @@ export default function DrawCanvas({
         c.releasePointerCapture?.(e.pointerId)
         applyPolicy()
       } else {
-        // Even if not drawing, ensure policy reflects current gesture state
+        // Even if not drawing, ensure policy is correct
         applyPolicy()
       }
     }
@@ -244,32 +216,27 @@ export default function DrawCanvas({
     const onPointerCancel       = (e: PointerEvent)=> endStroke(e)
     const onLostPointerCapture  = (e: PointerEvent)=> endStroke(e)
 
+    // Non-passive so preventDefault works while drawing
     c.addEventListener('pointerdown',        onPointerDown,        { passive: false })
     c.addEventListener('pointermove',        onPointerMove,        { passive: false })
     c.addEventListener('pointerup',          onPointerUp,          { passive: false })
     c.addEventListener('pointercancel',      onPointerCancel,      { passive: false })
     c.addEventListener('lostpointercapture', onLostPointerCapture, { passive: false })
 
-    // Keep crisp on DPR change (rotate/zoom) — avoid during stroke
+    // DPR change (rotate/zoom) — avoid during active stroke
     const onResize = ()=>{ if (!drawing.current) { resizeBackingStore() } }
     window.addEventListener('resize', onResize)
 
     return ()=>{
-      c.removeEventListener('touchstart', onTouchStartFast as any)
-      c.removeEventListener('touchend',   onTouchEndFast as any)
-      c.removeEventListener('touchcancel',onTouchEndFast as any)
-
       c.removeEventListener('pointerdown',        onPointerDown as any)
       c.removeEventListener('pointermove',        onPointerMove as any)
       c.removeEventListener('pointerup',          onPointerUp as any)
       c.removeEventListener('pointercancel',      onPointerCancel as any)
       c.removeEventListener('lostpointercapture', onLostPointerCapture as any)
-
-      window.removeEventListener('resize', onResize)
-
-      if (pendingTO.current) { window.clearTimeout(pendingTO.current) }
+      window.removeEventListener('resize',        onResize)
+      clearPending()
     }
-  }, [mode, color, size])
+  }, [mode, color, size, tool])
 
   return (
     <canvas
@@ -279,7 +246,6 @@ export default function DrawCanvas({
       style={{
         position:'absolute', inset:0, zIndex:10,
         display:'block', width: `${width}px`, height: `${height}px`,
-        // Stop selection/callout on the canvas itself (extra belt for palm)
         WebkitUserSelect: 'none',
         userSelect: 'none',
         WebkitTouchCallout: 'none'
