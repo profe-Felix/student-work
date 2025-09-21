@@ -1,9 +1,9 @@
-// src/pages/TeacherDashboard.tsx
+// src/pages/teacher/TeacherDashboard.tsx
 import { useEffect, useState } from 'react';
-import { listAssignments, listPages, listLatestSubmissionsByPage, getThumbnailForSubmission } from '../lib/queries';
-import { publicUrl } from '../lib/supabaseHelpers';
-import TeacherSyncBar from '../components/TeacherSyncBar';
-import PdfDropZone from '../components/PdfDropZone';
+import { listAssignments, listPages, listLatestSubmissionsByPage, getThumbnailForSubmission } from '../../lib/queries';
+import { publicUrl } from '../../lib/supabaseHelpers';
+import TeacherSyncBar from '../../components/TeacherSyncBar';
+import PdfDropZone from '../../components/PdfDropZone';
 
 export default function TeacherDashboard() {
   const [assignments, setAssignments] = useState<any[]>([]);
