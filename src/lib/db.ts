@@ -7,13 +7,18 @@ export const supabase = createClient(
 
 export async function ensureStudent(id: string) {
   if (!id) return
-  // Upsert guarantees the row exists even if called multiple times
-  const { error } = await supabase
+  await supabase.from('students').upsert({ id }, { onConflict: 'id', ignoreDuplicates: false })
+}
+
+export async function listStudents(letter: string) {
+  const like = `${letter}_%`
+  const { data, error } = await supabase
     .from('students')
-    .upsert({ id }, { onConflict: 'id', ignoreDuplicates: false })
-  if (error) {
-    console.warn('ensureStudent error:', error.message)
-  }
+    .select('id')
+    .like('id', like)
+    .order('id', { ascending: true })
+  if (error) throw error
+  return data as { id:string }[]
 }
 
 export async function upsertAssignmentWithPage(title: string, pdfPath: string, pageIndex: number) {
@@ -54,10 +59,8 @@ export async function createSubmission(student_id: string, assignment_id: string
   const { data, error } = await supabase
     .from('submissions')
     .insert({ student_id, assignment_id, page_id })
-    .select('id')
-    .single()
   if (error) throw error
-  return data!.id as string
+  return (data?.[0]?.id as string) || ''
 }
 
 export async function saveStrokes(submission_id: string, strokes: any) {
