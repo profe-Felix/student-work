@@ -246,7 +246,6 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      // FIX: correct casing here
       window.removeEventListener('beforeunload', onBeforeUnload)
     }
   }, [pageIndex, studentId])
@@ -514,14 +513,37 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      <div style={{ display:'flex', gap:8, justifyContent:'center', margin:'12px 0' }}>
-        <button onClick={()=>goToPage(Math.max(0, pageIndex-1))} disabled={saving || submitInFlight.current}>Prev</button>
-        <span style={{ margin:'0 8px' }}>Page {pageIndex+1}</span>
-        <button onClick={()=>goToPage(pageIndex+1)} disabled={saving || submitInFlight.current}>Next</button>
+      {/* Floating pager (always reachable) */}
+      <div
+        style={{
+          position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
+          zIndex: 10020, display:'flex', gap:10, alignItems:'center',
+          background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
+          boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
+        }}
+      >
+        <button
+          onClick={()=>goToPage(Math.max(0, pageIndex-1))}
+          disabled={saving || submitInFlight.current}
+          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+        >
+          ◀ Prev
+        </button>
+        <span style={{ minWidth:90, textAlign:'center', fontWeight:600 }}>
+          Page {pageIndex+1}
+        </span>
+        <button
+          onClick={()=>goToPage(pageIndex+1)}
+          disabled={saving || submitInFlight.current}
+          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+        >
+          Next ▶
+        </button>
       </div>
 
       {/* Floating toolbar */}
       {Toolbar}
+      {toast && <Toast text={toast.msg} kind={toast.kind} />}
     </div>
   )
 }
