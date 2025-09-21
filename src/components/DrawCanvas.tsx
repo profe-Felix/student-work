@@ -1,15 +1,16 @@
 import { useEffect, useRef } from 'react'
 
 /**
- * Canvas drawing with:
- * - Pixel-perfect alignment (devicePixelRatio aware)
- * - Apple Pencil: always draws (pointerType === 'pen')
- * - Touch: 1 finger draws, 2+ fingers scroll/pinch (canvas releases)
- * - Multiple strokes in a row (no “stuck scroll mode”)
+ * Solid, Pencil-friendly drawing:
+ * - Tracks active touch pointers (no window touch listeners)
+ * - 1-finger draws; 2+ fingers scroll/pinch (canvas releases)
+ * - Apple Pencil always draws
+ * - Pixel-accurate with devicePixelRatio
+ * - No resize during a stroke
  */
 export default function DrawCanvas({
-  width,   // CSS width (from PDF canvas CSS size)
-  height,  // CSS height (from PDF canvas CSS size)
+  width,   // CSS width (from PDF canvas)
+  height,  // CSS height (from PDF canvas)
   color,
   size,
   mode // 'scroll' | 'draw'
@@ -20,16 +21,16 @@ export default function DrawCanvas({
   size: number
   mode: 'scroll' | 'draw'
 }){
-  const canvasRef   = useRef<HTMLCanvasElement>(null)
-  const ctxRef      = useRef<CanvasRenderingContext2D | null>(null)
+  const canvasRef    = useRef<HTMLCanvasElement>(null)
+  const ctxRef       = useRef<CanvasRenderingContext2D | null>(null)
 
-  const drawing     = useRef(false)
-  const usingPen    = useRef(false)
-  const gesturing   = useRef(false)          // true while 2+ touches are down
-  const activeId    = useRef<number | null>(null)
-  const gestureTO   = useRef<number | null>(null) // debounce to clear gesture after touchend
+  const drawing      = useRef(false)
+  const usingPen     = useRef(false)
+  const activeId     = useRef<number | null>(null) // the pointer we’re drawing with
+  const touchCount   = useRef(0)                   // number of active touch pointers
+  const gesturing    = useRef(false)               // true when touchCount >= 2
 
-  // --- sizing helpers (CSS px -> device px backing store) ---
+  // --- size/backing store ---
   const resizeBackingStore = ()=>{
     const c = canvasRef.current!
     const dpr = Math.max(1, window.devicePixelRatio || 1)
@@ -40,73 +41,37 @@ export default function DrawCanvas({
     c.style.width  = `${width}px`
     c.style.height = `${height}px`
     const ctx = c.getContext('2d')!
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // use CSS pixel coords everywhere
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // draw in CSS pixels
     ctxRef.current = ctx
   }
 
-  // --- interaction policy ---
+  // --- interaction policy (must be set BEFORE touches begin) ---
   const applyPolicy = ()=>{
     const c = canvasRef.current!
     if (!c) return
     if (mode === 'scroll') {
-      // Teacher set to Scroll: never capture
       c.style.pointerEvents = 'none'
       c.style.touchAction   = 'auto'
       return
     }
-    // DRAW mode:
+    // DRAW mode: keep touch-action none so 1-finger never scrolls;
+    // release only when we KNOW 2+ touches are down.
     if (gesturing.current && !usingPen.current) {
-      // 2+ fingers (no Pencil) → release to scroll/pinch
       c.style.pointerEvents = 'none'
       c.style.touchAction   = 'auto'
     } else {
-      // IMPORTANT: keep touchAction 'none' in draw mode so single-finger never scrolls
       c.style.pointerEvents = 'auto'
       c.style.touchAction   = 'none'
     }
   }
 
-  // Ensure correct size & policy on mount/prop changes (but never mid-stroke)
+  // Apply sizing/policy when props change (but never mid-stroke)
   useEffect(()=>{
     if (!drawing.current) {
       resizeBackingStore()
       applyPolicy()
     }
   }, [width, height, mode])
-
-  // Global 2-finger detection (fires BEFORE pointer handlers)
-  useEffect(()=>{
-    const clearGestureSoon = ()=>{
-      if (gestureTO.current) window.clearTimeout(gestureTO.current)
-      // Debounce a hair to avoid sticky “gesture true” between fingers lifting
-      gestureTO.current = window.setTimeout(()=>{
-        gesturing.current = false
-        applyPolicy()
-      }, 40) // 40ms is enough to avoid flicker, but clears before next stroke
-    }
-
-    const onTS = (e: TouchEvent)=>{
-      if (e.touches.length > 1) {
-        if (gestureTO.current) window.clearTimeout(gestureTO.current)
-        gesturing.current = true
-        applyPolicy()
-      }
-    }
-    const onTE = (e: TouchEvent)=>{
-      if (e.touches.length <= 1){
-        clearGestureSoon()
-      }
-    }
-    window.addEventListener('touchstart', onTS, { passive: true })
-    window.addEventListener('touchend',   onTE, { passive: true })
-    window.addEventListener('touchcancel',onTE, { passive: true })
-    return ()=>{
-      window.removeEventListener('touchstart', onTS as any)
-      window.removeEventListener('touchend',   onTE  as any)
-      window.removeEventListener('touchcancel',onTE  as any)
-      if (gestureTO.current) window.clearTimeout(gestureTO.current)
-    }
-  }, [])
 
   useEffect(()=>{
     const c = canvasRef.current!
@@ -120,7 +85,7 @@ export default function DrawCanvas({
     }
     const ctx = () => ctxRef.current!
 
-    // --- basic stroke helpers ---
+    // Stroke helpers
     const begin = (x:number, y:number)=>{
       const k = ctx()
       k.strokeStyle = color
@@ -138,33 +103,50 @@ export default function DrawCanvas({
       k.stroke()
     }
 
-    // --- Pointer Events (pen/touch/mouse) ---
+    // Touch pointer bookkeeping
+    const addTouch = ()=> {
+      touchCount.current += 1
+      const nowGesturing = touchCount.current >= 2
+      if (nowGesturing !== gesturing.current) {
+        gesturing.current = nowGesturing
+        // If a gesture starts mid-stroke and we’re not using Pencil, cancel drawing
+        if (gesturing.current && drawing.current && !usingPen.current) {
+          drawing.current = false
+          activeId.current = null
+        }
+        applyPolicy()
+      }
+    }
+    const removeTouch = ()=> {
+      touchCount.current = Math.max(0, touchCount.current - 1)
+      const nowGesturing = touchCount.current >= 2
+      if (nowGesturing !== gesturing.current) {
+        gesturing.current = nowGesturing
+        applyPolicy()
+      }
+    }
+
+    // Pointer handlers (pen/touch/mouse)
     const onPointerDown = (e: PointerEvent)=>{
+      // Maintain touch active count
+      if (e.pointerType === 'touch') addTouch()
+
       if (mode !== 'draw') return
 
       usingPen.current = (e.pointerType === 'pen')
 
-      // If a multi-touch gesture is stuck from earlier but we now have a single new pointer,
-      // force-clear gesture state so a new stroke can begin.
-      // (Pencil always draws; for touch/mouse, assume single-pointer at this event.)
-      if (!usingPen.current) {
-        gesturing.current = false
-        applyPolicy()
-      }
-
-      // If a genuine 2+ finger gesture is active, still do not start (unless Pencil)
+      // If we’re actually in a 2-finger gesture (touchCount >= 2) and not Pencil, don’t draw
       if (gesturing.current && !usingPen.current) return
 
-      drawing.current = true
+      // Start a new stroke
+      drawing.current  = true
       activeId.current = e.pointerId
 
       const p = toLocal(e.clientX, e.clientY)
       begin(p.x, p.y)
 
-      // Capture so we keep receiving moves even if finger leaves the element
       c.setPointerCapture?.(e.pointerId)
-
-      // touch-action is already 'none' in draw mode; this belt+suspenders avoids page nudge
+      // Prevent page nudge; touch-action is already 'none' in draw mode
       e.preventDefault()
     }
 
@@ -172,7 +154,7 @@ export default function DrawCanvas({
       if (!drawing.current) return
       if (activeId.current !== null && e.pointerId !== activeId.current) return
 
-      // If a two-finger gesture starts mid-stroke (rare), abort (unless using Pencil)
+      // If gesture begins mid-stroke (2nd touch down) and not Pencil, abort draw
       if (gesturing.current && !usingPen.current) {
         drawing.current = false
         activeId.current = null
@@ -187,21 +169,26 @@ export default function DrawCanvas({
     }
 
     const endStroke = (e: PointerEvent)=>{
-      if (!drawing.current) return
-      if (activeId.current !== null && e.pointerId !== activeId.current) return
+      // Maintain touch active count
+      if (e.pointerType === 'touch') removeTouch()
 
-      drawing.current = false
-      usingPen.current = false
-      activeId.current = null
-      c.releasePointerCapture?.(e.pointerId)
-      applyPolicy()
+      if (drawing.current && activeId.current !== null && e.pointerId === activeId.current) {
+        drawing.current = false
+        usingPen.current = false
+        activeId.current = null
+        c.releasePointerCapture?.(e.pointerId)
+        applyPolicy()
+      } else {
+        // Even if not drawing, pointer ends can change gesture state
+        applyPolicy()
+      }
     }
 
     const onPointerUp           = (e: PointerEvent)=> endStroke(e)
     const onPointerCancel       = (e: PointerEvent)=> endStroke(e)
     const onLostPointerCapture  = (e: PointerEvent)=> endStroke(e)
 
-    // Non-passive so preventDefault works
+    // Register (must be non-passive)
     c.addEventListener('pointerdown',        onPointerDown,        { passive: false })
     c.addEventListener('pointermove',        onPointerMove,        { passive: false })
     c.addEventListener('pointerup',          onPointerUp,          { passive: false })
@@ -225,7 +212,6 @@ export default function DrawCanvas({
   return (
     <canvas
       ref={canvasRef}
-      // Backing store size is set in effect; keep attrs minimal to avoid resets mid-stroke
       width={1}
       height={1}
       style={{
