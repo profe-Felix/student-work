@@ -73,6 +73,21 @@ function clearDraft(student:string, assignment:string, page:number){
   try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
 }
 
+/** Tiny toast that auto-hides */
+function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
+  return (
+    <div style={{
+      position:'fixed', left:'50%', bottom:24, transform:'translateX(-50%)',
+      background: kind==='ok' ? '#047857' : '#b91c1c',
+      color:'#fff', padding:'10px 14px', borderRadius:12,
+      fontWeight:600, boxShadow:'0 6px 16px rgba(0,0,0,0.25)', zIndex: 20000,
+      maxWidth:'80vw', textAlign:'center'
+    }}>
+      {text}
+    </div>
+  )
+}
+
 export default function StudentAssignment(){
   const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
   const [pageIndex, setPageIndex]   = useState(0)
@@ -83,6 +98,16 @@ export default function StudentAssignment(){
   const [handMode, setHandMode] = useState(true)
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
+
+  // toast state
+  const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
+  const toastTimer = useRef<number|null>(null)
+  const showToast = (msg:string, kind:'ok'|'err'='ok', ms=1500)=>{
+    setToast({ msg, kind })
+    if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(()=> setToast(null), ms)
+  }
+  useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
   const [toolbarRight, setToolbarRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
 
@@ -133,7 +158,6 @@ export default function StudentAssignment(){
     let lastSerialized = ''
     const id = window.setInterval(()=>{
       try {
-        // Only autosave when in draw mode to reduce churn
         const data = drawRef.current?.getStrokes()
         if (!data) return
         const s = JSON.stringify(data)
@@ -158,7 +182,7 @@ export default function StudentAssignment(){
     }
   }, [pageIndex])
 
-  /** Submit helper. Clears the draft if successful. */
+  /** Submit helper. Clears the draft if successful + toast */
   const submit = async ()=>{
     try{
       setSaving(true)
@@ -173,11 +197,11 @@ export default function StudentAssignment(){
       // Draft is now "finalized" for this page
       clearDraft(studentId, assignmentTitle, pageIndex)
 
-      alert('Saved!')
+      showToast('Saved!', 'ok', 1500)
       audioBlob.current = null
     } catch (e:any){
       console.error(e)
-      alert('Failed to save: ' + (e?.message || e))
+      showToast('Save failed', 'err', 1800)
       throw e
     } finally { setSaving(false) }
   }
@@ -201,10 +225,10 @@ export default function StudentAssignment(){
       try {
         await submit()
       } catch {
-        // If submit fails (e.g., network), at least draft is already saved by the autosaver.
+        // If submit fails (e.g., network), the autosave draft remains.
       }
     } else {
-      // No auto-submit → ensure draft is saved one more time
+      // Ensure a draft is saved one more time
       try {
         const data = drawRef.current?.getStrokes()
         if (data) saveDraft(studentId, assignmentTitle, pageIndex, data)
@@ -332,7 +356,11 @@ export default function StudentAssignment(){
         <button onClick={()=>goToPage(pageIndex+1)}>Next</button>
       </div>
 
+      {/* Floating toolbar */}
       {Toolbar}
+
+      {/* Auto-close toast */}
+      {toast && <Toast text={toast.msg} kind={toast.kind} />}
     </div>
   )
 }
