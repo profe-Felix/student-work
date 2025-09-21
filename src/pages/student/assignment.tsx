@@ -112,7 +112,7 @@ export default function StudentAssignment(){
   const [handMode, setHandMode] = useState(true)
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
-  const submitInFlight = useRef(false)
+  const submitInFlight = useRef(false) // <-- single declaration
 
   // source debug (draft / server / cached / empty)
   const [sourceTag, setSourceTag] = useState<'draft'|'server'|'cached'|'empty'>('empty')
@@ -236,7 +236,6 @@ export default function StudentAssignment(){
   }, [pageIndex, studentId])
 
   /* ---------- Submit with dirty-check; cache last submitted ---------- */
-  const submitInFlight = useRef(false)
   const submit = async ()=>{
     if (submitInFlight.current) return
     submitInFlight.current = true
