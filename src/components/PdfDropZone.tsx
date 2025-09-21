@@ -21,43 +21,85 @@ export default function PdfDropZone({ onCreated }: Props) {
 
     setBusy(true);
     try {
-      // ---- CHANGE: use your 'pdfs' bucket ----
-      const bucket = 'pdfs';
+      const bucket = 'pdfs'; // your bucket
       const key = `${crypto.randomUUID()}.pdf`;
 
-      // 1) Upload PDF to storage
+      // 1) Upload the PDF
       const { error: upErr } = await supabase.storage.from(bucket).upload(key, file, {
         contentType: 'application/pdf',
       });
       if (upErr) throw upErr;
 
-      // 2) Create assignment (store "bucket/path" so it’s self-contained)
       const title = file.name.replace(/\.pdf$/i, '');
       const storage_path = `${bucket}/${key}`;
-      const { data: assign, error: aErr } = await supabase
+
+      // 2) Create the assignment, or reuse if title already exists
+      let assignmentId: string | null = null;
+      const ins = await supabase
         .from('assignments')
         .insert({ title, pdf_path: storage_path })
         .select('id')
-        .single();
-      if (aErr) throw aErr;
+        .maybeSingle();
+
+      if (ins.error) {
+        // 23505 = unique_violation on assignments.title
+        if ((ins.error as any).code === '23505') {
+          // Look up existing assignment id by title
+          const found = await supabase
+            .from('assignments')
+            .select('id,pdf_path')
+            .eq('title', title)
+            .maybeSingle();
+          if (found.error || !found.data?.id) {
+            throw ins.error; // surface original if lookup fails
+          }
+          assignmentId = found.data.id;
+
+          // Optional: if existing assignment has no pdf_path, update it (ignore errors)
+          if (!found.data.pdf_path) {
+            await supabase.from('assignments')
+              .update({ pdf_path: storage_path })
+              .eq('id', assignmentId);
+          }
+        } else {
+          throw ins.error;
+        }
+      } else {
+        assignmentId = ins.data!.id;
+      }
+
+      if (!assignmentId) throw new Error('Could not determine assignment id.');
 
       // 3) Count pages with pdfjs
       const pageCount = await countPdfPages(URL.createObjectURL(file));
 
-      // 4) Seed pages table
-      const rows = Array.from({ length: pageCount }).map((_, i) => ({
-        assignment_id: assign.id,
-        title: `Page ${i + 1}`,
-        page_index: i,
-        pdf_path: storage_path,
-      }));
-      const { error: pErr } = await supabase.from('pages').insert(rows);
-      if (pErr) throw pErr;
+      // 4) Ensure pages exist — insert only the missing ones (no 'title' column)
+      const existing = await supabase
+        .from('pages')
+        .select('page_index')
+        .eq('assignment_id', assignmentId);
 
-      onCreated(assign.id);
+      if (existing.error) throw existing.error;
+
+      const have = new Set<number>((existing.data ?? []).map((r: any) => r.page_index));
+      const rows = Array.from({ length: pageCount })
+        .map((_, i) => i)
+        .filter(i => !have.has(i))
+        .map((i) => ({
+          assignment_id: assignmentId!,
+          page_index: i,
+          pdf_path: storage_path,
+        }));
+
+      if (rows.length > 0) {
+        const { error: pErr } = await supabase.from('pages').insert(rows);
+        if (pErr) throw pErr;
+      }
+
+      onCreated(assignmentId);
     } catch (e: any) {
       console.error(e);
-      setErr(e?.message || 'Failed to create assignment.');
+      setErr(e?.message || 'Failed to create/attach assignment.');
     } finally {
       setBusy(false);
     }
