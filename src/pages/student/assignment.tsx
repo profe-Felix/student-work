@@ -5,7 +5,8 @@ import DrawCanvas, { DrawCanvasHandle } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
   upsertAssignmentWithPage,
-  createSubmission, saveStrokes, saveAudio, loadLatestSubmission
+  createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
+  supabase
 } from '../../lib/db'
 
 /** Constants */
@@ -13,6 +14,7 @@ const assignmentTitle = 'Handwriting - Daily'
 const pdfStoragePath = 'pdfs/aprende-m2.pdf'
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
+const POLL_MS = 5000
 
 /* ---------- Colors ---------- */
 const CRAYOLA_24 = [
@@ -63,7 +65,6 @@ function loadDraft(student:string, assignment:string, page:number){
 function clearDraft(student:string, assignment:string, page:number){
   try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
 }
-
 function saveSubmittedCache(student:string, assignment:string, page:number, strokes:any){
   try { localStorage.setItem(submittedKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
@@ -112,8 +113,6 @@ export default function StudentAssignment(){
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
-  const [sourceTag, setSourceTag] = useState<'draft'|'server'|'cached'|'empty'>('empty')
-
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
   const showToast = (msg:string, kind:'ok'|'err'='ok', ms=1500)=>{
@@ -135,41 +134,41 @@ export default function StudentAssignment(){
     setCanvasSize({ w: cssW, h: cssH })
   }
 
+  // assignment/page cache for realtime filter
+  const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
+
+  /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
     drawRef.current?.clearStrokes()
-    setSourceTag('empty')
     audioRef.current?.stop()
 
     ;(async ()=>{
       try{
         const draft = loadDraft(studentId, assignmentTitle, pageIndex)
-        if (draft?.strokes) {
-          drawRef.current?.loadStrokes(draft.strokes)
-          setSourceTag('draft')
-          return
-        }
+        if (draft?.strokes) drawRef.current?.loadStrokes(draft.strokes)
 
         const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+        currIds.current = { assignment_id, page_id }
         const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
-        if (cancelled) return
-        const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-        if (strokes) { drawRef.current?.loadStrokes(strokes); setSourceTag('server'); return }
-
-        const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
-        if (cached?.strokes) { drawRef.current?.loadStrokes(cached.strokes); setSourceTag('cached'); return }
-
-        drawRef.current?.clearStrokes(); setSourceTag('empty')
+        if (!cancelled) {
+          const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+          if (strokes) drawRef.current?.loadStrokes(strokes)
+          else if (!draft?.strokes) {
+            const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+            if (cached?.strokes) drawRef.current?.loadStrokes(cached.strokes)
+          }
+        }
       }catch{
         const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
-        if (cached?.strokes) { drawRef.current?.loadStrokes(cached.strokes); setSourceTag('cached') }
-        else { drawRef.current?.clearStrokes(); setSourceTag('empty') }
+        if (cached?.strokes) drawRef.current?.loadStrokes(cached.strokes)
       }
     })()
 
     return ()=>{ cancelled=true }
   }, [pageIndex, studentId])
 
+  /* ---------- Draft autosave ---------- */
   useEffect(()=>{
     let lastSerialized = ''
     let running = !document.hidden
@@ -204,6 +203,7 @@ export default function StudentAssignment(){
     }
   }, [pageIndex, studentId])
 
+  /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async ()=>{
     if (submitInFlight.current) return
     submitInFlight.current = true
@@ -219,8 +219,11 @@ export default function StudentAssignment(){
       const last = localStorage.getItem(lastKey)
       if (last && last === hash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
-      const submission_id = await createSubmission(studentId, assignment_id, page_id)
+      const ids = currIds.current.assignment_id ? currIds.current
+        : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+      currIds.current = ids
+
+      const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       if (hasInk) {
         await saveStrokes(submission_id, strokes)
@@ -233,8 +236,7 @@ export default function StudentAssignment(){
       }
 
       clearDraft(studentId, assignmentTitle, pageIndex)
-      setSourceTag('server')
-      showToast('Saved!', 'ok', 1400)
+      showToast('Saved!', 'ok', 1200)
     } catch (e:any){
       console.error(e); showToast('Save failed', 'err', 1800); throw e
     } finally {
@@ -262,6 +264,7 @@ export default function StudentAssignment(){
     setPageIndex(nextIndex)
   }
 
+  // two-finger pan host (works with the new Pointer Events drawing)
   const scrollHostRef = useRef<HTMLDivElement|null>(null)
   useEffect(()=>{
     const host=scrollHostRef.current; if(!host) return
@@ -280,6 +283,64 @@ export default function StudentAssignment(){
     setToolbarRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
+  /* ---------- Realtime + polling ---------- */
+  const reloadFromServer = async ()=>{
+    try{
+      const { assignment_id, page_id } = currIds.current.assignment_id
+        ? currIds.current
+        : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+      currIds.current = { assignment_id, page_id }
+      const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
+      const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+      if (strokes) {
+        drawRef.current?.loadStrokes(strokes)
+        saveSubmittedCache(studentId, assignmentTitle, pageIndex, strokes)
+        showToast('Updated from other device', 'ok', 900)
+      }
+    } catch {/* ignore */}
+  }
+
+  useEffect(()=>{
+    let cleanup: (()=>void)|null = null
+    let pollId: number | null = null
+    let mounted = true
+
+    ;(async ()=>{
+      const ids = currIds.current.assignment_id
+        ? currIds.current
+        : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+      currIds.current = ids
+
+      // Listen to submissions inserts for this student/page
+      const ch1 = supabase.channel(`sub-${studentId}-${ids.page_id}`)
+        .on('postgres_changes', {
+          event: 'INSERT', schema: 'public', table: 'submissions',
+          filter: `student_id=eq.${studentId},page_id=eq.${ids.page_id}`
+        }, ()=> reloadFromServer())
+        .subscribe()
+
+      // Also listen to artifacts inserts of kind=strokes for latest submission on this page
+      const ch2 = supabase.channel(`art-${studentId}-${ids.page_id}`)
+        .on('postgres_changes', {
+          event: 'INSERT', schema: 'public', table: 'artifacts',
+          filter: `kind=eq.strokes`
+        }, ()=> reloadFromServer())
+        .subscribe()
+
+      cleanup = ()=> { supabase.removeChannel(ch1); supabase.removeChannel(ch2) }
+
+      // Polling fallback
+      pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
+    })()
+
+    return ()=> {
+      mounted = false
+      if (cleanup) cleanup()
+      if (pollId!=null) window.clearInterval(pollId)
+    }
+  }, [studentId, pageIndex])
+
+  /* ---------- UI ---------- */
   const Toolbar = (
     <div
       style={{
@@ -358,7 +419,7 @@ export default function StudentAssignment(){
       ...(toolbarRight ? { paddingRight:130 } : { paddingLeft:130 }),
       background:'#fafafa', WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-        <h2>Student Assignment (Hosted)</h2>
+        <h2>Student Assignment</h2>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
             Student: <strong>{studentId}</strong>
@@ -383,11 +444,6 @@ export default function StudentAssignment(){
             <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
               color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
           </div>
-        </div>
-
-        {/* tiny source badge */}
-        <div style={{ position:'absolute', left:8, bottom:8, fontSize:11, color:'#6b7280' }}>
-          src: {sourceTag}
         </div>
       </div>
 
