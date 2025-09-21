@@ -1,6 +1,6 @@
 // src/components/TeacherSyncBar.tsx
 import { useEffect, useRef, useState } from 'react';
-import { assignmentChannel, publishAutoFollow, publishFocus, publishSetPage } from '@/lib/realtime';
+import { assignmentChannel, publishAutoFollow, publishFocus, publishSetPage } from '../lib/realtime';
 
 type Props = { assignmentId: string; pageId: string; pageIndex: number; className?: string };
 
