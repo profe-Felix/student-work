@@ -289,61 +289,67 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Realtime + polling (defensive) ---------- */
-  const reloadFromServer = async ()=>{
+  // REPLACE your existing reloadFromServer with this:
+const reloadFromServer = async ()=>{
+  try{
+    const { assignment_id, page_id } = currIds.current.assignment_id
+      ? currIds.current
+      : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+    currIds.current = { assignment_id, page_id }
+
+    const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
+    const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+
+    // Only apply if there are actual strokes to show
+    const normalized = normalizeStrokes(strokesPayload)
+    const hasServerInk = Array.isArray(normalized?.strokes) && normalized.strokes.length > 0
+    if (!hasServerInk) return
+
+    try {
+      drawRef.current?.loadStrokes(normalized)
+      saveSubmittedCache(studentId, assignmentTitle, pageIndex, normalized)
+    } catch {}
+  } catch {/* ignore */}
+}
+
+
+  // REPLACE your whole realtime useEffect with this version:
+useEffect(()=>{
+  let cleanup: (()=>void)|null = null
+  let pollId: number | null = null
+  let mounted = true
+
+  ;(async ()=>{
     try{
-      const { assignment_id, page_id } = currIds.current.assignment_id
+      const ids = currIds.current.assignment_id
         ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
-      currIds.current = { assignment_id, page_id }
-      const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
-      const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-      if (strokes) {
-        try { drawRef.current?.loadStrokes(normalizeStrokes(strokes)) } catch {}
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, normalizeStrokes(strokes))
-      }
-    } catch {/* ignore */}
-  }
+      currIds.current = ids
 
-  useEffect(()=>{
-    let cleanup: (()=>void)|null = null
-    let pollId: number | null = null
-    let mounted = true
+      // Only react to stroke artifacts, not raw submission rows
+      const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
+        .on('postgres_changes', {
+          event: 'INSERT', schema: 'public', table: 'artifacts',
+          filter: `page_id=eq.${ids.page_id},student_id=eq.${studentId},kind=eq.strokes`
+        }, ()=> reloadFromServer())
+        .subscribe()
 
-    ;(async ()=>{
-      try{
-        const ids = currIds.current.assignment_id
-          ? currIds.current
-          : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
-        currIds.current = ids
-
-        const ch1 = supabase.channel(`sub-${studentId}-${ids.page_id}`)
-          .on('postgres_changes', {
-            event: 'INSERT', schema: 'public', table: 'submissions',
-            filter: `student_id=eq.${studentId},page_id=eq.${ids.page_id}`
-          }, ()=> reloadFromServer())
-          .subscribe()
-
-        const ch2 = supabase.channel(`art-${studentId}-${ids.page_id}`)
-          .on('postgres_changes', {
-            event: 'INSERT', schema: 'public', table: 'artifacts',
-            filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
-          }, ()=> reloadFromServer())
-          .subscribe()
-
-        cleanup = ()=> { supabase.removeChannel(ch1); supabase.removeChannel(ch2) }
-      }catch(e){
-        console.error('realtime subscribe failed', e)
-      }
-
-      pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
-    })()
-
-    return ()=> {
-      mounted = false
-      if (cleanup) cleanup()
-      if (pollId!=null) window.clearInterval(pollId)
+      cleanup = ()=> { supabase.removeChannel(ch) }
+    }catch(e){
+      console.error('realtime subscribe failed', e)
     }
-  }, [studentId, pageIndex])
+
+    // Defensive polling still OK; reload() itself ignores empty payloads
+    pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
+  })()
+
+  return ()=> {
+    mounted = false
+    if (cleanup) cleanup()
+    if (pollId!=null) window.clearInterval(pollId)
+  }
+}, [studentId, pageIndex])
+
 
   /* ---------- UI ---------- */
   const Toolbar = (
