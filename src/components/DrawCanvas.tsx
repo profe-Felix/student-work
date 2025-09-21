@@ -17,11 +17,12 @@ export default function DrawCanvas({
   const drawing = useRef(false)
 
   useEffect(()=>{
-    const canvas = canvasRef.current!
-    // Toggle DOM props exactly like the working debug page
-    canvas.style.pointerEvents = mode === 'scroll' ? 'none' : 'auto'
-    canvas.style.touchAction = mode === 'scroll' ? 'auto' : 'none'
-  },[mode])
+  const c = canvasRef.current!
+  // Scroll mode: let Safari scroll as usual
+  // Draw mode: allow two-finger scroll/pinch, we'll preventDefault only on 1-finger drawing
+  c.style.pointerEvents = mode === 'scroll' ? 'none' : 'auto'
+  c.style.touchAction   = mode === 'scroll' ? 'auto' : 'pan-y pinch-zoom'
+},[mode])
 
   useEffect(()=>{
     const canvas = canvasRef.current!
