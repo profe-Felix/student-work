@@ -17,14 +17,16 @@ export default function DrawCanvas({
   const drawing     = useRef(false)
   const gesturing   = useRef(false) // true while 2+ fingers are down
 
-  // Apply base interaction policy
+  // Apply interaction policy to the canvas element
   const applyPolicy = ()=>{
     const c = canvasRef.current!
+    if (!c) return
     if (mode === 'scroll') {
+      // All scrolling handled by Safari
       c.style.pointerEvents = 'none'
       c.style.touchAction   = 'auto'
     } else {
-      // draw mode defaults; may be overridden during a gesture
+      // Draw mode: allow 2-finger scroll/pinch, capture 1-finger drawing
       c.style.pointerEvents = gesturing.current ? 'none' : 'auto'
       c.style.touchAction   = gesturing.current ? 'auto' : 'pan-y pinch-zoom'
     }
@@ -36,12 +38,15 @@ export default function DrawCanvas({
     const canvas = canvasRef.current!
     const ctx = canvas.getContext('2d')!
 
-    const getPos = (e: any)=>{
+    const getPos = (e: TouchEvent | MouseEvent)=>{
       const r = canvas.getBoundingClientRect()
+      // Touch
       if ('touches' in e && e.touches && e.touches.length) {
         return { x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top }
       }
-      return { x: e.clientX - r.left, y: e.clientY - r.top }
+      // Mouse
+      const me = e as MouseEvent
+      return { x: me.clientX - r.left, y: me.clientY - r.top }
     }
 
     // ---- gesture helpers ----
@@ -61,9 +66,7 @@ export default function DrawCanvas({
     // ---- handlers ----
     const onTouchStart = (e: TouchEvent)=>{
       if (mode !== 'draw') return
-      // Two+ fingers: let page handle (scroll/zoom)
-      if (e.touches.length > 1) { enterGesture(); return }
-      // One finger: draw
+      if (e.touches.length > 1) { enterGesture(); return } // multi-touch → let Safari scroll
       drawing.current = true
       const p = getPos(e)
       ctx.strokeStyle = color
@@ -72,28 +75,28 @@ export default function DrawCanvas({
       ctx.lineJoin    = 'round'
       ctx.beginPath()
       ctx.moveTo(p.x, p.y)
-      if (e.cancelable) e.preventDefault()
+      if (e.cancelable) e.preventDefault() // keep page still for 1-finger draw
     }
 
     const onTouchMove = (e: TouchEvent)=>{
       if (mode !== 'draw') return
-      if (e.touches.length > 1) { enterGesture(); return } // let Safari scroll
+      if (e.touches.length > 1) { enterGesture(); return } // let Safari handle
       if (!drawing.current) return
       const p = getPos(e)
       ctx.lineTo(p.x, p.y)
       ctx.stroke()
-      if (e.cancelable) e.preventDefault() // keep page from nudging with one finger
+      if (e.cancelable) e.preventDefault()
     }
 
-    const onTouchEnd = (_e: TouchEvent)=>{
+    const onTouchEnd = (e: TouchEvent)=>{
       if (mode !== 'draw') return
-      // If any fingers remain (e.g., from 2-finger gesture -> 1 finger), keep gesture mode consistent
-      // iOS fires touchend per finger; when none remain, end both drawing and gesture mode
-      const anyTouchesLeft = !!document?.touches?.length // not widely supported; fallback below
       drawing.current = false
-      if (!anyTouchesLeft) exitGesture()
-      else {
-        // fallback: small timeout to restore if everything lifted
+      // When no more touches remain, exit gesture mode
+      const anyTouchesLeft = e.touches && e.touches.length > 0
+      if (!anyTouchesLeft) {
+        exitGesture()
+      } else {
+        // iOS may fire per-finger; ensure we exit once all lift
         setTimeout(()=> exitGesture(), 0)
       }
     }
@@ -117,9 +120,11 @@ export default function DrawCanvas({
     }
     const onMouseUp = ()=>{ drawing.current = false }
 
+    // Touch must be non-passive for preventDefault to work
     canvas.addEventListener('touchstart', onTouchStart, { passive: false })
     canvas.addEventListener('touchmove',  onTouchMove,  { passive: false })
     canvas.addEventListener('touchend',   onTouchEnd,   { passive: true  })
+    // Mouse (desktop testing)
     canvas.addEventListener('mousedown',  onMouseDown)
     canvas.addEventListener('mousemove',  onMouseMove)
     canvas.addEventListener('mouseup',    onMouseUp)
