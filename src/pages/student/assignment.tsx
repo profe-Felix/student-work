@@ -512,7 +512,7 @@ export default function StudentAssignment(){
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
           zIndex: 10020, display:'flex', gap:10, alignItems:'center',
-          background:'#fff', border:'1px solid '#e5e7eb', borderRadius:999,
+          background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
           boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
         }}
       >
@@ -538,7 +538,7 @@ export default function StudentAssignment(){
       {/* Your toolbar + audio UI (unchanged) */}
       {/* ... keep your existing toolbar/audio components here ... */}
 
-      {toast && <Toast text={toast.msg} kind={toast.kind} />}
+      {toast && <Toast text={toast.msg, kind='ok'} />}
     </div>
   )
 }
