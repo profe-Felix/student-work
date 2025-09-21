@@ -48,9 +48,9 @@ const draftKey      = (student:string, assignment:string, page:number)=> `draft:
 const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
 const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
 
-function normalizeStrokes(data: any): StrokesPayload {
+function normalizeStrokes(data: unknown): StrokesPayload {
   if (!data || typeof data !== 'object') return { strokes: [] }
-  const arr = Array.isArray(data.strokes) ? data.strokes : []
+  const arr = Array.isArray((data as any).strokes) ? (data as any).strokes : []
   return { strokes: arr }
 }
 
@@ -111,8 +111,8 @@ export default function StudentAssignment(){
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
-  // SINGLE definition (no duplicates)
-  const [toolbarRight, setToolbarRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
+  // renamed to avoid any stale duplicate collisions
+  const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
 
   const drawRef = useRef<DrawCanvasHandle>(null)
   const audioRef = useRef<AudioRecorderHandle>(null)
@@ -138,7 +138,7 @@ export default function StudentAssignment(){
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
-  /* ---------- Page load: clear, then draft → server → cache (defensive) ---------- */
+  /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
@@ -285,7 +285,7 @@ export default function StudentAssignment(){
   }, [handMode])
 
   const flipToolbarSide = ()=> {
-    setToolbarRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
+    setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
   /* ---------- Realtime + polling (defensive) ---------- */
@@ -349,7 +349,7 @@ export default function StudentAssignment(){
   const Toolbar = (
     <div
       style={{
-        position:'fixed', right: toolbarRight?8:undefined, left: !toolbarRight?8:undefined, top:'50%', transform:'translateY(-50%)',
+        position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
         zIndex:10010, width:120, maxHeight:'80vh',
         display:'flex', flexDirection:'column', gap:10,
         padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
@@ -423,7 +423,7 @@ export default function StudentAssignment(){
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
-      ...(toolbarRight ? { paddingRight:130 } : { paddingLeft:130 }),
+      ...(toolbarOnRight ? { paddingRight:130 } : { paddingLeft:130 }),
       background:'#fafafa', WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
         <h2>Student Assignment</h2>
