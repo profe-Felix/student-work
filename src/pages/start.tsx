@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { listStudents, ensureStudent } from '../lib/db'
+import { listStudents } from '../lib/db'
 
 const DEFAULT_COUNT = 28
 
@@ -49,8 +49,7 @@ export default function StartPicker() {
     return () => { cancelled = true }
   }, [letter])
 
-  const pick = async (id: string) => {
-    try { await ensureStudent(id) } catch {}
+  const pick = (id: string) => {
     localStorage.setItem('currentStudent', id)
     nav(`/student/assignment?student=${encodeURIComponent(id)}`)
   }
