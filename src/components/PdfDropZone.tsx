@@ -12,7 +12,7 @@ export default function PdfDropZone({ onCreated }:{ onCreated:(assignmentId:stri
     if (!file || file.type !== 'application/pdf') { setErr('Drop a single PDF'); return; }
     setBusy(true);
     try {
-      const key = `pdfs/${crypto.randomUUID()}.pdf`; // no uuid package needed
+      const key = `pdfs/${crypto.randomUUID()}.pdf`; // no 'uuid' package needed
       const { error: upErr } = await supabase.storage.from('public').upload(key, file, { contentType: 'application/pdf' });
       if (upErr) throw upErr;
 
@@ -50,8 +50,9 @@ export default function PdfDropZone({ onCreated }:{ onCreated:(assignmentId:stri
 }
 
 async function countPdfPages(objectUrl: string): Promise<number> {
-  const pdfjs = await import('pdfjs-dist/build/pdf'); // types shim in src/types/pdfjs-dist.d.ts
-  // @ts-ignore – set worker path
+  // Types provided via src/types/pdfjs-dist.d.ts
+  const pdfjs: any = await import('pdfjs-dist/build/pdf');
+  // @ts-expect-error setting worker path at runtime
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.js', import.meta.url).toString();
   const pdf = await pdfjs.getDocument(objectUrl).promise;
   return pdf.numPages;
