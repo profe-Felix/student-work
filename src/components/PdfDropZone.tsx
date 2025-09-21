@@ -1,4 +1,4 @@
-// src/components/PdfDropZone.tsx
+//src/components/PdfDropZone.tsx
 import { useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
