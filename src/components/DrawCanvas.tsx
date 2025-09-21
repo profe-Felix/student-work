@@ -5,8 +5,7 @@ import { useEffect, useRef } from 'react'
  * - Pixel-perfect alignment (devicePixelRatio aware)
  * - Apple Pencil: always draws (pointerType === 'pen')
  * - Touch: 1 finger draws, 2+ fingers scroll/pinch (canvas releases)
- * - Mouse supported
- * - Stable: no resize mid-stroke; touch-action policy set BEFORE touchstart
+ * - Multiple strokes in a row (no “stuck scroll mode”)
  */
 export default function DrawCanvas({
   width,   // CSS width (from PDF canvas CSS size)
@@ -26,8 +25,9 @@ export default function DrawCanvas({
 
   const drawing     = useRef(false)
   const usingPen    = useRef(false)
-  const gesturing   = useRef(false)          // true while 2+ touches are on screen
-  const activeId    = useRef<number | null>(null) // active pointerId
+  const gesturing   = useRef(false)          // true while 2+ touches are down
+  const activeId    = useRef<number | null>(null)
+  const gestureTO   = useRef<number | null>(null) // debounce to clear gesture after touchend
 
   // --- sizing helpers (CSS px -> device px backing store) ---
   const resizeBackingStore = ()=>{
@@ -66,7 +66,7 @@ export default function DrawCanvas({
     }
   }
 
-  // Ensure correct size & policy on mount/prop changes
+  // Ensure correct size & policy on mount/prop changes (but never mid-stroke)
   useEffect(()=>{
     if (!drawing.current) {
       resizeBackingStore()
@@ -76,11 +76,26 @@ export default function DrawCanvas({
 
   // Global 2-finger detection (fires BEFORE pointer handlers)
   useEffect(()=>{
+    const clearGestureSoon = ()=>{
+      if (gestureTO.current) window.clearTimeout(gestureTO.current)
+      // Debounce a hair to avoid sticky “gesture true” between fingers lifting
+      gestureTO.current = window.setTimeout(()=>{
+        gesturing.current = false
+        applyPolicy()
+      }, 40) // 40ms is enough to avoid flicker, but clears before next stroke
+    }
+
     const onTS = (e: TouchEvent)=>{
-      if (e.touches.length > 1) { gesturing.current = true;  applyPolicy() }
+      if (e.touches.length > 1) {
+        if (gestureTO.current) window.clearTimeout(gestureTO.current)
+        gesturing.current = true
+        applyPolicy()
+      }
     }
     const onTE = (e: TouchEvent)=>{
-      if (e.touches.length <= 1){ gesturing.current = false; applyPolicy() }
+      if (e.touches.length <= 1){
+        clearGestureSoon()
+      }
     }
     window.addEventListener('touchstart', onTS, { passive: true })
     window.addEventListener('touchend',   onTE, { passive: true })
@@ -89,6 +104,7 @@ export default function DrawCanvas({
       window.removeEventListener('touchstart', onTS as any)
       window.removeEventListener('touchend',   onTE  as any)
       window.removeEventListener('touchcancel',onTE  as any)
+      if (gestureTO.current) window.clearTimeout(gestureTO.current)
     }
   }, [])
 
@@ -125,9 +141,18 @@ export default function DrawCanvas({
     // --- Pointer Events (pen/touch/mouse) ---
     const onPointerDown = (e: PointerEvent)=>{
       if (mode !== 'draw') return
+
       usingPen.current = (e.pointerType === 'pen')
 
-      // If a multi-touch gesture is already active and it's NOT the Pencil, release to page
+      // If a multi-touch gesture is stuck from earlier but we now have a single new pointer,
+      // force-clear gesture state so a new stroke can begin.
+      // (Pencil always draws; for touch/mouse, assume single-pointer at this event.)
+      if (!usingPen.current) {
+        gesturing.current = false
+        applyPolicy()
+      }
+
+      // If a genuine 2+ finger gesture is active, still do not start (unless Pencil)
       if (gesturing.current && !usingPen.current) return
 
       drawing.current = true
@@ -136,10 +161,10 @@ export default function DrawCanvas({
       const p = toLocal(e.clientX, e.clientY)
       begin(p.x, p.y)
 
-      // Capture so we keep receiving moves
+      // Capture so we keep receiving moves even if finger leaves the element
       c.setPointerCapture?.(e.pointerId)
 
-      // touch-action already 'none' in draw mode; this preventDefault is belt+suspenders
+      // touch-action is already 'none' in draw mode; this belt+suspenders avoids page nudge
       e.preventDefault()
     }
 
@@ -172,25 +197,28 @@ export default function DrawCanvas({
       applyPolicy()
     }
 
-    const onPointerUp     = (e: PointerEvent)=> endStroke(e)
-    const onPointerCancel = (e: PointerEvent)=> endStroke(e)
+    const onPointerUp           = (e: PointerEvent)=> endStroke(e)
+    const onPointerCancel       = (e: PointerEvent)=> endStroke(e)
+    const onLostPointerCapture  = (e: PointerEvent)=> endStroke(e)
 
     // Non-passive so preventDefault works
-    c.addEventListener('pointerdown',  onPointerDown,  { passive: false })
-    c.addEventListener('pointermove',  onPointerMove,  { passive: false })
-    c.addEventListener('pointerup',    onPointerUp,    { passive: false })
-    c.addEventListener('pointercancel',onPointerCancel,{ passive: false })
+    c.addEventListener('pointerdown',        onPointerDown,        { passive: false })
+    c.addEventListener('pointermove',        onPointerMove,        { passive: false })
+    c.addEventListener('pointerup',          onPointerUp,          { passive: false })
+    c.addEventListener('pointercancel',      onPointerCancel,      { passive: false })
+    c.addEventListener('lostpointercapture', onLostPointerCapture, { passive: false })
 
-    // Keep crisp if DPR changes (rotate/zoom)
+    // Keep crisp if DPR changes (rotate/zoom) — avoid during stroke
     const onResize = ()=>{ if (!drawing.current) { resizeBackingStore() } }
     window.addEventListener('resize', onResize)
 
     return ()=>{
-      c.removeEventListener('pointerdown',  onPointerDown as any)
-      c.removeEventListener('pointermove',  onPointerMove as any)
-      c.removeEventListener('pointerup',    onPointerUp as any)
-      c.removeEventListener('pointercancel',onPointerCancel as any)
-      window.removeEventListener('resize',  onResize)
+      c.removeEventListener('pointerdown',        onPointerDown as any)
+      c.removeEventListener('pointermove',        onPointerMove as any)
+      c.removeEventListener('pointerup',          onPointerUp as any)
+      c.removeEventListener('pointercancel',      onPointerCancel as any)
+      c.removeEventListener('lostpointercapture', onLostPointerCapture as any)
+      window.removeEventListener('resize',        onResize)
     }
   }, [mode, color, size])
 
