@@ -51,9 +51,15 @@ export default function PdfDropZone({ onCreated }:{ onCreated:(assignmentId:stri
 
 async function countPdfPages(objectUrl: string): Promise<number> {
   // Types provided via src/types/pdfjs-dist.d.ts
-  const pdfjs: any = await import('pdfjs-dist/build/pdf');
-  // @ts-expect-error setting worker path at runtime
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.js', import.meta.url).toString();
-  const pdf = await pdfjs.getDocument(objectUrl).promise;
-  return pdf.numPages;
+  const pdfjs = await import('pdfjs-dist/build/pdf');
+
+  // Set the worker path at runtime
+  (pdfjs as any).GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.js',
+    import.meta.url
+  ).toString();
+
+  const pdf = await (pdfjs as any).getDocument(objectUrl).promise;
+  return (pdf as any).numPages as number;
 }
+
