@@ -9,7 +9,12 @@ import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   supabase
 } from '../../lib/db'
-import { subscribeToAssignment, type SetPagePayload, type FocusPayload } from '../../lib/realtime'
+import {
+  subscribeToAssignment,
+  type SetPagePayload,
+  type FocusPayload,
+  type AutoFollowPayload,
+} from '../../lib/realtime'
 
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
@@ -138,12 +143,14 @@ export default function StudentAssignment(){
 
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
-  // keep an explicit state copy so we can trigger effects when assignment id appears
+  // assignment id for realtime
   const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
 
-  // Focus Mode + nav lock (driven by teacher)
+  // Realtime teacher controls
   const [focusOn, setFocusOn] = useState(false)
   const [navLocked, setNavLocked] = useState(false)
+  const [autoFollow, setAutoFollow] = useState(false)
+  const teacherPageIndexRef = useRef<number | null>(null)
 
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')   // last server ink we applied
@@ -169,7 +176,7 @@ export default function StudentAssignment(){
 
         const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = { assignment_id, page_id }
-        if (!rtAssignmentId) setRtAssignmentId(assignment_id!) // <-- assert defined
+        if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
 
         try {
           const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
@@ -278,7 +285,7 @@ export default function StudentAssignment(){
       const ids = currIds.current.assignment_id ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = ids
-      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!) // <-- assert defined
+      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
@@ -316,7 +323,7 @@ export default function StudentAssignment(){
 
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
-    if (navLocked) return // lock nav during teacher focus (if enabled)
+    if (navLocked || autoFollow) return // ← block navigation when locked or auto-following
     try { audioRef.current?.stop() } catch {}
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
@@ -358,11 +365,20 @@ export default function StudentAssignment(){
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
+        teacherPageIndexRef.current = pageIndex
         setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
         setFocusOn(!!on)
         setNavLocked(!!on && !!lockNav)
+      },
+      onAutoFollow: ({ on }: AutoFollowPayload) => {
+        setAutoFollow(!!on)
+        // if teacher turns it ON, snap to teacher page immediately if known
+        const tpi = teacherPageIndexRef.current
+        if (on && typeof tpi === 'number' && tpi !== pageIndex) {
+          setPageIndex(tpi)
+        }
       }
     })
     return () => {
@@ -371,7 +387,7 @@ export default function StudentAssignment(){
         else (supabase as any)?.removeChannel?.(ch)
       } catch {}
     }
-  }, [rtAssignmentId])
+  }, [rtAssignmentId, pageIndex])
 
   const reloadFromServer = async ()=>{
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
@@ -382,7 +398,7 @@ export default function StudentAssignment(){
         ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = { assignment_id, page_id }
-      if (!rtAssignmentId) setRtAssignmentId(assignment_id!) // <-- assert defined
+      if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
 
       const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
       const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
@@ -414,7 +430,7 @@ export default function StudentAssignment(){
           ? currIds.current
           : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = ids
-        if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!) // <-- assert defined
+        if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
         const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
           .on('postgres_changes', {
@@ -558,7 +574,7 @@ export default function StudentAssignment(){
       >
         <button
           onClick={()=>goToPage(Math.max(0, pageIndex-1))}
-          disabled={saving || submitInFlight.current || navLocked}
+          disabled={saving || submitInFlight.current || navLocked || autoFollow}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           ◀ Prev
@@ -568,7 +584,7 @@ export default function StudentAssignment(){
         </span>
         <button
           onClick={()=>goToPage(pageIndex+1)}
-          disabled={saving || submitInFlight.current || navLocked}
+          disabled={saving || submitInFlight.current || navLocked || autoFollow}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           Next ▶
