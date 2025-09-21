@@ -3,12 +3,12 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   listAssignments,
   listPages,
-  listLatestByPage,
   getAudioUrl,
   type AssignmentRow,
   type PageRow,
 } from '../../lib/db'
-import PdfDropZone from '../../components/PdfDropZone' // ⬅️ NEW
+import PdfDropZone from '../../components/PdfDropZone'
+import TeacherSyncBar from '../../components/TeacherSyncBar'
 
 type LatestCell = {
   submission_id: string
@@ -21,10 +21,11 @@ const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStar
 
 export default function TeacherDashboard() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
-  const [assignmentId, setAssignmentId] = useState<string>('') // selected assignment id
+  const [assignmentId, setAssignmentId] = useState<string>('')   // selected assignment id
 
   const [pages, setPages] = useState<PageRow[]>([])
-  const [pageId, setPageId] = useState<string>('') // selected page id
+  const [pageId, setPageId] = useState<string>('')               // selected page id
+  const [pageIndex, setPageIndex] = useState<number>(0)          // selected page index (0-based)
 
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({}) // key = student_id
@@ -51,12 +52,25 @@ export default function TeacherDashboard() {
         const ps = await listPages(assignmentId)
         setPages(ps)
         const p0 = ps.find(p => p.page_index === 0) ?? ps[0]
-        if (p0) setPageId(p0.id)
+        if (p0) {
+          setPageId(p0.id)
+          setPageIndex(p0.page_index)
+        } else {
+          setPageId('')
+          setPageIndex(0)
+        }
       } catch (e) {
         console.error('load pages failed', e)
       }
     })()
   }, [assignmentId])
+
+  // Keep pageIndex in sync when pageId changes
+  useEffect(() => {
+    if (!pageId) return
+    const p = pages.find((pp: PageRow) => pp.id === pageId)
+    if (p) setPageIndex(p.page_index)
+  }, [pageId, pages])
 
   // Load latest per student for the selected page
   useEffect(() => {
@@ -69,7 +83,7 @@ export default function TeacherDashboard() {
         for (let i = 0; i < STUDENTS.length; i += 6) {
           const batch = STUDENTS.slice(i, i + 6)
           const results = await Promise.all(
-            batch.map(async (sid) => {
+            batch.map(async (sid: string) => {
               // fetch latest-for-student
               const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
               if (!latest) return [sid, null] as const
@@ -122,11 +136,11 @@ export default function TeacherDashboard() {
   }
 
   const currentAssignment = useMemo(
-    () => assignments.find(a => a.id === assignmentId) || null,
+    () => assignments.find((a: AssignmentRow) => a.id === assignmentId) || null,
     [assignments, assignmentId]
   )
   const currentPage = useMemo(
-    () => pages.find(p => p.id === pageId) || null,
+    () => pages.find((p: PageRow) => p.id === pageId) || null,
     [pages, pageId]
   )
 
@@ -134,10 +148,10 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
-      {/* ⬇️ NEW: Drag & drop a PDF to create a fresh assignment */}
+      {/* Drag & drop a PDF to create a fresh assignment */}
       <div style={{ margin: '12px 0 18px' }}>
         <PdfDropZone
-          onCreated={(newId) => {
+          onCreated={(newId: string) => {
             setAssignmentId(newId)
             setPageId('') // will load pages and pick first
           }}
@@ -145,7 +159,7 @@ export default function TeacherDashboard() {
       </div>
 
       {/* Controls */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 16px' }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
         {/* Assignment select */}
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Assignment</span>
@@ -180,6 +194,17 @@ export default function TeacherDashboard() {
         {loading && <span style={{ color: '#6b7280' }}>Loading…</span>}
       </div>
 
+      {/* ⬇️ Sync / Focus bar (appears after assignment + page are selected) */}
+      {assignmentId && pageId && (
+        <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
+          <TeacherSyncBar
+            assignmentId={assignmentId}
+            pageId={pageId}
+            pageIndex={pageIndex}
+          />
+        </div>
+      )}
+
       {/* Grid */}
       <div
         style={{
@@ -188,7 +213,7 @@ export default function TeacherDashboard() {
           gap: 12,
         }}
       >
-        {STUDENTS.map(sid => {
+        {STUDENTS.map((sid: string) => {
           const cell = grid[sid] ?? null
           const has = !!cell
           return (
