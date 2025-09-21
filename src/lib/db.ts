@@ -7,15 +7,21 @@ export const supabase = createClient(
 
 export async function ensureStudent(id: string) {
   if (!id) return
-  const { error } = await supabase.from('students').insert({ id }).select('id').maybeSingle()
-  if (error && !String(error.message).includes('duplicate')) {
-    console.warn('ensureStudent warning:', error.message)
+  // Upsert guarantees the row exists even if called multiple times
+  const { error } = await supabase
+    .from('students')
+    .upsert({ id }, { onConflict: 'id', ignoreDuplicates: false })
+  if (error) {
+    console.warn('ensureStudent error:', error.message)
   }
 }
 
 export async function upsertAssignmentWithPage(title: string, pdfPath: string, pageIndex: number) {
   let { data: aRow } = await supabase
-    .from('assignments').select('id').eq('title', title).maybeSingle()
+    .from('assignments')
+    .select('id')
+    .eq('title', title)
+    .maybeSingle()
 
   let assignment_id = aRow?.id
   if (!assignment_id) {
@@ -32,9 +38,11 @@ export async function upsertAssignmentWithPage(title: string, pdfPath: string, p
     .maybeSingle()
 
   if (!pRow) {
-    const ins = await supabase.from('pages')
+    const ins = await supabase
+      .from('pages')
       .insert({ assignment_id, page_index: pageIndex, pdf_path: pdfPath })
-      .select('id').single()
+      .select('id')
+      .single()
     if (ins.error) throw ins.error
     pRow = ins.data
   }
@@ -43,34 +51,38 @@ export async function upsertAssignmentWithPage(title: string, pdfPath: string, p
 }
 
 export async function createSubmission(student_id: string, assignment_id: string, page_id: string) {
-  const { data, error } = await supabase.from('submissions')
+  const { data, error } = await supabase
+    .from('submissions')
     .insert({ student_id, assignment_id, page_id })
-    .select('id').single()
+    .select('id')
+    .single()
   if (error) throw error
   return data!.id as string
 }
 
 export async function saveStrokes(submission_id: string, strokes: any) {
-  const { error } = await supabase.from('artifacts').insert({
-    submission_id, kind: 'strokes', strokes_json: strokes
-  })
+  const { error } = await supabase
+    .from('artifacts')
+    .insert({ submission_id, kind: 'strokes', strokes_json: strokes })
   if (error) throw error
 }
 
 export async function saveAudio(submission_id: string, blob: Blob) {
   const fileName = `${submission_id}/${Date.now()}.webm`
-  const up = await supabase.storage.from('student-audio')
+  const up = await supabase.storage
+    .from('student-audio')
     .upload(fileName, blob, { contentType: blob.type })
   if (up.error) throw up.error
 
-  const { error } = await supabase.from('artifacts').insert({
-    submission_id, kind: 'audio', audio_path: fileName, bytes: blob.size
-  })
+  const { error } = await supabase
+    .from('artifacts')
+    .insert({ submission_id, kind: 'audio', audio_path: fileName, bytes: blob.size })
   if (error) throw error
 }
 
 export async function loadLatestSubmission(assignment_id: string, page_id: string, student_id: string) {
-  const { data, error } = await supabase.from('submissions')
+  const { data, error } = await supabase
+    .from('submissions')
     .select(`
       id,
       artifacts:artifacts(kind, strokes_json, audio_path)
