@@ -1,15 +1,16 @@
 import { useEffect, useRef } from 'react'
 
 /**
- * Pointer-Events based canvas with:
- * - Apple Pencil: always draws (even if fingers are on screen)
- * - Touch: 1 finger draws, 2+ fingers scroll/pinch the outer panel
- * - Mouse: left button draws
- * - Smooth strokes (RAF-batched)
+ * Canvas drawing with:
+ * - Pixel-perfect alignment (handles devicePixelRatio)
+ * - Apple Pencil: always draws (pointerType === 'pen')
+ * - Touch: 1 finger draws, 2+ fingers scroll/pinch (canvas releases)
+ * - Mouse supported
+ * - Stable (no resize during a stroke, no policy thrash)
  */
 export default function DrawCanvas({
-  width,
-  height,
+  width,   // CSS width (from PDF canvas CSS size)
+  height,  // CSS height (from PDF canvas CSS size)
   color,
   size,
   mode // 'scroll' | 'draw'
@@ -21,156 +22,180 @@ export default function DrawCanvas({
   mode: 'scroll' | 'draw'
 }){
   const canvasRef   = useRef<HTMLCanvasElement>(null)
+  const ctxRef      = useRef<CanvasRenderingContext2D | null>(null)
 
   const drawing     = useRef(false)
-  const usingPen    = useRef(false)       // pointerType === 'pen'
-  const gesturing   = useRef(false)       // true while 2+ touches on screen
-  const pointsQueue = useRef<{x:number,y:number}[]>([])
-  const rafId       = useRef<number|undefined>(undefined)
+  const usingPen    = useRef(false)
+  const gesturing   = useRef(false)   // true while 2+ touches are on screen
+  const lastId      = useRef<number | null>(null) // active pointerId
 
-  // ---- style helpers ----
-  const applyPolicy = ()=>{
+  // --- helpers ---
+  const resizeBackingStore = ()=>{
+    const c = canvasRef.current!
+    const dpr = Math.max(1, window.devicePixelRatio || 1)
+    const needW = Math.floor(width  * dpr)
+    const needH = Math.floor(height * dpr)
+    if (c.width !== needW)  c.width  = needW
+    if (c.height !== needH) c.height = needH
+    c.style.width  = `${width}px`
+    c.style.height = `${height}px`
+    const ctx = c.getContext('2d')!
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // CSS px coordinates
+    ctxRef.current = ctx
+  }
+
+  const setPolicy = ()=>{
     const c = canvasRef.current!
     if (!c) return
     if (mode === 'scroll') {
-      // Always let page/panel scroll
       c.style.pointerEvents = 'none'
       c.style.touchAction   = 'auto'
       return
     }
-    // Draw mode
+    // DRAW mode:
     if (gesturing.current && !usingPen.current) {
-      // Two-finger gesture with no Pencil: release to panel/page
+      // 2+ fingers, no Pencil -> release to scroll/pinch
       c.style.pointerEvents = 'none'
       c.style.touchAction   = 'auto'
     } else if (drawing.current) {
-      // While actively drawing, stop page nudging
+      // while actively drawing, stop page nudging
       c.style.pointerEvents = 'auto'
       c.style.touchAction   = 'none'
     } else {
-      // Idle draw mode: allow two-finger gestures to be recognized by the panel
+      // idle draw mode: allow two-finger gestures to be recognized by parent
       c.style.pointerEvents = 'auto'
       c.style.touchAction   = 'pan-y pinch-zoom'
     }
   }
 
-  useEffect(applyPolicy, [mode])
-
-  // ---- global touch listeners (to detect 2+ fingers reliably on iPad) ----
+  // Resize when props change (but never during an active stroke)
   useEffect(()=>{
-    const onTS = (e: TouchEvent)=> { if (e.touches.length > 1) { gesturing.current = true;  applyPolicy() } }
-    const onTE = (e: TouchEvent)=> { if (e.touches.length <= 1){ gesturing.current = false; applyPolicy() } }
+    if (!drawing.current) {
+      resizeBackingStore()
+      setPolicy()
+    }
+  }, [width, height, mode])
+
+  // Watch for 2+ fingers globally to flip policy immediately
+  useEffect(()=>{
+    const onTS = (e: TouchEvent)=>{
+      if (e.touches.length > 1) { gesturing.current = true;  setPolicy() }
+    }
+    const onTE = (e: TouchEvent)=>{
+      if (e.touches.length <= 1){ gesturing.current = false; setPolicy() }
+    }
     window.addEventListener('touchstart', onTS, { passive: true })
     window.addEventListener('touchend',   onTE, { passive: true })
-    return ()=> {
+    return ()=>{
       window.removeEventListener('touchstart', onTS as any)
       window.removeEventListener('touchend',   onTE  as any)
     }
   }, [])
 
-  // ---- draw loop (RAF) ----
   useEffect(()=>{
-    const canvas = canvasRef.current!
-    const ctx = canvas.getContext('2d')!
+    const c = canvasRef.current!
+    resizeBackingStore()    // ensure ctxRef is set
+    setPolicy()
 
-    const drawFrame = ()=>{
-      // Batch queued points into the current path
-      if (pointsQueue.current.length) {
-        ctx.strokeStyle = color
-        ctx.lineWidth   = size
-        ctx.lineCap     = 'round'
-        ctx.lineJoin    = 'round'
-        ctx.beginPath()
-        const first = pointsQueue.current[0]
-        ctx.moveTo(first.x, first.y)
-        for (let i=1; i<pointsQueue.current.length; i++){
-          const p = pointsQueue.current[i]
-          ctx.lineTo(p.x, p.y)
-        }
-        ctx.stroke()
-        pointsQueue.current = []
-      }
-      rafId.current = requestAnimationFrame(drawFrame)
-    }
-    rafId.current = requestAnimationFrame(drawFrame)
-    return ()=> { if (rafId.current) cancelAnimationFrame(rafId.current) }
-  }, [color, size])
-
-  useEffect(()=>{
-    const canvas = canvasRef.current!
-    const rect = ()=> canvas.getBoundingClientRect()
-
+    const rect = () => c.getBoundingClientRect()
     const toLocal = (clientX:number, clientY:number)=>{
       const r = rect()
       return { x: clientX - r.left, y: clientY - r.top }
     }
+    const ctx = () => ctxRef.current!
 
-    // ----- POINTER EVENTS (covers pen, touch, mouse) -----
+    // --- drawing primitives ---
+    const begin = (x:number, y:number)=>{
+      const k = ctx()
+      k.strokeStyle = color
+      k.lineWidth   = size
+      k.lineCap     = 'round'
+      k.lineJoin    = 'round'
+      k.beginPath()
+      k.moveTo(x, y)
+      // Add a tiny segment so taps leave a dot
+      k.lineTo(x + 0.001, y + 0.001)
+      k.stroke()
+    }
+    const lineTo = (x:number, y:number)=>{
+      const k = ctx()
+      k.lineTo(x, y)
+      k.stroke()
+    }
+
+    // --- POINTER EVENTS (pen/touch/mouse) ---
     const onPointerDown = (e: PointerEvent)=>{
       if (mode !== 'draw') return
-      // Pencil always draws (force through even if fingers are on screen)
       usingPen.current = (e.pointerType === 'pen')
-      if (usingPen.current || (e.pointerType === 'touch' || e.pointerType === 'mouse')) {
-        drawing.current = true
-        const p = toLocal(e.clientX, e.clientY)
-        pointsQueue.current.push(p)
-        // Capture so we keep getting move events even if leaving element
-        canvas.setPointerCapture?.(e.pointerId)
-        applyPolicy()
-        // Prevent page nudge for pen or single-finger draw
-        e.preventDefault()
-      }
+      // If multi-touch in progress and not Pencil, ignore (let scroll happen)
+      if (gesturing.current && !usingPen.current) return
+
+      drawing.current = true
+      lastId.current  = e.pointerId
+      const p = toLocal(e.clientX, e.clientY)
+      begin(p.x, p.y)
+      c.setPointerCapture?.(e.pointerId)
+      setPolicy()
+      e.preventDefault()
     }
 
     const onPointerMove = (e: PointerEvent)=>{
       if (!drawing.current) return
-      // If a gesture is in progress (2+ touches) and not using Pencil, stop drawing
+      // Only track the active pointer
+      if (lastId.current !== null && e.pointerId !== lastId.current) return
       if (gesturing.current && !usingPen.current) {
+        // Abort drawing if a gesture starts mid-stroke
         drawing.current = false
-        canvas.releasePointerCapture?.(e.pointerId)
-        applyPolicy()
+        lastId.current = null
+        c.releasePointerCapture?.(e.pointerId)
+        setPolicy()
         return
       }
       const p = toLocal(e.clientX, e.clientY)
-      pointsQueue.current.push(p)
-      // keep page still while drawing
+      lineTo(p.x, p.y)
       e.preventDefault()
     }
 
     const endStroke = (e: PointerEvent)=>{
       if (!drawing.current) return
+      if (lastId.current !== null && e.pointerId !== lastId.current) return
       drawing.current = false
       usingPen.current = false
-      canvas.releasePointerCapture?.(e.pointerId)
-      applyPolicy()
+      lastId.current = null
+      c.releasePointerCapture?.(e.pointerId)
+      setPolicy()
     }
 
-    // Safari sometimes fires pointercancel when system gesture takes over
     const onPointerUp     = (e: PointerEvent)=> endStroke(e)
     const onPointerCancel = (e: PointerEvent)=> endStroke(e)
 
-    // Register listeners (non-passive so preventDefault works during draw)
-    canvas.addEventListener('pointerdown',  onPointerDown,  { passive: false })
-    canvas.addEventListener('pointermove',  onPointerMove,  { passive: false })
-    canvas.addEventListener('pointerup',    onPointerUp,    { passive: false })
-    canvas.addEventListener('pointercancel',onPointerCancel,{ passive: false })
+    c.addEventListener('pointerdown',  onPointerDown,  { passive: false })
+    c.addEventListener('pointermove',  onPointerMove,  { passive: false })
+    c.addEventListener('pointerup',    onPointerUp,    { passive: false })
+    c.addEventListener('pointercancel',onPointerCancel,{ passive: false })
+
+    // Keep alignment crisp if DPR changes (rotation/zoom)
+    const onResize = ()=>{ if (!drawing.current) { resizeBackingStore(); } }
+    window.addEventListener('resize', onResize)
 
     return ()=>{
-      canvas.removeEventListener('pointerdown',  onPointerDown as any)
-      canvas.removeEventListener('pointermove',  onPointerMove as any)
-      canvas.removeEventListener('pointerup',    onPointerUp as any)
-      canvas.removeEventListener('pointercancel',onPointerCancel as any)
+      c.removeEventListener('pointerdown',  onPointerDown as any)
+      c.removeEventListener('pointermove',  onPointerMove as any)
+      c.removeEventListener('pointerup',    onPointerUp as any)
+      c.removeEventListener('pointercancel',onPointerCancel as any)
+      window.removeEventListener('resize',  onResize)
     }
-  }, [mode])
+  }, [mode, color, size])
 
   return (
     <canvas
       ref={canvasRef}
-      width={width}
-      height={height}
+      // Backing size will be set in effect; keep attributes minimal to avoid resets mid-stroke
+      width={1}
+      height={1}
       style={{
         position:'absolute', inset:0, zIndex:10,
-        display:'block', width:'100%', height:'100%'
+        display:'block', width: `${width}px`, height: `${height}px`
       }}
     />
   )
