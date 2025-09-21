@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
-import 'pdfjs-dist/build/pdf.worker.min.mjs'
+import 'pdfjs-dist/build/pdf.worker.min.mjs' // Vite-friendly worker import
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -9,54 +9,102 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 
 export default function PdfCanvas({
   url,
-  pageIndex = 0,
-  onReady
+  pageIndex,
+  onReady,
 }:{
   url: string
-  pageIndex?: number
-  onReady?: (pdf:any, canvas: HTMLCanvasElement) => void
+  pageIndex: number
+  onReady?: (pdf:any, canvas:HTMLCanvasElement)=>void
 }){
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement|null>(null)
+  const pdfRef    = useRef<any>(null)
+  const renderTaskRef = useRef<any>(null)
 
   useEffect(()=>{
     let cancelled = false
-    const canvas = canvasRef.current!
-    const ctx = canvas.getContext('2d')!
+    let localPdf: any = null
 
-    ;(async ()=>{
-      const pdf = await pdfjsLib.getDocument(url).promise
-      const page = await pdf.getPage(pageIndex + 1)
+    const load = async ()=>{
+      try{
+        // Cancel any prior render
+        if (renderTaskRef.current && renderTaskRef.current.cancel) {
+          try { await renderTaskRef.current.cancel() } catch {}
+        }
+        renderTaskRef.current = null
 
-      const baseViewport = page.getViewport({ scale: 1 })
-      const container = canvas.parentElement as HTMLElement
-      const containerCSSWidth = container?.clientWidth || Math.min(900, baseViewport.width)
-      const scale = containerCSSWidth / baseViewport.width
+        // Destroy old doc
+        if (pdfRef.current && pdfRef.current.destroy) {
+          try { await pdfRef.current.destroy() } catch {}
+          pdfRef.current = null
+        }
 
-      const viewport = page.getViewport({ scale })
-      const cssWidth  = Math.round(viewport.width)
-      const cssHeight = Math.round(viewport.height)
-      const dpr = Math.max(1, window.devicePixelRatio || 1)
+        const loadingTask = pdfjsLib.getDocument(url)
+        localPdf = await loadingTask.promise
+        if (cancelled) return
+        pdfRef.current = localPdf
 
-      canvas.width  = Math.floor(cssWidth * dpr)
-      canvas.height = Math.floor(cssHeight * dpr)
-      canvas.style.width  = `${cssWidth}px`
-      canvas.style.height = `${cssHeight}px`
+        const page = await localPdf.getPage(pageIndex + 1)
+        if (cancelled) return
 
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      const renderTask = page.render({ canvasContext: ctx as any, viewport })
-      await renderTask.promise
-      if (!cancelled) onReady?.(pdf, canvas)
-    })()
+        const viewport = page.getViewport({ scale: 1 })
+        const containerWidth = Math.min(900, window.innerWidth - 160) // keep it readable with toolbar
+        const scale = containerWidth / viewport.width
+        const scaledViewport = page.getViewport({ scale })
 
-    return ()=>{ cancelled = true }
+        const canvas = canvasRef.current!
+        const ctx = canvas.getContext('2d')!
+        canvas.width  = Math.floor(scaledViewport.width * window.devicePixelRatio)
+        canvas.height = Math.floor(scaledViewport.height * window.devicePixelRatio)
+        canvas.style.width  = `${scaledViewport.width}px`
+        canvas.style.height = `${scaledViewport.height}px`
+
+        // Reset transform to dpr
+        ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0)
+        const renderContext = { canvasContext: ctx, viewport: scaledViewport }
+        const task = page.render(renderContext)
+        renderTaskRef.current = task
+        await task.promise
+        if (cancelled) return
+
+        onReady?.(localPdf, canvas)
+      } catch(e){
+        // swallow errors when unmounted/cancelled
+        // console.warn('PDF render error', e)
+      }
+    }
+
+    load()
+
+    const onResize = ()=>{
+      // Re-render on resize
+      load()
+    }
+    window.addEventListener('resize', onResize)
+
+    return ()=>{
+      cancelled = true
+      window.removeEventListener('resize', onResize)
+      if (renderTaskRef.current && renderTaskRef.current.cancel) {
+        try { renderTaskRef.current.cancel() } catch {}
+      }
+      // Let pdf.js clean up
+      if (pdfRef.current && pdfRef.current.destroy) {
+        try { pdfRef.current.destroy() } catch {}
+      }
+      pdfRef.current = null
+      renderTaskRef.current = null
+    }
   }, [url, pageIndex])
 
   return (
     <canvas
       ref={canvasRef}
       style={{
-        position:'absolute', inset:0, display:'block',
-        width:'100%', height:'100%', pointerEvents:'none', zIndex:0
+        display:'block',
+        width:'100%',
+        height:'auto',
+        background:'#fff',
+        borderRadius: 8
       }}
     />
   )
