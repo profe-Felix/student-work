@@ -11,20 +11,44 @@ export type DrawCanvasHandle = {
   undo: () => void
 }
 
-function normalize(data: StrokesPayload | null | undefined): StrokesPayload {
-  if (!data || typeof data !== 'object') return { strokes: [] }
-  const arr = Array.isArray((data as any).strokes) ? (data as any).strokes : []
-  const safe = arr.map((s: any) => ({
-    color: typeof s?.color === 'string' ? s.color : '#000000',
-    size:  Number.isFinite(s?.size) ? s.size : 4,
-    tool:  s?.tool === 'highlighter' ? 'highlighter' : 'pen',
-    pts:   Array.isArray(s?.pts)
-      ? s.pts.filter((p: any) => Number.isFinite(p?.x) && Number.isFinite(p?.y))
-      : []
-  }))
+/* ---------- Type guards (no any) ---------- */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+function isPoint(v: unknown): v is StrokePoint {
+  return isRecord(v) && Number.isFinite((v as Record<string, unknown>).x) && Number.isFinite((v as Record<string, unknown>).y)
+}
+function isStroke(v: unknown): v is Stroke {
+  if (!isRecord(v)) return false
+  const color = typeof v.color === 'string'
+  const size  = Number.isFinite(v.size as number)
+  const tool  = v.tool === 'pen' || v.tool === 'highlighter'
+  const pts   = Array.isArray(v.pts) && (v.pts as unknown[]).every(isPoint)
+  return color && size && tool && pts
+}
+function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
+  if (!isRecord(input) || !Array.isArray((input as Record<string, unknown>).strokes)) {
+    return { strokes: [] }
+  }
+  const raw = (input as Record<string, unknown>).strokes as unknown[]
+  const safe: Stroke[] = raw
+    .map((s) => {
+      if (isStroke(s)) return s
+      // Try to salvage partially-formed strokes
+      if (isRecord(s)) {
+        const color = typeof s.color === 'string' ? (s.color as string) : '#000000'
+        const size  = Number.isFinite(s.size as number) ? (s.size as number) : 4
+        const tool  = s.tool === 'highlighter' ? 'highlighter' : 'pen'
+        const pts   = Array.isArray(s.pts) ? (s.pts as unknown[]).filter(isPoint) : []
+        return { color, size, tool, pts }
+      }
+      return null
+    })
+    .filter((x): x is Stroke => !!x)
   return { strokes: safe }
 }
 
+/* ---------- Render helpers ---------- */
 function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
   if (!s.pts || s.pts.length === 0) return
   ctx.save()
@@ -58,9 +82,9 @@ export default forwardRef(function DrawCanvas(
   ref
 ){
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const ctxRef = useRef<CanvasRenderingContext2D|null>(null)
-  const strokes = useRef<Stroke[]>([])
-  const current = useRef<Stroke|null>(null)
+  const ctxRef    = useRef<CanvasRenderingContext2D|null>(null)
+  const strokes   = useRef<Stroke[]>([])
+  const current   = useRef<Stroke|null>(null)
 
   // Pointer state for two-finger detection & pencil
   const activePointers = useRef<Set<number>>(new Set())
@@ -75,38 +99,41 @@ export default forwardRef(function DrawCanvas(
   }
 
   useEffect(()=>{
-    const c = canvasRef.current!
+    const c = canvasRef.current
+    if (!c) return
     c.width = width; c.height = height
-    const ctx = c.getContext('2d')!
+    const ctx = c.getContext('2d')
+    if (!ctx) return
     ctxRef.current = ctx
     redraw()
   }, [width, height])
 
   useEffect(()=>{
-    const c = canvasRef.current!
+    const c = canvasRef.current
+    if (!c) return
     if (mode === 'scroll') {
       c.style.pointerEvents = 'none'
-      c.style.touchAction = 'auto'
+      c.style.touchAction   = 'auto'
     } else {
       c.style.pointerEvents = 'auto'
-      c.style.touchAction = 'pan-y pinch-zoom'
+      c.style.touchAction   = 'pan-y pinch-zoom'
     }
   }, [mode])
 
   useImperativeHandle(ref, () => ({
-    getStrokes: () => ({ strokes: strokes.current }),
-    loadStrokes: (data: StrokesPayload | null | undefined) => {
+    getStrokes: (): StrokesPayload => ({ strokes: strokes.current }),
+    loadStrokes: (data: StrokesPayload | null | undefined): void => {
       const safe = normalize(data)
       strokes.current = safe.strokes
       current.current = null
       redraw()
     },
-    clearStrokes: () => {
+    clearStrokes: (): void => {
       strokes.current = []
       current.current = null
       redraw()
     },
-    undo: () => {
+    undo: (): void => {
       strokes.current.pop()
       redraw()
     }
@@ -119,10 +146,12 @@ export default forwardRef(function DrawCanvas(
   }
 
   useEffect(()=>{
-    const c = canvasRef.current!
+    const c = canvasRef.current
+    if (!c) return
+
     const shouldDraw = (e: PointerEvent) => {
       if (mode !== 'draw') return false
-      if (e.pointerType === 'pen') return true // let Apple Pencil draw (palm down allowed)
+      if (e.pointerType === 'pen') return true // allow Apple Pencil even with palm
       // fingers/mouse: draw only if a single non-pen pointer is down
       return activePointers.current.size <= 1
     }
@@ -135,7 +164,7 @@ export default forwardRef(function DrawCanvas(
       const p = getPos(e)
       current.current = { color, size, tool: tool === 'highlighter' ? 'highlighter' : 'pen', pts: [p] }
       redraw()
-      e.preventDefault?.()
+      if ((e as any).preventDefault) e.preventDefault()
     }
     const onPointerMove = (e: PointerEvent)=>{
       if (drawingPointerId.current !== e.pointerId) return
@@ -150,7 +179,7 @@ export default forwardRef(function DrawCanvas(
       const p = getPos(e)
       current.current.pts.push(p)
       redraw()
-      e.preventDefault?.()
+      if ((e as any).preventDefault) e.preventDefault()
     }
     const endStroke = ()=>{
       if (current.current) {
@@ -171,15 +200,15 @@ export default forwardRef(function DrawCanvas(
       try { c.releasePointerCapture(e.pointerId) } catch {}
     }
 
-    c.addEventListener('pointerdown', onPointerDown as any, { passive:false })
-    c.addEventListener('pointermove', onPointerMove as any, { passive:false })
-    c.addEventListener('pointerup', onPointerUp as any, { passive:true })
-    c.addEventListener('pointercancel', onPointerCancel as any, { passive:true })
+    c.addEventListener('pointerdown', onPointerDown as EventListener, { passive:false })
+    c.addEventListener('pointermove', onPointerMove as EventListener, { passive:false })
+    c.addEventListener('pointerup', onPointerUp as EventListener, { passive:true })
+    c.addEventListener('pointercancel', onPointerCancel as EventListener, { passive:true })
     return ()=>{
-      c.removeEventListener('pointerdown', onPointerDown as any)
-      c.removeEventListener('pointermove', onPointerMove as any)
-      c.removeEventListener('pointerup', onPointerUp as any)
-      c.removeEventListener('pointercancel', onPointerCancel as any)
+      c.removeEventListener('pointerdown', onPointerDown as EventListener)
+      c.removeEventListener('pointermove', onPointerMove as EventListener)
+      c.removeEventListener('pointerup', onPointerUp as EventListener)
+      c.removeEventListener('pointercancel', onPointerCancel as EventListener)
       activePointers.current.clear()
       drawingPointerId.current = null
     }
@@ -190,7 +219,11 @@ export default forwardRef(function DrawCanvas(
       ref={canvasRef}
       width={width}
       height={height}
-      style={{ position:'absolute', inset:0, zIndex:10, display:'block', width:'100%', height:'100%', touchAction:'pan-y pinch-zoom', background:'transparent' }}
+      style={{
+        position:'absolute', inset:0, zIndex:10,
+        display:'block', width:'100%', height:'100%',
+        touchAction:'pan-y pinch-zoom', background:'transparent'
+      }}
     />
   )
 })
