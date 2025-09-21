@@ -52,25 +52,24 @@ function Swatch({ hex, selected, onClick }:{ hex:string; selected:boolean; onCli
 
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
-/** Draft helpers (localStorage per student/assignment/page) */
-const draftKey = (student:string, assignment:string, page:number)=>
-  `draft:${student}:${assignment}:${page}`
+/** Draft + last-submitted helpers (localStorage per student/assignment/page) */
+const draftKey = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
+const lastHashKey = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
 
 function saveDraft(student:string, assignment:string, page:number, strokes:any){
-  try {
-    const payload = { t: Date.now(), strokes }
-    localStorage.setItem(draftKey(student, assignment, page), JSON.stringify(payload))
-  } catch {}
+  try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
 function loadDraft(student:string, assignment:string, page:number){
-  try {
-    const raw = localStorage.getItem(draftKey(student, assignment, page))
-    if (!raw) return null
-    return JSON.parse(raw) as { t:number, strokes:any }
-  } catch { return null }
+  try { const raw = localStorage.getItem(draftKey(student, assignment, page)); return raw ? JSON.parse(raw) : null } catch { return null }
 }
 function clearDraft(student:string, assignment:string, page:number){
   try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
+}
+
+async function hashStrokes(strokes:any): Promise<string> {
+  const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
+  const buf = await crypto.subtle.digest('SHA-256', enc)
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
 
 /** Tiny toast that auto-hides */
@@ -98,6 +97,7 @@ export default function StudentAssignment(){
   const [handMode, setHandMode] = useState(true)
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
+  const submitInFlight = useRef(false)
 
   // toast state
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
@@ -123,23 +123,20 @@ export default function StudentAssignment(){
   const onAudio = (b:Blob)=>{ audioBlob.current = b }
 
   /** Load order for a page:
-   *  1) Draft (if exists) — kinder refresh-safe
-   *  2) Latest submitted from Supabase
+   *  1) Draft (if exists)
+   *  2) Latest submitted
    *  3) Otherwise clear
    */
   useEffect(()=>{
     let cancelled=false
     ;(async ()=>{
       try{
-        // Stop any recording when page changes
-        audioRef.current?.stop()
+        audioRef.current?.stop() // stop recording when page changes
 
-        // Try local draft first
         const draft = loadDraft(studentId, assignmentTitle, pageIndex)
         if (draft && draft.strokes) {
           drawRef.current?.loadStrokes(draft.strokes)
         } else {
-          // Otherwise fetch from server
           await ensureStudent(studentId)
           const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
           const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
@@ -153,11 +150,15 @@ export default function StudentAssignment(){
     return ()=>{ cancelled=true }
   }, [pageIndex])
 
-  /** Draft autosave timer (saves only if something changed since last write) */
+  /** Autosave drafts; pause when hidden to reduce CPU/memory */
   useEffect(()=>{
     let lastSerialized = ''
-    const id = window.setInterval(()=>{
+    let running = !document.hidden
+    let intervalId: number | null = null
+
+    const tick = ()=>{
       try {
+        if (!running) return
         const data = drawRef.current?.getStrokes()
         if (!data) return
         const s = JSON.stringify(data)
@@ -166,44 +167,76 @@ export default function StudentAssignment(){
           lastSerialized = s
         }
       } catch {}
-    }, DRAFT_INTERVAL_MS)
-
-    const onBeforeUnload = ()=>{
-      try {
-        const data = drawRef.current?.getStrokes()
-        if (data) saveDraft(studentId, assignmentTitle, pageIndex, data)
-      } catch {}
     }
+
+    const start = ()=>{ if (intervalId==null){ intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) } }
+    const stop  = ()=>{ if (intervalId!=null){ window.clearInterval(intervalId); intervalId=null } }
+
+    const onVis = ()=>{ running = !document.hidden; if (running) start(); else stop() }
+    document.addEventListener('visibilitychange', onVis)
+
+    start()
+    const onBeforeUnload = ()=>{ try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {} }
     window.addEventListener('beforeunload', onBeforeUnload)
 
     return ()=>{
-      window.clearInterval(id)
+      stop()
+      document.removeEventListener('visibilitychange', onVis)
       window.removeEventListener('beforeunload', onBeforeUnload)
     }
   }, [pageIndex])
 
-  /** Submit helper. Clears the draft if successful + toast */
+  /** Submit helper with dirty-check + in-flight guard. Clears draft if successful. */
   const submit = async ()=>{
+    if (submitInFlight.current) return
+    submitInFlight.current = true
     try{
       setSaving(true)
+
+      const strokes = drawRef.current?.getStrokes() || { strokes: [] }
+      const hash = await hashStrokes(strokes)
+      // Save only if we have content
+      const hasInk = Array.isArray(strokes?.strokes) && strokes!.strokes.length > 0
+      const hasAudio = !!audioBlob.current
+      if (!hasInk && !hasAudio) {
+        setSaving(false)
+        submitInFlight.current = false
+        return
+      }
+
+      // Dirty-check: avoid duplicate writes
+      const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
+      const last = localStorage.getItem(lastKey)
+      if (last && last === hash && !hasAudio) {
+        // No change in ink and no new audio → skip
+        setSaving(false)
+        submitInFlight.current = false
+        return
+      }
+
       await ensureStudent(studentId)
       const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       const submission_id = await createSubmission(studentId, assignment_id, page_id)
 
-      const strokes = drawRef.current?.getStrokes()
-      if (strokes) await saveStrokes(submission_id, strokes)
-      if (audioBlob.current) await saveAudio(submission_id, audioBlob.current)
+      if (hasInk) {
+        await saveStrokes(submission_id, strokes)
+        localStorage.setItem(lastKey, hash)
+      }
+      if (hasAudio) {
+        await saveAudio(submission_id, audioBlob.current!)
+        audioBlob.current = null
+      }
 
-      // Draft is now "finalized" for this page
       clearDraft(studentId, assignmentTitle, pageIndex)
-
-      showToast('Saved!', 'ok', 1500)
-      audioBlob.current = null
+      showToast('Saved!', 'ok', 1400)
     } catch (e:any){
       console.error(e)
       showToast('Save failed', 'err', 1800)
       throw e
-    } finally { setSaving(false) }
+    } finally {
+      setSaving(false)
+      submitInFlight.current = false
+    }
   }
 
   /** Do we have any content worth saving? (ink or audio) */
@@ -215,24 +248,17 @@ export default function StudentAssignment(){
     } catch { return !!audioBlob.current }
   }
 
-  /** Page navigation with optional auto-submit */
+  /** Page navigation with optional auto-submit and dirty-check */
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
     // Stop any recording first
     audioRef.current?.stop()
 
     if (AUTO_SUBMIT_ON_PAGE_CHANGE && hasContent()) {
-      try {
-        await submit()
-      } catch {
-        // If submit fails (e.g., network), the autosave draft remains.
-      }
+      try { await submit() } catch { /* draft remains if it fails */ }
     } else {
       // Ensure a draft is saved one more time
-      try {
-        const data = drawRef.current?.getStrokes()
-        if (data) saveDraft(studentId, assignmentTitle, pageIndex, data)
-      } catch {}
+      try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
     }
     setPageIndex(nextIndex)
   }
@@ -351,9 +377,9 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'flex', gap:8, justifyContent:'center', margin:'12px 0' }}>
-        <button onClick={()=>goToPage(Math.max(0, pageIndex-1))}>Prev</button>
+        <button onClick={()=>goToPage(Math.max(0, pageIndex-1))} disabled={saving || submitInFlight.current}>Prev</button>
         <span style={{ margin:'0 8px' }}>Page {pageIndex+1}</span>
-        <button onClick={()=>goToPage(pageIndex+1)}>Next</button>
+        <button onClick={()=>goToPage(pageIndex+1)} disabled={saving || submitInFlight.current}>Next</button>
       </div>
 
       {/* Floating toolbar */}
