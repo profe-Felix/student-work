@@ -1,5 +1,5 @@
 // src/pages/teacher/index.tsx
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   listAssignments,
   listPages,
@@ -9,6 +9,7 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
+import { supabase } from '../../lib/db'
 
 type LatestCell = {
   submission_id: string
@@ -33,13 +34,70 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({}) // key = student_id
 
+  // ---- helpers -----------------------------------------------------
+
+  // Fetch latest per-student for current assignment/page
+  const refreshGrid = useRef<(why?: string) => Promise<void>>(async () => {})
+  refreshGrid.current = async (_why?: string) => {
+    if (!assignmentId || !pageId) return
+    setLoading(true)
+    try {
+      const next: Record<string, LatestCell> = {}
+      // process roster in small batches
+      for (let i = 0; i < STUDENTS.length; i += 6) {
+        const batch = STUDENTS.slice(i, i + 6)
+        const results: Array<readonly [string, LatestCell] | null> = await Promise.all(
+          batch.map(async (sid: string) => {
+            const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
+            if (!latest) return [sid, null] as const
+
+            const hasStrokes = !!latest.artifacts?.some(
+              (a: any) => a.kind === 'strokes' && a.strokes_json
+            )
+            const audioArt = latest.artifacts?.find(
+              (a: any) => a.kind === 'audio' && a.storage_path
+            )
+
+            let audioUrl: string | undefined
+            if (audioArt?.storage_path) {
+              try {
+                audioUrl = await getAudioUrl(audioArt.storage_path)
+              } catch {}
+            }
+            return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
+          })
+        )
+        for (const pair of results) {
+          if (!pair) continue
+          const [sid, cell] = pair
+          next[sid] = cell
+        }
+        setGrid((curr) => ({ ...curr, ...next }))
+      }
+    } catch (e) {
+      console.error('refreshGrid failed', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Debounce utility (for realtime bursts)
+  const debTimer = useRef<number | null>(null)
+  const debouncedRefresh = (delay = 350) => {
+    if (debTimer.current) window.clearTimeout(debTimer.current)
+    debTimer.current = window.setTimeout(() => {
+      refreshGrid.current('debounced')
+    }, delay)
+  }
+
+  // ---- initial loads -----------------------------------------------
+
   // Load assignments on mount
   useEffect(() => {
     (async () => {
       try {
         const as = await listAssignments()
         setAssignments(as)
-        // Default to "Handwriting - Daily" if present
         const preferred = as.find(a => a.title === 'Handwriting - Daily') ?? as[0]
         if (preferred) setAssignmentId(preferred.id)
       } catch (e) {
@@ -63,67 +121,43 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
-  // Load latest per student for the selected page
+  // Load grid whenever page changes
   useEffect(() => {
     if (!assignmentId || !pageId) return
-    let cancelled = false
-    setLoading(true)
-    ;(async () => {
-      try {
-        const nextGrid: Record<string, LatestCell> = {}
-
-        // process roster in small batches to be kind to the API
-        for (let i = 0; i < STUDENTS.length; i += 6) {
-          const batch = STUDENTS.slice(i, i + 6)
-
-          const results: Array<readonly [string, LatestCell] | null> = await Promise.all(
-            batch.map(async (sid: string) => {
-              // Fetch the latest submission for THIS student on THIS page
-              const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
-              if (!latest) return [sid, null] as const
-
-              const hasStrokes = !!latest.artifacts?.some(
-                (a: any) => a.kind === 'strokes' && a.strokes_json
-              )
-
-              const audioArt = latest.artifacts?.find(
-                (a: any) => a.kind === 'audio' && a.storage_path
-              )
-
-              let audioUrl: string | undefined
-              if (audioArt?.storage_path) {
-                try {
-                  // getAudioUrl returns Promise<string> — await it
-                  audioUrl = await getAudioUrl(audioArt.storage_path)
-                } catch { /* ignore */ }
-              }
-
-              return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
-            })
-          )
-
-          for (const pair of results) {
-            if (!pair) continue
-            const [sid, cell] = pair
-            nextGrid[sid] = cell
-          }
-
-          if (cancelled) return
-          setGrid((curr) => ({ ...curr, ...nextGrid }))
-        }
-      } catch (e) {
-        console.error('load latest grid failed', e)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-
-    return () => { cancelled = true }
+    setGrid({}) // clear old page data quickly to avoid stale tiles
+    refreshGrid.current('page change')
   }, [assignmentId, pageId])
 
-  // Small helper here (since db.ts returns latest w/out student filter)
+  // ---- realtime updates for snappy tiles ----------------------------
+
+  useEffect(() => {
+    if (!pageId) return
+    // listen to submissions on this page (fastest signal)
+    const ch1 = supabase.channel(`tgrid-subs-${pageId}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'submissions',
+        filter: `page_id=eq.${pageId}`
+      }, () => debouncedRefresh(250))
+      .subscribe()
+
+    // listen to artifacts (audio/strokes). If your schema lacks page_id on artifacts,
+    // this is global; we debounce to avoid spam.
+    const ch2 = supabase.channel(`tgrid-arts`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'artifacts'
+      }, () => debouncedRefresh(350))
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(ch1)
+      supabase.removeChannel(ch2)
+      if (debTimer.current) { window.clearTimeout(debTimer.current); debTimer.current = null }
+    }
+  }, [pageId])
+
+  // ---- small per-student query helper -------------------------------
+
   async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
-    const { supabase } = await import('../../lib/db')
     const { data: sub, error: se } = await supabase
       .from('submissions')
       .select('id, student_id, created_at, artifacts(id,kind,strokes_json,storage_path,created_at)')
