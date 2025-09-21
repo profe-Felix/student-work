@@ -15,18 +15,24 @@ export interface FocusPayload {
 
 export interface AutoFollowPayload {
   on: boolean;
-  allowedPages?: number[] | null; // zero-based allowed page indexes
-  teacherPageIndex?: number;      // teacher's current page
+  allowedPages?: number[] | null;
+  teacherPageIndex?: number;
+  assignmentId?: string;
+  assignmentPdfPath?: string | null; // "bucket/key" form
   ts?: number;
 }
 
 export type TeacherPresenceState = {
   role: 'teacher';
+  // sync/focus
   autoFollow: boolean;
   allowedPages: number[] | null;
   teacherPageIndex?: number;
   focusOn: boolean;
   lockNav: boolean;
+  // assignment selection
+  assignmentId?: string;
+  assignmentPdfPath?: string | null;
   updatedAt: number;
 };
 
@@ -46,12 +52,16 @@ export async function publishAutoFollow(
   ch: any,
   on: boolean,
   allowedPages?: number[] | null,
-  teacherPageIndex?: number
+  teacherPageIndex?: number,
+  assignmentId?: string,
+  assignmentPdfPath?: string | null,
 ) {
   const payload: AutoFollowPayload = {
     on,
     allowedPages: allowedPages ?? null,
     teacherPageIndex,
+    assignmentId,
+    assignmentPdfPath: assignmentPdfPath ?? null,
     ts: Date.now(),
   };
   await ch.send({ type: 'broadcast', event: 'AUTO_FOLLOW', payload });
@@ -74,6 +84,8 @@ export async function setTeacherPresence(
     teacherPageIndex: state.teacherPageIndex,
     focusOn: !!state.focusOn,
     lockNav: !!state.lockNav,
+    assignmentId: state.assignmentId,
+    assignmentPdfPath: state.assignmentPdfPath ?? null,
     updatedAt: state.updatedAt ?? Date.now(),
   };
   await ch.track(payload);
@@ -91,7 +103,6 @@ export function subscribeToAssignment(
     config: { broadcast: { ack: true }, presence: { key: 'student' } },
   });
 
-  // Broadcast listeners
   ch
     .on('broadcast', { event: 'SET_PAGE' }, ({ payload }) =>
       handlers.onSetPage?.(payload as SetPagePayload)
@@ -103,7 +114,7 @@ export function subscribeToAssignment(
       handlers.onAutoFollow?.(payload as AutoFollowPayload)
     );
 
-  // Presence listener — fires when we (student) join or teacher updates their presence.
+  // Presence sync on join
   ch.on('presence', { event: 'sync' }, () => {
     try {
       const state = ch.presenceState() as Record<string, TeacherPresenceState[]>;
@@ -116,6 +127,8 @@ export function subscribeToAssignment(
         on: !!latest.autoFollow,
         allowedPages: latest.allowedPages ?? null,
         teacherPageIndex: latest.teacherPageIndex,
+        assignmentId: latest.assignmentId,
+        assignmentPdfPath: latest.assignmentPdfPath ?? null,
         ts: latest.updatedAt,
       });
       handlers.onFocus?.({
@@ -134,7 +147,6 @@ export function subscribeToAssignment(
   });
 
   ch.subscribe((status: string) => {
-    // Safety: do a single read shortly after subscribe in case the initial 'sync' races.
     if (status === 'SUBSCRIBED') {
       setTimeout(() => {
         try {
@@ -148,6 +160,8 @@ export function subscribeToAssignment(
             on: !!latest.autoFollow,
             allowedPages: latest.allowedPages ?? null,
             teacherPageIndex: latest.teacherPageIndex,
+            assignmentId: latest.assignmentId,
+            assignmentPdfPath: latest.assignmentPdfPath ?? null,
             ts: latest.updatedAt,
           });
           handlers.onFocus?.({
