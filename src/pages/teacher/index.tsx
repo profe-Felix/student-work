@@ -1,191 +1,117 @@
 // src/pages/teacher/index.tsx
 import { useEffect, useMemo, useState } from 'react'
-import { listAssignments, listPages, listLatestByPage, getAudioUrl, AssignmentRow, PageRow } from '../../lib/db'
-import PdfCanvas from '../../components/PdfCanvas'
-import PlaybackDrawer from '../../components/PlaybackDrawer'
+import {
+  supabase,
+  listAssignments, listPages, listLatestByPage,
+  type AssignmentRow, type PageRow, getAudioUrl
+} from '../../lib/db'
 
-// Roster (A_01 … A_28). Adjust if your class size changes.
-const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
-
-type RowView = {
-  student_id: string
-  submission: { id: string } | null
-  strokes: { strokes_json?: any } | null
-  audio: { storage_path?: string | null } | null
-}
-
-export default function Teacher() {
+export default function TeacherPage(){
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
-  const [assignmentId, setAssignmentId] = useState<string | null>(null)
-
+  const [assignmentId, setAssignmentId] = useState<string>('')
   const [pages, setPages] = useState<PageRow[]>([])
-  const [pageId, setPageId] = useState<string | null>(null)
-  const [pageIndex, setPageIndex] = useState<number>(0)
-  const [pdfUrl, setPdfUrl] = useState<string>('')
+  const [pageId, setPageId] = useState<string>('')
 
-  const [rows, setRows] = useState<RowView[]>([])
+  const [rows, setRows] = useState<Awaited<ReturnType<typeof listLatestByPage>>>([])
   const [loading, setLoading] = useState(false)
 
-  // Drawer state
-  const [open, setOpen] = useState(false)
-  const [current, setCurrent] = useState<{ student: string, strokes: any, audioUrl?: string } | null>(null)
-
-  // Load assignments on mount
+  // load assignments
   useEffect(() => {
-    (async () => {
-      const a = await listAssignments()
-      setAssignments(a)
-      if (a.length) {
-        setAssignmentId(a[0].id)
-        // derive pdf path from student app setting:
-        const path = a[0].pdf_path || 'pdfs/aprende-m2.pdf'
-        setPdfUrl(`${import.meta.env.BASE_URL || '/'}${path.split('/').pop()}`)
-      }
-    })().catch(console.error)
+    ;(async ()=>{
+      try{
+        const a = await listAssignments()
+        setAssignments(a)
+        if (a.length && !assignmentId) setAssignmentId(a[0].id)
+      }catch(e){ console.error(e) }
+    })()
   }, [])
 
-  // Load pages when assignment changes
+  // load pages for assignment
   useEffect(() => {
     if (!assignmentId) return
-    ;(async () => {
-      const ps = await listPages(assignmentId)
-      setPages(ps)
-      const first = ps[0]
-      if (first) {
-        setPageId(first.id)
-        setPageIndex(first.page_index)
-      } else {
-        setPageId(null)
-        setPageIndex(0)
-      }
-    })().catch(console.error)
+    ;(async ()=>{
+      try{
+        const p = await listPages(assignmentId)
+        setPages(p)
+        if (p.length) setPageId(p[0].id)
+      }catch(e){ console.error(e) }
+    })()
   }, [assignmentId])
 
-  // Load latest per student when pageId changes
+  // load latest per student for page
   useEffect(() => {
-    if (!assignmentId || !pageId) { setRows([]); return }
+    if (!assignmentId || !pageId) return
     setLoading(true)
-    ;(async () => {
-      const data = await listLatestByPage(assignmentId, pageId, STUDENTS)
-      setRows(data)
+    ;(async ()=>{
+      try{
+        const data = await listLatestByPage(assignmentId, pageId)
+        setRows(data)
+      }catch(e){ console.error(e) }
+      finally{ setLoading(false) }
     })()
-      .catch(console.error)
-      .finally(() => setLoading(false))
   }, [assignmentId, pageId])
 
-  const openReview = async (r: RowView) => {
-    let audioUrl: string | undefined = undefined
-    if (r.audio?.storage_path) {
-      try { audioUrl = await getAudioUrl(r.audio.storage_path) } catch { /* ignore */ }
-    }
-    setCurrent({ student: r.student_id, strokes: r.strokes?.strokes_json || { strokes: [] }, audioUrl })
-    setOpen(true)
-  }
+  const currentAssignmentTitle = useMemo(() => {
+    return assignments.find(a => a.id === assignmentId)?.title ?? ''
+  }, [assignments, assignmentId])
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2 style={{ marginBottom: 12 }}>Teacher Dashboard</h2>
+    <div style={{ padding:16 }}>
+      <h2 style={{ marginBottom:12 }}>Teacher Dashboard</h2>
 
-      {/* Filters */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-        <label>
-          Assignment:{' '}
-          <select
-            value={assignmentId ?? ''}
-            onChange={e => {
-              setAssignmentId(e.target.value || null)
-            }}
-          >
-            {assignments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
-          </select>
-        </label>
+      <div style={{ display:'flex', gap:8, marginBottom:12 }}>
+        <select value={assignmentId} onChange={e=>setAssignmentId(e.target.value)}>
+          <option value="" disabled>Choose assignment…</option>
+          {assignments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+        </select>
 
-        <label>
-          Page:{' '}
-          <select
-            value={pageId ?? ''}
-            onChange={e => {
-              const id = e.target.value || null
-              setPageId(id)
-              const p = pages.find(x => x.id === id)
-              setPageIndex(p ? p.page_index : 0)
-            }}
-          >
-            {pages.map(p => <option key={p.id} value={p.id}>{p.page_index + 1}</option>)}
-          </select>
-        </label>
+        <select value={pageId} onChange={e=>setPageId(e.target.value)} disabled={!pages.length}>
+          {pages.length === 0 && <option value="">No pages</option>}
+          {pages.map(p => (
+            <option key={p.id} value={p.id}>Page {p.page_index + 1}</option>
+          ))}
+        </select>
       </div>
 
-      {/* Grid */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-          gap: 12
-        }}
-      >
-        {STUDENTS.map(stu => {
-          const r = rows.find(x => x.student_id === stu) || { student_id: stu, submission: null, strokes: null, audio: null }
-          const status = r.submission
-            ? (r.strokes?.strokes_json?.strokes?.length ? 'Submitted' : (r.audio ? 'Audio only' : 'Submitted'))
-            : 'No work'
+      <div style={{ marginBottom:8, color:'#6b7280' }}>
+        {currentAssignmentTitle && <>Showing latest work for <strong>{currentAssignmentTitle}</strong></>}
+      </div>
 
-          return (
-            <div key={stu}
-              style={{
-                border: '1px solid #e5e7eb', borderRadius: 12, background: '#fff',
-                padding: 10, display: 'flex', flexDirection: 'column', gap: 8
-              }}
-            >
-              <div style={{ fontWeight: 700, display: 'flex', justifyContent: 'space-between' }}>
-                <span>{stu}</span>
-                <span style={{
-                  fontSize: 12,
-                  padding: '2px 8px',
-                  borderRadius: 999,
-                  background: status === 'Submitted' ? '#DCFCE7' : status === 'Audio only' ? '#DBEAFE' : '#F3F4F6',
-                  color: status === 'Submitted' ? '#065F46' : status === 'Audio only' ? '#1E40AF' : '#374151',
-                  border: '1px solid #e5e7eb'
-                }}>
-                  {status}
-                </span>
-              </div>
-
-              {/* Tiny page preview */}
-              <div style={{ position: 'relative', width: '100%', aspectRatio: '4/3', overflow: 'hidden', borderRadius: 8, background:'#fafafa' }}>
-                <div style={{ position: 'absolute', inset: 0 }}>
-                  <PdfCanvas url={pdfUrl} pageIndex={pageIndex} />
+      {loading ? <div>Loading…</div> : (
+        <div style={{
+          display:'grid',
+          gridTemplateColumns:'repeat(auto-fill, minmax(220px, 1fr))',
+          gap:12
+        }}>
+          {rows.length === 0 && (
+            <div style={{ color:'#6b7280' }}>No work yet.</div>
+          )}
+          {rows.map(r => {
+            const audio = getAudioUrl(r.audio_url)
+            const hasInk = !!(r.strokes_json && Array.isArray(r.strokes_json.strokes) && r.strokes_json.strokes.length)
+            return (
+              <div key={r.submission_id} style={{
+                border:'1px solid #e5e7eb', borderRadius:12, padding:10, background:'#fff'
+              }}>
+                <div style={{ fontWeight:700, marginBottom:6 }}>{r.student_id}</div>
+                <div style={{ fontSize:12, color:'#6b7280', marginBottom:8 }}>
+                  {new Date(r.created_at).toLocaleString()}
                 </div>
+                <div style={{
+                  height:120, border:'1px dashed #e5e7eb', borderRadius:8,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  background: hasInk ? '#f0f9ff' : '#f9fafb'
+                }}>
+                  {hasInk ? '✏️ Strokes present' : '— No strokes —'}
+                </div>
+                {audio && (
+                  <audio src={audio} controls style={{ width:'100%', marginTop:8 }} />
+                )}
               </div>
-
-              <button
-                onClick={() => openReview(r as RowView)}
-                disabled={!r.submission}
-                style={{
-                  marginTop: 4, padding: '6px 10px', borderRadius: 8,
-                  border: '1px solid #e5e7eb', background: r.submission ? '#f9fafb' : '#f3f4f6'
-                }}
-              >
-                Review
-              </button>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Drawer */}
-      {open && current &&
-        <PlaybackDrawer
-          onClose={() => setOpen(false)}
-          student={current.student}
-          pdfUrl={pdfUrl}
-          pageIndex={pageIndex}
-          strokesPayload={current.strokes}
-          audioUrl={current.audioUrl}
-        />
-      }
-
-      {loading && <div style={{ marginTop: 12, color: '#6b7280' }}>Loading…</div>}
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
