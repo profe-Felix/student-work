@@ -1,6 +1,6 @@
 // src/components/PdfDropZone.tsx
 import { useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '../lib/supabaseClient';
 import { v4 as uuidv4 } from 'uuid';
 
 export default function PdfDropZone({ onCreated }:{ onCreated:(assignmentId:string)=>void }) {
@@ -27,7 +27,7 @@ export default function PdfDropZone({ onCreated }:{ onCreated:(assignmentId:stri
         assignment_id: assign.id,
         title: `Page ${i + 1}`,
         page_index: i,
-        pdf_path: key, // required by your schema
+        pdf_path: key,
       }));
       const { error: pErr } = await supabase.from('pages').insert(rows);
       if (pErr) throw pErr;
