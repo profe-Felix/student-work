@@ -21,7 +21,7 @@ export default function StudentAssignment(){
 
   const submit = ()=>{
     alert(
-      `Submit page ${pageIndex + 1}: audio=${!!audioBlob.current ? 'yes' : 'no'} (strokes drawn are on the canvas layer)`
+      `Submit page ${pageIndex + 1}: audio=${!!audioBlob.current ? 'yes' : 'no'}`
     )
     audioBlob.current = null
   }
@@ -30,34 +30,48 @@ export default function StudentAssignment(){
     <div style={{ minHeight:'100vh', padding: 12, paddingBottom: 96, background:'#fafafa' }}>
       <h2>Student Assignment (Hosted)</h2>
 
-      {/* Stacked: PDF (bottom) + drawing canvas (top) */}
+      {/* Scrollable panel so two-finger gestures actually scroll */}
       <div
         style={{
-          position: 'relative',
-          width: `${canvasSize.w}px`,
-          height: `${canvasSize.h}px`,
-          margin: '12px auto',
-          // In draw mode, prevent page scroll; in scroll mode, allow normal scroll.
-          touchAction: handMode ? 'auto' : 'none'
+          height: 'calc(100vh - 140px)',           // room for header + bottom toolbar
+          overflowY: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          touchAction: 'auto',                      // always allow scrolling here
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'center',
+          padding: 12,
+          background: '#fff',
+          border: '1px solid #eee',
+          borderRadius: 12
         }}
       >
-        <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
-          <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
-        </div>
+        {/* PDF + Draw stack (no touchAction here) */}
+        <div
+          style={{
+            position: 'relative',
+            width: `${canvasSize.w}px`,
+            height: `${canvasSize.h}px`
+          }}
+        >
+          <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
+            <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
+          </div>
 
-        <div style={{ position: 'absolute', inset: 0, zIndex: 10 }}>
-          <DrawCanvas
-            width={canvasSize.w}
-            height={canvasSize.h}
-            color={color}
-            size={size}
-            mode={handMode ? 'scroll' : 'draw'}
-          />
+          <div style={{ position: 'absolute', inset: 0, zIndex: 10 }}>
+            <DrawCanvas
+              width={canvasSize.w}
+              height={canvasSize.h}
+              color={color}
+              size={size}
+              mode={handMode ? 'scroll' : 'draw'}
+            />
+          </div>
         </div>
       </div>
 
       {/* Page nav */}
-      <div style={{ display:'flex', gap:8, justifyContent:'center', marginBottom: 12 }}>
+      <div style={{ display:'flex', gap:8, justifyContent:'center', margin: '12px 0' }}>
         <button onClick={()=>setPageIndex(p=>Math.max(0,p-1))}>Prev</button>
         <span style={{ margin: '0 8px' }}>Page {pageIndex+1}</span>
         <button onClick={()=>setPageIndex(p=>p+1)}>Next</button>
