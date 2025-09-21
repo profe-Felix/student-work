@@ -1,73 +1,45 @@
+// src/lib/db.ts
 import { createClient } from '@supabase/supabase-js'
 
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL as string,
-  import.meta.env.VITE_SUPABASE_ANON_KEY as string
-)
+export const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!
+export const supabaseAnon = import.meta.env.VITE_SUPABASE_ANON_KEY!
+export const supabase = createClient(supabaseUrl, supabaseAnon, {
+  auth: { persistSession: false, autoRefreshToken: false }
+})
 
-// Minimal row shapes we touch
-type StudentRow = { id: string }
-
-export async function ensureStudent(id: string) {
-  if (!id) return
-  const { error } = await supabase
-    .from('students')
-    .upsert({ id }, { onConflict: 'id', ignoreDuplicates: false })
-  if (error) throw error
+// ---------- Types ----------
+export type AssignmentRow = { id: string; title: string; pdf_path: string | null }
+export type PageRow = { id: string; assignment_id: string; page_index: number }
+export type SubmissionRow = { id: string; assignment_id: string; page_id: string; student_id: string; created_at: string }
+export type ArtifactRow = {
+  id: string
+  submission_id: string
+  page_id: string
+  kind: 'strokes' | 'audio'
+  strokes_json?: any
+  storage_path?: string | null
+  created_at: string
 }
 
-export async function listStudents(letter: string): Promise<StudentRow[]> {
-  const like = `${letter}_%`
-  const { data, error } = await supabase
-    .from('students')
-    .select('id')
-    .like('id', like)
-    .order('id', { ascending: true })
-  if (error) throw error
-  return (data as StudentRow[]) || []
-}
-
+// ---------- Existing write helpers (keep yours here) ----------
 export async function upsertAssignmentWithPage(title: string, pdfPath: string, pageIndex: number) {
-  // assignment
-  const gotA = await supabase
+  // upsert assignment
+  const { data: a, error: ea } = await supabase
     .from('assignments')
+    .upsert({ title, pdf_path: pdfPath }, { onConflict: 'title' })
     .select('id')
-    .eq('title', title)
-    .maybeSingle()
-  if (gotA.error) throw gotA.error
+    .single()
+  if (ea) throw ea
 
-  let assignment_id: string | undefined = (gotA.data as any)?.id
-  if (!assignment_id) {
-    const insA = await supabase
-      .from('assignments')
-      .insert({ title })
-      .select('id')
-      .single()
-    if (insA.error) throw insA.error
-    assignment_id = (insA.data as any).id
-  }
-
-  // page
-  const gotP = await supabase
+  // upsert page
+  const { data: p, error: ep } = await supabase
     .from('pages')
+    .upsert({ assignment_id: a.id, page_index: pageIndex }, { onConflict: 'assignment_id,page_index' })
     .select('id')
-    .eq('assignment_id', assignment_id)
-    .eq('page_index', pageIndex)
-    .maybeSingle()
-  if (gotP.error) throw gotP.error
+    .single()
+  if (ep) throw ep
 
-  let page_id: string | undefined = (gotP.data as any)?.id
-  if (!page_id) {
-    const insP = await supabase
-      .from('pages')
-      .insert({ assignment_id, page_index: pageIndex, pdf_path: pdfPath })
-      .select('id')
-      .single()
-    if (insP.error) throw insP.error
-    page_id = (insP.data as any).id
-  }
-
-  return { assignment_id: assignment_id!, page_id: page_id! }
+  return { assignment_id: a.id as string, page_id: p.id as string }
 }
 
 export async function createSubmission(student_id: string, assignment_id: string, page_id: string) {
@@ -77,41 +49,129 @@ export async function createSubmission(student_id: string, assignment_id: string
     .select('id')
     .single()
   if (error) throw error
-  return (data as any).id as string
+  return data.id as string
 }
 
 export async function saveStrokes(submission_id: string, strokes: any) {
-  const { error } = await supabase
-    .from('artifacts')
-    .insert({ submission_id, kind: 'strokes', strokes_json: strokes })
+  const { error } = await supabase.from('artifacts').insert({
+    submission_id,
+    kind: 'strokes',
+    strokes_json: strokes
+  })
   if (error) throw error
 }
 
 export async function saveAudio(submission_id: string, blob: Blob) {
-  const fileName = `${submission_id}/${Date.now()}.webm`
-  const up = await supabase.storage
-    .from('student-audio')
-    .upload(fileName, blob, { contentType: blob.type })
-  if (up.error) throw up.error
+  // path: audio/<submission_id>/<timestamp>.webm
+  const name = `${Date.now()}.webm`
+  const path = `audio/${submission_id}/${name}`
 
-  const { error } = await supabase
-    .from('artifacts')
-    .insert({ submission_id, kind: 'audio', audio_path: fileName, bytes: blob.size } as any)
-  if (error) throw error
+  const { error: upErr } = await supabase.storage.from('audio').upload(path, blob, {
+    contentType: 'audio/webm', upsert: false
+  })
+  if (upErr) throw upErr
+
+  const { error: artErr } = await supabase.from('artifacts').insert({
+    submission_id,
+    kind: 'audio',
+    storage_path: path
+  })
+  if (artErr) throw artErr
 }
 
 export async function loadLatestSubmission(assignment_id: string, page_id: string, student_id: string) {
-  const { data, error } = await supabase
+  // latest submission for that (student, page)
+  const { data: subs, error: es } = await supabase
     .from('submissions')
-    .select(`
-      id,
-      artifacts:artifacts(kind, strokes_json, audio_path)
-    `)
+    .select('id, created_at')
     .eq('assignment_id', assignment_id)
     .eq('page_id', page_id)
     .eq('student_id', student_id)
     .order('created_at', { ascending: false })
     .limit(1)
+
+  if (es) throw es
+  const submission = subs?.[0]
+  if (!submission) return null
+
+  const { data: arts, error: ea } = await supabase
+    .from('artifacts')
+    .select('*')
+    .eq('submission_id', submission.id)
+    .order('created_at', { ascending: false })
+
+  if (ea) throw ea
+  return { submission, artifacts: arts || [] as ArtifactRow[] }
+}
+
+// ---------- NEW: Teacher dashboard reads ----------
+
+// List all assignments (id + title), newest first.
+export async function listAssignments(): Promise<AssignmentRow[]> {
+  const { data, error } = await supabase
+    .from('assignments')
+    .select('id,title,pdf_path')
+    .order('created_at', { ascending: false })
   if (error) throw error
-  return (data && (data as any[])[0]) || null
+  return data as AssignmentRow[]
+}
+
+// Pages for an assignment (ordered by page_index)
+export async function listPages(assignment_id: string): Promise<PageRow[]> {
+  const { data, error } = await supabase
+    .from('pages')
+    .select('id,assignment_id,page_index')
+    .eq('assignment_id', assignment_id)
+    .order('page_index', { ascending: true })
+  if (error) throw error
+  return data as PageRow[]
+}
+
+// Latest submission per student for a page.
+// Returns 28 rows (A_01..A_28) even if no submission yet (submission/artifacts null).
+export async function listLatestByPage(assignment_id: string, page_id: string, students: string[]) {
+  // 1) Grab all submissions for this page
+  const { data: subs, error: es } = await supabase
+    .from('submissions')
+    .select('id,student_id,created_at')
+    .eq('assignment_id', assignment_id)
+    .eq('page_id', page_id)
+    .order('created_at', { ascending: false })
+  if (es) throw es
+
+  // pick latest per student
+  const latestMap = new Map<string, SubmissionRow>()
+  for (const s of (subs || []) as SubmissionRow[]) {
+    if (!latestMap.has(s.student_id)) latestMap.set(s.student_id, s)
+  }
+
+  // 2) Fetch artifacts for those latest submissions
+  const latestList = Array.from(latestMap.values())
+  const ids = latestList.map(s => s.id)
+  let artifacts: ArtifactRow[] = []
+  if (ids.length) {
+    const { data: arts, error: ea } = await supabase
+      .from('artifacts')
+      .select('*')
+      .in('submission_id', ids)
+      .order('created_at', { ascending: false })
+    if (ea) throw ea
+    artifacts = (arts || []) as ArtifactRow[]
+  }
+
+  // 3) Build simple view per student
+  return students.map(stu => {
+    const sub = latestMap.get(stu) || null
+    const arts = sub ? artifacts.filter(a => a.submission_id === sub.id) : []
+    const strokes = arts.find(a => a.kind === 'strokes') || null
+    const audio = arts.find(a => a.kind === 'audio') || null
+    return { student_id: stu, submission: sub, strokes, audio }
+  })
+}
+
+// Signed URL for audio (1 hour)
+export async function getAudioUrl(storage_path: string) {
+  const { data, error } = await supabase.storage.from('audio').createSignedUrl(storage_path, 3600)
+  if (error) throw error
+  return data?.signedUrl as string
 }
