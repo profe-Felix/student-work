@@ -74,8 +74,8 @@ export default function TeacherDashboard() {
               const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
               if (!latest) return [sid, null] as const
 
-              const hasStrokes = !!latest.artifacts?.some(a => a.kind === 'strokes' && a.strokes_json)
-              const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
+              const hasStrokes = !!latest.artifacts?.some((a: any) => a.kind === 'strokes' && a.strokes_json)
+              const audioArt = latest.artifacts?.find((a: any) => a.kind === 'audio' && a.storage_path)
               let audioUrl: string | undefined
               if (audioArt?.storage_path) {
                 try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
@@ -154,7 +154,7 @@ export default function TeacherDashboard() {
             onChange={(e) => { setAssignmentId(e.target.value); setPageId('') }}
             style={{ padding: '6px 8px', minWidth: 260 }}
           >
-            {assignments.map(a => (
+            {assignments.map((a: AssignmentRow) => (
               <option key={a.id} value={a.id}>{a.title}</option>
             ))}
           </select>
@@ -169,7 +169,7 @@ export default function TeacherDashboard() {
             style={{ padding: '6px 8px', minWidth: 120 }}
             disabled={!assignmentId}
           >
-            {pages.map(p => (
+            {pages.map((p: PageRow) => (
               <option key={p.id} value={p.id}>
                 Page {p.page_index + 1}
               </option>
