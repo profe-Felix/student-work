@@ -13,7 +13,7 @@ import {
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
 const pdfStoragePath = 'pdfs/aprende-m2.pdf'
-const AUTO_SUBMIT_ON_PAGE_CHANGE = false
+const AUTO_SUBMIT_ON_PAGE_CHANGE = true           // <— re-enabled
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
 
@@ -111,7 +111,7 @@ export default function StudentAssignment(){
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
-  // renamed to avoid any stale duplicate collisions
+  // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
 
   const drawRef = useRef<DrawCanvasHandle>(null)
@@ -137,6 +137,12 @@ export default function StudentAssignment(){
 
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
+  // hashes/dirty tracking
+  const lastAppliedServerHash = useRef<string>('')   // last server ink we applied
+  const lastLocalHash = useRef<string>('')           // last local canvas snapshot
+  const localDirty = useRef<boolean>(false)
+  const dirtySince = useRef<number>(0)
+  const justSavedAt = useRef<number>(0)              // ignore window after save
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
@@ -148,6 +154,10 @@ export default function StudentAssignment(){
         const draft = loadDraft(studentId, assignmentTitle, pageIndex)
         if (draft?.strokes) {
           try { drawRef.current?.loadStrokes(normalizeStrokes(draft.strokes)) } catch {}
+          // prime local hash from draft
+          try { lastLocalHash.current = await hashStrokes(normalizeStrokes(draft.strokes)) } catch {}
+        } else {
+          lastLocalHash.current = ''
         }
 
         const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
@@ -157,25 +167,60 @@ export default function StudentAssignment(){
           const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
           if (!cancelled && latest) {
             const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-            if (strokes) {
-              try { drawRef.current?.loadStrokes(normalizeStrokes(strokes)) } catch {}
+            const norm = normalizeStrokes(strokes)
+            if (Array.isArray(norm.strokes) && norm.strokes.length > 0) {
+              const h = await hashStrokes(norm)
+              // only apply if we don't already have local unsaved ink
+              if (!localDirty.current) {
+                drawRef.current?.loadStrokes(norm)
+                lastAppliedServerHash.current = h
+                lastLocalHash.current = h
+              }
             } else if (!draft?.strokes) {
               const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
-              if (cached?.strokes) try { drawRef.current?.loadStrokes(normalizeStrokes(cached.strokes)) } catch {}
+              if (cached?.strokes) {
+                drawRef.current?.loadStrokes(normalizeStrokes(cached.strokes))
+                lastLocalHash.current = await hashStrokes(normalizeStrokes(cached.strokes))
+              }
             }
           }
         } catch {/* ignore */}
       }catch(e){
         console.error('init load failed', e)
         const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
-        if (cached?.strokes) try { drawRef.current?.loadStrokes(normalizeStrokes(cached.strokes)) } catch {}
+        if (cached?.strokes) {
+          const norm = normalizeStrokes(cached.strokes)
+          try { drawRef.current?.loadStrokes(norm); lastLocalHash.current = await hashStrokes(norm) } catch {}
+        }
       }
     })()
 
     return ()=>{ cancelled=true }
   }, [pageIndex, studentId])
 
-  /* ---------- Draft autosave ---------- */
+  /* ---------- Local dirty watcher (no DrawCanvas change needed) ---------- */
+  useEffect(()=>{
+    let id: number | null = null
+    const tick = async ()=>{
+      try {
+        const data = drawRef.current?.getStrokes()
+        if (!data) return
+        const h = await hashStrokes(data)
+        if (h !== lastLocalHash.current) {
+          // content changed locally
+          localDirty.current = true
+          dirtySince.current = Date.now()
+          lastLocalHash.current = h
+          // opportunistic draft save
+          saveDraft(studentId, assignmentTitle, pageIndex, data)
+        }
+      } catch {}
+    }
+    id = window.setInterval(tick, 800)
+    return ()=>{ if (id!=null) window.clearInterval(id) }
+  }, [pageIndex, studentId])
+
+  /* ---------- Draft autosave (coarse) ---------- */
   useEffect(()=>{
     let lastSerialized = ''
     let running = !document.hidden
@@ -204,7 +249,7 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload)
+      window.removeEventListener('beforeunload', onBeforeunload as any)
     }
   }, [pageIndex, studentId])
 
@@ -234,6 +279,9 @@ export default function StudentAssignment(){
         await saveStrokes(submission_id, strokes)
         localStorage.setItem(lastKey, encHash)
         saveSubmittedCache(studentId, assignmentTitle, pageIndex, strokes)
+        lastAppliedServerHash.current = encHash
+        lastLocalHash.current = encHash
+        localDirty.current = false
       }
       if (hasAudio) {
         await saveAudio(submission_id, audioBlob.current!)
@@ -242,6 +290,7 @@ export default function StudentAssignment(){
 
       clearDraft(studentId, assignmentTitle, pageIndex)
       showToast('Saved!', 'ok', 1200)
+      justSavedAt.current = Date.now()
     } catch (e:any){
       console.error(e); showToast('Save failed', 'err', 1800)
     } finally {
@@ -261,11 +310,17 @@ export default function StudentAssignment(){
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
     try { audioRef.current?.stop() } catch {}
-    if (AUTO_SUBMIT_ON_PAGE_CHANGE && hasContent()) {
-      try { await submit() } catch {}
+
+    const current = drawRef.current?.getStrokes() || { strokes: [] }
+    const hasInk   = Array.isArray(current.strokes) && current.strokes.length > 0
+    const hasAudio = !!audioBlob.current
+
+    if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasAudio)) {
+      try { await submit() } catch { try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {} }
     } else {
-      try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
+      try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
     }
+
     setPageIndex(nextIndex)
   }
 
@@ -289,67 +344,72 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Realtime + polling (defensive) ---------- */
-  // REPLACE your existing reloadFromServer with this:
-const reloadFromServer = async ()=>{
-  try{
-    const { assignment_id, page_id } = currIds.current.assignment_id
-      ? currIds.current
-      : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
-    currIds.current = { assignment_id, page_id }
+  const reloadFromServer = async ()=>{
+    // ignore reloads right after a save
+    if (Date.now() - (justSavedAt.current || 0) < 1200) return
+    // if user has unsaved work in the last 5s, don't stomp it
+    if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
 
-    const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
-    const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-
-    // Only apply if there are actual strokes to show
-    const normalized = normalizeStrokes(strokesPayload)
-    const hasServerInk = Array.isArray(normalized?.strokes) && normalized.strokes.length > 0
-    if (!hasServerInk) return
-
-    try {
-      drawRef.current?.loadStrokes(normalized)
-      saveSubmittedCache(studentId, assignmentTitle, pageIndex, normalized)
-    } catch {}
-  } catch {/* ignore */}
-}
-
-
-  // REPLACE your whole realtime useEffect with this version:
-useEffect(()=>{
-  let cleanup: (()=>void)|null = null
-  let pollId: number | null = null
-  let mounted = true
-
-  ;(async ()=>{
     try{
-      const ids = currIds.current.assignment_id
+      const { assignment_id, page_id } = currIds.current.assignment_id
         ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
-      currIds.current = ids
+      currIds.current = { assignment_id, page_id }
 
-      // Only react to stroke artifacts, not raw submission rows
-      const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
-        .on('postgres_changes', {
-          event: 'INSERT', schema: 'public', table: 'artifacts',
-          filter: `page_id=eq.${ids.page_id},student_id=eq.${studentId},kind=eq.strokes`
-        }, ()=> reloadFromServer())
-        .subscribe()
+      const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
+      const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+      const normalized = normalizeStrokes(strokesPayload)
 
-      cleanup = ()=> { supabase.removeChannel(ch) }
-    }catch(e){
-      console.error('realtime subscribe failed', e)
-    }
+      const hasServerInk = Array.isArray(normalized?.strokes) && normalized.strokes.length > 0
+      if (!hasServerInk) return
 
-    // Defensive polling still OK; reload() itself ignores empty payloads
-    pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
-  })()
+      const serverHash = await hashStrokes(normalized)
+      if (serverHash === lastAppliedServerHash.current) return // already applied
 
-  return ()=> {
-    mounted = false
-    if (cleanup) cleanup()
-    if (pollId!=null) window.clearInterval(pollId)
+      // if local differs but not dirty, accept server
+      if (!localDirty.current) {
+        drawRef.current?.loadStrokes(normalized)
+        saveSubmittedCache(studentId, assignmentTitle, pageIndex, normalized)
+        lastAppliedServerHash.current = serverHash
+        lastLocalHash.current = serverHash
+      }
+    } catch {/* ignore */}
   }
-}, [studentId, pageIndex])
 
+  useEffect(()=>{
+    let cleanup: (()=>void)|null = null
+    let pollId: number | null = null
+    let mounted = true
+
+    ;(async ()=>{
+      try{
+        const ids = currIds.current.assignment_id
+          ? currIds.current
+          : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+        currIds.current = ids
+
+        // Only react to stroke artifacts (not raw submission shells)
+        const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
+          .on('postgres_changes', {
+            event: '*', schema: 'public', table: 'artifacts',
+            filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
+          }, ()=> reloadFromServer())
+          .subscribe()
+
+        cleanup = ()=> { supabase.removeChannel(ch) }
+      }catch(e){
+        console.error('realtime subscribe failed', e)
+      }
+
+      pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
+    })()
+
+    return ()=> {
+      mounted = false
+      if (cleanup) cleanup()
+      if (pollId!=null) window.clearInterval(pollId)
+    }
+  }, [studentId, pageIndex])
 
   /* ---------- UI ---------- */
   const Toolbar = (
