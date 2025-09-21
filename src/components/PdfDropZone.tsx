@@ -1,4 +1,4 @@
-//src/components/PdfDropZone.tsx
+// src/components/PdfDropZone.tsx
 import { useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
@@ -21,18 +21,22 @@ export default function PdfDropZone({ onCreated }: Props) {
 
     setBusy(true);
     try {
+      // ---- CHANGE: use your 'pdfs' bucket ----
+      const bucket = 'pdfs';
+      const key = `${crypto.randomUUID()}.pdf`;
+
       // 1) Upload PDF to storage
-      const key = `pdfs/${crypto.randomUUID()}.pdf`;
-      const { error: upErr } = await supabase.storage.from('public').upload(key, file, {
+      const { error: upErr } = await supabase.storage.from(bucket).upload(key, file, {
         contentType: 'application/pdf',
       });
       if (upErr) throw upErr;
 
-      // 2) Create assignment
+      // 2) Create assignment (store "bucket/path" so it’s self-contained)
       const title = file.name.replace(/\.pdf$/i, '');
+      const storage_path = `${bucket}/${key}`;
       const { data: assign, error: aErr } = await supabase
         .from('assignments')
-        .insert({ title, pdf_path: key })
+        .insert({ title, pdf_path: storage_path })
         .select('id')
         .single();
       if (aErr) throw aErr;
@@ -45,7 +49,7 @@ export default function PdfDropZone({ onCreated }: Props) {
         assignment_id: assign.id,
         title: `Page ${i + 1}`,
         page_index: i,
-        pdf_path: key,
+        pdf_path: storage_path,
       }));
       const { error: pErr } = await supabase.from('pages').insert(rows);
       if (pErr) throw pErr;
