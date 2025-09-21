@@ -1,122 +1,75 @@
-// src/components/TeacherSyncBar.tsx
-import { useEffect, useRef, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
-import {
-  assignmentChannel,
-  publishAutoFollow,
-  publishFocus,
-  publishSetPage,
-} from '../lib/realtime';
+// src/lib/realtime.ts
+import { supabase } from './supabaseClient';
 
-type Props = {
-  assignmentId: string;
+export interface SetPagePayload {
   pageId: string;
   pageIndex: number;
-  className?: string;
-};
+  ts?: number;
+}
 
-export default function TeacherSyncBar({
-  assignmentId,
-  pageId,
-  pageIndex,
-  className,
-}: Props) {
-  const [autoFollow, setAutoFollow] = useState(false);
-  const [focus, setFocus] = useState(false);
-  const [lockNav, setLockNav] = useState(true);
-  const chRef = useRef<ReturnType<typeof assignmentChannel> | null>(null);
+export interface FocusPayload {
+  on: boolean;
+  lockNav?: boolean;
+  ts?: number;
+}
 
-  // (1) Create/subscribe the channel when assignmentId changes
-  useEffect(() => {
-    if (!assignmentId) return;
+export interface AutoFollowPayload {
+  on: boolean;
+  allowedPages?: number[] | null; // zero-based page indexes the student may visit while ON
+  teacherPageIndex?: number;      // current teacher page (helps snap immediately)
+  ts?: number;
+}
 
-    const ch = assignmentChannel(assignmentId);
-    ch.subscribe();
-    chRef.current = ch;
+export function assignmentChannel(assignmentId: string) {
+  return supabase.channel(`assign:${assignmentId}`, {
+    config: { broadcast: { ack: true }, presence: { key: 'teacher' } },
+  });
+}
 
-    return () => {
-      // Some versions expose unsubscribe(), others require removeChannel()
-      if (typeof (ch as any).unsubscribe === 'function') {
-        (ch as any).unsubscribe();
-      } else {
-        supabase.removeChannel(ch);
-      }
-      chRef.current = null;
-    };
-  }, [assignmentId]);
+export async function publishSetPage(ch: any, pageId: string, pageIndex: number) {
+  const payload: SetPagePayload = { pageId, pageIndex, ts: Date.now() };
+  await ch.send({ type: 'broadcast', event: 'SET_PAGE', payload });
+}
 
-  // helper to get a current channel safely
-  const getCh = () => chRef.current;
+export async function publishAutoFollow(
+  ch: any,
+  on: boolean,
+  allowedPages?: number[] | null,
+  teacherPageIndex?: number
+) {
+  const payload: AutoFollowPayload = {
+    on,
+    allowedPages: allowedPages ?? null,
+    teacherPageIndex,
+    ts: Date.now()
+  };
+  await ch.send({ type: 'broadcast', event: 'AUTO_FOLLOW', payload });
+}
 
-  async function pushOnce() {
-    const ch = getCh();
-    if (!ch) return;
-    await publishSetPage(ch, pageId, pageIndex);
+export async function publishFocus(ch: any, on: boolean, lockNav = true) {
+  const payload: FocusPayload = { on, lockNav, ts: Date.now() };
+  await ch.send({ type: 'broadcast', event: 'FOCUS', payload });
+}
+
+export function subscribeToAssignment(
+  assignmentId: string,
+  handlers: {
+    onSetPage?: (p: SetPagePayload) => void;
+    onFocus?: (p: FocusPayload) => void;
+    onAutoFollow?: (p: AutoFollowPayload) => void;
   }
-
-  async function toggleAutoFollow() {
-    const ch = getCh();
-    if (!ch) return;
-    const next = !autoFollow;
-    setAutoFollow(next);
-    await publishAutoFollow(ch, next);
-    if (next) {
-      // seed initial page when turning on
-      await publishSetPage(ch, pageId, pageIndex);
-    }
-  }
-
-  async function toggleFocus() {
-    const ch = getCh();
-    if (!ch) return;
-    const next = !focus;
-    setFocus(next);
-    await publishFocus(ch, next, lockNav);
-  }
-
-  // (2) When auto-follow is ON, republish the current page if it changes
-  useEffect(() => {
-    const ch = getCh();
-    if (autoFollow && ch) {
-      publishSetPage(ch, pageId, pageIndex);
-    }
-  }, [autoFollow, pageId, pageIndex]);
-
-  return (
-    <div
-      className={`flex items-center gap-2 p-2 bg-white/80 rounded-xl shadow border ${
-        className ?? ''
-      }`}
-    >
-      <button className="px-3 py-1 rounded bg-black text-white" onClick={pushOnce}>
-        Sync to Me
-      </button>
-
-      <label className="flex items-center gap-1">
-        <input type="checkbox" checked={autoFollow} onChange={toggleAutoFollow} />
-        Auto-follow
-      </label>
-
-      <span className="mx-1 h-5 w-px bg-gray-300" />
-
-      <label className="flex items-center gap-1">
-        <input
-          type="checkbox"
-          checked={lockNav}
-          onChange={() => setLockNav((v) => !v)}
-          disabled={!focus}
-        />
-        Lock nav
-      </label>
-
-      <button
-        className={`px-3 py-1 rounded ${
-          focus ? 'bg-red-600 text-white' : 'bg-gray-100'
-        }`}
-        onClick={toggleFocus}
-      >
-        {focus ? 'End Focus' : 'Start Focus'}
-      </button>
-    </div>
-  );
+) {
+  const ch = supabase.channel(`assign:${assignmentId}`);
+  ch
+    .on('broadcast', { event: 'SET_PAGE' }, ({ payload }) =>
+      handlers.onSetPage?.(payload as SetPagePayload)
+    )
+    .on('broadcast', { event: 'FOCUS' }, ({ payload }) =>
+      handlers.onFocus?.(payload as FocusPayload)
+    )
+    .on('broadcast', { event: 'AUTO_FOLLOW' }, ({ payload }) =>
+      handlers.onAutoFollow?.(payload as AutoFollowPayload)
+    )
+    .subscribe();
+  return ch;
 }
