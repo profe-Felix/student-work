@@ -477,7 +477,7 @@ export default function StudentAssignment(){
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6 }}>
         {[{label:'S',val:3},{label:'M',val:6},{label:'L',val:10}].map(s=>(
           <button key={s.label} onClick={()=>setSize(s.val)}
-            style={{ padding:'6px 0', borderRadius:8, border:'1px solid '#ddd',
+            style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
               background: size===s.val ? '#111' : '#fff', color: size===s.val ? '#fff' : '#111' }}>
             {s.label}
           </button>
