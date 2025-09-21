@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   listAssignments,
   listPages,
-  listLatestByPage,
   getAudioUrl,
   type AssignmentRow,
   type PageRow,
@@ -72,23 +71,33 @@ export default function TeacherDashboard() {
     ;(async () => {
       try {
         const nextGrid: Record<string, LatestCell> = {}
+
+        // process roster in small batches to be kind to the API
         for (let i = 0; i < STUDENTS.length; i += 6) {
           const batch = STUDENTS.slice(i, i + 6)
-          const results = await Promise.all(
+
+          const results: Array<readonly [string, LatestCell] | null> = await Promise.all(
             batch.map(async (sid: string) => {
-              try {
-                // NOTE: listLatestByPage returns latest for the page (not per-student).
-                // We actually want per-student → call a small helper below.
-              } catch {}
+              // Fetch the latest submission for THIS student on THIS page
               const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
               if (!latest) return [sid, null] as const
 
-              const hasStrokes = !!latest.artifacts?.some(a => a.kind === 'strokes' && a.strokes_json)
-              const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
+              const hasStrokes = !!latest.artifacts?.some(
+                (a: any) => a.kind === 'strokes' && a.strokes_json
+              )
+
+              const audioArt = latest.artifacts?.find(
+                (a: any) => a.kind === 'audio' && a.storage_path
+              )
+
               let audioUrl: string | undefined
               if (audioArt?.storage_path) {
-                try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
+                try {
+                  // getAudioUrl returns Promise<string> — await it
+                  audioUrl = await getAudioUrl(audioArt.storage_path)
+                } catch { /* ignore */ }
               }
+
               return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
             })
           )
@@ -98,8 +107,9 @@ export default function TeacherDashboard() {
             const [sid, cell] = pair
             nextGrid[sid] = cell
           }
+
           if (cancelled) return
-          setGrid(curr => ({ ...curr, ...nextGrid }))
+          setGrid((curr) => ({ ...curr, ...nextGrid }))
         }
       } catch (e) {
         console.error('load latest grid failed', e)
@@ -127,7 +137,18 @@ export default function TeacherDashboard() {
       console.error('per-student latest fetch error', se)
       return null
     }
-    return sub
+    return sub as unknown as {
+      id: string
+      student_id: string
+      created_at: string
+      artifacts: Array<{
+        id: string
+        kind: string
+        strokes_json?: unknown
+        storage_path?: string
+        created_at: string
+      }>
+    } | null
   }
 
   const currentAssignment = useMemo(
