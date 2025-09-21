@@ -1,11 +1,12 @@
 // src/pages/teacher/index.tsx
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   listAssignments,
   listPages,
   getAudioUrl,
   type AssignmentRow,
   type PageRow,
+  supabase, // <-- use client for realtime subscribe
 } from '../../lib/db'
 import PdfDropZone from '../../components/PdfDropZone'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
@@ -29,6 +30,7 @@ export default function TeacherDashboard() {
 
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({}) // key = student_id
+  const refreshDebounce = useRef<number | null>(null)
 
   // Load assignments on mount
   useEffect(() => {
@@ -36,7 +38,7 @@ export default function TeacherDashboard() {
       try {
         const as = await listAssignments()
         setAssignments(as)
-        const preferred = as.find(a => a.title === 'Handwriting - Daily') ?? as[0]
+        const preferred = as.find((a: AssignmentRow) => a.title === 'Handwriting - Daily') ?? as[0]
         if (preferred) setAssignmentId(preferred.id)
       } catch (e) {
         console.error('load assignments failed', e)
@@ -51,7 +53,7 @@ export default function TeacherDashboard() {
       try {
         const ps = await listPages(assignmentId)
         setPages(ps)
-        const p0 = ps.find(p => p.page_index === 0) ?? ps[0]
+        const p0 = ps.find((p: PageRow) => p.page_index === 0) ?? ps[0]
         if (p0) {
           setPageId(p0.id)
           setPageIndex(p0.page_index)
@@ -72,51 +74,70 @@ export default function TeacherDashboard() {
     if (p) setPageIndex(p.page_index)
   }, [pageId, pages])
 
-  // Load latest per student for the selected page
-  useEffect(() => {
+  const fetchGrid = useCallback(async () => {
     if (!assignmentId || !pageId) return
-    let cancelled = false
     setLoading(true)
-    ;(async () => {
-      try {
-        const nextGrid: Record<string, LatestCell> = {}
-        for (let i = 0; i < STUDENTS.length; i += 6) {
-          const batch = STUDENTS.slice(i, i + 6)
-          const results = await Promise.all(
-            batch.map(async (sid: string) => {
-              // fetch latest-for-student
-              const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
-              if (!latest) return [sid, null] as const
+    try {
+      const nextGrid: Record<string, LatestCell> = {}
 
-              const hasStrokes = !!latest.artifacts?.some((a: any) => a.kind === 'strokes' && a.strokes_json)
-              const audioArt = latest.artifacts?.find((a: any) => a.kind === 'audio' && a.storage_path)
-              let audioUrl: string | undefined
-              if (audioArt?.storage_path) {
-                try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
-              }
-              return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
-            })
-          )
+      // fetch students in small batches
+      for (let i = 0; i < STUDENTS.length; i += 6) {
+        const batch = STUDENTS.slice(i, i + 6)
+        const results = await Promise.all(
+          batch.map(async (sid: string) => {
+            const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
+            if (!latest) return [sid, null] as const
 
-          for (const pair of results) {
-            if (!pair) continue
-            const [sid, cell] = pair
-            nextGrid[sid] = cell
-          }
-          if (cancelled) return
-          setGrid(curr => ({ ...curr, ...nextGrid }))
+            const hasStrokes = !!latest.artifacts?.some((a: any) => a.kind === 'strokes' && a.strokes_json)
+            const audioArt = latest.artifacts?.find((a: any) => a.kind === 'audio' && a.storage_path)
+            let audioUrl: string | undefined
+            if (audioArt?.storage_path) {
+              try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
+            }
+            return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
+          })
+        )
+        for (const pair of results) {
+          if (!pair) continue
+          const [sid, cell] = pair
+          nextGrid[sid] = cell
         }
-      } catch (e) {
-        console.error('load latest grid failed', e)
-      } finally {
-        if (!cancelled) setLoading(false)
+        setGrid(curr => ({ ...curr, ...nextGrid }))
       }
-    })()
-
-    return () => { cancelled = true }
+    } catch (e) {
+      console.error('load latest grid failed', e)
+    } finally {
+      setLoading(false)
+    }
   }, [assignmentId, pageId])
 
-  // Small helper here (since db.ts returns latest w/out student filter)
+  // Initial grid load
+  useEffect(() => { void fetchGrid() }, [fetchGrid])
+
+  // Realtime: refresh grid when any artifact for this page changes
+  useEffect(() => {
+    if (!assignmentId || !pageId) return
+    // NOTE: This assumes a DB trigger/view exposes page_id on artifacts.
+    // If not, change to listen on submissions table and re-fetch on change.
+    const ch = supabase.channel(`teacher-grid-${assignmentId}-${pageId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'artifacts',
+        filter: `page_id=eq.${pageId}`
+      }, () => {
+        if (refreshDebounce.current) window.clearTimeout(refreshDebounce.current)
+        refreshDebounce.current = window.setTimeout(() => { void fetchGrid() }, 150) as unknown as number
+      })
+      .subscribe()
+
+    return () => {
+      try { supabase.removeChannel(ch) } catch {}
+      if (refreshDebounce.current) { window.clearTimeout(refreshDebounce.current); refreshDebounce.current = null }
+    }
+  }, [assignmentId, pageId, fetchGrid])
+
+  // Small helper (per-student latest)
   async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
     const { supabase } = await import('../../lib/db')
     const { data: sub, error: se } = await supabase
@@ -191,10 +212,17 @@ export default function TeacherDashboard() {
           </select>
         </label>
 
+        <button
+          onClick={() => void fetchGrid()}
+          style={{ padding: '6px 10px', border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}
+        >
+          Refresh
+        </button>
+
         {loading && <span style={{ color: '#6b7280' }}>Loading…</span>}
       </div>
 
-      {/* ⬇️ Sync / Focus bar (appears after assignment + page are selected) */}
+      {/* Sync / Focus bar */}
       {assignmentId && pageId && (
         <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
           <TeacherSyncBar
