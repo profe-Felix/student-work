@@ -1,10 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas from '../../components/DrawCanvas'
 import AudioRecorder from '../../components/AudioRecorder'
 
 export default function StudentAssignment(){
-  // Default to your uploaded PDF in /public
   const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
   const [pageIndex, setPageIndex]   = useState(0)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
@@ -15,7 +14,6 @@ export default function StudentAssignment(){
 
   const audioBlob = useRef<Blob | null>(null)
 
-  // IMPORTANT: use CSS size (not backing store size) so DrawCanvas aligns perfectly
   const onPdfReady = (_pdf:any, canvas: HTMLCanvasElement)=>{
     const cssW = Math.round(parseFloat(getComputedStyle(canvas).width))
     const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
@@ -29,32 +27,90 @@ export default function StudentAssignment(){
     audioBlob.current = null
   }
 
+  // ----- MANUAL TWO-FINGER PAN on the scroll panel -----
+  const scrollHostRef = useRef<HTMLDivElement|null>(null)
+  useEffect(()=>{
+    const host = scrollHostRef.current
+    if (!host) return
+
+    let panActive = false
+    let startY = 0
+    let startX = 0
+    let startScrollTop = 0
+    let startScrollLeft = 0
+
+    // capture=true so we see the touches even if they start on the canvas
+    const onTouchStart = (e: TouchEvent)=>{
+      if (e.touches.length >= 2) {
+        // only enable manual pan while in Draw mode
+        if (!handMode) {
+          panActive = true
+          const t1 = e.touches[0]
+          const t2 = e.touches[1]
+          startY = (t1.clientY + t2.clientY) / 2
+          startX = (t1.clientX + t2.clientX) / 2
+          startScrollTop = host.scrollTop
+          startScrollLeft = host.scrollLeft
+        }
+      }
+    }
+
+    const onTouchMove = (e: TouchEvent)=>{
+      if (panActive && e.touches.length >= 2) {
+        // manual panning — preventDefault stops page rubber banding
+        e.preventDefault()
+        const t1 = e.touches[0]
+        const t2 = e.touches[1]
+        const y = (t1.clientY + t2.clientY) / 2
+        const x = (t1.clientX + t2.clientX) / 2
+        host.scrollTop  = startScrollTop  - (y - startY)
+        host.scrollLeft = startScrollLeft - (x - startX)
+      }
+    }
+
+    const endPan = ()=>{
+      panActive = false
+    }
+
+    host.addEventListener('touchstart', onTouchStart, { passive: true,  capture: true })
+    host.addEventListener('touchmove',  onTouchMove,  { passive: false, capture: true })
+    host.addEventListener('touchend',   endPan,       { passive: true,  capture: true })
+    host.addEventListener('touchcancel',endPan,       { passive: true,  capture: true })
+    return ()=>{
+      host.removeEventListener('touchstart', onTouchStart as any, true)
+      host.removeEventListener('touchmove',  onTouchMove  as any, true)
+      host.removeEventListener('touchend',   endPan       as any, true)
+      host.removeEventListener('touchcancel',endPan       as any, true)
+    }
+  }, [handMode])
+
   return (
-    <div style={{ minHeight:'100vh', padding: 12, paddingBottom: 96, background:'#fafafa' }}>
+    <div style={{ minHeight:'100vh', padding: 12, paddingBottom: 96, background:'#fafafa',
+                  WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
       <h2>Student Assignment (Hosted)</h2>
 
-      {/* Scrollable panel so two-finger gestures scroll/pinch */}
+      {/* Scrollable panel; we also attach a ref to manually pan when two fingers are down */}
       <div
-  style={{
-    height: 'calc(100vh - 140px)',
-    overflowY: 'auto',
-    WebkitOverflowScrolling: 'touch',
-    touchAction: 'pan-y pinch-zoom',   // <— was 'auto'
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-    padding: 12,
-    background: '#fff',
-    border: '1px solid #eee',
-    borderRadius: 12,
-    // avoid text selection/callout on long palm rests
-    WebkitUserSelect: 'none',
-    userSelect: 'none',
-    WebkitTouchCallout: 'none'
-  }}
->
-
-        {/* PDF + Draw stack (no touchAction here) */}
+        ref={scrollHostRef}
+        style={{
+          height: 'calc(100vh - 140px)',
+          overflow: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          // IMPORTANT: 'none' so our manual pan works with preventDefault
+          touchAction: 'none',
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'center',
+          padding: 12,
+          background: '#fff',
+          border: '1px solid #eee',
+          borderRadius: 12,
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
+          WebkitTouchCallout: 'none'
+        }}
+      >
+        {/* PDF + Draw stack */}
         <div
           style={{
             position: 'relative',
@@ -100,12 +156,15 @@ export default function StudentAssignment(){
         {handMode ? '✋ Scroll' : '✍️ Draw'}
       </button>
 
-      {/* Fixed bottom toolbar */}
+      {/* Fixed bottom toolbar (no blue selection/copy) */}
       <div style={{
         position:'fixed', left:0, right:0, bottom:0, zIndex:10000,
         background:'#fff', borderTop:'1px solid #e5e7eb', padding:'8px 12px',
-        display:'flex', gap:8, alignItems:'center', justifyContent:'center'
-      }}>
+        display:'flex', gap:8, alignItems:'center', justifyContent:'center',
+        WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none'
+      }}
+        onTouchStart={(e)=>{ /* prevent long-press selection/callout */ e.preventDefault() }}
+      >
         <label>Color <input type="color" value={color} onChange={e=>setColor(e.target.value)} /></label>
         <label>Size
           <select value={size} onChange={e=>setSize(parseInt(e.target.value))}>
@@ -114,7 +173,7 @@ export default function StudentAssignment(){
             <option value={10}>L</option>
           </select>
         </label>
-        <AudioRecorder maxSec={180} onBlob={onAudio} />
+        <AudioRecorder maxSec={180} onBlob={(b)=>{ audioBlob.current = b }} />
         <button onClick={submit} style={{ background:'#22c55e', color:'#fff', padding:'6px 12px', borderRadius:8 }}>
           Submit
         </button>
