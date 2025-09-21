@@ -13,6 +13,7 @@ export type DrawCanvasHandle = {
   undo: () => void;
 }
 
+// Distance from point to segment
 function distPointToSeg(px:number, py:number, x1:number, y1:number, x2:number, y2:number){
   const vx = x2 - x1, vy = y2 - y1
   const wx = px - x1, wy = py - y1
@@ -23,6 +24,15 @@ function distPointToSeg(px:number, py:number, x1:number, y1:number, x2:number, y
   const b = c1 / c2
   const bx = x1 + b*vx, by = y1 + b*vy
   return Math.hypot(px - bx, py - by)
+}
+
+// Quick bbox overlap test for two segments (with padding)
+function segsBBoxOverlap(ax:number, ay:number, bx:number, by:number, cx:number, cy:number, dx:number, dy:number, pad:number){
+  const min1x = Math.min(ax, bx) - pad, max1x = Math.max(ax, bx) + pad
+  const min1y = Math.min(ay, by) - pad, max1y = Math.max(ay, by) + pad
+  const min2x = Math.min(cx, dx) - pad, max2x = Math.max(cx, dx) + pad
+  const min2y = Math.min(cy, dy) - pad, max2y = Math.max(cy, dy) + pad
+  return !(max1x < min2x || max2x < min1x || max1y < min2y || max2y < min1y)
 }
 
 export default forwardRef<DrawCanvasHandle, {
@@ -49,9 +59,14 @@ export default forwardRef<DrawCanvasHandle, {
   const PENDING_MS   = 60
   const MOVE_THRESH  = 8
 
-  // stroke model for undo / object eraser
+  // Stroke model (for redraw & undo)
   const strokesRef   = useRef<Stroke[]>([])
   const liveStroke   = useRef<Stroke | null>(null)
+
+  // Sweep eraser path (object eraser)
+  const sweeping     = useRef(false)
+  const sweepLast    = useRef<{x:number,y:number} | null>(null)
+  const SWEEP_STEP   = 2 // px sampling to avoid missing thin lines
 
   const resizeBackingStore = ()=>{
     const c = canvasRef.current!
@@ -110,7 +125,6 @@ export default forwardRef<DrawCanvasHandle, {
       const p = s.points[i]
       k.lineTo(p.x, p.y)
     }
-    // ensure tap leaves a dot
     if (s.points.length === 1) {
       const p = s.points[0]
       k.lineTo(p.x + 0.001, p.y + 0.001)
@@ -151,7 +165,6 @@ export default forwardRef<DrawCanvasHandle, {
     if (!drawing.current) {
       resizeBackingStore()
       applyPolicy()
-      // redraw after DPR change / resize
       redrawAll()
     }
   }, [width, height, mode])
@@ -177,7 +190,6 @@ export default forwardRef<DrawCanvasHandle, {
       if (pendingId.current === null || !pendingPos.current) return
       drawing.current  = true
       activeId.current = pendingId.current
-      // start a new live stroke
       liveStroke.current = {
         tool: (tool === 'eraser' ? 'eraser' : tool === 'highlighter' ? 'highlighter' : 'pen'),
         color, size, points: [pendingPos.current]
@@ -186,28 +198,47 @@ export default forwardRef<DrawCanvasHandle, {
       clearPending()
     }
 
-    // OBJECT ERASER helper: remove nearest stroke to point
-    const eraseByObjectAt = (pt:{x:number;y:number})=>{
-      // search backwards (top-most first), ignore eraser strokes
+    // --- SWEEP OBJECT ERASER ---
+    const hitStrokeBySweepSeg = (ax:number, ay:number, bx:number, by:number): number | null=>{
       const arr = strokesRef.current
+      // Hit top-most first
       for (let i = arr.length - 1; i >= 0; i--) {
         const s = arr[i]
-        if (s.tool === 'eraser') continue
+        if (s.tool === 'eraser') continue // don't target pixel-eraser strokes
         const pts = s.points
-        if (pts.length === 1) {
-          if (Math.hypot(pt.x - pts[0].x, pt.y - pts[0].y) <= Math.max(12, s.size*1.2)) {
-            arr.splice(i,1); redrawAll(); return
-          }
-        } else {
-          let hit = false
-          const thresh = Math.max(12, s.tool==='highlighter' ? s.size*2 : s.size*1.2)
-          for (let j=0;j<pts.length-1;j++){
-            if (distPointToSeg(pt.x,pt.y, pts[j].x,pts[j].y, pts[j+1].x,pts[j+1].y) <= thresh){
-              hit = true; break
-            }
-          }
-          if (hit) { arr.splice(i,1); redrawAll(); return }
+        const thresh = Math.max(12, s.tool==='highlighter' ? s.size*2 : s.size*1.2)
+        // Fast reject: bbox overlap against each segment
+        for (let j=0;j<pts.length-1;j++){
+          const a = pts[j], b = pts[j+1]
+          if (!segsBBoxOverlap(ax,ay,bx,by, a.x,a.y,b.x,b.y, thresh)) continue
+          const d = distPointToSeg(ax,ay, a.x,a.y, b.x,b.y)
+          if (d <= thresh) return i
         }
+        // Handle single-dot strokes
+        if (pts.length === 1) {
+          const d1 = distPointToSeg(pts[0].x, pts[0].y, ax, ay, bx, by)
+          if (d1 <= thresh) return i
+        }
+      }
+      return null
+    }
+
+    const sweepEraseBetween = (p0:{x:number,y:number}, p1:{x:number,y:number})=>{
+      // Sample along the sweep to avoid skipping narrow intersections
+      const dx = p1.x - p0.x, dy = p1.y - p0.y
+      const len = Math.hypot(dx, dy)
+      const steps = Math.max(1, Math.floor(len / SWEEP_STEP))
+      let prev = p0
+      for (let i=1; i<=steps; i++){
+        const t = i/steps
+        const cur = { x: p0.x + dx*t, y: p0.y + dy*t }
+        const idx = hitStrokeBySweepSeg(prev.x, prev.y, cur.x, cur.y)
+        if (idx !== null) {
+          strokesRef.current.splice(idx, 1)
+          // After deletion, redraw and continue checking (topmost-first)
+          redrawAll()
+        }
+        prev = cur
       }
     }
 
@@ -217,9 +248,18 @@ export default forwardRef<DrawCanvasHandle, {
       usingPen.current = (e.pointerType === 'pen')
       const p = toLocal(e.clientX, e.clientY)
 
-      // Object eraser: remove a stroke near the tap; no drawing capture
       if (tool === 'eraserObject') {
-        eraseByObjectAt(p)
+        // Start sweeping immediately (no capture needed)
+        sweeping.current = true
+        sweepLast.current = p
+        // Erase any stroke under the initial contact
+        const idx = (()=>{
+          // reuse hit function with a tiny segment
+          return (function hitAtPoint(pt:{x:number,y:number}){
+            return hitStrokeBySweepSeg(pt.x, pt.y, pt.x+0.001, pt.y+0.001)
+          })(p)
+        })()
+        if (idx !== null) { strokesRef.current.splice(idx,1); redrawAll() }
         e.preventDefault()
         return
       }
@@ -250,6 +290,16 @@ export default forwardRef<DrawCanvasHandle, {
     }
 
     const onPointerMove = (e: PointerEvent)=>{
+      const pt = toLocal(e.clientX, e.clientY)
+
+      // Sweep eraser path
+      if (tool === 'eraserObject' && sweeping.current && sweepLast.current) {
+        sweepEraseBetween(sweepLast.current, pt)
+        sweepLast.current = pt
+        e.preventDefault()
+        return
+      }
+
       // start on move if pending and moved enough
       if (pendingId.current !== null && e.pointerId === pendingId.current && pendingPos.current) {
         const r = rect()
@@ -262,9 +312,8 @@ export default forwardRef<DrawCanvasHandle, {
       }
 
       if (!drawing.current || activeId.current !== e.pointerId || !liveStroke.current) return
-      const pt = toLocal(e.clientX, e.clientY)
       liveStroke.current.points.push(pt)
-      // draw only the segment for perf
+      // draw only the new segment
       const k = ctxRef.current!
       const s = liveStroke.current
       const n = s.points.length
@@ -278,6 +327,12 @@ export default forwardRef<DrawCanvasHandle, {
     }
 
     const endStroke = (e: PointerEvent)=>{
+      // End sweep eraser
+      if (tool === 'eraserObject' && sweeping.current) {
+        sweeping.current = false
+        sweepLast.current = null
+      }
+
       // cancel pending (no draw)
       if (pendingId.current !== null && e.pointerId === pendingId.current) {
         clearPending()
@@ -286,7 +341,6 @@ export default forwardRef<DrawCanvasHandle, {
         drawing.current = false
         activeId.current = null
         if (liveStroke.current) {
-          // push stroke and keep bitmap as-is
           strokesRef.current.push(liveStroke.current)
           liveStroke.current = null
         }
