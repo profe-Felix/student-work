@@ -8,13 +8,13 @@ import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission
 } from '../../lib/db'
 
-/** MVP constants (can parameterize later) */
+/** Constants */
 const assignmentTitle = 'Handwriting - Daily'
 const pdfStoragePath = 'pdfs/aprende-m2.pdf'
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 
-// Crayola 24
+/* ---------- Colors ---------- */
 const CRAYOLA_24 = [
   { name:'Red',hex:'#EE204D' },{ name:'Yellow',hex:'#FCE883' },
   { name:'Blue',hex:'#1F75FE' },{ name:'Green',hex:'#1CAC78' },
@@ -46,10 +46,14 @@ function Swatch({ hex, selected, onClick }:{ hex:string; selected:boolean; onCli
       aria-label={`Color ${hex}`} />
   )
 }
+
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
-const draftKey = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
-const lastHashKey = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
+/* ---------- Keys & helpers ---------- */
+const draftKey      = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
+const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
+const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
+
 function saveDraft(student:string, assignment:string, page:number, strokes:any){
   try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
@@ -59,11 +63,22 @@ function loadDraft(student:string, assignment:string, page:number){
 function clearDraft(student:string, assignment:string, page:number){
   try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
 }
+
+// “Last good” submitted cache (for refresh even if server fetch fails)
+function saveSubmittedCache(student:string, assignment:string, page:number, strokes:any){
+  try { localStorage.setItem(submittedKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+}
+function loadSubmittedCache(student:string, assignment:string, page:number){
+  try { const raw = localStorage.getItem(submittedKey(student, assignment, page)); return raw ? JSON.parse(raw) : null } catch { return null }
+}
+
 async function hashStrokes(strokes:any): Promise<string> {
   const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
   const buf = await crypto.subtle.digest('SHA-256', enc)
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
+
+/** Tiny toast */
 function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   return (
     <div style={{
@@ -81,13 +96,12 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
 export default function StudentAssignment(){
   const location = useLocation()
   const nav = useNavigate()
-  const urlStudent = useMemo(()=>{
+  const studentId = useMemo(()=>{
     const qs = new URLSearchParams(location.search)
-    return qs.get('student') || localStorage.getItem('currentStudent') || 'A_01'
+    const id = qs.get('student') || localStorage.getItem('currentStudent') || 'A_01'
+    localStorage.setItem('currentStudent', id)
+    return id
   }, [location.search])
-  useEffect(()=>{ localStorage.setItem('currentStudent', urlStudent) }, [urlStudent])
-
-  const studentId = urlStudent
 
   const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
   const [pageIndex, setPageIndex]   = useState(0)
@@ -99,6 +113,9 @@ export default function StudentAssignment(){
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
+
+  // source debug (draft / server / cached / empty)
+  const [sourceTag, setSourceTag] = useState<'draft'|'server'|'cached'|'empty'>('empty')
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
@@ -120,35 +137,72 @@ export default function StudentAssignment(){
     const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
     setCanvasSize({ w: cssW, h: cssH })
   }
-  const onAudio = (b:Blob)=>{ audioBlob.current = b }
 
+  /* ---------- Page load: clear immediately, then load draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
+
+    // 1) hard clear immediately to avoid bleed
+    drawRef.current?.clearStrokes()
+    setSourceTag('empty')
+    // also stop recording on page change
+    audioRef.current?.stop()
+
     ;(async ()=>{
       try{
-        audioRef.current?.stop()
+        // 2) draft first
         const draft = loadDraft(studentId, assignmentTitle, pageIndex)
-        if (draft && draft.strokes) {
+        if (draft?.strokes) {
           drawRef.current?.loadStrokes(draft.strokes)
-        } else {
-          await ensureStudent(studentId)
-          const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
-          const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
-          if (cancelled) return
-          const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-          if (strokes) drawRef.current?.loadStrokes(strokes)
-          else drawRef.current?.clearStrokes()
+          setSourceTag('draft')
+          return
         }
-      }catch(e){ console.warn('Load failed:', e) }
+
+        // 3) server
+        await ensureStudent(studentId)
+        const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+        const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
+        if (cancelled) return
+        const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+        if (strokes) {
+          drawRef.current?.loadStrokes(strokes)
+          setSourceTag('server')
+          return
+        }
+
+        // 4) last-submitted cache
+        const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+        if (cached?.strokes) {
+          drawRef.current?.loadStrokes(cached.strokes)
+          setSourceTag('cached')
+          return
+        }
+
+        // else stay empty
+        drawRef.current?.clearStrokes()
+        setSourceTag('empty')
+      }catch(e){
+        // Network or 401: fall back to cache if possible
+        const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+        if (cached?.strokes) {
+          drawRef.current?.loadStrokes(cached.strokes)
+          setSourceTag('cached')
+        } else {
+          drawRef.current?.clearStrokes()
+          setSourceTag('empty')
+        }
+      }
     })()
+
     return ()=>{ cancelled=true }
-    // IMPORTANT: also reload when studentId changes
   }, [pageIndex, studentId])
 
+  /* ---------- Draft autosave ---------- */
   useEffect(()=>{
     let lastSerialized = ''
     let running = !document.hidden
     let intervalId: number | null = null
+
     const tick = ()=>{
       try {
         if (!running) return
@@ -161,13 +215,19 @@ export default function StudentAssignment(){
         }
       } catch {}
     }
+
     const start = ()=>{ if (intervalId==null){ intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) } }
     const stop  = ()=>{ if (intervalId!=null){ window.clearInterval(intervalId); intervalId=null } }
+
     const onVis = ()=>{ running = !document.hidden; if (running) start(); else stop() }
     document.addEventListener('visibilitychange', onVis)
+
     start()
-    const onBeforeUnload = ()=>{ try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {} }
+    const onBeforeUnload = ()=>{
+      try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
+    }
     window.addEventListener('beforeunload', onBeforeUnload)
+
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
@@ -175,16 +235,19 @@ export default function StudentAssignment(){
     }
   }, [pageIndex, studentId])
 
+  /* ---------- Submit with dirty-check; cache last submitted ---------- */
+  const submitInFlight = useRef(false)
   const submit = async ()=>{
     if (submitInFlight.current) return
     submitInFlight.current = true
     try{
       setSaving(true)
       const strokes = drawRef.current?.getStrokes() || { strokes: [] }
-      const hash = await hashStrokes(strokes)
-      const hasInk = Array.isArray(strokes?.strokes) && strokes!.strokes.length > 0
+      const hasInk   = Array.isArray(strokes?.strokes) && strokes.strokes.length > 0
       const hasAudio = !!audioBlob.current
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
+
+      const hash = await hashStrokes(strokes)
       const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
       const last = localStorage.getItem(lastKey)
       if (last && last === hash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
@@ -192,13 +255,26 @@ export default function StudentAssignment(){
       await ensureStudent(studentId)
       const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       const submission_id = await createSubmission(studentId, assignment_id, page_id)
-      if (hasInk) { await saveStrokes(submission_id, strokes); localStorage.setItem(lastKey, hash) }
-      if (hasAudio) { await saveAudio(submission_id, audioBlob.current!); audioBlob.current = null }
+
+      if (hasInk) {
+        await saveStrokes(submission_id, strokes)
+        localStorage.setItem(lastKey, hash)
+        saveSubmittedCache(studentId, assignmentTitle, pageIndex, strokes)
+      }
+      if (hasAudio) {
+        await saveAudio(submission_id, audioBlob.current!)
+        audioBlob.current = null
+      }
+
       clearDraft(studentId, assignmentTitle, pageIndex)
+      setSourceTag('server') // next reload should prefer server; cached kept as fallback
       showToast('Saved!', 'ok', 1400)
     } catch (e:any){
       console.error(e); showToast('Save failed', 'err', 1800); throw e
-    } finally { setSaving(false); submitInFlight.current=false }
+    } finally {
+      setSaving(false)
+      submitInFlight.current = false
+    }
   }
 
   const hasContent = ()=>{
@@ -239,6 +315,7 @@ export default function StudentAssignment(){
     setToolbarRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
+  /* ---------- UI ---------- */
   const Toolbar = (
     <div
       style={{
@@ -328,10 +405,12 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      <div ref={scrollHostRef}
+      <div
+        ref={scrollHostRef}
         style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch', touchAction:'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-          background:'#fff', border:'1px solid #eee', borderRadius:12 }}>
+          background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
+      >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
           <div style={{ position:'absolute', inset:0, zIndex:0 }}>
             <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
@@ -341,6 +420,11 @@ export default function StudentAssignment(){
               color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
           </div>
         </div>
+
+        {/* tiny source badge */}
+        <div style={{ position:'absolute', left:8, bottom:8, fontSize:11, color:'#6b7280' }}>
+          src: {sourceTag}
+        </div>
       </div>
 
       <div style={{ display:'flex', gap:8, justifyContent:'center', margin:'12px 0' }}>
@@ -349,10 +433,7 @@ export default function StudentAssignment(){
         <button onClick={()=>goToPage(pageIndex+1)} disabled={saving || submitInFlight.current}>Next</button>
       </div>
 
-      {/* Floating toolbar */}
-      {/* (Defined above) */}
       {Toolbar}
-
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
     </div>
   )
