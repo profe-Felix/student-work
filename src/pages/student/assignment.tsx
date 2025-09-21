@@ -1,4 +1,4 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -313,19 +313,39 @@ export default function StudentAssignment(){
     }
   }
 
-  const blockedBySync = (idx: number) => {
-    if (!autoFollow) return false
-    // if teacher provided allowed pages, only those are allowed
-    if (allowedPages && allowedPages.length > 0) return !allowedPages.includes(idx)
-    // if no list provided, hard lock to teacher's page
+  /* ---------- Sync rules ---------- */
+  const isAllowed = (idx: number) => {
+    if (!autoFollow) return true
+    if (allowedPages && allowedPages.length > 0) return allowedPages.includes(idx)
+    // hard lock if no allow-list provided
     const tpi = teacherPageIndexRef.current
-    if (typeof tpi === 'number') return idx !== tpi
-    return true
+    return typeof tpi === 'number' ? idx === tpi : false
+  }
+
+  const nextAllowed = (from: number, dir: 1 | -1): number | null => {
+    if (!autoFollow) return from + dir
+    if (allowedPages && allowedPages.length > 0) {
+      // find next allowed index in that direction
+      const sorted = [...allowedPages].sort((a,b)=>a-b)
+      if (dir > 0) {
+        for (const p of sorted) if (p > from) return p
+        return null
+      } else {
+        for (let i = sorted.length - 1; i >= 0; i--) if (sorted[i] < from) return sorted[i]
+        return null
+      }
+    } else {
+      // hard lock to teacher page
+      const tpi = teacherPageIndexRef.current
+      if (typeof tpi !== 'number') return null
+      if (tpi === from) return null // no move
+      return tpi // jump directly to teacher page
+    }
   }
 
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
-    if (navLocked || blockedBySync(nextIndex)) return
+    if (!isAllowed(nextIndex)) return
     try { audioRef.current?.stop() } catch {}
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
@@ -339,6 +359,20 @@ export default function StudentAssignment(){
     }
 
     setPageIndex(nextIndex)
+  }
+
+  // Prev/Next handlers that skip blocked pages
+  const onPrev = () => {
+    if (saving || submitInFlight.current || navLocked) return
+    const target = nextAllowed(pageIndex, -1)
+    if (target == null) return
+    void goToPage(target)
+  }
+  const onNext = () => {
+    if (saving || submitInFlight.current || navLocked) return
+    const target = nextAllowed(pageIndex, 1)
+    if (target == null) return
+    void goToPage(target)
   }
 
   // two-finger pan host
@@ -362,7 +396,7 @@ export default function StudentAssignment(){
 
   /* ---------- Realtime + polling (defensive) ---------- */
 
-  // subscribe to teacher broadcast once we know the assignment id
+  // subscribe to teacher broadcast + presence once we know the assignment id
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
@@ -378,7 +412,6 @@ export default function StudentAssignment(){
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        // when turning ON, snap to teacher immediately
         if (on && typeof teacherPageIndexRef.current === 'number') {
           setPageIndex(teacherPageIndexRef.current)
         }
@@ -566,7 +599,7 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      {/* Floating pager */}
+      {/* Floating pager (Prev/Next skip to next allowed page) */}
       <div
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
@@ -576,8 +609,8 @@ export default function StudentAssignment(){
         }}
       >
         <button
-          onClick={()=>goToPage(Math.max(0, pageIndex-1))}
-          disabled={saving || submitInFlight.current || navLocked || blockedBySync(Math.max(0, pageIndex-1))}
+          onClick={onPrev}
+          disabled={saving || submitInFlight.current || navLocked || nextAllowed(pageIndex, -1) == null}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           ◀ Prev
@@ -586,8 +619,8 @@ export default function StudentAssignment(){
           Page {pageIndex+1}
         </span>
         <button
-          onClick={()=>goToPage(pageIndex+1)}
-          disabled={saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
+          onClick={onNext}
+          disabled={saving || submitInFlight.current || navLocked || nextAllowed(pageIndex, 1) == null}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           Next ▶
