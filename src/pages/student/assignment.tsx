@@ -143,13 +143,13 @@ export default function StudentAssignment(){
 
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
-  // assignment id for realtime
   const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
 
   // Realtime teacher controls
   const [focusOn, setFocusOn] = useState(false)
   const [navLocked, setNavLocked] = useState(false)
   const [autoFollow, setAutoFollow] = useState(false)
+  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
 
   // hashes/dirty tracking
@@ -313,17 +313,19 @@ export default function StudentAssignment(){
     }
   }
 
-  const hasContent = ()=>{
-    try {
-      const strokes = drawRef.current?.getStrokes()
-      const count = Array.isArray(strokes?.strokes) ? strokes!.strokes.length : 0
-      return count > 0 || !!audioBlob.current
-    } catch { return !!audioBlob.current }
+  const blockedBySync = (idx: number) => {
+    if (!autoFollow) return false
+    // if teacher provided allowed pages, only those are allowed
+    if (allowedPages && allowedPages.length > 0) return !allowedPages.includes(idx)
+    // if no list provided, hard lock to teacher's page
+    const tpi = teacherPageIndexRef.current
+    if (typeof tpi === 'number') return idx !== tpi
+    return true
   }
 
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
-    if (navLocked || autoFollow) return // ← block navigation when locked or auto-following
+    if (navLocked || blockedBySync(nextIndex)) return
     try { audioRef.current?.stop() } catch {}
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
@@ -366,18 +368,19 @@ export default function StudentAssignment(){
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
         teacherPageIndexRef.current = pageIndex
-        setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
         setFocusOn(!!on)
         setNavLocked(!!on && !!lockNav)
       },
-      onAutoFollow: ({ on }: AutoFollowPayload) => {
+      onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
         setAutoFollow(!!on)
-        // if teacher turns it ON, snap to teacher page immediately if known
-        const tpi = teacherPageIndexRef.current
-        if (on && typeof tpi === 'number' && tpi !== pageIndex) {
-          setPageIndex(tpi)
+        setAllowedPages(allowedPages ?? null)
+        if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
+        // when turning ON, snap to teacher immediately
+        if (on && typeof teacherPageIndexRef.current === 'number') {
+          setPageIndex(teacherPageIndexRef.current)
         }
       }
     })
@@ -387,7 +390,7 @@ export default function StudentAssignment(){
         else (supabase as any)?.removeChannel?.(ch)
       } catch {}
     }
-  }, [rtAssignmentId, pageIndex])
+  }, [rtAssignmentId, autoFollow])
 
   const reloadFromServer = async ()=>{
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
@@ -563,7 +566,7 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      {/* Floating pager (always reachable) */}
+      {/* Floating pager */}
       <div
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
@@ -574,7 +577,7 @@ export default function StudentAssignment(){
       >
         <button
           onClick={()=>goToPage(Math.max(0, pageIndex-1))}
-          disabled={saving || submitInFlight.current || navLocked || autoFollow}
+          disabled={saving || submitInFlight.current || navLocked || blockedBySync(Math.max(0, pageIndex-1))}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           ◀ Prev
@@ -584,7 +587,7 @@ export default function StudentAssignment(){
         </span>
         <button
           onClick={()=>goToPage(pageIndex+1)}
-          disabled={saving || submitInFlight.current || navLocked || autoFollow}
+          disabled={saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           Next ▶
@@ -595,7 +598,7 @@ export default function StudentAssignment(){
       {Toolbar}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
 
-      {/* Focus overlay (from teacher) */}
+      {/* Focus overlay */}
       {focusOn && (
         <div
           style={{
