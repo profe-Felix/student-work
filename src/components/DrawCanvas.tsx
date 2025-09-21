@@ -26,7 +26,7 @@ export default function DrawCanvas({
       c.style.pointerEvents = 'none'
       c.style.touchAction   = 'auto'
     } else {
-      // Draw mode: allow 2-finger scroll/pinch, capture 1-finger drawing
+      // Draw mode: allow 2-finger scroll/pinch when a gesture is active
       c.style.pointerEvents = gesturing.current ? 'none' : 'auto'
       c.style.touchAction   = gesturing.current ? 'auto' : 'pan-y pinch-zoom'
     }
@@ -40,33 +40,23 @@ export default function DrawCanvas({
 
     const getPos = (e: TouchEvent | MouseEvent)=>{
       const r = canvas.getBoundingClientRect()
-      // Touch
       if ('touches' in e && e.touches && e.touches.length) {
         return { x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top }
       }
-      // Mouse
       const me = e as MouseEvent
       return { x: me.clientX - r.left, y: me.clientY - r.top }
     }
 
-    // ---- gesture helpers ----
     const enterGesture = ()=>{
-      if (!gesturing.current) {
-        gesturing.current = true
-        applyPolicy() // temporarily let Safari handle scroll/zoom
-      }
+      if (!gesturing.current) { gesturing.current = true; applyPolicy() }
     }
     const exitGesture = ()=>{
-      if (gesturing.current) {
-        gesturing.current = false
-        applyPolicy() // restore drawing capture
-      }
+      if (gesturing.current) { gesturing.current = false; applyPolicy() }
     }
 
-    // ---- handlers ----
     const onTouchStart = (e: TouchEvent)=>{
       if (mode !== 'draw') return
-      if (e.touches.length > 1) { enterGesture(); return } // multi-touch → let Safari scroll
+      if (e.touches.length > 1) { enterGesture(); return } // multi-touch → release to scroll container
       drawing.current = true
       const p = getPos(e)
       ctx.strokeStyle = color
@@ -80,7 +70,7 @@ export default function DrawCanvas({
 
     const onTouchMove = (e: TouchEvent)=>{
       if (mode !== 'draw') return
-      if (e.touches.length > 1) { enterGesture(); return } // let Safari handle
+      if (e.touches.length > 1) { enterGesture(); return } // let panel/page scroll
       if (!drawing.current) return
       const p = getPos(e)
       ctx.lineTo(p.x, p.y)
@@ -91,14 +81,9 @@ export default function DrawCanvas({
     const onTouchEnd = (e: TouchEvent)=>{
       if (mode !== 'draw') return
       drawing.current = false
-      // When no more touches remain, exit gesture mode
       const anyTouchesLeft = e.touches && e.touches.length > 0
-      if (!anyTouchesLeft) {
-        exitGesture()
-      } else {
-        // iOS may fire per-finger; ensure we exit once all lift
-        setTimeout(()=> exitGesture(), 0)
-      }
+      if (!anyTouchesLeft) exitGesture()
+      else setTimeout(()=> exitGesture(), 0) // per-finger end on iOS
     }
 
     const onMouseDown = (e: MouseEvent)=>{
