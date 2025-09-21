@@ -11,17 +11,16 @@ export type DrawCanvasHandle = {
   undo: () => void
 }
 
-function normalize(data: any): StrokesPayload {
+function normalize(data: StrokesPayload | null | undefined): StrokesPayload {
   if (!data || typeof data !== 'object') return { strokes: [] }
-  const arr = Array.isArray(data.strokes) ? data.strokes : []
-  // Shallow-validate each stroke
+  const arr = Array.isArray((data as any).strokes) ? (data as any).strokes : []
   const safe = arr.map((s: any) => ({
     color: typeof s?.color === 'string' ? s.color : '#000000',
     size:  Number.isFinite(s?.size) ? s.size : 4,
     tool:  s?.tool === 'highlighter' ? 'highlighter' : 'pen',
     pts:   Array.isArray(s?.pts)
-            ? s.pts.filter((p: any) => Number.isFinite(p?.x) && Number.isFinite(p?.y))
-            : []
+      ? s.pts.filter((p: any) => Number.isFinite(p?.x) && Number.isFinite(p?.y))
+      : []
   }))
   return { strokes: safe }
 }
@@ -49,7 +48,7 @@ export default forwardRef(function DrawCanvas(
     width, height,
     color, size,
     mode, // 'scroll' | 'draw'
-    tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'  (erasers handled outside)
+    tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'
   }:{
     width:number; height:number
     color:string; size:number
@@ -94,20 +93,20 @@ export default forwardRef(function DrawCanvas(
     }
   }, [mode])
 
-  useImperativeHandle(ref, ()=>({
-    getStrokes: ()=> ({ strokes: strokes.current }),
-    loadStrokes: (data)=>{
+  useImperativeHandle(ref, () => ({
+    getStrokes: () => ({ strokes: strokes.current }),
+    loadStrokes: (data: StrokesPayload | null | undefined) => {
       const safe = normalize(data)
       strokes.current = safe.strokes
       current.current = null
       redraw()
     },
-    clearStrokes: ()=>{
+    clearStrokes: () => {
       strokes.current = []
       current.current = null
       redraw()
     },
-    undo: ()=>{
+    undo: () => {
       strokes.current.pop()
       redraw()
     }
@@ -123,7 +122,7 @@ export default forwardRef(function DrawCanvas(
     const c = canvasRef.current!
     const shouldDraw = (e: PointerEvent) => {
       if (mode !== 'draw') return false
-      if (e.pointerType === 'pen') return true // always let Apple Pencil draw
+      if (e.pointerType === 'pen') return true // let Apple Pencil draw (palm down allowed)
       // fingers/mouse: draw only if a single non-pen pointer is down
       return activePointers.current.size <= 1
     }
@@ -142,7 +141,6 @@ export default forwardRef(function DrawCanvas(
       if (drawingPointerId.current !== e.pointerId) return
       if (!current.current) return
       if (!shouldDraw(e)) {
-        // gesture changed mid-stroke → commit what we have and stop
         if (current.current.pts.length > 1) strokes.current.push(current.current)
         current.current = null
         drawingPointerId.current = null
