@@ -1,11 +1,7 @@
-// src/hooks/useStudentAssignment.ts
 import { useMemo, useState } from 'react';
 
-/** TEMP placeholder hook so StudentWorkspace compiles.
- *  Replace with your real assignment/page state when ready.
- */
 export function useStudentAssignment() {
-  // TODO: wire these to Supabase / router params
+  // TODO: replace with your real assignment/page state from Supabase/context/router
   const [assignmentId] = useState<string>('demo-assignment');
   const [pages] = useState<string[]>(['page-1', 'page-2', 'page-3']);
   const [currentIndex, setCurrentIndex] = useState(0);
