@@ -1,4 +1,4 @@
-//src/lib/realtime.ts
+// src/lib/realtime.ts
 import { supabase } from './supabaseClient';
 
 export interface SetPagePayload {
@@ -106,35 +106,66 @@ export function subscribeToAssignment(
   // Presence listener — fires when we (student) join or teacher updates their presence.
   ch.on('presence', { event: 'sync' }, () => {
     try {
-      const state = ch.presenceState?.() as Record<string, TeacherPresenceState[]>;
+      const state = ch.presenceState() as Record<string, TeacherPresenceState[]>;
       const arr = (state?.teacher ?? []).filter(s => s?.role === 'teacher');
       if (arr.length === 0) return;
-      // pick the most recent teacher state
       const latest = arr.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
-      if (latest) {
-        // Surface to the same handlers the student already uses for broadcasts
-        handlers.onAutoFollow?.({
-          on: !!latest.autoFollow,
-          allowedPages: latest.allowedPages ?? null,
-          teacherPageIndex: latest.teacherPageIndex,
+      if (!latest) return;
+
+      handlers.onAutoFollow?.({
+        on: !!latest.autoFollow,
+        allowedPages: latest.allowedPages ?? null,
+        teacherPageIndex: latest.teacherPageIndex,
+        ts: latest.updatedAt,
+      });
+      handlers.onFocus?.({
+        on: !!latest.focusOn,
+        lockNav: !!latest.lockNav,
+        ts: latest.updatedAt,
+      });
+      if (typeof latest.teacherPageIndex === 'number') {
+        handlers.onSetPage?.({
+          pageId: '',
+          pageIndex: latest.teacherPageIndex,
           ts: latest.updatedAt,
         });
-        handlers.onFocus?.({
-          on: !!latest.focusOn,
-          lockNav: !!latest.lockNav,
-          ts: latest.updatedAt,
-        });
-        if (typeof latest.teacherPageIndex === 'number') {
-          handlers.onSetPage?.({
-            pageId: '', // we only know index via presence
-            pageIndex: latest.teacherPageIndex,
-            ts: latest.updatedAt,
-          });
-        }
       }
     } catch {}
   });
 
-  ch.subscribe();
+  ch.subscribe((status: string) => {
+    // Safety: do a single read shortly after subscribe in case the initial 'sync' races.
+    if (status === 'SUBSCRIBED') {
+      setTimeout(() => {
+        try {
+          const state = ch.presenceState() as Record<string, TeacherPresenceState[]>;
+          const arr = (state?.teacher ?? []).filter(s => s?.role === 'teacher');
+          if (arr.length === 0) return;
+          const latest = arr.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
+          if (!latest) return;
+
+          handlers.onAutoFollow?.({
+            on: !!latest.autoFollow,
+            allowedPages: latest.allowedPages ?? null,
+            teacherPageIndex: latest.teacherPageIndex,
+            ts: latest.updatedAt,
+          });
+          handlers.onFocus?.({
+            on: !!latest.focusOn,
+            lockNav: !!latest.lockNav,
+            ts: latest.updatedAt,
+          });
+          if (typeof latest.teacherPageIndex === 'number') {
+            handlers.onSetPage?.({
+              pageId: '',
+              pageIndex: latest.teacherPageIndex,
+              ts: latest.updatedAt,
+            });
+          }
+        } catch {}
+      }, 50);
+    }
+  });
+
   return ch;
 }
