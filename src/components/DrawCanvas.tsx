@@ -2,12 +2,18 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react
 
 type Tool = 'pen' | 'highlighter' | 'eraser' | 'eraserObject'
 
+type Point = { x:number; y:number }
+
 type Stroke = {
   tool: 'pen' | 'highlighter' | 'eraser'; // object eraser doesn't add a stroke
   color: string;
   size: number;
-  points: { x:number; y:number }[];
+  points: Point[];
 }
+
+type HistoryAdd = { type:'add'; index:number }                // index where stroke lives now (end)
+type HistoryRemove = { type:'remove'; index:number; stroke: Stroke } // removed stroke + original index
+type HistoryItem = HistoryAdd | HistoryRemove
 
 export type DrawCanvasHandle = {
   undo: () => void;
@@ -54,7 +60,7 @@ export default forwardRef<DrawCanvasHandle, {
   const activeId     = useRef<number | null>(null)
 
   const pendingId    = useRef<number | null>(null)
-  const pendingPos   = useRef<{x:number,y:number} | null>(null)
+  const pendingPos   = useRef<Point | null>(null)
   const pendingTO    = useRef<number | null>(null)
   const PENDING_MS   = 60
   const MOVE_THRESH  = 8
@@ -65,8 +71,18 @@ export default forwardRef<DrawCanvasHandle, {
 
   // Sweep eraser path (object eraser)
   const sweeping     = useRef(false)
-  const sweepLast    = useRef<{x:number,y:number} | null>(null)
+  const sweepLast    = useRef<Point | null>(null)
   const SWEEP_STEP   = 2 // px sampling to avoid missing thin lines
+
+  // History stack (supports undo for add + object-erase)
+  const historyRef   = useRef<HistoryItem[]>([])
+  const HISTORY_LIMIT = 500
+
+  const pushHistory = (item: HistoryItem)=>{
+    const arr = historyRef.current
+    arr.push(item)
+    if (arr.length > HISTORY_LIMIT) arr.shift()
+  }
 
   const resizeBackingStore = ()=>{
     const c = canvasRef.current!
@@ -139,12 +155,27 @@ export default forwardRef<DrawCanvasHandle, {
 
   useImperativeHandle(ref, ()=>({
     undo(){
+      // If a live stroke is mid-flight, cancel it
       if (liveStroke.current) {
         liveStroke.current = null
-      } else if (strokesRef.current.length){
-        strokesRef.current.pop()
+        redrawAll()
+        return
       }
-      redrawAll()
+      const h = historyRef.current
+      if (!h.length) return
+      const last = h.pop()!
+      if (last.type === 'add') {
+        // remove the most recently added stroke
+        if (strokesRef.current.length > 0) {
+          strokesRef.current.pop()
+          redrawAll()
+        }
+      } else if (last.type === 'remove') {
+        // re-insert previously deleted stroke at its original index
+        const idx = Math.max(0, Math.min(last.index, strokesRef.current.length))
+        strokesRef.current.splice(idx, 0, last.stroke)
+        redrawAll()
+      }
     }
   }), [])
 
@@ -198,23 +229,21 @@ export default forwardRef<DrawCanvasHandle, {
       clearPending()
     }
 
-    // --- SWEEP OBJECT ERASER ---
+    // --- OBJECT ERASER SWEEP HELPERS ---
     const hitStrokeBySweepSeg = (ax:number, ay:number, bx:number, by:number): number | null=>{
       const arr = strokesRef.current
       // Hit top-most first
       for (let i = arr.length - 1; i >= 0; i--) {
         const s = arr[i]
-        if (s.tool === 'eraser') continue // don't target pixel-eraser strokes
+        if (s.tool === 'eraser') continue // ignore pixel eraser strokes
         const pts = s.points
         const thresh = Math.max(12, s.tool==='highlighter' ? s.size*2 : s.size*1.2)
-        // Fast reject: bbox overlap against each segment
         for (let j=0;j<pts.length-1;j++){
           const a = pts[j], b = pts[j+1]
           if (!segsBBoxOverlap(ax,ay,bx,by, a.x,a.y,b.x,b.y, thresh)) continue
           const d = distPointToSeg(ax,ay, a.x,a.y, b.x,b.y)
           if (d <= thresh) return i
         }
-        // Handle single-dot strokes
         if (pts.length === 1) {
           const d1 = distPointToSeg(pts[0].x, pts[0].y, ax, ay, bx, by)
           if (d1 <= thresh) return i
@@ -223,8 +252,7 @@ export default forwardRef<DrawCanvasHandle, {
       return null
     }
 
-    const sweepEraseBetween = (p0:{x:number,y:number}, p1:{x:number,y:number})=>{
-      // Sample along the sweep to avoid skipping narrow intersections
+    const sweepEraseBetween = (p0:Point, p1:Point)=>{
       const dx = p1.x - p0.x, dy = p1.y - p0.y
       const len = Math.hypot(dx, dy)
       const steps = Math.max(1, Math.floor(len / SWEEP_STEP))
@@ -234,8 +262,9 @@ export default forwardRef<DrawCanvasHandle, {
         const cur = { x: p0.x + dx*t, y: p0.y + dy*t }
         const idx = hitStrokeBySweepSeg(prev.x, prev.y, cur.x, cur.y)
         if (idx !== null) {
-          strokesRef.current.splice(idx, 1)
-          // After deletion, redraw and continue checking (topmost-first)
+          const [removed] = strokesRef.current.splice(idx, 1)
+          // record deletion for undo
+          pushHistory({ type:'remove', index: idx, stroke: removed })
           redrawAll()
         }
         prev = cur
@@ -249,17 +278,17 @@ export default forwardRef<DrawCanvasHandle, {
       const p = toLocal(e.clientX, e.clientY)
 
       if (tool === 'eraserObject') {
-        // Start sweeping immediately (no capture needed)
         sweeping.current = true
         sweepLast.current = p
-        // Erase any stroke under the initial contact
-        const idx = (()=>{
-          // reuse hit function with a tiny segment
-          return (function hitAtPoint(pt:{x:number,y:number}){
-            return hitStrokeBySweepSeg(pt.x, pt.y, pt.x+0.001, pt.y+0.001)
-          })(p)
-        })()
-        if (idx !== null) { strokesRef.current.splice(idx,1); redrawAll() }
+        // hit-test initial point
+        const idx = (function hitAtPoint(pt:Point){
+          return hitStrokeBySweepSeg(pt.x, pt.y, pt.x+0.001, pt.y+0.001)
+        })(p)
+        if (idx !== null) {
+          const [removed] = strokesRef.current.splice(idx, 1)
+          pushHistory({ type:'remove', index: idx, stroke: removed })
+          redrawAll()
+        }
         e.preventDefault()
         return
       }
@@ -341,7 +370,9 @@ export default forwardRef<DrawCanvasHandle, {
         drawing.current = false
         activeId.current = null
         if (liveStroke.current) {
+          // push stroke and record history
           strokesRef.current.push(liveStroke.current)
+          pushHistory({ type:'add', index: strokesRef.current.length - 1 })
           liveStroke.current = null
         }
         c.releasePointerCapture?.(e.pointerId)
