@@ -1,6 +1,17 @@
 // src/lib/realtime.ts
 import { supabase } from './supabaseClient';
 
+export interface SetPagePayload {
+  pageId: string;
+  pageIndex: number;
+  ts?: number;
+}
+export interface FocusPayload {
+  on: boolean;
+  lockNav?: boolean;
+  ts?: number;
+}
+
 export function assignmentChannel(assignmentId: string) {
   return supabase.channel(`assign:${assignmentId}`, {
     config: { broadcast: { ack: true }, presence: { key: 'teacher' } },
@@ -8,7 +19,8 @@ export function assignmentChannel(assignmentId: string) {
 }
 
 export async function publishSetPage(ch: any, pageId: string, pageIndex: number) {
-  await ch.send({ type: 'broadcast', event: 'SET_PAGE', payload: { pageId, pageIndex, ts: Date.now() } });
+  const payload: SetPagePayload = { pageId, pageIndex, ts: Date.now() };
+  await ch.send({ type: 'broadcast', event: 'SET_PAGE', payload });
 }
 
 export async function publishAutoFollow(ch: any, on: boolean) {
@@ -16,18 +28,21 @@ export async function publishAutoFollow(ch: any, on: boolean) {
 }
 
 export async function publishFocus(ch: any, on: boolean, lockNav = true) {
-  await ch.send({ type: 'broadcast', event: 'FOCUS', payload: { on, lockNav, ts: Date.now() } });
+  const payload: FocusPayload = { on, lockNav, ts: Date.now() };
+  await ch.send({ type: 'broadcast', event: 'FOCUS', payload });
 }
 
-/** Student-side hook to subscribe to teacher sync */
-export function subscribeToAssignment(assignmentId: string, handlers: {
-  onSetPage?: (p: {pageId: string; pageIndex: number}) => void;
-  onFocus?: (p: {on: boolean; lockNav?: boolean}) => void;
-}) {
+export function subscribeToAssignment(
+  assignmentId: string,
+  handlers: {
+    onSetPage?: (p: SetPagePayload) => void;
+    onFocus?: (p: FocusPayload) => void;
+  }
+) {
   const ch = supabase.channel(`assign:${assignmentId}`);
   ch
-    .on('broadcast', { event: 'SET_PAGE' }, ({ payload }) => handlers.onSetPage?.(payload))
-    .on('broadcast', { event: 'FOCUS' }, ({ payload }) => handlers.onFocus?.(payload))
+    .on('broadcast', { event: 'SET_PAGE' }, ({ payload }) => handlers.onSetPage?.(payload as SetPagePayload))
+    .on('broadcast', { event: 'FOCUS' }, ({ payload }) => handlers.onFocus?.(payload as FocusPayload))
     .subscribe();
   return ch;
 }
