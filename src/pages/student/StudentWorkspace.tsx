@@ -1,7 +1,7 @@
 // src/pages/student/StudentWorkspace.tsx
 import { useEffect, useRef, useState } from 'react';
-import { subscribeToAssignment, SetPagePayload, FocusPayload } from '../../lib/realtime';
-import { useStudentAssignment } from '../../hooks/useStudentAssignment'; // see fallback hook below if you don't have one
+import { subscribeToAssignment, type SetPagePayload, type FocusPayload } from '../../lib/realtime';
+import { useStudentAssignment } from '../../hooks/useStudentAssignment'; // make sure this file exists (see step 3)
 
 export default function StudentWorkspace() {
   const { assignmentId, currentPageId, setPageById, nextPage, prevPage } = useStudentAssignment();
