@@ -1,32 +1,32 @@
 import { useEffect, useRef, useState } from 'react'
 import PdfCanvas from '../../components/PdfCanvas'
-import DrawCanvas from '../../components/DrawCanvas'
+import DrawCanvas, { DrawCanvasHandle } from '../../components/DrawCanvas'
 import AudioRecorder from '../../components/AudioRecorder'
 
-// Crayola 24 (approx hex values)
+// Crayola 24 (approx)
 const CRAYOLA_24 = [
-  { name:'Red',         hex:'#EE204D' }, { name:'Yellow',      hex:'#FCE883' },
-  { name:'Blue',        hex:'#1F75FE' }, { name:'Green',       hex:'#1CAC78' },
-  { name:'Orange',      hex:'#FF7538' }, { name:'Purple',      hex:'#926EAE' },
-  { name:'Black',       hex:'#000000' }, { name:'White',       hex:'#FFFFFF' },
-  { name:'Brown',       hex:'#B4674D' }, { name:'Pink',        hex:'#FFBCD9' },
-  { name:'Gray',        hex:'#95918C' }, { name:'Violet',      hex:'#7F00FF' },
-  { name:'Red-Orange',  hex:'#FF5349' }, { name:'Yellow-Orange',hex:'#FFB653' },
-  { name:'Yellow-Green',hex:'#C5E384' }, { name:'Blue-Green',  hex:'#0095B7' },
-  { name:'Blue-Violet', hex:'#7366BD' }, { name:'Red-Violet',  hex:'#C0448F' },
-  { name:'Cerulean',    hex:'#1DACD6' }, { name:'Indigo',      hex:'#4F69C6' },
-  { name:'Scarlet',     hex:'#FC2847' }, { name:'Magenta',     hex:'#F664AF' },
-  { name:'Peach',       hex:'#FFCBA4' }, { name:'Tan',         hex:'#ECE1D3' },
+  { name:'Red',hex:'#EE204D' },{ name:'Yellow',hex:'#FCE883' },
+  { name:'Blue',hex:'#1F75FE' },{ name:'Green',hex:'#1CAC78' },
+  { name:'Orange',hex:'#FF7538' },{ name:'Purple',hex:'#926EAE' },
+  { name:'Black',hex:'#000000' },{ name:'White',hex:'#FFFFFF' },
+  { name:'Brown',hex:'#B4674D' },{ name:'Pink',hex:'#FFBCD9' },
+  { name:'Gray',hex:'#95918C' },{ name:'Violet',hex:'#7F00FF' },
+  { name:'Red-Orange',hex:'#FF5349' },{ name:'Yellow-Orange',hex:'#FFB653' },
+  { name:'Yellow-Green',hex:'#C5E384' },{ name:'Blue-Green',hex:'#0095B7' },
+  { name:'Blue-Violet',hex:'#7366BD' },{ name:'Red-Violet',hex:'#C0448F' },
+  { name:'Cerulean',hex:'#1DACD6' },{ name:'Indigo',hex:'#4F69C6' },
+  { name:'Scarlet',hex:'#FC2847' },{ name:'Magenta',hex:'#F664AF' },
+  { name:'Peach',hex:'#FFCBA4' },{ name:'Tan',hex:'#ECE1D3' },
 ]
 
-// Crayola “Colors of the World” (12 common tones for compact UI)
+// Skin tones (12 compact selection)
 const SKIN_TONES = [
-  { name:'Ultra Light',   hex:'#FDE6D0' }, { name:'Very Light',    hex:'#F5D2B8' },
-  { name:'Light',         hex:'#EDC3A6' }, { name:'Light-Medium',  hex:'#E5B294' },
-  { name:'Medium',        hex:'#D9A07F' }, { name:'Medium-Tan',    hex:'#C88B6B' },
-  { name:'Tan',           hex:'#B97B5E' }, { name:'Medium-Deep',   hex:'#A86A4E' },
-  { name:'Deep',          hex:'#94583F' }, { name:'Very Deep',     hex:'#7C4936' },
-  { name:'Rich Deep',     hex:'#643B2C' }, { name:'Ultra Deep',    hex:'#4E2F24' },
+  { name:'Ultra Light',hex:'#FDE6D0' },{ name:'Very Light',hex:'#F5D2B8' },
+  { name:'Light',hex:'#EDC3A6' },{ name:'Light-Medium',hex:'#E5B294' },
+  { name:'Medium',hex:'#D9A07F' },{ name:'Medium-Tan',hex:'#C88B6B' },
+  { name:'Tan',hex:'#B97B5E' },{ name:'Medium-Deep',hex:'#A86A4E' },
+  { name:'Deep',hex:'#94583F' },{ name:'Very Deep',hex:'#7C4936' },
+  { name:'Rich Deep',hex:'#643B2C' },{ name:'Ultra Deep',hex:'#4E2F24' },
 ]
 
 function Swatch({ hex, selected, onClick }: { hex:string; selected:boolean; onClick:()=>void }){
@@ -34,7 +34,7 @@ function Swatch({ hex, selected, onClick }: { hex:string; selected:boolean; onCl
     <button
       onClick={onClick}
       style={{
-        width: 34, height: 34, borderRadius: 9999,
+        width: 40, height: 40, borderRadius: 10,
         border: selected ? '3px solid #111' : '2px solid #ddd',
         background: hex, boxShadow: selected ? '0 0 0 2px #fff inset' : 'none'
       }}
@@ -43,7 +43,7 @@ function Swatch({ hex, selected, onClick }: { hex:string; selected:boolean; onCl
   )
 }
 
-type Tool = 'pen' | 'highlighter' | 'eraser'
+type Tool = 'pen' | 'highlighter' | 'eraser' | 'eraserObject'
 
 export default function StudentAssignment(){
   const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
@@ -59,6 +59,7 @@ export default function StudentAssignment(){
     try { return localStorage.getItem('toolbarSide') !== 'left' } catch { return true }
   })
 
+  const drawRef = useRef<DrawCanvasHandle>(null)
   const audioBlob = useRef<Blob | null>(null)
 
   const onPdfReady = (_pdf:any, canvas: HTMLCanvasElement)=>{
@@ -68,22 +69,19 @@ export default function StudentAssignment(){
   }
 
   const onAudio = (b: Blob)=>{ audioBlob.current = b }
-
   const submit = ()=>{
     alert(`Submit page ${pageIndex + 1}: audio=${!!audioBlob.current ? 'yes' : 'no'}`)
     audioBlob.current = null
   }
 
-  // ----- MANUAL TWO-FINGER PAN on the scroll panel -----
+  // Manual two-finger pan on the scroll panel
   const scrollHostRef = useRef<HTMLDivElement|null>(null)
   useEffect(()=>{
     const host = scrollHostRef.current
     if (!host) return
-
     let panActive = false
     let startY = 0, startX = 0
     let startScrollTop = 0, startScrollLeft = 0
-
     const onTouchStart = (e: TouchEvent)=>{
       if (e.touches.length >= 2 && !handMode) {
         panActive = true
@@ -105,7 +103,6 @@ export default function StudentAssignment(){
       }
     }
     const endPan = ()=>{ panActive = false }
-
     host.addEventListener('touchstart', onTouchStart, { passive: true,  capture: true })
     host.addEventListener('touchmove',  onTouchMove,  { passive: false, capture: true })
     host.addEventListener('touchend',   endPan,       { passive: true,  capture: true })
@@ -133,7 +130,7 @@ export default function StudentAssignment(){
         ...(toolbarRight ? { right:8 } : { left:8 }),
         top:'50%', transform:'translateY(-50%)',
         zIndex: 10010,
-        width: 92, maxHeight:'80vh',
+        width: 120, maxHeight:'80vh',
         display:'flex', flexDirection:'column', gap:10,
         padding:10, background:'#ffffff', border:'1px solid #e5e7eb', borderRadius:12,
         boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
@@ -163,12 +160,13 @@ export default function StudentAssignment(){
         </button>
       </div>
 
-      {/* Tool buttons */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6 }}>
+      {/* Tools */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
         {[
-          {label:'Pen', icon:'✏️', val:'pen'},
-          {label:'Hi',  icon:'🖍️', val:'highlighter'},
+          {label:'Pen',  icon:'✏️', val:'pen'},
+          {label:'Hi',   icon:'🖍️', val:'highlighter'},
           {label:'Erase',icon:'🧽', val:'eraser'},
+          {label:'Obj',  icon:'🗑️', val:'eraserObject'},
         ].map(t=>(
           <button key={t.val}
             onClick={()=>setTool(t.val as Tool)}
@@ -183,7 +181,7 @@ export default function StudentAssignment(){
         ))}
       </div>
 
-      {/* Sizes */}
+      {/* Sizes + Undo */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6 }}>
         {[
           {label:'S', val:3},
@@ -200,19 +198,26 @@ export default function StudentAssignment(){
             {s.label}
           </button>
         ))}
+        <button
+          onClick={()=>drawRef.current?.undo()}
+          style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}
+          title="Undo last stroke"
+        >
+          ⟲ Undo
+        </button>
       </div>
 
-      {/* Colors (scrollable) */}
-      <div style={{ overflowY:'auto', paddingRight:4, maxHeight:'48vh' }}>
+      {/* Colors (scroll only up/down; 2 columns) */}
+      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
         <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 34px)', gap:8 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
           {CRAYOLA_24.map(c=>(
             <Swatch key={c.hex} hex={c.hex} selected={color===c.hex} onClick={()=>{ setColor(c.hex); setTool('pen') }} />
           ))}
         </div>
 
         <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 34px)', gap:8 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
           {SKIN_TONES.map(c=>(
             <Swatch key={c.hex} hex={c.hex} selected={color===c.hex} onClick={()=>{ setColor(c.hex); setTool('pen') }} />
           ))}
@@ -236,7 +241,7 @@ export default function StudentAssignment(){
         minHeight:'100vh',
         padding: 12,
         paddingBottom: 12,
-        ...(toolbarRight ? { paddingRight: 110 } : { paddingLeft: 110 }),
+        ...(toolbarRight ? { paddingRight: 130 } : { paddingLeft: 130 }),
         background:'#fafafa',
         WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none'
       }}
@@ -250,8 +255,7 @@ export default function StudentAssignment(){
           height: 'calc(100vh - 120px)',
           overflow: 'auto',
           WebkitOverflowScrolling: 'touch',
-          // 'none' so our manual pan works with preventDefault
-          touchAction: 'none',
+          touchAction: 'none', // needed for manual pan
           display: 'flex',
           alignItems: 'flex-start',
           justifyContent: 'center',
@@ -275,6 +279,7 @@ export default function StudentAssignment(){
 
           <div style={{ position: 'absolute', inset: 0, zIndex: 10 }}>
             <DrawCanvas
+              ref={drawRef}
               width={canvasSize.w}
               height={canvasSize.h}
               color={color}
@@ -293,7 +298,7 @@ export default function StudentAssignment(){
         <button onClick={()=>setPageIndex(p=>p+1)}>Next</button>
       </div>
 
-      {/* Vertical toolbar (left or right) */}
+      {/* Vertical toolbar */}
       {Toolbar}
     </div>
   )
