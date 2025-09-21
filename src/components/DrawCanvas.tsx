@@ -1,5 +1,12 @@
 import { useEffect, useRef } from 'react'
 
+/**
+ * Pointer-Events based canvas with:
+ * - Apple Pencil: always draws (even if fingers are on screen)
+ * - Touch: 1 finger draws, 2+ fingers scroll/pinch the outer panel
+ * - Mouse: left button draws
+ * - Smooth strokes (RAF-batched)
+ */
 export default function DrawCanvas({
   width,
   height,
@@ -14,115 +21,147 @@ export default function DrawCanvas({
   mode: 'scroll' | 'draw'
 }){
   const canvasRef   = useRef<HTMLCanvasElement>(null)
-  const drawing     = useRef(false)
-  const gesturing   = useRef(false) // true while 2+ fingers are down
 
-  // Apply interaction policy to the canvas element
+  const drawing     = useRef(false)
+  const usingPen    = useRef(false)       // pointerType === 'pen'
+  const gesturing   = useRef(false)       // true while 2+ touches on screen
+  const pointsQueue = useRef<{x:number,y:number}[]>([])
+  const rafId       = useRef<number|undefined>(undefined)
+
+  // ---- style helpers ----
   const applyPolicy = ()=>{
     const c = canvasRef.current!
     if (!c) return
     if (mode === 'scroll') {
-      // All scrolling handled by Safari
+      // Always let page/panel scroll
       c.style.pointerEvents = 'none'
       c.style.touchAction   = 'auto'
+      return
+    }
+    // Draw mode
+    if (gesturing.current && !usingPen.current) {
+      // Two-finger gesture with no Pencil: release to panel/page
+      c.style.pointerEvents = 'none'
+      c.style.touchAction   = 'auto'
+    } else if (drawing.current) {
+      // While actively drawing, stop page nudging
+      c.style.pointerEvents = 'auto'
+      c.style.touchAction   = 'none'
     } else {
-      // Draw mode: allow 2-finger scroll/pinch when a gesture is active
-      c.style.pointerEvents = gesturing.current ? 'none' : 'auto'
-      c.style.touchAction   = gesturing.current ? 'auto' : 'pan-y pinch-zoom'
+      // Idle draw mode: allow two-finger gestures to be recognized by the panel
+      c.style.pointerEvents = 'auto'
+      c.style.touchAction   = 'pan-y pinch-zoom'
     }
   }
 
   useEffect(applyPolicy, [mode])
 
+  // ---- global touch listeners (to detect 2+ fingers reliably on iPad) ----
+  useEffect(()=>{
+    const onTS = (e: TouchEvent)=> { if (e.touches.length > 1) { gesturing.current = true;  applyPolicy() } }
+    const onTE = (e: TouchEvent)=> { if (e.touches.length <= 1){ gesturing.current = false; applyPolicy() } }
+    window.addEventListener('touchstart', onTS, { passive: true })
+    window.addEventListener('touchend',   onTE, { passive: true })
+    return ()=> {
+      window.removeEventListener('touchstart', onTS as any)
+      window.removeEventListener('touchend',   onTE  as any)
+    }
+  }, [])
+
+  // ---- draw loop (RAF) ----
   useEffect(()=>{
     const canvas = canvasRef.current!
     const ctx = canvas.getContext('2d')!
 
-    const getPos = (e: TouchEvent | MouseEvent)=>{
-      const r = canvas.getBoundingClientRect()
-      if ('touches' in e && e.touches && e.touches.length) {
-        return { x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top }
+    const drawFrame = ()=>{
+      // Batch queued points into the current path
+      if (pointsQueue.current.length) {
+        ctx.strokeStyle = color
+        ctx.lineWidth   = size
+        ctx.lineCap     = 'round'
+        ctx.lineJoin    = 'round'
+        ctx.beginPath()
+        const first = pointsQueue.current[0]
+        ctx.moveTo(first.x, first.y)
+        for (let i=1; i<pointsQueue.current.length; i++){
+          const p = pointsQueue.current[i]
+          ctx.lineTo(p.x, p.y)
+        }
+        ctx.stroke()
+        pointsQueue.current = []
       }
-      const me = e as MouseEvent
-      return { x: me.clientX - r.left, y: me.clientY - r.top }
+      rafId.current = requestAnimationFrame(drawFrame)
+    }
+    rafId.current = requestAnimationFrame(drawFrame)
+    return ()=> { if (rafId.current) cancelAnimationFrame(rafId.current) }
+  }, [color, size])
+
+  useEffect(()=>{
+    const canvas = canvasRef.current!
+    const rect = ()=> canvas.getBoundingClientRect()
+
+    const toLocal = (clientX:number, clientY:number)=>{
+      const r = rect()
+      return { x: clientX - r.left, y: clientY - r.top }
     }
 
-    const enterGesture = ()=>{
-      if (!gesturing.current) { gesturing.current = true; applyPolicy() }
-    }
-    const exitGesture = ()=>{
-      if (gesturing.current) { gesturing.current = false; applyPolicy() }
-    }
-
-    const onTouchStart = (e: TouchEvent)=>{
+    // ----- POINTER EVENTS (covers pen, touch, mouse) -----
+    const onPointerDown = (e: PointerEvent)=>{
       if (mode !== 'draw') return
-      if (e.touches.length > 1) { enterGesture(); return } // multi-touch → release to scroll container
-      drawing.current = true
-      const p = getPos(e)
-      ctx.strokeStyle = color
-      ctx.lineWidth   = size
-      ctx.lineCap     = 'round'
-      ctx.lineJoin    = 'round'
-      ctx.beginPath()
-      ctx.moveTo(p.x, p.y)
-      if (e.cancelable) e.preventDefault() // keep page still for 1-finger draw
+      // Pencil always draws (force through even if fingers are on screen)
+      usingPen.current = (e.pointerType === 'pen')
+      if (usingPen.current || (e.pointerType === 'touch' || e.pointerType === 'mouse')) {
+        drawing.current = true
+        const p = toLocal(e.clientX, e.clientY)
+        pointsQueue.current.push(p)
+        // Capture so we keep getting move events even if leaving element
+        canvas.setPointerCapture?.(e.pointerId)
+        applyPolicy()
+        // Prevent page nudge for pen or single-finger draw
+        e.preventDefault()
+      }
     }
 
-    const onTouchMove = (e: TouchEvent)=>{
-      if (mode !== 'draw') return
-      if (e.touches.length > 1) { enterGesture(); return } // let panel/page scroll
+    const onPointerMove = (e: PointerEvent)=>{
       if (!drawing.current) return
-      const p = getPos(e)
-      ctx.lineTo(p.x, p.y)
-      ctx.stroke()
-      if (e.cancelable) e.preventDefault()
+      // If a gesture is in progress (2+ touches) and not using Pencil, stop drawing
+      if (gesturing.current && !usingPen.current) {
+        drawing.current = false
+        canvas.releasePointerCapture?.(e.pointerId)
+        applyPolicy()
+        return
+      }
+      const p = toLocal(e.clientX, e.clientY)
+      pointsQueue.current.push(p)
+      // keep page still while drawing
+      e.preventDefault()
     }
 
-    const onTouchEnd = (e: TouchEvent)=>{
-      if (mode !== 'draw') return
+    const endStroke = (e: PointerEvent)=>{
+      if (!drawing.current) return
       drawing.current = false
-      const anyTouchesLeft = e.touches && e.touches.length > 0
-      if (!anyTouchesLeft) exitGesture()
-      else setTimeout(()=> exitGesture(), 0) // per-finger end on iOS
+      usingPen.current = false
+      canvas.releasePointerCapture?.(e.pointerId)
+      applyPolicy()
     }
 
-    const onMouseDown = (e: MouseEvent)=>{
-      if (mode !== 'draw' || gesturing.current) return
-      drawing.current = true
-      const p = getPos(e)
-      ctx.strokeStyle = color
-      ctx.lineWidth   = size
-      ctx.lineCap     = 'round'
-      ctx.lineJoin    = 'round'
-      ctx.beginPath()
-      ctx.moveTo(p.x, p.y)
-    }
-    const onMouseMove = (e: MouseEvent)=>{
-      if (!drawing.current) return
-      const p = getPos(e)
-      ctx.lineTo(p.x, p.y)
-      ctx.stroke()
-    }
-    const onMouseUp = ()=>{ drawing.current = false }
+    // Safari sometimes fires pointercancel when system gesture takes over
+    const onPointerUp     = (e: PointerEvent)=> endStroke(e)
+    const onPointerCancel = (e: PointerEvent)=> endStroke(e)
 
-    // Touch must be non-passive for preventDefault to work
-    canvas.addEventListener('touchstart', onTouchStart, { passive: false })
-    canvas.addEventListener('touchmove',  onTouchMove,  { passive: false })
-    canvas.addEventListener('touchend',   onTouchEnd,   { passive: true  })
-    // Mouse (desktop testing)
-    canvas.addEventListener('mousedown',  onMouseDown)
-    canvas.addEventListener('mousemove',  onMouseMove)
-    canvas.addEventListener('mouseup',    onMouseUp)
+    // Register listeners (non-passive so preventDefault works during draw)
+    canvas.addEventListener('pointerdown',  onPointerDown,  { passive: false })
+    canvas.addEventListener('pointermove',  onPointerMove,  { passive: false })
+    canvas.addEventListener('pointerup',    onPointerUp,    { passive: false })
+    canvas.addEventListener('pointercancel',onPointerCancel,{ passive: false })
 
     return ()=>{
-      canvas.removeEventListener('touchstart', onTouchStart as any)
-      canvas.removeEventListener('touchmove',  onTouchMove as any)
-      canvas.removeEventListener('touchend',   onTouchEnd as any)
-      canvas.removeEventListener('mousedown',  onMouseDown as any)
-      canvas.removeEventListener('mousemove',  onMouseMove as any)
-      canvas.removeEventListener('mouseup',    onMouseUp as any)
+      canvas.removeEventListener('pointerdown',  onPointerDown as any)
+      canvas.removeEventListener('pointermove',  onPointerMove as any)
+      canvas.removeEventListener('pointerup',    onPointerUp as any)
+      canvas.removeEventListener('pointercancel',onPointerCancel as any)
     }
-  },[color, size, mode])
+  }, [mode])
 
   return (
     <canvas
