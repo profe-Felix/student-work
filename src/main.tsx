@@ -1,20 +1,22 @@
 import React from 'react'
-import { createRoot } from 'react-dom/client'
+import ReactDOM from 'react-dom/client'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import StudentAssignment from './pages/student/assignment'
-import TeacherSubmission from './pages/teacher/submission'
+import StartPicker from './pages/start'
 
-function App(){
-  const base = import.meta.env.BASE_URL || '/'
-  return (
-    <HashRouter>
+const base = import.meta.env.BASE_URL || '/'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <HashRouter basename="/">
       <Routes>
-        <Route path="/student/assignment" element={<StudentAssignment/>} />
-        <Route path="/teacher/submission" element={<TeacherSubmission/>} />
-        <Route path="*" element={<Navigate to="/student/assignment" replace/>} />
+        <Route path="/" element={<Navigate to="/start" replace />} />
+        <Route path="/start" element={<StartPicker />} />
+        <Route path="/student/assignment" element={<StudentAssignment />} />
+        {/* Teacher route will come next */}
+        {/* <Route path="/teacher" element={<TeacherDashboard />} /> */}
+        <Route path="*" element={<Navigate to="/start" replace />} />
       </Routes>
     </HashRouter>
-  )
-}
-
-createRoot(document.getElementById('root')!).render(<App/>)
+  </React.StrictMode>
+)
