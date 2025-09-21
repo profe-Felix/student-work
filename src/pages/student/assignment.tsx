@@ -282,8 +282,7 @@ export default function StudentAssignment(){
     return ()=>{ host.removeEventListener('touchstart',onTS as any,true); host.removeEventListener('touchmove',onTM as any,true); host.removeEventListener('touchend',end as any,true); host.removeEventListener('touchcancel',end as any,true) }
   }, [handMode])
 
-  const [toolbarRight, setToolbarRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
-  const flipToolbarSide = ()=>{
+  const flipToolbarSide = ()=> {
     setToolbarRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
@@ -460,7 +459,7 @@ export default function StudentAssignment(){
       </div>
 
       {/* Floating toolbar */}
-      {/* (content defined above) */}
+      {Toolbar}
     </div>
   )
 }
