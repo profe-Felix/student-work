@@ -169,7 +169,7 @@ export default function StudentAssignment(){
 
         const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = { assignment_id, page_id }
-        if (!rtAssignmentId) setRtAssignmentId(assignment_id)
+        if (!rtAssignmentId) setRtAssignmentId(assignment_id!) // <-- assert defined
 
         try {
           const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
@@ -278,7 +278,7 @@ export default function StudentAssignment(){
       const ids = currIds.current.assignment_id ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = ids
-      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
+      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!) // <-- assert defined
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
@@ -382,7 +382,7 @@ export default function StudentAssignment(){
         ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = { assignment_id, page_id }
-      if (!rtAssignmentId) setRtAssignmentId(assignment_id)
+      if (!rtAssignmentId) setRtAssignmentId(assignment_id!) // <-- assert defined
 
       const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
       const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
@@ -414,7 +414,7 @@ export default function StudentAssignment(){
           ? currIds.current
           : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = ids
-        if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
+        if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!) // <-- assert defined
 
         const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
           .on('postgres_changes', {
@@ -477,7 +477,7 @@ export default function StudentAssignment(){
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6 }}>
         {[{label:'S',val:3},{label:'M',val:6},{label:'L',val:10}].map(s=>(
           <button key={s.label} onClick={()=>setSize(s.val)}
-            style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
+            style={{ padding:'6px 0', borderRadius:8, border:'1px solid '#ddd',
               background: size===s.val ? '#111' : '#fff', color: size===s.val ? '#fff' : '#111' }}>
             {s.label}
           </button>
