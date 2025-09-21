@@ -13,17 +13,20 @@ export default function TeacherDashboard() {
   const [pageIndex, setPageIndex] = useState<number>(0);
   const [cards, setCards] = useState<any[]>([]);
 
-  useEffect(() => { listAssignments().then(({ data }) => setAssignments(data ?? [])); }, []);
+  useEffect(() => {
+    listAssignments().then(({ data }: { data: any[] | null }) => setAssignments(data ?? []));
+  }, []);
+
   useEffect(() => {
     if (!assignmentId) return;
-    listPages(assignmentId).then(({ data }) => setPages(data ?? []));
+    listPages(assignmentId).then(({ data }: { data: any[] | null }) => setPages(data ?? []));
   }, [assignmentId]);
 
   useEffect(() => {
     async function load() {
       if (!pageId) { setCards([]); return; }
       const subs = await listLatestSubmissionsByPage(pageId);
-      const withThumbs = await Promise.all(subs.map(async s => {
+      const withThumbs = await Promise.all(subs.map(async (s: any) => {
         const path = await getThumbnailForSubmission(s.id);
         return { ...s, thumb: path ? publicUrl(path) : null };
       }));
@@ -36,28 +39,33 @@ export default function TeacherDashboard() {
     <div className="p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Teacher Dashboard</h1>
 
-      <PdfDropZone onCreated={(newId) => {
+      <PdfDropZone onCreated={(newId: string) => {
         setAssignmentId(newId);
       }} />
 
       <div className="flex gap-3 items-center">
-        <select className="border rounded px-2 py-1" value={assignmentId} onChange={e => { setAssignmentId(e.target.value); setPageId(''); }}>
+        <select
+          className="border rounded px-2 py-1"
+          value={assignmentId}
+          onChange={e => { setAssignmentId(e.target.value); setPageId(''); }}
+        >
           <option value="">Select assignment…</option>
-          {assignments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+          {assignments.map((a: any) => <option key={a.id} value={a.id}>{a.title}</option>)}
         </select>
+
         <select
           className="border rounded px-2 py-1"
           value={pageId}
           onChange={e => {
             const pid = e.target.value;
             setPageId(pid);
-            const idx = pages.find((p:any) => p.id === pid)?.page_index ?? 0;
+            const idx = pages.find((p: any) => p.id === pid)?.page_index ?? 0;
             setPageIndex(idx);
           }}
           disabled={!assignmentId}
         >
           <option value="">Select page…</option>
-          {pages.map((p:any) => <option key={p.id} value={p.id}>Pg {p.page_index + 1}: {p.title}</option>)}
+          {pages.map((p: any) => <option key={p.id} value={p.id}>Pg {p.page_index + 1}: {p.title}</option>)}
         </select>
       </div>
 
@@ -71,7 +79,7 @@ export default function TeacherDashboard() {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {cards.map(c => (
+        {cards.map((c: any) => (
           <div key={c.id} className="border rounded-xl overflow-hidden shadow-sm">
             {c.thumb ? (
               <img src={c.thumb} alt="thumbnail" className="w-full aspect-[4/3] object-cover" />
