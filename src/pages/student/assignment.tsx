@@ -4,18 +4,26 @@ import DrawCanvas from '../../components/DrawCanvas'
 import AudioRecorder from '../../components/AudioRecorder'
 
 export default function StudentAssignment(){
+  // Default to your uploaded PDF in /public
   const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
-  const [pageIndex, setPageIndex] = useState(0)
+  const [pageIndex, setPageIndex]   = useState(0)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
+
   const [color, setColor] = useState('#1F75FE')
-  const [size, setSize]   = useState(6)
+  const [size,  setSize]  = useState(6)
   const [handMode, setHandMode] = useState(true) // default to Scroll
+
   const audioBlob = useRef<Blob | null>(null)
 
+  // IMPORTANT: use CSS size (not backing store size) so DrawCanvas aligns perfectly
   const onPdfReady = (_pdf:any, canvas: HTMLCanvasElement)=>{
-    setCanvasSize({ w: canvas.width, h: canvas.height })
+    const cssW = Math.round(parseFloat(getComputedStyle(canvas).width))
+    const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
+    setCanvasSize({ w: cssW, h: cssH })
   }
+
   const onAudio = (b: Blob)=>{ audioBlob.current = b }
+
   const submit = ()=>{
     alert(`Submit page ${pageIndex + 1}: audio=${!!audioBlob.current ? 'yes' : 'no'}`)
     audioBlob.current = null
@@ -25,13 +33,13 @@ export default function StudentAssignment(){
     <div style={{ minHeight:'100vh', padding: 12, paddingBottom: 96, background:'#fafafa' }}>
       <h2>Student Assignment (Hosted)</h2>
 
-      {/* Scrollable panel so two-finger gestures scroll */}
+      {/* Scrollable panel so two-finger gestures scroll/pinch */}
       <div
         style={{
-          height: 'calc(100vh - 140px)',
+          height: 'calc(100vh - 140px)',          // leaves room for header + toolbar
           overflowY: 'auto',
           WebkitOverflowScrolling: 'touch',
-          touchAction: 'auto',
+          touchAction: 'auto',                     // always allow scrolling here
           display: 'flex',
           alignItems: 'flex-start',
           justifyContent: 'center',
@@ -82,6 +90,7 @@ export default function StudentAssignment(){
           border:'1px solid #e5e7eb', borderRadius: 9999, padding: '10px 14px',
           boxShadow:'0 2px 8px rgba(0,0,0,0.15)'
         }}
+        aria-label={handMode ? 'Switch to Draw' : 'Switch to Scroll'}
       >
         {handMode ? '✋ Scroll' : '✍️ Draw'}
       </button>
@@ -101,7 +110,9 @@ export default function StudentAssignment(){
           </select>
         </label>
         <AudioRecorder maxSec={180} onBlob={onAudio} />
-        <button onClick={submit} style={{ background:'#22c55e', color:'#fff', padding:'6px 12px', borderRadius:8 }}>Submit</button>
+        <button onClick={submit} style={{ background:'#22c55e', color:'#fff', padding:'6px 12px', borderRadius:8 }}>
+          Submit
+        </button>
       </div>
     </div>
   )
