@@ -1,221 +1,220 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 
-type Tool = 'pen' | 'highlighter' | 'eraser' | 'eraserObject'
-type Point = { x:number; y:number }
-type Stroke = { tool:'pen'|'highlighter'|'eraser'; color:string; size:number; points:Point[] }
-type HistoryAdd = { type:'add'; index:number }
-type HistoryRemove = { type:'remove'; index:number; stroke: Stroke }
-type HistoryItem = HistoryAdd | HistoryRemove
+export type StrokePoint = { x: number; y: number }
+export type Stroke = { color: string; size: number; tool: 'pen'|'highlighter'; pts: StrokePoint[] }
+export type StrokesPayload = { strokes: Stroke[] }
 
 export type DrawCanvasHandle = {
-  undo: () => void
-  getStrokes: () => any
-  loadStrokes: (data:any) => void
+  getStrokes: () => StrokesPayload
+  loadStrokes: (data: StrokesPayload) => void
   clearStrokes: () => void
+  undo: () => void
 }
 
-function distPointToSeg(px:number, py:number, x1:number, y1:number, x2:number, y2:number){
-  const vx = x2 - x1, vy = y2 - y1, wx = px - x1, wy = py - y1
-  const c1 = vx*wx + vy*wy
-  if (c1 <= 0) return Math.hypot(px - x1, py - y1)
-  const c2 = vx*vx + vy*vy
-  if (c2 <= c1) return Math.hypot(px - x2, py - y2)
-  const b = c1 / c2, bx = x1 + b*vx, by = y1 + b*vy
-  return Math.hypot(px - bx, py - by)
-}
-function segsBBoxOverlap(ax:number, ay:number, bx:number, by:number, cx:number, cy:number, dx:number, dy:number, pad:number){
-  const min1x = Math.min(ax, bx) - pad, max1x = Math.max(ax, bx) + pad
-  const min1y = Math.min(ay, by) - pad, max1y = Math.max(ay, by) + pad
-  const min2x = Math.min(cx, dx) - pad, max2x = Math.max(cx, dx) + pad
-  const min2y = Math.min(cy, dy) - pad, max2y = Math.max(cy, dy) + pad
-  return !(max1x < min2x || max2x < min1x || max1y < min2y || max2y < min1y)
+function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.lineWidth = s.size
+  if (s.tool === 'highlighter') {
+    ctx.globalAlpha = 0.35
+  } else {
+    ctx.globalAlpha = 1
+  }
+  ctx.strokeStyle = s.color
+  ctx.beginPath()
+  for (let i = 0; i < s.pts.length; i++) {
+    const p = s.pts[i]
+    if (i === 0) ctx.moveTo(p.x, p.y)
+    else ctx.lineTo(p.x, p.y)
+  }
+  ctx.stroke()
+  ctx.restore()
 }
 
-export default forwardRef<DrawCanvasHandle, {
-  width:number; height:number; color:string; size:number; mode:'scroll'|'draw'; tool:Tool
-}>(function DrawCanvas({ width, height, color, size, mode, tool }, ref){
-
+export default forwardRef(function DrawCanvas(
+  {
+    width, height,
+    color, size,
+    mode, // 'scroll' | 'draw'
+    tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'  (erasers handled outside)
+  }:{
+    width:number; height:number
+    color:string; size:number
+    mode:'scroll'|'draw'
+    tool:'pen'|'highlighter'|'eraser'|'eraserObject'
+  },
+  ref
+){
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const ctxRef    = useRef<CanvasRenderingContext2D|null>(null)
+  const ctxRef = useRef<CanvasRenderingContext2D|null>(null)
+  const strokes = useRef<Stroke[]>([])
+  const current = useRef<Stroke|null>(null)
 
-  const drawing   = useRef(false)
-  const activeId  = useRef<number|null>(null)
-  const usingPen  = useRef(false)
+  // Pointer state
+  const activePointers = useRef<Set<number>>(new Set()) // track non-pen pointers for two-finger detection
+  const drawingPointerId = useRef<number|null>(null)     // the pointer currently drawing
+  const drawingIsPen = useRef<boolean>(false)
 
-  const pendingId  = useRef<number|null>(null)
-  const pendingPos = useRef<Point|null>(null)
-  const pendingTO  = useRef<number|null>(null)
-  const PENDING_MS = 60
-  const MOVE_THRESH= 8
-
-  const strokesRef = useRef<Stroke[]>([])
-  const liveStroke = useRef<Stroke|null>(null)
-
-  const sweeping   = useRef(false)
-  const sweepLast  = useRef<Point|null>(null)
-  const SWEEP_STEP = 2
-
-  const historyRef = useRef<HistoryItem[]>([])
-  const HISTORY_LIMIT = 500
-  const pushHistory = (h:HistoryItem)=>{ const a=historyRef.current; a.push(h); if(a.length>HISTORY_LIMIT) a.shift() }
-
-  const resizeBackingStore = ()=>{
-    const c = canvasRef.current!, dpr = Math.max(1, window.devicePixelRatio || 1)
-    const needW = Math.floor(width*dpr), needH = Math.floor(height*dpr)
-    if (c.width!==needW) c.width=needW
-    if (c.height!==needH) c.height=needH
-    c.style.width = `${width}px`; c.style.height = `${height}px`
-    const k = c.getContext('2d')!; k.setTransform(dpr,0,0,dpr,0,0); ctxRef.current = k
+  const redraw = ()=>{
+    const ctx = ctxRef.current!
+    ctx.clearRect(0,0, ctx.canvas.width, ctx.canvas.height)
+    for (const s of strokes.current) drawStroke(ctx, s)
+    if (current.current) drawStroke(ctx, current.current)
   }
-  const clearCanvas = ()=>{
-    const c = canvasRef.current!, k = ctxRef.current!
-    k.save(); k.setTransform(1,0,0,1,0,0); k.clearRect(0,0,c.width,c.height)
-    const dpr = Math.max(1, window.devicePixelRatio || 1); k.setTransform(dpr,0,0,dpr,0,0); k.restore()
-  }
-  const applyStrokeStyle = (s:Stroke)=>{
-    const k = ctxRef.current!; k.lineCap='round'; k.lineJoin='round'
-    if (s.tool==='eraser'){ k.globalCompositeOperation='destination-out'; k.globalAlpha=1; k.strokeStyle='#000'; k.lineWidth=s.size*2 }
-    else if (s.tool==='highlighter'){ k.globalCompositeOperation='source-over'; k.globalAlpha=0.35; k.strokeStyle=s.color; k.lineWidth=s.size*2 }
-    else { k.globalCompositeOperation='source-over'; k.globalAlpha=1; k.strokeStyle=s.color; k.lineWidth=s.size }
-  }
-  const drawStroke = (s:Stroke)=>{
-    const k = ctxRef.current!; if(!s.points.length) return
-    applyStrokeStyle(s)
-    k.beginPath(); k.moveTo(s.points[0].x, s.points[0].y)
-    for(let i=1;i<s.points.length;i++){ const p=s.points[i]; k.lineTo(p.x,p.y) }
-    if (s.points.length===1){ const p=s.points[0]; k.lineTo(p.x+0.001,p.y+0.001) }
-    k.stroke()
-  }
-  const redrawAll = ()=>{ clearCanvas(); for (const s of strokesRef.current) drawStroke(s) }
-
-  useImperativeHandle(ref, ()=>({
-    undo(){
-      if (liveStroke.current){ liveStroke.current=null; redrawAll(); return }
-      const h = historyRef.current; if(!h.length) return
-      const last = h.pop()!
-      if (last.type==='add'){ if(strokesRef.current.length){ strokesRef.current.pop(); redrawAll() } }
-      else { const idx=Math.max(0,Math.min(last.index,strokesRef.current.length)); strokesRef.current.splice(idx,0,last.stroke); redrawAll() }
-    },
-    getStrokes(){ return { strokes: strokesRef.current } },
-    loadStrokes(data:any){ strokesRef.current = (data && Array.isArray(data.strokes)) ? data.strokes : []; redrawAll() },
-    clearStrokes(){ strokesRef.current = []; historyRef.current = []; liveStroke.current=null; redrawAll() },
-  }), [])
-
-  const applyPolicy = ()=>{
-    const c = canvasRef.current!; if (mode==='scroll'){ c.style.pointerEvents='none'; c.style.touchAction='auto' }
-    else { c.style.pointerEvents='auto'; c.style.touchAction='none' }
-  }
-
-  useEffect(()=>{ if(!drawing.current){ resizeBackingStore(); applyPolicy(); redrawAll() } }, [width,height,mode])
 
   useEffect(()=>{
-    const c = canvasRef.current!; resizeBackingStore(); applyPolicy()
-    const rect = ()=> c.getBoundingClientRect()
-    const toLocal = (x:number,y:number)=>{ const r=rect(); return { x:x-r.left, y:y-r.top } }
+    const c = canvasRef.current!
+    c.width = width; c.height = height
+    const ctx = c.getContext('2d')!
+    ctxRef.current = ctx
+    redraw()
+  }, [width, height])
 
-    const clearPending = ()=>{ if(pendingTO.current) window.clearTimeout(pendingTO.current); pendingTO.current=null; pendingId.current=null; pendingPos.current=null }
-    const commitPending = ()=>{
-      if(pendingId.current===null || !pendingPos.current) return
-      drawing.current=true; activeId.current=pendingId.current
-      liveStroke.current = { tool:(tool==='eraser'?'eraser':tool==='highlighter'?'highlighter':'pen'), color, size, points:[pendingPos.current] }
-      drawStroke(liveStroke.current); clearPending()
+  useEffect(()=>{
+    // Interaction policy:
+    // - In scroll mode: let events pass through to parent (no drawing).
+    // - In draw mode: capture single-finger / pen; allow two-finger to scroll by disabling drawing.
+    const c = canvasRef.current!
+    if (mode === 'scroll') {
+      c.style.pointerEvents = 'none'
+      c.style.touchAction = 'auto'
+    } else {
+      c.style.pointerEvents = 'auto'
+      // allow pinch/scroll gestures; we’ll gate drawing ourselves
+      c.style.touchAction = 'pan-y pinch-zoom'
+    }
+  }, [mode])
+
+  useImperativeHandle(ref, ()=>({
+    getStrokes: ()=> ({ strokes: strokes.current }),
+    loadStrokes: (data: StrokesPayload)=>{
+      strokes.current = Array.isArray(data?.strokes) ? data.strokes : []
+      current.current = null
+      redraw()
+    },
+    clearStrokes: ()=>{
+      strokes.current = []
+      current.current = null
+      redraw()
+    },
+    undo: ()=>{
+      strokes.current.pop()
+      redraw()
+    }
+  }))
+
+  const getPos = (e: PointerEvent)=>{
+    const c = canvasRef.current!
+    const r = c.getBoundingClientRect()
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
+  }
+
+  useEffect(()=>{
+    const c = canvasRef.current!
+    const ctx = ctxRef.current!
+    if (!c || !ctx) return
+
+    const shouldDrawWithThisPointer = (e: PointerEvent) => {
+      if (mode !== 'draw') return false
+
+      // If at least two non-pen pointers are on screen, we’re in scroll gesture → do not draw.
+      const fingersDown = activePointers.current.size
+      const isPen = e.pointerType === 'pen'
+
+      // Allow Apple Pencil to draw even with palms down.
+      if (isPen) return true
+
+      // Non-pen (finger/mouse): only draw if single pointer and we're not currently panning.
+      return fingersDown <= 1
     }
 
-    const hitStrokeBySweepSeg = (ax:number,ay:number,bx:number,by:number):number|null=>{
-      const arr=strokesRef.current
-      for(let i=arr.length-1;i>=0;i--){
-        const s=arr[i]; if(s.tool==='eraser') continue
-        const pts=s.points; const thresh=Math.max(12, s.tool==='highlighter'? s.size*2 : s.size*1.2)
-        for(let j=0;j<pts.length-1;j++){
-          const a=pts[j], b=pts[j+1]
-          if (!segsBBoxOverlap(ax,ay,bx,by, a.x,a.y,b.x,b.y,thresh)) continue
-          const d=distPointToSeg(ax,ay, a.x,a.y, b.x,b.y); if(d<=thresh) return i
-        }
-        if(pts.length===1){ const d1=distPointToSeg(pts[0].x,pts[0].y, ax,ay,bx,by); if(d1<=thresh) return i }
-      }
-      return null
-    }
-    const sweepEraseBetween = (p0:Point,p1:Point)=>{
-      const dx=p1.x-p0.x, dy=p1.y-p0.y, len=Math.hypot(dx,dy), steps=Math.max(1,Math.floor(len/SWEEP_STEP))
-      let prev=p0
-      for(let i=1;i<=steps;i++){
-        const t=i/steps, cur={ x:p0.x+dx*t, y:p0.y+dy*t }
-        const idx=hitStrokeBySweepSeg(prev.x,prev.y, cur.x,cur.y)
-        if(idx!==null){ const [removed]=strokesRef.current.splice(idx,1); pushHistory({type:'remove',index:idx,stroke:removed}); redrawAll() }
-        prev=cur
-      }
+    const onPointerDown = (e: PointerEvent)=>{
+      // Track non-pen pointers for “two-finger” detection
+      if (e.pointerType !== 'pen') activePointers.current.add(e.pointerId)
+
+      if (!shouldDrawWithThisPointer(e)) return
+
+      drawingPointerId.current = e.pointerId
+      drawingIsPen.current = e.pointerType === 'pen'
+      c.setPointerCapture(e.pointerId)
+
+      const p = getPos(e)
+      current.current = { color, size, tool: tool === 'highlighter' ? 'highlighter' : 'pen', pts: [p] }
+      redraw()
+
+      // prevent a “long press” blue selection on iPad
+      if ((e as any).preventDefault) e.preventDefault()
     }
 
-    const onPointerDown = (e:PointerEvent)=>{
-      if (mode!=='draw') return
-      const p = toLocal(e.clientX,e.clientY); usingPen.current = (e.pointerType==='pen')
+    const onPointerMove = (e: PointerEvent)=>{
+      // If we’re not the active drawing pointer, ignore.
+      if (drawingPointerId.current !== e.pointerId) {
+        // also update fingers count for scroll detection
+        return
+      }
+      if (!current.current) return
 
-      if (tool==='eraserObject'){
-        sweeping.current=true; sweepLast.current=p
-        const idx = (():number|null=> hitStrokeBySweepSeg(p.x,p.y,p.x+0.001,p.y+0.001))()
-        if(idx!==null){ const [removed]=strokesRef.current.splice(idx,1); pushHistory({type:'remove',index:idx,stroke:removed}); redrawAll() }
-        e.preventDefault(); return
+      if (!shouldDrawWithThisPointer(e)) {
+        // Gesture changed mid-draw (second finger went down) → end stroke
+        strokes.current.push(current.current)
+        current.current = null
+        drawingPointerId.current = null
+        redraw()
+        return
       }
 
-      if (usingPen.current || e.pointerType==='mouse'){
-        drawing.current=true; activeId.current=e.pointerId
-        liveStroke.current={ tool:(tool==='eraser'?'eraser':tool==='highlighter'?'highlighter':'pen'), color, size, points:[p] }
-        drawStroke(liveStroke.current); c.setPointerCapture?.(e.pointerId); e.preventDefault(); return
-      }
-
-      // touch single-finger: delay to avoid accidental dot
-      pendingId.current=e.pointerId; pendingPos.current=p
-      if(pendingTO.current) window.clearTimeout(pendingTO.current)
-      pendingTO.current=window.setTimeout(()=>{ if(pendingId.current===e.pointerId){ commitPending(); c.setPointerCapture?.(e.pointerId) } }, PENDING_MS)
+      const p = getPos(e)
+      current.current.pts.push(p)
+      redraw()
+      if ((e as any).preventDefault) e.preventDefault()
     }
 
-    const onPointerMove = (e:PointerEvent)=>{
-      const pt = toLocal(e.clientX,e.clientY)
-      if (tool==='eraserObject' && sweeping.current && sweepLast.current){ sweepEraseBetween(sweepLast.current,pt); sweepLast.current=pt; e.preventDefault(); return }
-      if (pendingId.current!==null && e.pointerId===pendingId.current && pendingPos.current){
-        const r=rect(), dx=e.clientX-(r.left+pendingPos.current.x), dy=e.clientY-(r.top+pendingPos.current.y)
-        if (Math.hypot(dx,dy)>=MOVE_THRESH){ commitPending(); c.setPointerCapture?.(e.pointerId) }
+    const endStroke = ()=>{
+      if (current.current) {
+        // discard tiny tap with a single point
+        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        current.current = null
+        redraw()
       }
-      if (!drawing.current || activeId.current!==e.pointerId || !liveStroke.current) return
-      liveStroke.current.points.push(pt)
-      const k=ctxRef.current!, s=liveStroke.current, n=s.points.length
-      if (n>=2){ applyStrokeStyle(s); k.beginPath(); const a=s.points[n-2], b=s.points[n-1]; k.moveTo(a.x,a.y); k.lineTo(b.x,b.y); k.stroke() }
-      e.preventDefault()
+      drawingPointerId.current = null
     }
 
-    const endStroke = (e:PointerEvent)=>{
-      if (tool==='eraserObject' && sweeping.current){ sweeping.current=false; sweepLast.current=null }
-      if (pendingId.current!==null && e.pointerId===pendingId.current) clearPending()
-      if (drawing.current && activeId.current===e.pointerId){
-        drawing.current=false; activeId.current=null
-        if (liveStroke.current){ strokesRef.current.push(liveStroke.current); pushHistory({type:'add', index:strokesRef.current.length-1}); liveStroke.current=null }
-        c.releasePointerCapture?.(e.pointerId); applyPolicy()
-      }
+    const onPointerUp = (e: PointerEvent)=>{
+      // remove from active finger set if non-pen
+      if (e.pointerType !== 'pen') activePointers.current.delete(e.pointerId)
+      if (drawingPointerId.current === e.pointerId) endStroke()
+      try { c.releasePointerCapture(e.pointerId) } catch {}
     }
 
-    c.addEventListener('pointerdown', onPointerDown, {passive:false})
-    c.addEventListener('pointermove', onPointerMove, {passive:false})
-    c.addEventListener('pointerup', endStroke, {passive:false})
-    c.addEventListener('pointercancel', endStroke, {passive:false})
-    c.addEventListener('lostpointercapture', endStroke, {passive:false})
+    const onPointerCancel = (e: PointerEvent)=>{
+      if (e.pointerType !== 'pen') activePointers.current.delete(e.pointerId)
+      if (drawingPointerId.current === e.pointerId) endStroke()
+      try { c.releasePointerCapture(e.pointerId) } catch {}
+    }
 
-    const onResize = ()=>{ if(!drawing.current){ resizeBackingStore(); redrawAll() } }
-    window.addEventListener('resize', onResize)
+    c.addEventListener('pointerdown', onPointerDown, { passive:false })
+    c.addEventListener('pointermove', onPointerMove, { passive:false })
+    c.addEventListener('pointerup', onPointerUp, { passive:true })
+    c.addEventListener('pointercancel', onPointerCancel, { passive:true })
 
     return ()=>{
       c.removeEventListener('pointerdown', onPointerDown as any)
       c.removeEventListener('pointermove', onPointerMove as any)
-      c.removeEventListener('pointerup', endStroke as any)
-      c.removeEventListener('pointercancel', endStroke as any)
-      c.removeEventListener('lostpointercapture', endStroke as any)
-      window.removeEventListener('resize', onResize)
-      if (pendingTO.current) window.clearTimeout(pendingTO.current)
+      c.removeEventListener('pointerup', onPointerUp as any)
+      c.removeEventListener('pointercancel', onPointerCancel as any)
+      activePointers.current.clear()
+      drawingPointerId.current = null
+      drawingIsPen.current = false
     }
-  }, [mode,color,size,tool])
+  }, [mode, color, size, tool])
 
-  return <canvas ref={canvasRef} width={1} height={1}
-    style={{ position:'absolute', inset:0, zIndex:10, display:'block',
-      width:`${width}px`, height:`${height}px`, WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}
-    onContextMenu={(e)=> e.preventDefault()}
-  />
+  return (
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      style={{ position:'absolute', inset:0, zIndex:10, display:'block', width:'100%', height:'100%', touchAction:'pan-y pinch-zoom', background:'transparent' }}
+    />
+  )
 })
