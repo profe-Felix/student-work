@@ -35,20 +35,25 @@ export default function StudentAssignment(){
 
       {/* Scrollable panel so two-finger gestures scroll/pinch */}
       <div
-        style={{
-          height: 'calc(100vh - 140px)',          // leaves room for header + toolbar
-          overflowY: 'auto',
-          WebkitOverflowScrolling: 'touch',
-          touchAction: 'auto',                     // always allow scrolling here
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'center',
-          padding: 12,
-          background: '#fff',
-          border: '1px solid #eee',
-          borderRadius: 12
-        }}
-      >
+  style={{
+    height: 'calc(100vh - 140px)',
+    overflowY: 'auto',
+    WebkitOverflowScrolling: 'touch',
+    touchAction: 'pan-y pinch-zoom',   // <— was 'auto'
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    padding: 12,
+    background: '#fff',
+    border: '1px solid #eee',
+    borderRadius: 12,
+    // avoid text selection/callout on long palm rests
+    WebkitUserSelect: 'none',
+    userSelect: 'none',
+    WebkitTouchCallout: 'none'
+  }}
+>
+
         {/* PDF + Draw stack (no touchAction here) */}
         <div
           style={{
