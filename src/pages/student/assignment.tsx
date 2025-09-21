@@ -13,7 +13,7 @@ import {
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
 const pdfStoragePath = 'pdfs/aprende-m2.pdf'
-const AUTO_SUBMIT_ON_PAGE_CHANGE = true           // <— re-enabled
+const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
 
@@ -154,7 +154,6 @@ export default function StudentAssignment(){
         const draft = loadDraft(studentId, assignmentTitle, pageIndex)
         if (draft?.strokes) {
           try { drawRef.current?.loadStrokes(normalizeStrokes(draft.strokes)) } catch {}
-          // prime local hash from draft
           try { lastLocalHash.current = await hashStrokes(normalizeStrokes(draft.strokes)) } catch {}
         } else {
           lastLocalHash.current = ''
@@ -170,7 +169,6 @@ export default function StudentAssignment(){
             const norm = normalizeStrokes(strokes)
             if (Array.isArray(norm.strokes) && norm.strokes.length > 0) {
               const h = await hashStrokes(norm)
-              // only apply if we don't already have local unsaved ink
               if (!localDirty.current) {
                 drawRef.current?.loadStrokes(norm)
                 lastAppliedServerHash.current = h
@@ -179,8 +177,9 @@ export default function StudentAssignment(){
             } else if (!draft?.strokes) {
               const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
               if (cached?.strokes) {
-                drawRef.current?.loadStrokes(normalizeStrokes(cached.strokes))
-                lastLocalHash.current = await hashStrokes(normalizeStrokes(cached.strokes))
+                const normC = normalizeStrokes(cached.strokes)
+                drawRef.current?.loadStrokes(normC)
+                lastLocalHash.current = await hashStrokes(normC)
               }
             }
           }
@@ -198,7 +197,7 @@ export default function StudentAssignment(){
     return ()=>{ cancelled=true }
   }, [pageIndex, studentId])
 
-  /* ---------- Local dirty watcher (no DrawCanvas change needed) ---------- */
+  /* ---------- Local dirty watcher ---------- */
   useEffect(()=>{
     let id: number | null = null
     const tick = async ()=>{
@@ -207,11 +206,9 @@ export default function StudentAssignment(){
         if (!data) return
         const h = await hashStrokes(data)
         if (h !== lastLocalHash.current) {
-          // content changed locally
           localDirty.current = true
           dirtySince.current = Date.now()
           lastLocalHash.current = h
-          // opportunistic draft save
           saveDraft(studentId, assignmentTitle, pageIndex, data)
         }
       } catch {}
@@ -249,7 +246,8 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeunload as any)
+      // FIX: correct casing here
+      window.removeEventListener('beforeunload', onBeforeUnload)
     }
   }, [pageIndex, studentId])
 
@@ -345,9 +343,7 @@ export default function StudentAssignment(){
 
   /* ---------- Realtime + polling (defensive) ---------- */
   const reloadFromServer = async ()=>{
-    // ignore reloads right after a save
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
-    // if user has unsaved work in the last 5s, don't stomp it
     if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
 
     try{
@@ -364,9 +360,8 @@ export default function StudentAssignment(){
       if (!hasServerInk) return
 
       const serverHash = await hashStrokes(normalized)
-      if (serverHash === lastAppliedServerHash.current) return // already applied
+      if (serverHash === lastAppliedServerHash.current) return
 
-      // if local differs but not dirty, accept server
       if (!localDirty.current) {
         drawRef.current?.loadStrokes(normalized)
         saveSubmittedCache(studentId, assignmentTitle, pageIndex, normalized)
@@ -388,7 +383,6 @@ export default function StudentAssignment(){
           : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = ids
 
-        // Only react to stroke artifacts (not raw submission shells)
         const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
           .on('postgres_changes', {
             event: '*', schema: 'public', table: 'artifacts',
