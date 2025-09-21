@@ -6,13 +6,14 @@ import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/D
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
-  supabase, getPageId, getAudioUrl, // add getPageId
+  supabase, getPageId,
 } from '../../lib/db'
 import { subscribeToAssignment, type AutoFollowPayload, type FocusPayload } from '../../lib/realtime'
 
 /** Fallback constants (used only if no teacher presence yet) */
 const FALLBACK_ASSIGNMENT_TITLE = 'Handwriting - Daily'
-const FALLBACK_PDF_STORAGE = 'pdfs/aprende-m2.pdf'
+/** Served from your site bundle (public/aprende-m2.pdf), not Supabase: */
+const FALLBACK_PDF_URL = `${import.meta.env.BASE_URL || '/'}aprende-m2.pdf`
 
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
@@ -101,10 +102,11 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
-  // Assignment & PDF chosen by teacher (falls back to default)
+  // Assignment chosen by teacher (falls back to default)
   const [assignmentId, setAssignmentId] = useState<string | null>(null)
-  const [pdfPath, setPdfPath] = useState<string | null>(null) // "bucket/key"
-  const [pdfUrl, setPdfUrl] = useState<string>('')            // actual URL for <PdfCanvas>
+
+  // PDF that we actually render
+  const [pdfUrl, setPdfUrl] = useState<string>('')   // start empty, we’ll set fallback in useEffect
 
   // page state
   const [pageIndex, setPageIndex]   = useState(0)
@@ -145,7 +147,7 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // Helper: convert "bucket/key" to public URL
+  // Convert "bucket/key" (from teacher) to public URL
   const toPublicUrl = (storagePath: string) => {
     const [bucket, ...rest] = storagePath.split('/')
     const path = rest.join('/')
@@ -155,14 +157,13 @@ export default function StudentAssignment(){
 
   // ==== Teacher presence / auto-follow ====
   useEffect(() => {
-    // We subscribe to the "fallback" assignment channel so presence can tell us the real one.
+    // Subscribe to teacher channel keyed by fallback assignment title (so we learn the real one)
     const ch = subscribeToAssignment(FALLBACK_ASSIGNMENT_TITLE, {
       onAutoFollow: (p: AutoFollowPayload) => {
         if (p.assignmentId) setAssignmentId(p.assignmentId)
         if (typeof p.teacherPageIndex === 'number') setPageIndex(p.teacherPageIndex)
         setAllowedPages(p.allowedPages ?? null)
         if (p.assignmentPdfPath) {
-          setPdfPath(p.assignmentPdfPath)
           setPdfUrl(toPublicUrl(p.assignmentPdfPath))
         }
       },
@@ -180,7 +181,7 @@ export default function StudentAssignment(){
   // Fallback initial PDF URL if teacher hasn't broadcast yet
   useEffect(() => {
     if (!pdfUrl) {
-      setPdfUrl(toPublicUrl(FALLBACK_PDF_STORAGE))
+      setPdfUrl(FALLBACK_PDF_URL)
     }
   }, [pdfUrl])
 
@@ -334,7 +335,6 @@ export default function StudentAssignment(){
       // need assignment & page ids
       let aId = assignmentId ?? undefined
       if (!aId) {
-        // no presence yet — stop, we can't submit to unknown assignment
         showToast('Waiting for teacher assignment…', 'err', 1500)
         setSaving(false); submitInFlight.current=false; return
       }
@@ -380,9 +380,9 @@ export default function StudentAssignment(){
     const hasAudio = !!audioBlob.current
 
     if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasAudio)) {
-      try { await submit() } catch { 
+      try { await submit() } catch {
         const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-        try { saveDraft(studentId, titleKey, pageIndex, current) } catch {} 
+        try { saveDraft(studentId, titleKey, pageIndex, current) } catch {}
       }
     } else {
       const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
@@ -392,7 +392,7 @@ export default function StudentAssignment(){
     setPageIndex(nextIndex)
   }
 
-  // polling to pick up server updates (kept from your original)
+  // polling to pick up server updates
   const reloadFromServer = async ()=>{
     if (!assignmentId) return
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
@@ -456,7 +456,6 @@ export default function StudentAssignment(){
   }, [studentId, pageIndex, assignmentId])
 
   /* ---------- UI ---------- */
-
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
       ...(toolbarOnRight ? { paddingRight:130 } : { paddingLeft:130 }),
@@ -499,7 +498,6 @@ export default function StudentAssignment(){
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
           <div style={{ position:'absolute', inset:0, zIndex:0 }}>
-            {/* Use teacher-selected PDF url, fallback to default */}
             <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
           </div>
           <div style={{ position:'absolute', inset:0, zIndex:10, pointerEvents: focusOn ? 'none' : 'auto' }}>
@@ -514,7 +512,7 @@ export default function StudentAssignment(){
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
           zIndex: 10020, display:'flex', gap:10, alignItems:'center',
-          background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
+          background:'#fff', border:'1px solid '#e5e7eb', borderRadius:999,
           boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
         }}
       >
@@ -537,8 +535,8 @@ export default function StudentAssignment(){
         </button>
       </div>
 
-      {/* (Your color/toolbar UI remains unchanged below; keep what you already had) */}
-      {/* ... existing toolbar & audio recorder UI ... */}
+      {/* Your toolbar + audio UI (unchanged) */}
+      {/* ... keep your existing toolbar/audio components here ... */}
 
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
     </div>
