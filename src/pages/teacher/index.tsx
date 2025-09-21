@@ -1,15 +1,14 @@
-//src/pages/teacher/index.tsx
-import { useEffect, useMemo, useRef, useState } from 'react'
+// src/pages/teacher/index.tsx
+import { useEffect, useMemo, useState } from 'react'
 import {
   listAssignments,
   listPages,
+  listLatestByPage,
   getAudioUrl,
   type AssignmentRow,
   type PageRow,
-  supabase
 } from '../../lib/db'
-import TeacherSyncBar from '../../components/TeacherSyncBar'
-import PdfDropZone from '../../components/PdfDropZone'
+import PdfDropZone from '../../components/PdfDropZone' // ⬅️ NEW
 
 type LatestCell = {
   submission_id: string
@@ -17,73 +16,20 @@ type LatestCell = {
   audioUrl?: string
 } | null
 
+// Simple roster: A_01..A_28 (matches your student format)
 const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
 
 export default function TeacherDashboard() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
-  const [assignmentId, setAssignmentId] = useState<string>('')
+  const [assignmentId, setAssignmentId] = useState<string>('') // selected assignment id
 
   const [pages, setPages] = useState<PageRow[]>([])
-  const [pageId, setPageId] = useState<string>('')
-
-  const pageIndex = useMemo(
-    () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
-    [pages, pageId]
-  )
+  const [pageId, setPageId] = useState<string>('') // selected page id
 
   const [loading, setLoading] = useState(false)
-  const [grid, setGrid] = useState<Record<string, LatestCell>>({})
+  const [grid, setGrid] = useState<Record<string, LatestCell>>({}) // key = student_id
 
-  // fetch helper
-  const refreshGrid = useRef<(why?: string) => Promise<void>>(async () => {})
-  refreshGrid.current = async (_why?: string) => {
-    if (!assignmentId || !pageId) return
-    setLoading(true)
-    try {
-      const next: Record<string, LatestCell> = {}
-      for (let i = 0; i < STUDENTS.length; i += 6) {
-        const batch = STUDENTS.slice(i, i + 6)
-        const results: Array<readonly [string, LatestCell] | null> = await Promise.all(
-          batch.map(async (sid: string) => {
-            const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
-            if (!latest) return [sid, null] as const
-            const hasStrokes = !!latest.artifacts?.some(
-              (a: any) => a.kind === 'strokes' && a.strokes_json
-            )
-            const audioArt = latest.artifacts?.find(
-              (a: any) => a.kind === 'audio' && a.storage_path
-            )
-            let audioUrl: string | undefined
-            if (audioArt?.storage_path) {
-              try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
-            }
-            return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
-          })
-        )
-        for (const pair of results) {
-          if (!pair) continue
-          const [sid, cell] = pair
-          next[sid] = cell
-        }
-        setGrid((curr) => ({ ...curr, ...next }))
-      }
-    } catch (e) {
-      console.error('refreshGrid failed', e)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // debounce
-  const debTimer = useRef<number | null>(null)
-  const debouncedRefresh = (delay = 300) => {
-    if (debTimer.current) window.clearTimeout(debTimer.current)
-    debTimer.current = window.setTimeout(() => {
-      refreshGrid.current('debounced')
-    }, delay)
-  }
-
-  // initial loads
+  // Load assignments on mount
   useEffect(() => {
     (async () => {
       try {
@@ -97,6 +43,7 @@ export default function TeacherDashboard() {
     })()
   }, [])
 
+  // When assignment changes, load its pages and pick page 0 if exists
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
@@ -111,40 +58,53 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
+  // Load latest per student for the selected page
   useEffect(() => {
     if (!assignmentId || !pageId) return
-    setGrid({})
-    refreshGrid.current('page change')
+    let cancelled = false
+    setLoading(true)
+    ;(async () => {
+      try {
+        const nextGrid: Record<string, LatestCell> = {}
+        for (let i = 0; i < STUDENTS.length; i += 6) {
+          const batch = STUDENTS.slice(i, i + 6)
+          const results = await Promise.all(
+            batch.map(async (sid) => {
+              // fetch latest-for-student
+              const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
+              if (!latest) return [sid, null] as const
+
+              const hasStrokes = !!latest.artifacts?.some(a => a.kind === 'strokes' && a.strokes_json)
+              const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
+              let audioUrl: string | undefined
+              if (audioArt?.storage_path) {
+                try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
+              }
+              return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
+            })
+          )
+
+          for (const pair of results) {
+            if (!pair) continue
+            const [sid, cell] = pair
+            nextGrid[sid] = cell
+          }
+          if (cancelled) return
+          setGrid(curr => ({ ...curr, ...nextGrid }))
+        }
+      } catch (e) {
+        console.error('load latest grid failed', e)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+
+    return () => { cancelled = true }
   }, [assignmentId, pageId])
 
-  // realtime refreshers
-  useEffect(() => {
-    if (!pageId) return
-
-    // submissions on this page
-    const ch1 = supabase.channel(`tgrid-subs-${pageId}`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'submissions',
-        filter: `page_id=eq.${pageId}`
-      }, () => debouncedRefresh(200))
-      .subscribe()
-
-    // artifacts anywhere (audio / strokes)
-    const ch2 = supabase.channel(`tgrid-arts`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'artifacts'
-      }, () => debouncedRefresh(300))
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(ch1)
-      supabase.removeChannel(ch2)
-      if (debTimer.current) { window.clearTimeout(debTimer.current); debTimer.current = null }
-    }
-  }, [pageId])
-
-  // helper: get latest with artifacts per student for this page
+  // Small helper here (since db.ts returns latest w/out student filter)
   async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
+    const { supabase } = await import('../../lib/db')
     const { data: sub, error: se } = await supabase
       .from('submissions')
       .select('id, student_id, created_at, artifacts(id,kind,strokes_json,storage_path,created_at)')
@@ -158,18 +118,7 @@ export default function TeacherDashboard() {
       console.error('per-student latest fetch error', se)
       return null
     }
-    return sub as unknown as {
-      id: string
-      student_id: string
-      created_at: string
-      artifacts: Array<{
-        id: string
-        kind: string
-        strokes_json?: unknown
-        storage_path?: string
-        created_at: string
-      }>
-    } | null
+    return sub as any
   }
 
   const currentAssignment = useMemo(
@@ -185,16 +134,24 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
-      <div style={{ margin: '12px 0 16px' }}>
-        <PdfDropZone onCreated={(newId: string) => setAssignmentId(newId)} />
+      {/* ⬇️ NEW: Drag & drop a PDF to create a fresh assignment */}
+      <div style={{ margin: '12px 0 18px' }}>
+        <PdfDropZone
+          onCreated={(newId) => {
+            setAssignmentId(newId)
+            setPageId('') // will load pages and pick first
+          }}
+        />
       </div>
 
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 16px' }}>
+        {/* Assignment select */}
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Assignment</span>
           <select
             value={assignmentId}
-            onChange={(e) => setAssignmentId(e.target.value)}
+            onChange={(e) => { setAssignmentId(e.target.value); setPageId('') }}
             style={{ padding: '6px 8px', minWidth: 260 }}
           >
             {assignments.map(a => (
@@ -203,6 +160,7 @@ export default function TeacherDashboard() {
           </select>
         </label>
 
+        {/* Page select */}
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Page</span>
           <select
@@ -220,25 +178,9 @@ export default function TeacherDashboard() {
         </label>
 
         {loading && <span style={{ color: '#6b7280' }}>Loading…</span>}
-        <button
-          onClick={() => refreshGrid.current('manual')}
-          style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
-          title="Force refresh"
-        >
-          Refresh
-        </button>
       </div>
 
-      {assignmentId && pageId && (
-        <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
-          <TeacherSyncBar
-            assignmentId={assignmentId}
-            pageId={pageId}
-            pageIndex={pageIndex}
-          />
-        </div>
-      )}
-
+      {/* Grid */}
       <div
         style={{
           display: 'grid',
@@ -281,6 +223,7 @@ export default function TeacherDashboard() {
         })}
       </div>
 
+      {/* Footnote */}
       <div style={{ marginTop: 16, fontSize: 12, color: '#6b7280' }}>
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
