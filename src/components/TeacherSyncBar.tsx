@@ -28,7 +28,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     const next = !autoFollow;
     setAutoFollow(next);
     await publishAutoFollow(chRef.current, next);
-    if (next) await publishSetPage(chRef.current, pageId, pageIndex); // seed
+    if (next) await publishSetPage(chRef.current, pageId, pageIndex);
   }
 
   async function toggleFocus() {
@@ -38,7 +38,6 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     await publishFocus(chRef.current, next, lockNav);
   }
 
-  // auto-follow re-push on page change
   useEffect(() => {
     if (autoFollow && chRef.current) publishSetPage(chRef.current, pageId, pageIndex);
   }, [autoFollow, pageId, pageIndex]);
@@ -53,10 +52,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
       <label className="flex items-center gap-1">
         <input type="checkbox" checked={lockNav} onChange={() => setLockNav(v=>!v)} disabled={!focus}/> Lock nav
       </label>
-      <button
-        className={`px-3 py-1 rounded ${focus ? 'bg-red-600 text-white' : 'bg-gray-100'}`}
-        onClick={toggleFocus}
-      >
+      <button className={`px-3 py-1 rounded ${focus ? 'bg-red-600 text-white' : 'bg-gray-100'}`} onClick={toggleFocus}>
         {focus ? 'End Focus' : 'Start Focus'}
       </button>
     </div>
