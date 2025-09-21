@@ -1,4 +1,4 @@
-// src/main.tsx
+//src/main.tsx
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
