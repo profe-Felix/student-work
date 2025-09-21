@@ -7,9 +7,15 @@ import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission
 } from '../../lib/db'
 
+/** MVP constants (can parameterize later) */
 const studentId = 'A_01'
 const assignmentTitle = 'Handwriting - Daily'
 const pdfStoragePath = 'pdfs/aprende-m2.pdf'
+
+/** Kinder-proof: enable auto-submit when changing pages */
+const AUTO_SUBMIT_ON_PAGE_CHANGE = true
+/** Draft autosave interval (ms) */
+const DRAFT_INTERVAL_MS = 4000
 
 // Crayola 24
 const CRAYOLA_24 = [
@@ -46,6 +52,27 @@ function Swatch({ hex, selected, onClick }:{ hex:string; selected:boolean; onCli
 
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
+/** Draft helpers (localStorage per student/assignment/page) */
+const draftKey = (student:string, assignment:string, page:number)=>
+  `draft:${student}:${assignment}:${page}`
+
+function saveDraft(student:string, assignment:string, page:number, strokes:any){
+  try {
+    const payload = { t: Date.now(), strokes }
+    localStorage.setItem(draftKey(student, assignment, page), JSON.stringify(payload))
+  } catch {}
+}
+function loadDraft(student:string, assignment:string, page:number){
+  try {
+    const raw = localStorage.getItem(draftKey(student, assignment, page))
+    if (!raw) return null
+    return JSON.parse(raw) as { t:number, strokes:any }
+  } catch { return null }
+}
+function clearDraft(student:string, assignment:string, page:number){
+  try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
+}
+
 export default function StudentAssignment(){
   const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
   const [pageIndex, setPageIndex]   = useState(0)
@@ -70,25 +97,68 @@ export default function StudentAssignment(){
   }
   const onAudio = (b:Blob)=>{ audioBlob.current = b }
 
-  // Load per-page submission; if none, CLEAR strokes so pages don't leak ink
+  /** Load order for a page:
+   *  1) Draft (if exists) — kinder refresh-safe
+   *  2) Latest submitted from Supabase
+   *  3) Otherwise clear
+   */
   useEffect(()=>{
     let cancelled=false
     ;(async ()=>{
       try{
-        // stop any recording when page changes
+        // Stop any recording when page changes
         audioRef.current?.stop()
-        await ensureStudent(studentId)
-        const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
-        const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
-        if (cancelled) return
-        const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-        if (strokes) { drawRef.current?.loadStrokes(strokes) }
-        else { drawRef.current?.clearStrokes() } // <-- important: no leak across pages
+
+        // Try local draft first
+        const draft = loadDraft(studentId, assignmentTitle, pageIndex)
+        if (draft && draft.strokes) {
+          drawRef.current?.loadStrokes(draft.strokes)
+        } else {
+          // Otherwise fetch from server
+          await ensureStudent(studentId)
+          const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+          const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
+          if (cancelled) return
+          const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+          if (strokes) drawRef.current?.loadStrokes(strokes)
+          else drawRef.current?.clearStrokes()
+        }
       }catch(e){ console.warn('Load failed:', e) }
     })()
     return ()=>{ cancelled=true }
   }, [pageIndex])
 
+  /** Draft autosave timer (saves only if something changed since last write) */
+  useEffect(()=>{
+    let lastSerialized = ''
+    const id = window.setInterval(()=>{
+      try {
+        // Only autosave when in draw mode to reduce churn
+        const data = drawRef.current?.getStrokes()
+        if (!data) return
+        const s = JSON.stringify(data)
+        if (s !== lastSerialized) {
+          saveDraft(studentId, assignmentTitle, pageIndex, data)
+          lastSerialized = s
+        }
+      } catch {}
+    }, DRAFT_INTERVAL_MS)
+
+    const onBeforeUnload = ()=>{
+      try {
+        const data = drawRef.current?.getStrokes()
+        if (data) saveDraft(studentId, assignmentTitle, pageIndex, data)
+      } catch {}
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+
+    return ()=>{
+      window.clearInterval(id)
+      window.removeEventListener('beforeunload', onBeforeUnload)
+    }
+  }, [pageIndex])
+
+  /** Submit helper. Clears the draft if successful. */
   const submit = async ()=>{
     try{
       setSaving(true)
@@ -100,12 +170,47 @@ export default function StudentAssignment(){
       if (strokes) await saveStrokes(submission_id, strokes)
       if (audioBlob.current) await saveAudio(submission_id, audioBlob.current)
 
+      // Draft is now "finalized" for this page
+      clearDraft(studentId, assignmentTitle, pageIndex)
+
       alert('Saved!')
       audioBlob.current = null
     } catch (e:any){
       console.error(e)
       alert('Failed to save: ' + (e?.message || e))
+      throw e
     } finally { setSaving(false) }
+  }
+
+  /** Do we have any content worth saving? (ink or audio) */
+  const hasContent = ()=>{
+    try {
+      const strokes = drawRef.current?.getStrokes()
+      const count = Array.isArray(strokes?.strokes) ? strokes!.strokes.length : 0
+      return count > 0 || !!audioBlob.current
+    } catch { return !!audioBlob.current }
+  }
+
+  /** Page navigation with optional auto-submit */
+  const goToPage = async (nextIndex:number)=>{
+    if (nextIndex < 0) return
+    // Stop any recording first
+    audioRef.current?.stop()
+
+    if (AUTO_SUBMIT_ON_PAGE_CHANGE && hasContent()) {
+      try {
+        await submit()
+      } catch {
+        // If submit fails (e.g., network), at least draft is already saved by the autosaver.
+      }
+    } else {
+      // No auto-submit → ensure draft is saved one more time
+      try {
+        const data = drawRef.current?.getStrokes()
+        if (data) saveDraft(studentId, assignmentTitle, pageIndex, data)
+      } catch {}
+    }
+    setPageIndex(nextIndex)
   }
 
   // two-finger pan host
@@ -222,9 +327,9 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'flex', gap:8, justifyContent:'center', margin:'12px 0' }}>
-        <button onClick={()=>setPageIndex(p=>Math.max(0,p-1))}>Prev</button>
+        <button onClick={()=>goToPage(Math.max(0, pageIndex-1))}>Prev</button>
         <span style={{ margin:'0 8px' }}>Page {pageIndex+1}</span>
-        <button onClick={()=>setPageIndex(p=>p+1)}>Next</button>
+        <button onClick={()=>goToPage(pageIndex+1)}>Next</button>
       </div>
 
       {Toolbar}
