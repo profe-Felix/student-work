@@ -6,13 +6,9 @@ const DEFAULT_COUNT = 28
 
 function makeIds(letter: string, count: number) {
   const ids: string[] = []
-  for (let i = 1; i <= count; i++) {
-    ids.push(`${letter}_${String(i).padStart(2, '0')}`)
-  }
+  for (let i = 1; i <= count; i++) ids.push(`${letter}_${String(i).padStart(2, '0')}`)
   return ids
 }
-
-type StudentRow = { id: string }
 
 export default function StartPicker() {
   const nav = useNavigate()
@@ -21,14 +17,19 @@ export default function StartPicker() {
   const [dbIds, setDbIds] = useState<string[] | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const ids = useMemo(() => dbIds ?? makeIds(letter, count), [dbIds, letter, count])
+  // union: generated + DB (no dupes), sorted
+  const ids = useMemo(() => {
+    const base = makeIds(letter, count)
+    const fromDb = dbIds ?? []
+    const set = new Set<string>([...base, ...fromDb])
+    return Array.from(set).sort()
+  }, [dbIds, letter, count])
 
   useEffect(() => {
     localStorage.setItem('teacherLetter', letter)
     localStorage.setItem('rosterCount', String(count))
   }, [letter, count])
 
-  // Try to fetch students from DB; if none/error, fall back to generated ids
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -36,12 +37,12 @@ export default function StartPicker() {
       try {
         const rows = await listStudents(letter)
         if (!cancelled && rows && rows.length) {
-          setDbIds(rows.map((row: StudentRow) => row.id))
+          setDbIds(rows.map(r => r.id))
         } else {
-          setDbIds(null)
+          setDbIds([])
         }
       } catch {
-        setDbIds(null)
+        setDbIds([])
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -62,41 +63,31 @@ export default function StartPicker() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
           <label>Class letter:</label>
           <select value={letter} onChange={e => setLetter(e.target.value)} style={{ padding: '6px 8px' }}>
-            {['A', 'B', 'C', 'D', 'E', 'F'].map((L) => <option key={L} value={L}>{L}</option>)}
+            {['A', 'B', 'C', 'D', 'E', 'F'].map(L => <option key={L} value={L}>{L}</option>)}
           </select>
 
           <label>Count:</label>
           <select value={count} onChange={e => setCount(Number(e.target.value))} style={{ padding: '6px 8px' }}>
-            {[20, 22, 24, 26, 28, 30, 32].map((n) => <option key={n} value={n}>{n}</option>)}
+            {[20, 22, 24, 26, 28, 30, 32].map(n => <option key={n} value={n}>{n}</option>)}
           </select>
 
           {loading && <span>Loading roster…</span>}
         </div>
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
-          gap: 12
-        }}>
-          {ids.map((id: string) => (
-            <button key={id}
-              onClick={() => pick(id)}
-              style={{
-                aspectRatio: '1 / 1',
-                background: '#fff',
-                border: '2px solid #e5e7eb',
-                borderRadius: 16,
-                fontSize: 24,
-                fontWeight: 800,
-                boxShadow: '0 4px 10px rgba(0,0,0,0.06)'
-              }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(110px, 1fr))', gap:12 }}>
+          {ids.map(id => (
+            <button key={id} onClick={() => pick(id)}
+              style={{ aspectRatio:'1 / 1', background:'#fff', border:'2px solid #e5e7eb',
+                       borderRadius:16, fontSize:24, fontWeight:800,
+                       boxShadow:'0 4px 10px rgba(0,0,0,0.06)' }}>
               {id}
             </button>
           ))}
         </div>
 
         <div style={{ marginTop: 16, fontSize: 12, color: '#6b7280' }}>
-          Tip: it remembers your class letter and shows {count} numbers.
+          Tip: shows all numbers {letter}_01…{letter}_{String(count).padStart(2,'0')}.  
+          If a number is new, be sure you’ve **seeded students** or enabled the **insert policy** so saving works.
         </div>
       </div>
     </div>
