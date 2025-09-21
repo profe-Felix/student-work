@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
@@ -8,13 +9,9 @@ import {
 } from '../../lib/db'
 
 /** MVP constants (can parameterize later) */
-const studentId = 'A_01'
 const assignmentTitle = 'Handwriting - Daily'
 const pdfStoragePath = 'pdfs/aprende-m2.pdf'
-
-/** Kinder-proof: enable auto-submit when changing pages */
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
-/** Draft autosave interval (ms) */
 const DRAFT_INTERVAL_MS = 4000
 
 // Crayola 24
@@ -49,13 +46,10 @@ function Swatch({ hex, selected, onClick }:{ hex:string; selected:boolean; onCli
       aria-label={`Color ${hex}`} />
   )
 }
-
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
-/** Draft + last-submitted helpers (localStorage per student/assignment/page) */
 const draftKey = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
 const lastHashKey = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
-
 function saveDraft(student:string, assignment:string, page:number, strokes:any){
   try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
@@ -65,14 +59,11 @@ function loadDraft(student:string, assignment:string, page:number){
 function clearDraft(student:string, assignment:string, page:number){
   try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
 }
-
 async function hashStrokes(strokes:any): Promise<string> {
   const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
   const buf = await crypto.subtle.digest('SHA-256', enc)
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
-
-/** Tiny toast that auto-hides */
 function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   return (
     <div style={{
@@ -88,6 +79,16 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
 }
 
 export default function StudentAssignment(){
+  const location = useLocation()
+  const nav = useNavigate()
+  const urlStudent = useMemo(()=>{
+    const qs = new URLSearchParams(location.search)
+    return qs.get('student') || localStorage.getItem('currentStudent') || 'A_01'
+  }, [location.search])
+  useEffect(()=>{ localStorage.setItem('currentStudent', urlStudent) }, [urlStudent])
+
+  const studentId = urlStudent
+
   const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
   const [pageIndex, setPageIndex]   = useState(0)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
@@ -99,7 +100,6 @@ export default function StudentAssignment(){
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
-  // toast state
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
   const showToast = (msg:string, kind:'ok'|'err'='ok', ms=1500)=>{
@@ -122,17 +122,11 @@ export default function StudentAssignment(){
   }
   const onAudio = (b:Blob)=>{ audioBlob.current = b }
 
-  /** Load order for a page:
-   *  1) Draft (if exists)
-   *  2) Latest submitted
-   *  3) Otherwise clear
-   */
   useEffect(()=>{
     let cancelled=false
     ;(async ()=>{
       try{
-        audioRef.current?.stop() // stop recording when page changes
-
+        audioRef.current?.stop()
         const draft = loadDraft(studentId, assignmentTitle, pageIndex)
         if (draft && draft.strokes) {
           drawRef.current?.loadStrokes(draft.strokes)
@@ -148,14 +142,13 @@ export default function StudentAssignment(){
       }catch(e){ console.warn('Load failed:', e) }
     })()
     return ()=>{ cancelled=true }
-  }, [pageIndex])
+    // IMPORTANT: also reload when studentId changes
+  }, [pageIndex, studentId])
 
-  /** Autosave drafts; pause when hidden to reduce CPU/memory */
   useEffect(()=>{
     let lastSerialized = ''
     let running = !document.hidden
     let intervalId: number | null = null
-
     const tick = ()=>{
       try {
         if (!running) return
@@ -168,78 +161,46 @@ export default function StudentAssignment(){
         }
       } catch {}
     }
-
     const start = ()=>{ if (intervalId==null){ intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) } }
     const stop  = ()=>{ if (intervalId!=null){ window.clearInterval(intervalId); intervalId=null } }
-
     const onVis = ()=>{ running = !document.hidden; if (running) start(); else stop() }
     document.addEventListener('visibilitychange', onVis)
-
     start()
     const onBeforeUnload = ()=>{ try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {} }
     window.addEventListener('beforeunload', onBeforeUnload)
-
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
       window.removeEventListener('beforeunload', onBeforeUnload)
     }
-  }, [pageIndex])
+  }, [pageIndex, studentId])
 
-  /** Submit helper with dirty-check + in-flight guard. Clears draft if successful. */
   const submit = async ()=>{
     if (submitInFlight.current) return
     submitInFlight.current = true
     try{
       setSaving(true)
-
       const strokes = drawRef.current?.getStrokes() || { strokes: [] }
       const hash = await hashStrokes(strokes)
-      // Save only if we have content
       const hasInk = Array.isArray(strokes?.strokes) && strokes!.strokes.length > 0
       const hasAudio = !!audioBlob.current
-      if (!hasInk && !hasAudio) {
-        setSaving(false)
-        submitInFlight.current = false
-        return
-      }
-
-      // Dirty-check: avoid duplicate writes
+      if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
       const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
       const last = localStorage.getItem(lastKey)
-      if (last && last === hash && !hasAudio) {
-        // No change in ink and no new audio → skip
-        setSaving(false)
-        submitInFlight.current = false
-        return
-      }
+      if (last && last === hash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       await ensureStudent(studentId)
       const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       const submission_id = await createSubmission(studentId, assignment_id, page_id)
-
-      if (hasInk) {
-        await saveStrokes(submission_id, strokes)
-        localStorage.setItem(lastKey, hash)
-      }
-      if (hasAudio) {
-        await saveAudio(submission_id, audioBlob.current!)
-        audioBlob.current = null
-      }
-
+      if (hasInk) { await saveStrokes(submission_id, strokes); localStorage.setItem(lastKey, hash) }
+      if (hasAudio) { await saveAudio(submission_id, audioBlob.current!); audioBlob.current = null }
       clearDraft(studentId, assignmentTitle, pageIndex)
       showToast('Saved!', 'ok', 1400)
     } catch (e:any){
-      console.error(e)
-      showToast('Save failed', 'err', 1800)
-      throw e
-    } finally {
-      setSaving(false)
-      submitInFlight.current = false
-    }
+      console.error(e); showToast('Save failed', 'err', 1800); throw e
+    } finally { setSaving(false); submitInFlight.current=false }
   }
 
-  /** Do we have any content worth saving? (ink or audio) */
   const hasContent = ()=>{
     try {
       const strokes = drawRef.current?.getStrokes()
@@ -248,16 +209,12 @@ export default function StudentAssignment(){
     } catch { return !!audioBlob.current }
   }
 
-  /** Page navigation with optional auto-submit and dirty-check */
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
-    // Stop any recording first
     audioRef.current?.stop()
-
     if (AUTO_SUBMIT_ON_PAGE_CHANGE && hasContent()) {
-      try { await submit() } catch { /* draft remains if it fails */ }
+      try { await submit() } catch {}
     } else {
-      // Ensure a draft is saved one more time
       try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
     }
     setPageIndex(nextIndex)
@@ -285,7 +242,7 @@ export default function StudentAssignment(){
   const Toolbar = (
     <div
       style={{
-        position:'fixed', ...(toolbarRight?{right:8}:{left:8}), top:'50%', transform:'translateY(-50%)',
+        position:'fixed', right: toolbarRight?8:undefined, left: !toolbarRight?8:undefined, top:'50%', transform:'translateY(-50%)',
         zIndex:10010, width:120, maxHeight:'80vh',
         display:'flex', flexDirection:'column', gap:10,
         padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
@@ -359,10 +316,20 @@ export default function StudentAssignment(){
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
       ...(toolbarRight ? { paddingRight:130 } : { paddingLeft:130 }),
       background:'#fafafa', WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
-      <h2>Student Assignment (Hosted)</h2>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        <h2>Student Assignment (Hosted)</h2>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
+            Student: <strong>{studentId}</strong>
+          </div>
+          <button onClick={()=> nav('/start')} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}>
+            Switch
+          </button>
+        </div>
+      </div>
 
       <div ref={scrollHostRef}
-        style={{ height:'calc(100vh - 120px)', overflow:'auto', WebkitOverflowScrolling:'touch', touchAction:'none',
+        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch', touchAction:'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12 }}>
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
@@ -383,9 +350,9 @@ export default function StudentAssignment(){
       </div>
 
       {/* Floating toolbar */}
+      {/* (Defined above) */}
       {Toolbar}
 
-      {/* Auto-close toast */}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
     </div>
   )
