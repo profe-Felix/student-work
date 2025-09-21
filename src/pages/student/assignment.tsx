@@ -4,7 +4,7 @@ import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
-  ensureStudent, upsertAssignmentWithPage,
+  upsertAssignmentWithPage,
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission
 } from '../../lib/db'
 
@@ -64,7 +64,6 @@ function clearDraft(student:string, assignment:string, page:number){
   try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
 }
 
-// “Last good” submitted cache (for refresh even if server fetch fails)
 function saveSubmittedCache(student:string, assignment:string, page:number, strokes:any){
   try { localStorage.setItem(submittedKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
@@ -78,7 +77,6 @@ async function hashStrokes(strokes:any): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
 
-/** Tiny toast */
 function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   return (
     <div style={{
@@ -112,9 +110,8 @@ export default function StudentAssignment(){
   const [handMode, setHandMode] = useState(true)
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
-  const submitInFlight = useRef(false) // <-- single declaration
+  const submitInFlight = useRef(false)
 
-  // source debug (draft / server / cached / empty)
   const [sourceTag, setSourceTag] = useState<'draft'|'server'|'cached'|'empty'>('empty')
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
@@ -138,19 +135,14 @@ export default function StudentAssignment(){
     setCanvasSize({ w: cssW, h: cssH })
   }
 
-  /* ---------- Page load: clear immediately, then load draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
-
-    // 1) hard clear immediately to avoid bleed
     drawRef.current?.clearStrokes()
     setSourceTag('empty')
-    // also stop recording on page change
     audioRef.current?.stop()
 
     ;(async ()=>{
       try{
-        // 2) draft first
         const draft = loadDraft(studentId, assignmentTitle, pageIndex)
         if (draft?.strokes) {
           drawRef.current?.loadStrokes(draft.strokes)
@@ -158,46 +150,26 @@ export default function StudentAssignment(){
           return
         }
 
-        // 3) server
-        await ensureStudent(studentId)
         const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
         if (cancelled) return
         const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-        if (strokes) {
-          drawRef.current?.loadStrokes(strokes)
-          setSourceTag('server')
-          return
-        }
+        if (strokes) { drawRef.current?.loadStrokes(strokes); setSourceTag('server'); return }
 
-        // 4) last-submitted cache
         const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
-        if (cached?.strokes) {
-          drawRef.current?.loadStrokes(cached.strokes)
-          setSourceTag('cached')
-          return
-        }
+        if (cached?.strokes) { drawRef.current?.loadStrokes(cached.strokes); setSourceTag('cached'); return }
 
-        // else stay empty
-        drawRef.current?.clearStrokes()
-        setSourceTag('empty')
-      }catch(e){
-        // Network or 401: fall back to cache if possible
+        drawRef.current?.clearStrokes(); setSourceTag('empty')
+      }catch{
         const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
-        if (cached?.strokes) {
-          drawRef.current?.loadStrokes(cached.strokes)
-          setSourceTag('cached')
-        } else {
-          drawRef.current?.clearStrokes()
-          setSourceTag('empty')
-        }
+        if (cached?.strokes) { drawRef.current?.loadStrokes(cached.strokes); setSourceTag('cached') }
+        else { drawRef.current?.clearStrokes(); setSourceTag('empty') }
       }
     })()
 
     return ()=>{ cancelled=true }
   }, [pageIndex, studentId])
 
-  /* ---------- Draft autosave ---------- */
   useEffect(()=>{
     let lastSerialized = ''
     let running = !document.hidden
@@ -218,16 +190,13 @@ export default function StudentAssignment(){
 
     const start = ()=>{ if (intervalId==null){ intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) } }
     const stop  = ()=>{ if (intervalId!=null){ window.clearInterval(intervalId); intervalId=null } }
-
     const onVis = ()=>{ running = !document.hidden; if (running) start(); else stop() }
     document.addEventListener('visibilitychange', onVis)
-
     start()
     const onBeforeUnload = ()=>{
       try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
     }
     window.addEventListener('beforeunload', onBeforeUnload)
-
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
@@ -235,7 +204,6 @@ export default function StudentAssignment(){
     }
   }, [pageIndex, studentId])
 
-  /* ---------- Submit with dirty-check; cache last submitted ---------- */
   const submit = async ()=>{
     if (submitInFlight.current) return
     submitInFlight.current = true
@@ -251,7 +219,6 @@ export default function StudentAssignment(){
       const last = localStorage.getItem(lastKey)
       if (last && last === hash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      await ensureStudent(studentId)
       const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       const submission_id = await createSubmission(studentId, assignment_id, page_id)
 
@@ -266,7 +233,7 @@ export default function StudentAssignment(){
       }
 
       clearDraft(studentId, assignmentTitle, pageIndex)
-      setSourceTag('server') // next reload should prefer server; cached kept as fallback
+      setSourceTag('server')
       showToast('Saved!', 'ok', 1400)
     } catch (e:any){
       console.error(e); showToast('Save failed', 'err', 1800); throw e
@@ -295,7 +262,6 @@ export default function StudentAssignment(){
     setPageIndex(nextIndex)
   }
 
-  // two-finger pan host
   const scrollHostRef = useRef<HTMLDivElement|null>(null)
   useEffect(()=>{
     const host=scrollHostRef.current; if(!host) return
@@ -314,7 +280,6 @@ export default function StudentAssignment(){
     setToolbarRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  /* ---------- UI ---------- */
   const Toolbar = (
     <div
       style={{
