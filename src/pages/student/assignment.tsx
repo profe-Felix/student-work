@@ -9,6 +9,7 @@ import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   supabase
 } from '../../lib/db'
+import { subscribeToAssignment, type SetPagePayload, type FocusPayload } from '../../lib/realtime'
 
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
@@ -137,6 +138,13 @@ export default function StudentAssignment(){
 
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
+  // keep an explicit state copy so we can trigger effects when assignment id appears
+  const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
+
+  // Focus Mode + nav lock (driven by teacher)
+  const [focusOn, setFocusOn] = useState(false)
+  const [navLocked, setNavLocked] = useState(false)
+
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')   // last server ink we applied
   const lastLocalHash = useRef<string>('')           // last local canvas snapshot
@@ -161,6 +169,7 @@ export default function StudentAssignment(){
 
         const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = { assignment_id, page_id }
+        if (!rtAssignmentId) setRtAssignmentId(assignment_id)
 
         try {
           const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
@@ -195,7 +204,7 @@ export default function StudentAssignment(){
     })()
 
     return ()=>{ cancelled=true }
-  }, [pageIndex, studentId])
+  }, [pageIndex, studentId, rtAssignmentId])
 
   /* ---------- Local dirty watcher ---------- */
   useEffect(()=>{
@@ -269,6 +278,7 @@ export default function StudentAssignment(){
       const ids = currIds.current.assignment_id ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = ids
+      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
@@ -306,6 +316,7 @@ export default function StudentAssignment(){
 
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
+    if (navLocked) return // lock nav during teacher focus (if enabled)
     try { audioRef.current?.stop() } catch {}
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
@@ -341,6 +352,27 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Realtime + polling (defensive) ---------- */
+
+  // subscribe to teacher broadcast once we know the assignment id
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    const ch = subscribeToAssignment(rtAssignmentId, {
+      onSetPage: ({ pageIndex }: SetPagePayload) => {
+        setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+      },
+      onFocus: ({ on, lockNav }: FocusPayload) => {
+        setFocusOn(!!on)
+        setNavLocked(!!on && !!lockNav)
+      }
+    })
+    return () => {
+      try {
+        if (typeof (ch as any).unsubscribe === 'function') (ch as any).unsubscribe()
+        else (supabase as any)?.removeChannel?.(ch)
+      } catch {}
+    }
+  }, [rtAssignmentId])
+
   const reloadFromServer = async ()=>{
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
     if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
@@ -350,6 +382,7 @@ export default function StudentAssignment(){
         ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = { assignment_id, page_id }
+      if (!rtAssignmentId) setRtAssignmentId(assignment_id)
 
       const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
       const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
@@ -381,6 +414,7 @@ export default function StudentAssignment(){
           ? currIds.current
           : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = ids
+        if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
         const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
           .on('postgres_changes', {
@@ -402,7 +436,7 @@ export default function StudentAssignment(){
       if (cleanup) cleanup()
       if (pollId!=null) window.clearInterval(pollId)
     }
-  }, [studentId, pageIndex])
+  }, [studentId, pageIndex, rtAssignmentId])
 
   /* ---------- UI ---------- */
   const Toolbar = (
@@ -524,7 +558,7 @@ export default function StudentAssignment(){
       >
         <button
           onClick={()=>goToPage(Math.max(0, pageIndex-1))}
-          disabled={saving || submitInFlight.current}
+          disabled={saving || submitInFlight.current || navLocked}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           ◀ Prev
@@ -534,7 +568,7 @@ export default function StudentAssignment(){
         </span>
         <button
           onClick={()=>goToPage(pageIndex+1)}
-          disabled={saving || submitInFlight.current}
+          disabled={saving || submitInFlight.current || navLocked}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           Next ▶
@@ -544,6 +578,19 @@ export default function StudentAssignment(){
       {/* Floating toolbar */}
       {Toolbar}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
+
+      {/* Focus overlay (from teacher) */}
+      {focusOn && (
+        <div
+          style={{
+            position:'fixed', inset:0, background:'rgba(0,0,0,0.6)',
+            backdropFilter:'blur(2px)', zIndex: 20050,
+            display:'grid', placeItems:'center', color:'#fff', fontSize:20, fontWeight:700
+          }}
+        >
+          Focus Mode — watch the teacher ✋
+        </div>
+      )}
     </div>
   )
 }
