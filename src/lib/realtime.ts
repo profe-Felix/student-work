@@ -1,4 +1,4 @@
-//src/lib/realtime.ts
+// src/lib/realtime.ts
 import { supabase } from './db';
 
 export interface SetPagePayload {
@@ -15,8 +15,9 @@ export interface FocusPayload {
 
 export interface AutoFollowPayload {
   on: boolean;
-  allowedPages?: number[] | null; // zero-based allowed page indexes
-  teacherPageIndex?: number;      // teacher's current page
+  allowedPages?: number[] | null;    // zero-based allowed page indexes
+  teacherPageIndex?: number;         // teacher's current page (zero-based)
+  assignmentPdfPath?: string;        // e.g. "public/pdfs/uuid.pdf"
   ts?: number;
 }
 
@@ -25,6 +26,7 @@ export type TeacherPresenceState = {
   autoFollow: boolean;
   allowedPages: number[] | null;
   teacherPageIndex?: number;
+  assignmentPdfPath?: string;
   focusOn: boolean;
   lockNav: boolean;
   updatedAt: number;
@@ -46,12 +48,14 @@ export async function publishAutoFollow(
   ch: any,
   on: boolean,
   allowedPages?: number[] | null,
-  teacherPageIndex?: number
+  teacherPageIndex?: number,
+  assignmentPdfPath?: string
 ) {
   const payload: AutoFollowPayload = {
     on,
     allowedPages: allowedPages ?? null,
     teacherPageIndex,
+    assignmentPdfPath,
     ts: Date.now(),
   };
   await ch.send({ type: 'broadcast', event: 'AUTO_FOLLOW', payload });
@@ -72,6 +76,7 @@ export async function setTeacherPresence(
     autoFollow: !!state.autoFollow,
     allowedPages: state.allowedPages ?? null,
     teacherPageIndex: state.teacherPageIndex,
+    assignmentPdfPath: state.assignmentPdfPath,
     focusOn: !!state.focusOn,
     lockNav: !!state.lockNav,
     updatedAt: state.updatedAt ?? Date.now(),
@@ -104,8 +109,8 @@ export function subscribeToAssignment(
       handlers.onAutoFollow?.(payload as AutoFollowPayload)
     );
 
-  // Presence sync
-  ch.on('presence', { event: 'sync' }, () => {
+  // Presence sync (late joiners land here)
+  function syncFromPresence() {
     try {
       const state = ch.presenceState() as Record<string, TeacherPresenceState[]>;
       const arr = (state?.teacher ?? []).filter(s => s?.role === 'teacher');
@@ -117,6 +122,7 @@ export function subscribeToAssignment(
         on: !!latest.autoFollow,
         allowedPages: latest.allowedPages ?? null,
         teacherPageIndex: latest.teacherPageIndex,
+        assignmentPdfPath: latest.assignmentPdfPath,
         ts: latest.updatedAt,
       });
       handlers.onFocus?.({
@@ -132,39 +138,14 @@ export function subscribeToAssignment(
         });
       }
     } catch {}
-  });
+  }
 
-  // Safety read shortly after subscribe (helps late joiners)
+  ch.on('presence', { event: 'sync' }, syncFromPresence);
+
   ch.subscribe((status: string) => {
     if (status === 'SUBSCRIBED') {
-      setTimeout(() => {
-        try {
-          const state = ch.presenceState() as Record<string, TeacherPresenceState[]>;
-          const arr = (state?.teacher ?? []).filter(s => s?.role === 'teacher');
-          if (arr.length === 0) return;
-          const latest = arr.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
-          if (!latest) return;
-
-          handlers.onAutoFollow?.({
-            on: !!latest.autoFollow,
-            allowedPages: latest.allowedPages ?? null,
-            teacherPageIndex: latest.teacherPageIndex,
-            ts: latest.updatedAt,
-          });
-          handlers.onFocus?.({
-            on: !!latest.focusOn,
-            lockNav: !!latest.lockNav,
-            ts: latest.updatedAt,
-          });
-          if (typeof latest.teacherPageIndex === 'number') {
-            handlers.onSetPage?.({
-              pageId: '',
-              pageIndex: latest.teacherPageIndex,
-              ts: latest.updatedAt,
-            });
-          }
-        } catch {}
-      }, 50);
+      // small delay so presence has data
+      setTimeout(syncFromPresence, 50);
     }
   });
 
