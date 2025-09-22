@@ -26,7 +26,11 @@ export type TeacherPresenceState = {
   autoFollow: boolean;
   allowedPages: number[] | null;
   teacherPageIndex: number | null;
+  // LEGACY: some callers include focusOn in presence
+  focusOn?: boolean;
   ts?: number;
+  // Allow unknown legacy fields without breaking
+  [k: string]: any;
 };
 
 /** -------------------------------------------------------------------------------------------
@@ -47,7 +51,7 @@ export async function publishSetAssignment(assignmentId: string) {
     event: 'set-assignment',
     payload: { assignmentId, ts: Date.now() },
   });
-  // Do not return a Promise from react effect cleanup:
+  // Avoid returning a Promise from cleanup in React effects
   void supabase.removeChannel(ch);
 }
 
@@ -59,7 +63,6 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
       if (typeof id === 'string' && id) onSetAssignment(id);
     })
     .subscribe();
-  // Return a cleanup that does NOT return a promise
   return () => { void supabase.removeChannel(ch); };
 }
 
@@ -79,18 +82,31 @@ function resolveChannel(input: ChannelOrId): { ch: RealtimeChannel; temporary: b
     const ch = assignmentChannel(input);
     return { ch, temporary: true };       // we'll subscribe/send/remove
   }
-  return { ch: input, temporary: false }; // assume already subscribed
+  return { ch: input, temporary: false }; // assume already subscribed by caller
 }
 
-/** ---------- Low-level publish/subscribe helpers (accept extra args for legacy calls) ---------- */
+/** ---------- Low-level publish/subscribe helpers (very permissive for legacy calls) ---------- */
 
 // SET PAGE
+// Accepts any of:
+//   publishSetPage(assign, { pageIndex, pageId? })
+//   publishSetPage(assign, 3)
+//   publishSetPage(assign, 'page-uuid', 3)
 export async function publishSetPage(
   assignment: ChannelOrId,
-  payload: SetPagePayload,
-  // legacy extra args ignored:
+  payloadOrPageId: SetPagePayload | number | string,
+  maybeIndex?: number,
   ..._legacy: any[]
 ) {
+  let payload: SetPagePayload;
+  if (typeof payloadOrPageId === 'object') {
+    payload = payloadOrPageId as SetPagePayload;
+  } else if (typeof payloadOrPageId === 'number') {
+    payload = { pageIndex: payloadOrPageId };
+  } else {
+    payload = { pageId: payloadOrPageId, pageIndex: typeof maybeIndex === 'number' ? maybeIndex : 0 };
+  }
+
   const { ch, temporary } = resolveChannel(assignment);
   if (temporary) { await ch.subscribe(); }
   await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } });
@@ -112,11 +128,21 @@ export function subscribeToSetPage(
 }
 
 // FOCUS
+// Accepts any of:
+//   publishFocus(assign, { on, lockNav? })
+//   publishFocus(assign, true)
+//   publishFocus(assign, true, true)
 export async function publishFocus(
   assignment: ChannelOrId,
-  payload: FocusPayload,
+  payloadOrOn: FocusPayload | boolean,
+  maybeLockNav?: boolean,
   ..._legacy: any[]
 ) {
+  const payload: FocusPayload =
+    typeof payloadOrOn === 'boolean'
+      ? { on: payloadOrOn, lockNav: !!maybeLockNav }
+      : (payloadOrOn as FocusPayload);
+
   const { ch, temporary } = resolveChannel(assignment);
   if (temporary) { await ch.subscribe(); }
   await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } });
@@ -138,11 +164,22 @@ export function subscribeToFocus(
 }
 
 // AUTO-FOLLOW
+// Accepts any of:
+//   publishAutoFollow(assign, { on, allowedPages?, teacherPageIndex? })
+//   publishAutoFollow(assign, true)
+//   publishAutoFollow(assign, true, [0,1,2], 0)
 export async function publishAutoFollow(
   assignment: ChannelOrId,
-  payload: AutoFollowPayload,
+  payloadOrOn: AutoFollowPayload | boolean,
+  maybeAllowed?: number[] | null,
+  maybeTeacherIdx?: number,
   ..._legacy: any[]
 ) {
+  const payload: AutoFollowPayload =
+    typeof payloadOrOn === 'boolean'
+      ? { on: payloadOrOn, allowedPages: maybeAllowed ?? null, teacherPageIndex: typeof maybeTeacherIdx === 'number' ? maybeTeacherIdx : undefined }
+      : (payloadOrOn as AutoFollowPayload);
+
   const { ch, temporary } = resolveChannel(assignment);
   if (temporary) { await ch.subscribe(); }
   await ch.send({
