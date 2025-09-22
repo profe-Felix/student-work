@@ -43,20 +43,22 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
   const allowedRef = useRef<number[] | null>(null);
   const chRef = useRef<ReturnType<typeof assignmentChannel> | null>(null);
 
-  // Open teacher channel and publish initial presence
+  // Open teacher channel and publish initial presence AFTER subscribe
   useEffect(() => {
     if (!assignmentId) return;
     const ch = assignmentChannel(assignmentId);
-    ch.subscribe();
-    chRef.current = ch;
-    // initial presence
-    setTeacherPresence(ch, {
-      autoFollow,
-      allowedPages: allowedRef.current ?? null,
-      teacherPageIndex: pageIndex,
-      focusOn: focus,
-      lockNav,
+    ch.subscribe(async (status: string) => {
+      if (status === 'SUBSCRIBED') {
+        await setTeacherPresence(ch, {
+          autoFollow,
+          allowedPages: allowedRef.current ?? null,
+          teacherPageIndex: pageIndex,
+          focusOn: focus,
+          lockNav,
+        });
+      }
     });
+    chRef.current = ch;
     return () => { ch.unsubscribe(); chRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignmentId]);
@@ -64,7 +66,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
   // Whenever these change, update presence
   useEffect(() => {
     if (!chRef.current) return;
-    setTeacherPresence(chRef.current, {
+    void setTeacherPresence(chRef.current, {
       autoFollow,
       allowedPages: allowedRef.current ?? null,
       teacherPageIndex: pageIndex,
@@ -76,7 +78,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
   // When auto-follow is ON, rebroadcast current page on change (snappy)
   useEffect(() => {
     if (autoFollow && chRef.current && pageId) {
-      publishSetPage(chRef.current, pageId, pageIndex);
+      void publishSetPage(chRef.current, pageId, pageIndex);
     }
   }, [autoFollow, pageId, pageIndex]);
 
