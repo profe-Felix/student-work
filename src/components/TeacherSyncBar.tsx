@@ -12,6 +12,7 @@ type Props = {
   assignmentId: string;
   pageId: string;
   pageIndex: number;
+  assignmentPdfPath?: string;  // <-- NEW
   className?: string;
 };
 
@@ -35,7 +36,7 @@ function parseRanges(input: string): number[] {
   return Array.from(out.values()).sort((a, b) => a - b);
 }
 
-export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, className }: Props) {
+export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, assignmentPdfPath, className }: Props) {
   const [autoFollow, setAutoFollow] = useState(false);
   const [focus, setFocus] = useState(false);
   const [lockNav, setLockNav] = useState(true);
@@ -53,6 +54,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
           autoFollow,
           allowedPages: allowedRef.current ?? null,
           teacherPageIndex: pageIndex,
+          assignmentPdfPath,
           focusOn: focus,
           lockNav,
         });
@@ -63,17 +65,18 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignmentId]);
 
-  // Keep presence up-to-date when toggles/page change
+  // Keep presence up-to-date when toggles/page/pdf change
   useEffect(() => {
     if (!chRef.current) return;
     void setTeacherPresence(chRef.current, {
       autoFollow,
       allowedPages: allowedRef.current ?? null,
       teacherPageIndex: pageIndex,
+      assignmentPdfPath,
       focusOn: focus,
       lockNav,
     });
-  }, [autoFollow, focus, lockNav, pageIndex]);
+  }, [autoFollow, focus, lockNav, pageIndex, assignmentPdfPath]);
 
   // When auto-follow is ON, also rebroadcast page for snappy snap-to
   useEffect(() => {
@@ -100,12 +103,13 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
       autoFollow: next,
       allowedPages: allowed ?? null,
       teacherPageIndex: pageIndex,
+      assignmentPdfPath,
       focusOn: focus,
       lockNav,
     });
 
     // 2) broadcast to currently connected students
-    await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
+    await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex, assignmentPdfPath);
     if (next) await publishSetPage(chRef.current, pageId, pageIndex);
   }
 
@@ -118,6 +122,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
       autoFollow,
       allowedPages: allowedRef.current ?? null,
       teacherPageIndex: pageIndex,
+      assignmentPdfPath,
       focusOn: next,
       lockNav,
     });
