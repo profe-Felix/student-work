@@ -1,4 +1,4 @@
-//src/pages/teacher/index.tsx
+// src/pages/teacher/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   listAssignments,
@@ -10,6 +10,7 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
+import { publishSetAssignment } from '../../lib/realtime' // NEW
 
 type LatestCell = {
   submission_id: string
@@ -186,7 +187,15 @@ export default function TeacherDashboard() {
       <h2>Teacher Dashboard</h2>
 
       <div style={{ margin: '12px 0 16px' }}>
-        <PdfDropZone onCreated={(newId: string) => setAssignmentId(newId)} />
+        {/* NEW: broadcast when a brand-new assignment is created via drop zone */}
+        <PdfDropZone onCreated={async (newId: string) => {
+          setAssignmentId(newId)
+          try {
+            await publishSetAssignment(newId)
+          } catch (err) {
+            console.error('broadcast onCreated failed', err)
+          }
+        }} />
       </div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
@@ -194,7 +203,15 @@ export default function TeacherDashboard() {
           <span style={{ marginBottom: 4, color: '#555' }}>Assignment</span>
           <select
             value={assignmentId}
-            onChange={(e) => setAssignmentId(e.target.value)}
+            onChange={async (e) => {
+              const next = e.target.value
+              setAssignmentId(next)
+              try {
+                await publishSetAssignment(next) // NEW: tell students to switch
+              } catch (err) {
+                console.error('broadcast assignment change failed', err)
+              }
+            }}
             style={{ padding: '6px 8px', minWidth: 260 }}
           >
             {assignments.map(a => (
