@@ -538,7 +538,7 @@ export default function StudentAssignment(){
       {/* Your toolbar + audio UI (unchanged) */}
       {/* ... keep your existing toolbar/audio components here ... */}
 
-      {toast && <Toast text={toast.msg, kind='ok'} />}
+      {toast && <Toast text={toast.msg} kind={toast.kind} />}
     </div>
   )
 }
