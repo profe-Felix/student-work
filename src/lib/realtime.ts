@@ -1,12 +1,12 @@
 // src/lib/realtime.ts
-// Centralized realtime helpers, plus a tiny global channel to handoff assignment switches.
+// Realtime utilities: legacy-compatible exports + global assignment handoff.
 
 import { supabase } from './supabaseClient';
 
-/** ---------- Types you were already using (kept here so other files keep compiling) ---------- */
+/** ---------- Types (kept broad for compatibility) ---------- */
 export interface SetPagePayload {
-  pageId: string;         // DB pages.id (uuid)
-  pageIndex: number;      // zero-based page index
+  pageId?: string;         // optional for legacy calls
+  pageIndex: number;
   ts?: number;
 }
 export interface FocusPayload {
@@ -16,8 +16,8 @@ export interface FocusPayload {
 }
 export interface AutoFollowPayload {
   on: boolean;
-  allowedPages?: number[] | null; // zero-based allowed page indexes
-  teacherPageIndex?: number;      // teacher's current page
+  allowedPages?: number[] | null;
+  teacherPageIndex?: number;
   ts?: number;
 }
 export type TeacherPresenceState = {
@@ -25,11 +25,11 @@ export type TeacherPresenceState = {
   autoFollow: boolean;
   allowedPages: number[] | null;
   teacherPageIndex: number | null;
+  ts?: number;
 };
 
 /** -------------------------------------------------------------------------------------------
- *  Global “class” channel (assignment-agnostic) used *only* to tell students to switch
- *  to a different assignmentId.
+ *  Global “class” channel (assignment-agnostic) used to hand students off to another assignment
  *  ----------------------------------------------------------------------------------------- */
 export function globalChannel() {
   return supabase.channel('global-class', {
@@ -61,8 +61,7 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
 }
 
 /** -------------------------------------------------------------------------------------------
- *  (Optional) Per-assignment channel helpers — keep these if your app uses them elsewhere.
- *  They’re generic and safe to include even if you don’t use every event.
+ *  Per-assignment channels
  *  ----------------------------------------------------------------------------------------- */
 export function assignmentChannel(assignmentId: string) {
   return supabase.channel(`assignment:${assignmentId}`, {
@@ -70,13 +69,21 @@ export function assignmentChannel(assignmentId: string) {
   });
 }
 
-/** ----- Set Page ----- */
-export async function publishSetPage(assignmentId: string, payload: SetPagePayload) {
+/** ---------- Low-level publish/subscribe helpers (accept extra args for legacy calls) ---------- */
+
+// SET PAGE
+export async function publishSetPage(
+  assignmentId: string,
+  payload: SetPagePayload,
+  // legacy extra args ignored:
+  ..._legacy: any[]
+) {
   const ch = assignmentChannel(assignmentId);
   await ch.subscribe();
   await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } });
   await supabase.removeChannel(ch);
 }
+
 export function subscribeToSetPage(
   assignmentId: string,
   onPayload: (payload: SetPagePayload) => void
@@ -91,13 +98,18 @@ export function subscribeToSetPage(
   return () => supabase.removeChannel(ch);
 }
 
-/** ----- Focus (teacher “eyes on me”) ----- */
-export async function publishFocus(assignmentId: string, payload: FocusPayload) {
+// FOCUS
+export async function publishFocus(
+  assignmentId: string,
+  payload: FocusPayload,
+  ..._legacy: any[]
+) {
   const ch = assignmentChannel(assignmentId);
   await ch.subscribe();
   await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } });
   await supabase.removeChannel(ch);
 }
+
 export function subscribeToFocus(
   assignmentId: string,
   onPayload: (payload: FocusPayload) => void
@@ -112,8 +124,12 @@ export function subscribeToFocus(
   return () => supabase.removeChannel(ch);
 }
 
-/** ----- Auto-follow (optionally gate pages) ----- */
-export async function publishAutoFollow(assignmentId: string, payload: AutoFollowPayload) {
+// AUTO-FOLLOW
+export async function publishAutoFollow(
+  assignmentId: string,
+  payload: AutoFollowPayload,
+  ..._legacy: any[]
+) {
   const ch = assignmentChannel(assignmentId);
   await ch.subscribe();
   await ch.send({
@@ -123,6 +139,7 @@ export async function publishAutoFollow(assignmentId: string, payload: AutoFollo
   });
   await supabase.removeChannel(ch);
 }
+
 export function subscribeToAutoFollow(
   assignmentId: string,
   onPayload: (payload: AutoFollowPayload) => void
@@ -135,4 +152,67 @@ export function subscribeToAutoFollow(
     })
     .subscribe();
   return () => supabase.removeChannel(ch);
+}
+
+/** ---------- Presence (legacy-expected by TeacherSyncBar) ---------- */
+export async function setTeacherPresence(
+  assignmentId: string,
+  state: TeacherPresenceState
+) {
+  const ch = assignmentChannel(assignmentId);
+  await ch.subscribe();
+  await ch.send({
+    type: 'broadcast',
+    event: 'presence',
+    payload: { ...state, ts: Date.now() },
+  });
+  await supabase.removeChannel(ch);
+}
+
+export function subscribeToPresence(
+  assignmentId: string,
+  onPayload: (payload: TeacherPresenceState) => void
+) {
+  const ch = assignmentChannel(assignmentId)
+    .on('broadcast', { event: 'presence' }, (msg: any) => {
+      const p = msg?.payload as TeacherPresenceState;
+      if (!p) return;
+      onPayload(p);
+    })
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+}
+
+/** ---------- High-level convenience: one call to get all three events ---------- */
+type AssignmentHandlers = {
+  onSetPage?: (p: SetPagePayload) => void;
+  onFocus?: (p: FocusPayload) => void;
+  onAutoFollow?: (p: AutoFollowPayload) => void;
+  onPresence?: (p: TeacherPresenceState) => void;
+};
+
+/**
+ * subscribeToAssignment(assignmentId, handlers)
+ * Legacy-friendly combined subscription that triggers the given callbacks.
+ * Returns the underlying channel (so you can unsubscribe/removeChannel).
+ */
+export function subscribeToAssignment(assignmentId: string, handlers: AssignmentHandlers) {
+  const ch = assignmentChannel(assignmentId)
+    .on('broadcast', { event: 'set-page' }, (msg: any) => {
+      handlers.onSetPage?.(msg?.payload as SetPagePayload);
+    })
+    .on('broadcast', { event: 'focus' }, (msg: any) => {
+      handlers.onFocus?.(msg?.payload as FocusPayload);
+    })
+    .on('broadcast', { event: 'auto-follow' }, (msg: any) => {
+      handlers.onAutoFollow?.(msg?.payload as AutoFollowPayload);
+    })
+    .on('broadcast', { event: 'presence' }, (msg: any) => {
+      handlers.onPresence?.(msg?.payload as TeacherPresenceState);
+    })
+    .subscribe();
+
+  // Return something unsubscribe-able in multiple ways for safety with legacy code
+  (ch as any).unsubscribe = () => supabase.removeChannel(ch);
+  return ch;
 }
