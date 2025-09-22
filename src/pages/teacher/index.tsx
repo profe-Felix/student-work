@@ -3,11 +3,11 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   listAssignments,
   listPages,
+  listLatestByPage,
   getAudioUrl,
   type AssignmentRow,
   type PageRow,
 } from '../../lib/db'
-import TeacherSyncBar from '../../components/TeacherSyncBar'
 
 type LatestCell = {
   submission_id: string
@@ -15,18 +15,20 @@ type LatestCell = {
   audioUrl?: string
 } | null
 
+// Simple roster: A_01..A_28 (matches your student format)
 const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
 
 export default function TeacherDashboard() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
-  const [assignmentId, setAssignmentId] = useState<string>('')
+  const [assignmentId, setAssignmentId] = useState<string>('') // selected assignment id
 
   const [pages, setPages] = useState<PageRow[]>([])
-  const [pageId, setPageId] = useState<string>('')
+  const [pageId, setPageId] = useState<string>('') // selected page id
 
   const [loading, setLoading] = useState(false)
-  const [grid, setGrid] = useState<Record<string, LatestCell>>({})
+  const [grid, setGrid] = useState<Record<string, LatestCell>>({}) // key = student_id
 
+  // Load assignments on mount
   useEffect(() => {
     (async () => {
       try {
@@ -40,6 +42,7 @@ export default function TeacherDashboard() {
     })()
   }, [])
 
+  // When assignment changes, load its pages and pick page 0 if exists
   useEffect(() => {
     if (!assignmentId) return
     (async () => {
@@ -54,35 +57,11 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
-  async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
-    const { supabase } = await import('../../lib/db')
-    const { data: sub, error: se } = await supabase
-      .from('submissions')
-      .select('id, student_id, created_at, artifacts(id,kind,strokes_json,storage_path,created_at)')
-      .eq('assignment_id', assignment_id)
-      .eq('page_id', page_id)
-      .eq('student_id', student_id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if (se) {
-      console.error('per-student latest fetch error', se)
-      return null
-    }
-    return sub as unknown as {
-      id: string
-      student_id: string
-      created_at: string
-      artifacts: { id: string; kind: string; strokes_json: any; storage_path: string | null; created_at: string }[]
-    } | null
-  }
-
+  // Load latest per student for the selected page
   useEffect(() => {
     if (!assignmentId || !pageId) return
     let cancelled = false
-    setGrid({})
     setLoading(true)
-
     ;(async () => {
       try {
         const nextGrid: Record<string, LatestCell> = {}
@@ -90,6 +69,7 @@ export default function TeacherDashboard() {
           const batch = STUDENTS.slice(i, i + 6)
           const results = await Promise.all(
             batch.map(async (sid) => {
+              // Per-student latest (by page)
               const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
               if (!latest) return [sid, null] as const
 
@@ -121,6 +101,25 @@ export default function TeacherDashboard() {
     return () => { cancelled = true }
   }, [assignmentId, pageId])
 
+  // Small helper here (since db.ts returns latest w/out student filter)
+  async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
+    const { supabase } = await import('../../lib/db')
+    const { data: sub, error: se } = await supabase
+      .from('submissions')
+      .select('id, student_id, created_at, artifacts(id,kind,strokes_json,storage_path,created_at)')
+      .eq('assignment_id', assignment_id)
+      .eq('page_id', page_id)
+      .eq('student_id', student_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (se) {
+      console.error('per-student latest fetch error', se)
+      return null
+    }
+    return sub
+  }
+
   const currentAssignment = useMemo(
     () => assignments.find(a => a.id === assignmentId) || null,
     [assignments, assignmentId]
@@ -129,9 +128,6 @@ export default function TeacherDashboard() {
     () => pages.find(p => p.id === pageId) || null,
     [pages, pageId]
   )
-  const pageIndex = currentPage?.page_index ?? 0
-  const assignmentPdfPath =
-    (currentAssignment?.pdf_path ?? null) || (currentPage?.pdf_path ?? null) // ✅ prefer assignment-level pdf
 
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
@@ -139,6 +135,7 @@ export default function TeacherDashboard() {
 
       {/* Controls */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 16px' }}>
+        {/* Assignment select */}
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Assignment</span>
           <select
@@ -146,12 +143,13 @@ export default function TeacherDashboard() {
             onChange={(e) => setAssignmentId(e.target.value)}
             style={{ padding: '6px 8px', minWidth: 260 }}
           >
-            {assignments.map((a) => (
+            {assignments.map(a => (
               <option key={a.id} value={a.id}>{a.title}</option>
             ))}
           </select>
         </label>
 
+        {/* Page select */}
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Page</span>
           <select
@@ -159,7 +157,7 @@ export default function TeacherDashboard() {
             onChange={(e) => setPageId(e.target.value)}
             style={{ padding: '6px 8px', minWidth: 120 }}
           >
-            {pages.map((p) => (
+            {pages.map(p => (
               <option key={p.id} value={p.id}>
                 Page {p.page_index + 1}
               </option>
@@ -170,18 +168,6 @@ export default function TeacherDashboard() {
         {loading && <span style={{ color: '#6b7280' }}>Loading…</span>}
       </div>
 
-      {/* Sync bar */}
-      {assignmentId && pageId && (
-        <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
-          <TeacherSyncBar
-            assignmentId={assignmentId}
-            pageId={pageId}
-            pageIndex={pageIndex}
-            assignmentPdfPath={assignmentPdfPath}
-          />
-        </div>
-      )}
-
       {/* Grid */}
       <div
         style={{
@@ -190,7 +176,7 @@ export default function TeacherDashboard() {
           gap: 12,
         }}
       >
-        {STUDENTS.map((sid) => {
+        {STUDENTS.map(sid => {
           const cell = grid[sid] ?? null
           const has = !!cell
           return (
@@ -225,6 +211,7 @@ export default function TeacherDashboard() {
         })}
       </div>
 
+      {/* Footnote */}
       <div style={{ marginTop: 16, fontSize: 12, color: '#6b7280' }}>
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
