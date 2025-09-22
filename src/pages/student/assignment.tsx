@@ -1,4 +1,4 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -9,12 +9,10 @@ import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   supabase
 } from '../../lib/db'
-import { subscribeToAssignment, AutoFollowPayload, FocusPayload, SetPagePayload } from '../../lib/realtime'
 
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
-// REMOVE hardcoded pdf; we’ll learn it via teacher sync, fallback to the built-in file.
-const DEFAULT_FALLBACK_PDF = `${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`
+const pdfStoragePath = 'pdfs/aprende-m2.pdf'
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
@@ -102,9 +100,7 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
-  // DYNAMIC PDF URL (teacher can change this via Sync-to-Me presence)
-  const [pdfUrl, setPdfUrl] = useState<string>(DEFAULT_FALLBACK_PDF)
-
+  const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
   const [pageIndex, setPageIndex]   = useState(0)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
@@ -148,11 +144,6 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)              // ignore window after save
 
-  // Realtime control from teacher
-  const followingOn = useRef<boolean>(false)
-  const allowedPagesRef = useRef<number[] | null>(null)
-  const lastEventAtRef = useRef<number>(0) // debounce noisy events
-
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
@@ -168,7 +159,7 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, 'public/pdfs/aprende-m2.pdf', pageIndex)
+        const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = { assignment_id, page_id }
 
         try {
@@ -276,7 +267,7 @@ export default function StudentAssignment(){
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       const ids = currIds.current.assignment_id ? currIds.current
-        : await upsertAssignmentWithPage(assignmentTitle, 'public/pdfs/aprende-m2.pdf', pageIndex)
+        : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = ids
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
@@ -315,11 +306,6 @@ export default function StudentAssignment(){
 
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
-    // If following and allowedPages is defined, block out-of-range
-    if (followingOn.current && allowedPagesRef.current && !allowedPagesRef.current.includes(nextIndex)) {
-      return
-    }
-
     try { audioRef.current?.stop() } catch {}
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
@@ -335,7 +321,7 @@ export default function StudentAssignment(){
     setPageIndex(nextIndex)
   }
 
-  // two-finger pan host (kept)
+  // two-finger pan host
   const scrollHostRef = useRef<HTMLDivElement|null>(null)
   useEffect(()=>{
     const host=scrollHostRef.current; if(!host) return
@@ -354,67 +340,7 @@ export default function StudentAssignment(){
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  /* ---------- Realtime subscription (Sync-to-Me + Focus) ---------- */
-  useEffect(() => {
-    // The teacher picks which assignment we’re in via the *assignmentId route* you used before.
-    // Subscribe based on that (fallback to 'Handwriting - Daily' behavior still works).
-    const qs = new URLSearchParams(location.search);
-    const routeAssignmentId = qs.get('assignment') || ''; // optional
-
-    const realAssignmentId = routeAssignmentId || 'default'; // channel name must be non-empty
-    const ch = subscribeToAssignment(realAssignmentId, {
-      onSetPage: (p: SetPagePayload) => {
-        // Debounce + only change when different
-        const now = Date.now();
-        if (now - (lastEventAtRef.current || 0) < 150) return;
-        lastEventAtRef.current = now;
-
-        if (typeof p.pageIndex === 'number' && p.pageIndex !== pageIndex) {
-          // respect allowedPages if enforced
-          if (!followingOn.current || !allowedPagesRef.current || allowedPagesRef.current.includes(p.pageIndex)) {
-            setPageIndex(p.pageIndex);
-          }
-        }
-      },
-      onFocus: (p: FocusPayload) => {
-        // handled elsewhere; your overlay is already wired — not duplicating here
-      },
-      onAutoFollow: (p: AutoFollowPayload) => {
-        // Debounce noisy presence
-        const now = Date.now();
-        if (now - (lastEventAtRef.current || 0) < 150) return;
-        lastEventAtRef.current = now;
-
-        followingOn.current = !!p.on;
-        allowedPagesRef.current = p.allowedPages ?? null;
-
-        // If teacher provided a PDF path, switch to it
-        if (p.assignmentPdfPath && typeof p.assignmentPdfPath === 'string') {
-          try {
-            const [bucket, ...rest] = p.assignmentPdfPath.split('/');
-            const path = rest.join('/');
-            const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-            if (data?.publicUrl && data.publicUrl !== pdfUrl) {
-              setPdfUrl(data.publicUrl);
-            }
-          } catch {}
-        }
-
-        // If teacher told us their current page, and it’s allowed, snap once
-        if (typeof p.teacherPageIndex === 'number') {
-          const idx = p.teacherPageIndex;
-          if (!followingOn.current || !allowedPagesRef.current || allowedPagesRef.current.includes(idx)) {
-            if (idx !== pageIndex) setPageIndex(idx);
-          }
-        }
-      }
-    });
-
-    return () => { ch?.unsubscribe?.(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search, pageIndex, pdfUrl]);
-
-  /* ---------- Defensive polling (unchanged) ---------- */
+  /* ---------- Realtime + polling (defensive) ---------- */
   const reloadFromServer = async ()=>{
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
     if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
@@ -422,7 +348,7 @@ export default function StudentAssignment(){
     try{
       const { assignment_id, page_id } = currIds.current.assignment_id
         ? currIds.current
-        : await upsertAssignmentWithPage(assignmentTitle, 'public/pdfs/aprende-m2.pdf', pageIndex)
+        : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = { assignment_id, page_id }
 
       const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
@@ -453,7 +379,7 @@ export default function StudentAssignment(){
       try{
         const ids = currIds.current.assignment_id
           ? currIds.current
-          : await upsertAssignmentWithPage(assignmentTitle, 'public/pdfs/aprende-m2.pdf', pageIndex)
+          : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = ids
 
         const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
@@ -501,7 +427,12 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-        {[{label:'Pen',icon:'✏️',val:'pen'},{label:'Hi',icon:'🖍️',val:'highlighter'},{label:'Erase',icon:'🧽',val:'eraser'},{label:'Obj',icon:'🗑️',val:'eraserObject'}].map(t=>(
+        {[
+          {label:'Pen',  icon:'✏️', val:'pen'},
+          {label:'Hi',   icon:'🖍️', val:'highlighter'},
+          {label:'Erase',icon:'🧽', val:'eraser'},
+          {label:'Obj',  icon:'🗑️', val:'eraserObject'},
+        ].map(t=>(
           <button key={t.val} onClick={()=>setTool(t.val as Tool)}
             style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
               background: tool===t.val ? '#111' : '#fff', color: tool===t.val ? '#fff' : '#111' }}
@@ -582,7 +513,7 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      {/* Floating pager */}
+      {/* Floating pager (always reachable) */}
       <div
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
@@ -610,6 +541,7 @@ export default function StudentAssignment(){
         </button>
       </div>
 
+      {/* Floating toolbar */}
       {Toolbar}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
     </div>
