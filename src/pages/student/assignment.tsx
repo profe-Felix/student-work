@@ -1,4 +1,4 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -10,7 +10,7 @@ import {
 } from '../../lib/db'
 import { subscribeToClassroom, type AutoFollowPayload, type FocusPayload } from '../../lib/realtime'
 
-/** Fallback (used only until teacher broadcasts a real assignment) */
+/** Fallbacks used until the teacher broadcasts a real assignment context */
 const FALLBACK_ASSIGNMENT_TITLE = 'Handwriting - Daily'
 const FALLBACK_PDF_URL = `${import.meta.env.BASE_URL || '/'}aprende-m2.pdf`
 
@@ -100,11 +100,12 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
+  // Teacher-controlled context
   const [assignmentId, setAssignmentId] = useState<string | null>(null)
-  const [pdfUrl, setPdfUrl] = useState<string>('') // fallback set below
+  const [pdfUrl, setPdfUrl] = useState<string>(FALLBACK_PDF_URL)
   const [pageIndex, setPageIndex]   = useState(0)
-  const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
+  const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
   const [color, setColor] = useState('#1F75FE')
   const [size,  setSize]  = useState(6)
   const [handMode, setHandMode] = useState(true)
@@ -146,33 +147,38 @@ export default function StudentAssignment(){
     return data.publicUrl
   }
 
-  /** Subscribe to the single classroom channel so late-joiners also get the state */
+  /** Subscribe to a single classroom channel so late-joiners snap in */
   useEffect(() => {
     const ch = subscribeToClassroom({
       onAutoFollow: (p: AutoFollowPayload) => {
-        // switch to the teacher's assignment/PDF immediately
-        if (p.assignmentId) setAssignmentId(p.assignmentId)
-        if (p.assignmentPdfPath) setPdfUrl(toPublicUrl(p.assignmentPdfPath))
-        if (typeof p.teacherPageIndex === 'number') setPageIndex(p.teacherPageIndex)
-        setAllowedPages(p.allowedPages ?? null)
+        // Only set PDF if teacher supplied a valid storage path
+        if (p.assignmentPdfPath) {
+          const newUrl = toPublicUrl(p.assignmentPdfPath)
+          if (newUrl && newUrl !== pdfUrl) setPdfUrl(newUrl)
+        }
+        if (p.assignmentId && p.assignmentId !== assignmentId) setAssignmentId(p.assignmentId)
+        if (typeof p.teacherPageIndex === 'number' && p.teacherPageIndex !== pageIndex) setPageIndex(p.teacherPageIndex)
+        // allowed pages (null => free roam)
+        const nextAllowed = p.allowedPages ?? null
+        setAllowedPages(curr => {
+          const a = curr?.join(',') ?? ''
+          const b = nextAllowed?.join(',') ?? ''
+          return a === b ? curr : nextAllowed
+        })
       },
       onFocus: (f: FocusPayload) => {
         setFocusOn(!!f.on)
         setNavLocked(!!f.on && !!f.lockNav)
       },
-      onSetPage: ({ pageIndex }) => {
-        if (typeof pageIndex === 'number') setPageIndex(pageIndex)
+      onSetPage: ({ pageIndex: idx }) => {
+        if (typeof idx === 'number' && idx !== pageIndex) setPageIndex(idx)
       }
     })
     return () => { ch?.unsubscribe?.() }
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignmentId, pdfUrl, pageIndex])
 
-  // Fallback PDF (until the teacher broadcasts)
-  useEffect(() => {
-    if (!pdfUrl) setPdfUrl(FALLBACK_PDF_URL)
-  }, [pdfUrl])
-
-  // --- rest of the file: unchanged save/load/submit/polling logic ---
+  /* ---------- Draft / server sync, same as before (with assignmentId guard) ---------- */
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
   const lastAppliedServerHash = useRef<string>('')
   const lastLocalHash = useRef<string>('')
@@ -307,14 +313,14 @@ export default function StudentAssignment(){
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       const encHash = await hashStrokes(strokes)
-      const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
+      const titleKey = assignmentId ?? FALLBACK_PDF_URL
       const lastKey = lastHashKey(studentId, titleKey, pageIndex)
       const last = localStorage.getItem(lastKey)
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       let aId = assignmentId ?? undefined
       if (!aId) {
-        showToast('Waiting for teacher assignment…', 'err', 1500)
+        showToast('Waiting for teacher assignment…', 'err', 1200)
         setSaving(false); submitInFlight.current=false; return
       }
       const pId = await getPageId(aId, pageIndex)
@@ -433,11 +439,16 @@ export default function StudentAssignment(){
   }, [studentId, pageIndex, assignmentId])
 
   /* ---------- UI ---------- */
+  const flipToolbarSide = ()=> {
+    setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
+  }
+
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
       ...(toolbarOnRight ? { paddingRight:130 } : { paddingLeft:130 }),
       background:'#fafafa', WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
 
+      {/* Focus overlay */}
       {focusOn && (
         <div
           style={{
@@ -483,6 +494,7 @@ export default function StudentAssignment(){
         </div>
       </div>
 
+      {/* Pager */}
       <div
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
@@ -510,7 +522,79 @@ export default function StudentAssignment(){
         </button>
       </div>
 
-      {/* (Keep your existing toolbar + AudioRecorder UI as before) */}
+      {/* Floating toolbar (restored) */}
+      <div
+        style={{
+          position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
+          zIndex:10010, width:120, maxHeight:'80vh',
+          display:'flex', flexDirection:'column', gap:10,
+          padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
+          WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none', overflow:'hidden',
+          pointerEvents: focusOn ? 'none' : 'auto'
+        }}
+      >
+        <div style={{ display:'flex', gap:6 }}>
+          <button onClick={flipToolbarSide} title="Flip toolbar side"
+            style={{ flex:1, background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0' }}>⇄</button>
+          <button onClick={()=>setHandMode(m=>!m)}
+            style={{ flex:1, background: handMode?'#f3f4f6':'#34d399', color: handMode?'#111827':'#064e3b',
+              border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0', fontWeight:600 }}>
+            {handMode ? '✋' : '✍️'}
+          </button>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+          {[
+            {label:'Pen',  icon:'✏️', val:'pen'},
+            {label:'Hi',   icon:'🖍️', val:'highlighter'},
+            {label:'Erase',icon:'🧽', val:'eraser'},
+            {label:'Obj',  icon:'🗑️', val:'eraserObject'},
+          ].map(t=>(
+            <button key={t.val} onClick={()=>setTool(t.val as Tool)}
+              style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
+                background: tool===t.val ? '#111' : '#fff', color: tool===t.val ? '#fff' : '#111' }}
+              title={t.label}>{t.icon}</button>
+          ))}
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6 }}>
+          {[{label:'S',val:3},{label:'M',val:6},{label:'L',val:10}].map(s=>(
+            <button key={s.label} onClick={()=>setSize(s.val)}
+              style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
+                background: size===s.val ? '#111' : '#fff', color: size===s.val ? '#fff' : '#111' }}>
+              {s.label}
+            </button>
+          ))}
+          <button onClick={()=>drawRef.current?.undo()}
+            style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
+        </div>
+
+        <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
+          <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+            {CRAYOLA_24.map(c=>(
+              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+            ))}
+          </div>
+          <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+            {SKIN_TONES.map(c=>(
+              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+          <AudioRecorder ref={audioRef} maxSec={180} onBlob={(b)=>{ audioBlob.current = b }} />
+          <button onClick={submit}
+            style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
+              color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
+            {saving ? 'Saving…' : 'Submit'}
+          </button>
+        </div>
+      </div>
 
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
     </div>
