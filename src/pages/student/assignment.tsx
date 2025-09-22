@@ -1,4 +1,4 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -146,12 +146,16 @@ export default function StudentAssignment(){
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
   const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
 
-  // Realtime teacher controls
+  // Realtime teacher controls (with TS debouncing)
   const [focusOn, setFocusOn] = useState(false)
   const [navLocked, setNavLocked] = useState(false)
   const [autoFollow, setAutoFollow] = useState(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
+
+  const lastSetPageTs = useRef(0)
+  const lastAutoTs = useRef(0)
+  const lastFocusTs = useRef(0)
 
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')   // last server ink we applied
@@ -326,7 +330,6 @@ export default function StudentAssignment(){
   const nextAllowed = (from: number, dir: 1 | -1): number | null => {
     if (!autoFollow) return from + dir
     if (allowedPages && allowedPages.length > 0) {
-      // find next allowed index in that direction
       const sorted = [...allowedPages].sort((a,b)=>a-b)
       if (dir > 0) {
         for (const p of sorted) if (p > from) return p
@@ -336,11 +339,10 @@ export default function StudentAssignment(){
         return null
       }
     } else {
-      // hard lock to teacher page
       const tpi = teacherPageIndexRef.current
       if (typeof tpi !== 'number') return null
-      if (tpi === from) return null // no move
-      return tpi // jump directly to teacher page
+      if (tpi === from) return null
+      return tpi
     }
   }
 
@@ -359,7 +361,7 @@ export default function StudentAssignment(){
       try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
     }
 
-    setPageIndex(nextIndex)
+    if (pageIndex !== nextIndex) setPageIndex(nextIndex)
   }
 
   // Prev/Next handlers that skip blocked pages
@@ -426,30 +428,55 @@ export default function StudentAssignment(){
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
-      onSetPage: ({ pageIndex }: SetPagePayload) => {
-        teacherPageIndexRef.current = pageIndex
-        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+      onSetPage: (payload: SetPagePayload) => {
+        const ts = payload.ts ?? Date.now()
+        if (ts <= lastSetPageTs.current) return
+        lastSetPageTs.current = ts
+
+        const idx = payload.pageIndex
+        if (typeof idx === 'number') {
+          teacherPageIndexRef.current = idx
+          if (autoFollow && pageIndex !== idx) setPageIndex(idx)
+        }
       },
-      onFocus: ({ on, lockNav }: FocusPayload) => {
-        setFocusOn(!!on)
-        setNavLocked(!!on && !!lockNav)
+      onFocus: (payload: FocusPayload) => {
+        const ts = payload.ts ?? Date.now()
+        if (ts <= lastFocusTs.current) return
+        lastFocusTs.current = ts
+
+        const nextOn = !!payload.on
+        const nextLock = !!payload.lockNav && nextOn
+        setFocusOn(prev => (prev !== nextOn ? nextOn : prev))
+        setNavLocked(prev => (prev !== nextLock ? nextLock : prev))
       },
-      onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
-        setAutoFollow(!!on)
-        setAllowedPages(allowedPages ?? null)
-        if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        if (on && typeof teacherPageIndexRef.current === 'number') {
+      onAutoFollow: (payload: AutoFollowPayload) => {
+        const ts = payload.ts ?? Date.now()
+        if (ts <= lastAutoTs.current) return
+        lastAutoTs.current = ts
+
+        const nextOn = !!payload.on
+        const nextAllowed = payload.allowedPages ?? null
+        setAutoFollow(prev => (prev !== nextOn ? nextOn : prev))
+        setAllowedPages(prev => {
+          const a = (prev ?? []).join(','); const b = (nextAllowed ?? []).join(',')
+          return a === b ? prev : nextAllowed
+        })
+        if (typeof payload.teacherPageIndex === 'number') {
+          teacherPageIndexRef.current = payload.teacherPageIndex
+        }
+        if (nextOn && typeof teacherPageIndexRef.current === 'number' && pageIndex !== teacherPageIndexRef.current) {
           setPageIndex(teacherPageIndexRef.current)
         }
       }
     })
+
     return () => {
       try {
         if (typeof (ch as any).unsubscribe === 'function') (ch as any).unsubscribe()
         else (supabase as any)?.removeChannel?.(ch)
       } catch {}
     }
-  }, [rtAssignmentId, autoFollow])
+  }, [rtAssignmentId, autoFollow, pageIndex])
 
   const reloadFromServer = async ()=>{
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
