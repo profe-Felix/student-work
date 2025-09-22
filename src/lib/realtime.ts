@@ -1,7 +1,8 @@
 // src/lib/realtime.ts
 // Realtime utilities: legacy-compatible exports + global assignment handoff.
 
-import { supabase } from './supabaseClient';
+import type { RealtimeChannel } from '@supabase/supabase-js'
+import { supabase } from './supabaseClient'
 
 /** ---------- Types (kept broad for compatibility) ---------- */
 export interface SetPagePayload {
@@ -46,7 +47,8 @@ export async function publishSetAssignment(assignmentId: string) {
     event: 'set-assignment',
     payload: { assignmentId, ts: Date.now() },
   });
-  await supabase.removeChannel(ch);
+  // Do not return a Promise from react effect cleanup:
+  void supabase.removeChannel(ch);
 }
 
 /** Student bootstraps this once and will jump to any new assignmentId the teacher selects. */
@@ -57,7 +59,8 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
       if (typeof id === 'string' && id) onSetAssignment(id);
     })
     .subscribe();
-  return () => supabase.removeChannel(ch);
+  // Return a cleanup that does NOT return a promise
+  return () => { void supabase.removeChannel(ch); };
 }
 
 /** -------------------------------------------------------------------------------------------
@@ -69,19 +72,29 @@ export function assignmentChannel(assignmentId: string) {
   });
 }
 
+/** Helper: allow functions to accept either an assignmentId string OR a RealtimeChannel */
+type ChannelOrId = string | RealtimeChannel;
+function resolveChannel(input: ChannelOrId): { ch: RealtimeChannel; temporary: boolean } {
+  if (typeof input === 'string') {
+    const ch = assignmentChannel(input);
+    return { ch, temporary: true };       // we'll subscribe/send/remove
+  }
+  return { ch: input, temporary: false }; // assume already subscribed
+}
+
 /** ---------- Low-level publish/subscribe helpers (accept extra args for legacy calls) ---------- */
 
 // SET PAGE
 export async function publishSetPage(
-  assignmentId: string,
+  assignment: ChannelOrId,
   payload: SetPagePayload,
   // legacy extra args ignored:
   ..._legacy: any[]
 ) {
-  const ch = assignmentChannel(assignmentId);
-  await ch.subscribe();
+  const { ch, temporary } = resolveChannel(assignment);
+  if (temporary) { await ch.subscribe(); }
   await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } });
-  await supabase.removeChannel(ch);
+  if (temporary) { void supabase.removeChannel(ch); }
 }
 
 export function subscribeToSetPage(
@@ -95,19 +108,19 @@ export function subscribeToSetPage(
       onPayload(p);
     })
     .subscribe();
-  return () => supabase.removeChannel(ch);
+  return () => { void supabase.removeChannel(ch); };
 }
 
 // FOCUS
 export async function publishFocus(
-  assignmentId: string,
+  assignment: ChannelOrId,
   payload: FocusPayload,
   ..._legacy: any[]
 ) {
-  const ch = assignmentChannel(assignmentId);
-  await ch.subscribe();
+  const { ch, temporary } = resolveChannel(assignment);
+  if (temporary) { await ch.subscribe(); }
   await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } });
-  await supabase.removeChannel(ch);
+  if (temporary) { void supabase.removeChannel(ch); }
 }
 
 export function subscribeToFocus(
@@ -121,23 +134,23 @@ export function subscribeToFocus(
       onPayload(p);
     })
     .subscribe();
-  return () => supabase.removeChannel(ch);
+  return () => { void supabase.removeChannel(ch); };
 }
 
 // AUTO-FOLLOW
 export async function publishAutoFollow(
-  assignmentId: string,
+  assignment: ChannelOrId,
   payload: AutoFollowPayload,
   ..._legacy: any[]
 ) {
-  const ch = assignmentChannel(assignmentId);
-  await ch.subscribe();
+  const { ch, temporary } = resolveChannel(assignment);
+  if (temporary) { await ch.subscribe(); }
   await ch.send({
     type: 'broadcast',
     event: 'auto-follow',
     payload: { ...payload, ts: Date.now() },
   });
-  await supabase.removeChannel(ch);
+  if (temporary) { void supabase.removeChannel(ch); }
 }
 
 export function subscribeToAutoFollow(
@@ -151,22 +164,22 @@ export function subscribeToAutoFollow(
       onPayload(p);
     })
     .subscribe();
-  return () => supabase.removeChannel(ch);
+  return () => { void supabase.removeChannel(ch); };
 }
 
 /** ---------- Presence (legacy-expected by TeacherSyncBar) ---------- */
 export async function setTeacherPresence(
-  assignmentId: string,
+  assignment: ChannelOrId,
   state: TeacherPresenceState
 ) {
-  const ch = assignmentChannel(assignmentId);
-  await ch.subscribe();
+  const { ch, temporary } = resolveChannel(assignment);
+  if (temporary) { await ch.subscribe(); }
   await ch.send({
     type: 'broadcast',
     event: 'presence',
     payload: { ...state, ts: Date.now() },
   });
-  await supabase.removeChannel(ch);
+  if (temporary) { void supabase.removeChannel(ch); }
 }
 
 export function subscribeToPresence(
@@ -180,7 +193,7 @@ export function subscribeToPresence(
       onPayload(p);
     })
     .subscribe();
-  return () => supabase.removeChannel(ch);
+  return () => { void supabase.removeChannel(ch); };
 }
 
 /** ---------- High-level convenience: one call to get all three events ---------- */
@@ -194,7 +207,7 @@ type AssignmentHandlers = {
 /**
  * subscribeToAssignment(assignmentId, handlers)
  * Legacy-friendly combined subscription that triggers the given callbacks.
- * Returns the underlying channel (so you can unsubscribe/removeChannel).
+ * Returns the underlying channel with an unsubscribe() companion.
  */
 export function subscribeToAssignment(assignmentId: string, handlers: AssignmentHandlers) {
   const ch = assignmentChannel(assignmentId)
@@ -212,7 +225,7 @@ export function subscribeToAssignment(assignmentId: string, handlers: Assignment
     })
     .subscribe();
 
-  // Return something unsubscribe-able in multiple ways for safety with legacy code
-  (ch as any).unsubscribe = () => supabase.removeChannel(ch);
+  // Provide a void-cleanup instead of returning the Promise to satisfy React types
+  (ch as any).unsubscribe = () => { void supabase.removeChannel(ch); };
   return ch;
 }
