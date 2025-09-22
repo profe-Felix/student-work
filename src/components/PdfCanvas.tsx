@@ -10,36 +10,33 @@ type Props = {
 
 export default function PdfCanvas({ url, pageIndex, onReady, scale = 1.25 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const lastTokenRef = useRef(0)
+  const tokenRef = useRef(0)
 
   useEffect(() => {
     if (!url) return
 
     let cancelled = false
-    let cleanup: (() => void) | null = null
     let renderTask: any | null = null
     let loadingTask: any | null = null
     let pdfDoc: any | null = null
 
-    const token = ++lastTokenRef.current
+    const token = ++tokenRef.current
 
     ;(async () => {
       try {
         const pdfjs: any = await import('pdfjs-dist/build/pdf')
-
-        // Match worker to runtime api version to avoid mismatch
         const ver: string = (pdfjs && pdfjs.version) ? String(pdfjs.version) : '4.10.38'
+        // mjs worker works on GH Pages
         pdfjs.GlobalWorkerOptions.workerSrc =
           `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`
 
-        // Cancel any previous render by creating a new token; also keep handles to cancel below
         loadingTask = pdfjs.getDocument(url)
         const pdf = await loadingTask.promise
-        if (cancelled || token !== lastTokenRef.current) return
+        if (cancelled || token !== tokenRef.current) return
         pdfDoc = pdf
 
         const page = await pdf.getPage(pageIndex + 1)
-        if (cancelled || token !== lastTokenRef.current) return
+        if (cancelled || token !== tokenRef.current) return
 
         const viewport = page.getViewport({ scale })
         const canvas = canvasRef.current
@@ -47,32 +44,33 @@ export default function PdfCanvas({ url, pageIndex, onReady, scale = 1.25 }: Pro
         const ctx = canvas.getContext('2d')
         if (!ctx) return
 
-        canvas.width = viewport.width
-        canvas.height = viewport.height
+        // Resize only if changed (reduces flicker)
+        if (canvas.width !== viewport.width)  canvas.width  = viewport.width
+        if (canvas.height !== viewport.height) canvas.height = viewport.height
 
         renderTask = page.render({ canvasContext: ctx, viewport })
         await renderTask.promise
-        if (cancelled || token !== lastTokenRef.current) return
+        if (cancelled || token !== tokenRef.current) return
 
         onReady?.(pdf, canvas)
-
-        cleanup = () => {
-          try { renderTask?.cancel() } catch {}
-          try { loadingTask?.destroy?.() } catch {}
-          try { pdfDoc?.destroy?.() } catch {}
+      } catch (e: any) {
+        // Expected when a render is superseded by new props
+        const msg = (e && e.name) ? e.name : ''
+        if (msg === 'RenderingCancelledException' || msg === 'AbortException') {
+          // ignore — we’re cancelling on purpose
+        } else {
+          console.error('PdfCanvas load error', e)
         }
-      } catch (e) {
-        console.error('PdfCanvas load error', e)
+      } finally {
+        // Don’t destroy worker on normal prop churn; let browser cache it
       }
     })()
 
     return () => {
       cancelled = true
-      // Hard-cancel any in-flight work on prop change/unmount
       try { renderTask?.cancel() } catch {}
       try { loadingTask?.destroy?.() } catch {}
       try { pdfDoc?.destroy?.() } catch {}
-      if (cleanup) cleanup()
     }
   }, [url, pageIndex, scale, onReady])
 
