@@ -22,14 +22,13 @@ export interface AutoFollowPayload {
   ts?: number;
 }
 export type TeacherPresenceState = {
-  role: 'teacher';
-  autoFollow: boolean;
-  allowedPages: number[] | null;
-  teacherPageIndex: number | null;
-  // LEGACY: some callers include focusOn in presence
-  focusOn?: boolean;
+  role?: 'teacher';                 // <-- optional; we'll default to 'teacher'
+  autoFollow?: boolean;             // <-- optional to accept partials
+  allowedPages?: number[] | null;   // <-- optional
+  teacherPageIndex?: number | null; // <-- optional
+  focusOn?: boolean;                // <-- already allowed
+  lockNav?: boolean;                // <-- add this, TeacherSyncBar uses it
   ts?: number;
-  // Allow unknown legacy fields without breaking
   [k: string]: any;
 };
 
@@ -211,10 +210,15 @@ export async function setTeacherPresence(
 ) {
   const { ch, temporary } = resolveChannel(assignment);
   if (temporary) { await ch.subscribe(); }
+  const payload: TeacherPresenceState = {
+    role: 'teacher',           // <-- default the role
+    ...state,
+    ts: Date.now(),            // <-- ensure ts is set
+  };
   await ch.send({
     type: 'broadcast',
     event: 'presence',
-    payload: { ...state, ts: Date.now() },
+    payload,
   });
   if (temporary) { void supabase.removeChannel(ch); }
 }
