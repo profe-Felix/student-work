@@ -1,4 +1,4 @@
-// src/components/TeacherSyncBar.tsx
+//src/components/TeacherSyncBar.tsx
 import { useEffect, useRef, useState } from 'react';
 import {
   assignmentChannel,
