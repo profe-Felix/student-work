@@ -183,7 +183,7 @@ export default function TeacherDashboard() {
             assignmentId={assignmentId}
             pageId={pageId}
             pageIndex={currentPage?.page_index ?? 0}
-            assignmentPdfPath={currentPage?.pdf_path ?? null}  {/* ✅ renamed prop */}
+            assignmentPdfPath={currentPage?.pdf_path ?? null}
           />
         </div>
       )}
