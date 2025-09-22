@@ -2,8 +2,8 @@
 import { useEffect, useRef } from 'react'
 
 type Props = {
-  url: string               // Full URL to the PDF (Supabase public URL or /aprende-m2.pdf)
-  pageIndex: number         // 0-based
+  url: string               // PDF URL (Supabase public URL or /aprende-m2.pdf)
+  pageIndex: number         // 0-based index
   onReady?: (pdf: any, canvas: HTMLCanvasElement) => void
   scale?: number            // default 1.25
 }
@@ -20,9 +20,9 @@ export default function PdfCanvas({ url, pageIndex, onReady, scale = 1.25 }: Pro
       try {
         const pdfjs: any = await import('pdfjs-dist/build/pdf')
 
-        // ✅ Use CDN worker to avoid GitHub Pages asset path issues
+        // ✅ v4 worker is an ES module (.mjs). Use a CDN that serves it.
         pdfjs.GlobalWorkerOptions.workerSrc =
-          'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.5.136/build/pdf.worker.min.js'
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.worker.min.mjs'
 
         const loadingTask = pdfjs.getDocument(url)
         const pdf = await loadingTask.promise
@@ -34,7 +34,6 @@ export default function PdfCanvas({ url, pageIndex, onReady, scale = 1.25 }: Pro
         const viewport = page.getViewport({ scale })
         const canvas = canvasRef.current
         if (!canvas) return
-
         const ctx = canvas.getContext('2d')
         if (!ctx) return
 
