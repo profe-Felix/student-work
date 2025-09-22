@@ -7,8 +7,8 @@ export const supabase = createClient(
   { auth: { persistSession: false } }
 )
 
-// === Types ===
-export type AssignmentRow = { id: string; title: string; pdf_path: string | null }
+// === Types (teacher page may import some of these) ===
+export type AssignmentRow = { id: string; title: string }
 export type PageRow = { id: string; assignment_id: string; page_index: number; pdf_path: string | null }
 
 // ----- SELECT helpers -----
@@ -20,7 +20,7 @@ export async function getAssignmentIdByTitle(title: string): Promise<string> {
     .limit(1)
     .maybeSingle()
   if (error) throw error
-  if (!data?.id) throw new Error(`Assignment "${title}" not found.`)
+  if (!data?.id) throw new Error(`Assignment "${title}" not found`)
   return data.id
 }
 
@@ -33,8 +33,16 @@ export async function getPageId(assignment_id: string, page_index: number): Prom
     .limit(1)
     .maybeSingle()
   if (error) throw error
-  if (!data?.id) throw new Error(`Page ${page_index} not found for assignment ${assignment_id}.`)
+  if (!data?.id) throw new Error(`Page ${page_index} not found for assignment ${assignment_id}`)
   return data.id
+}
+
+/** Backward-compatible wrapper used by student/assignment.tsx */
+export async function upsertAssignmentWithPage(title: string, _pdf_path: string, page_index: number) {
+  // We don’t upsert here; just SELECT what already exists.
+  const assignment_id = await getAssignmentIdByTitle(title)
+  const page_id = await getPageId(assignment_id, page_index)
+  return { assignment_id, page_id }
 }
 
 // ----- Submissions & artifacts -----
@@ -63,6 +71,7 @@ export async function saveAudio(submission_id: string, blob: Blob) {
     upsert: false,
   })
   if (upErr) throw upErr
+
   const { error: insErr } = await supabase
     .from('artifacts')
     .insert([{ submission_id, kind: 'audio', storage_path: `${bucket}/${key}` }])
@@ -94,16 +103,17 @@ export async function loadLatestSubmission(assignment_id: string, page_id: strin
     .from('artifacts')
     .select('id, kind, strokes_json, storage_path, created_at')
     .eq('submission_id', sub.id)
+    .order('created_at', { ascending: true })
   if (ae) throw ae
 
   return { submission: sub, artifacts: arts || [] }
 }
 
-// ----- Teacher helpers -----
+// ----- Teacher helpers (select-only) -----
 export async function listAssignments(): Promise<AssignmentRow[]> {
   const { data, error } = await supabase
     .from('assignments')
-    .select('id,title,pdf_path')     // ✅ include pdf_path
+    .select('id,title')
     .order('title', { ascending: true })
   if (error) throw error
   return data as AssignmentRow[]
@@ -117,4 +127,17 @@ export async function listPages(assignment_id: string): Promise<PageRow[]> {
     .order('page_index', { ascending: true })
   if (error) throw error
   return data as PageRow[]
+}
+
+export async function listLatestByPage(assignment_id: string, page_id: string) {
+  const { data, error } = await supabase
+    .from('submissions')
+    .select('id, student_id, created_at, artifacts(id,kind,strokes_json,storage_path,created_at)')
+    .eq('assignment_id', assignment_id)
+    .eq('page_id', page_id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  return data
 }
