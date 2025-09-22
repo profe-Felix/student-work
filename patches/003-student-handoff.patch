@@ -1,0 +1,57 @@
+*** Begin Patch
+*** Update File: src/pages/student/assignment.tsx
+@@
+-import React, { useEffect, useMemo, useRef, useState } from 'react';
++import React, { useEffect, useMemo, useRef, useState } from 'react';
++// NEW:
++import { useLocation } from 'react-router-dom';
++import { subscribeToGlobal } from '../../lib/realtime';
++import { listPages, supabase } from '../../lib/db';
+@@
+-// const assignmentTitle = 'Handwriting - Daily'
+-// const pdfStoragePath = 'pdfs/aprende-m2.pdf'
++// REMOVE hard-coded assignment/pdf. Replace with dynamic handoff-driven state.
++const [rtAssignmentId, setRtAssignmentId] = useState<string>('');
++const [pdfStoragePath, setPdfStoragePath] = useState<string>(''); // drives PdfCanvas URL
++
++// NEW: allow deep links like ?assignmentId=abcd-123
++const loc = useLocation();
++useEffect(() => {
++  const p = new URLSearchParams(loc.search);
++  const urlAssignment = p.get('assignmentId');
++  if (urlAssignment) setRtAssignmentId(urlAssignment);
++}, [loc.search]);
++
++// NEW: listen for teacher handoff (switch assignment)
++useEffect(() => {
++  const off = subscribeToGlobal((nextAssignmentId) => {
++    setRtAssignmentId(nextAssignmentId);
++    setPageIndex(0); // optional: reset to first page on switch
++  });
++  return off;
++}, []);
++
++// NEW: when assignment or page changes, resolve pdf path and ensure IDs
++useEffect(() => {
++  (async () => {
++    if (!rtAssignmentId) return;
++    try {
++      const pages = await listPages(rtAssignmentId);
++      const curr = pages.find((x: any) => x.page_index === pageIndex) ?? pages[0];
++      const path = curr?.pdf_path || '';
++      setPdfStoragePath(path);
++
++      // If you maintained a currIds.current, update it here instead of upserting:
++      // currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id };
++    } catch (e) {
++      console.error('Failed to load pages for assignment', rtAssignmentId, e);
++    }
++  })();
++}, [rtAssignmentId, pageIndex]);
++
++// NEW: build a public URL for PdfCanvas and normalize nulls to empty string.
++const pdfUrl = useMemo(() => {
++  if (!pdfStoragePath) return '';
++  return supabase.storage.from('public').getPublicUrl(pdfStoragePath).data.publicUrl;
++}, [pdfStoragePath]);
+*** End Patch

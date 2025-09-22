@@ -1,0 +1,29 @@
+*** Begin Patch
+*** Update File: src/pages/teacher/index.tsx
+@@
+-import React, { useEffect, useMemo, useRef, useState } from 'react';
++import React, { useEffect, useMemo, useRef, useState } from 'react';
++// NEW:
++import { publishSetAssignment } from '../../lib/realtime';
+@@
+-        <select
+-          value={assignmentId}
+-          onChange={(e) => setAssignmentId(e.target.value)}
+-        >
++        <select
++          value={assignmentId}
++          onChange={async (e) => {
++            const next = e.target.value;
++            setAssignmentId(next);
++            try {
++              await publishSetAssignment(next); // NEW: tell students to switch
++            } catch (err) {
++              console.error('Failed to broadcast assignment change', err);
++            }
++          }}
++        >
+           {assignments.map((a) => (
+             <option key={a.id} value={a.id}>{a.title}</option>
+           ))}
+         </select>
+*** End Patch
