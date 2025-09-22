@@ -5,6 +5,7 @@ import {
   publishAutoFollow,
   publishFocus,
   publishSetPage,
+  setTeacherPresence,
 } from '../lib/realtime';
 
 type Props = {
@@ -14,7 +15,7 @@ type Props = {
   className?: string;
 };
 
-// Accept "1-3,5,8-9" (1-based) -> return [0,1,2,4,7,8] (0-based)
+// Accept "1-3,5,8-9" (1-based) -> [0,1,2,4,7,8] (0-based)
 function parseRanges(input: string): number[] {
   const out = new Set<number>();
   const parts = input.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
@@ -38,19 +39,41 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
   const [autoFollow, setAutoFollow] = useState(false);
   const [focus, setFocus] = useState(false);
   const [lockNav, setLockNav] = useState(true);
-  const [rangeText, setRangeText] = useState(''); // optional allow-list (1-based)
+  const [rangeText, setRangeText] = useState('');
+  const allowedRef = useRef<number[] | null>(null);
   const chRef = useRef<ReturnType<typeof assignmentChannel> | null>(null);
 
-  // open channel for this assignment
+  // Open teacher channel and publish initial presence
   useEffect(() => {
     if (!assignmentId) return;
     const ch = assignmentChannel(assignmentId);
     ch.subscribe();
     chRef.current = ch;
+    // initial presence
+    setTeacherPresence(ch, {
+      autoFollow,
+      allowedPages: allowedRef.current ?? null,
+      teacherPageIndex: pageIndex,
+      focusOn: focus,
+      lockNav,
+    });
     return () => { ch.unsubscribe(); chRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignmentId]);
 
-  // when auto-follow is ON, rebroadcast page on any change
+  // Whenever these change, update presence
+  useEffect(() => {
+    if (!chRef.current) return;
+    setTeacherPresence(chRef.current, {
+      autoFollow,
+      allowedPages: allowedRef.current ?? null,
+      teacherPageIndex: pageIndex,
+      focusOn: focus,
+      lockNav,
+    });
+  }, [autoFollow, focus, lockNav, pageIndex]);
+
+  // When auto-follow is ON, rebroadcast current page on change (snappy)
   useEffect(() => {
     if (autoFollow && chRef.current && pageId) {
       publishSetPage(chRef.current, pageId, pageIndex);
@@ -63,10 +86,20 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     setAutoFollow(next);
 
     const allowed = next ? parseRanges(rangeText) : null;
-    await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
+    allowedRef.current = allowed;
 
+    // presence first (so late joiners immediately see it)
+    await setTeacherPresence(chRef.current, {
+      autoFollow: next,
+      allowedPages: allowed ?? null,
+      teacherPageIndex: pageIndex,
+      focusOn: focus,
+      lockNav,
+    });
+
+    // broadcast for currently connected students
+    await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
     if (next) {
-      // Snap everyone immediately
       await publishSetPage(chRef.current, pageId, pageIndex);
     }
   }
@@ -75,6 +108,13 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     if (!chRef.current) return;
     const next = !focus;
     setFocus(next);
+    await setTeacherPresence(chRef.current, {
+      autoFollow,
+      allowedPages: allowedRef.current ?? null,
+      teacherPageIndex: pageIndex,
+      focusOn: next,
+      lockNav,
+    });
     await publishFocus(chRef.current, next, lockNav);
   }
 
