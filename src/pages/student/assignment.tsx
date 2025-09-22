@@ -1,4 +1,4 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -7,6 +7,7 @@ import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecord
 import {
   upsertAssignmentWithPage,
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
+  listPages, // NEW
   supabase
 } from '../../lib/db'
 import {
@@ -14,11 +15,13 @@ import {
   type SetPagePayload,
   type FocusPayload,
   type AutoFollowPayload,
+  // NEW:
+  subscribeToGlobal,
 } from '../../lib/realtime'
 
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
-const pdfStoragePath = 'pdfs/aprende-m2.pdf'
+const DEFAULT_PDF_STORAGE_PATH = 'pdfs/aprende-m2.pdf' // renamed to avoid name clash
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
@@ -106,7 +109,14 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
-  const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
+  // CHANGED: no hard-coded local pdf; derive from storage path below
+  const [pdfStoragePath, setPdfStoragePath] = useState<string>('') // NEW
+  const pdfUrl = useMemo(() => { // NEW
+    if (!pdfStoragePath) return ''
+    const { data } = supabase.storage.from('public').getPublicUrl(pdfStoragePath)
+    return data?.publicUrl ?? ''
+  }, [pdfStoragePath])
+
   const [pageIndex, setPageIndex]   = useState(0)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
@@ -159,6 +169,41 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)              // ignore window after save
 
+  // NEW: assignment handoff listener (teacher broadcast)
+  useEffect(() => {
+    const off = subscribeToGlobal((nextAssignmentId) => {
+      setRtAssignmentId(nextAssignmentId)
+      setPageIndex(0) // snap to page 0 on switch (tweak if you want to preserve)
+      // clear local ids for fresh join on next ensureIds()
+      currIds.current = {}
+    })
+    return off
+  }, [])
+
+  // NEW: helper to resolve ids depending on whether we have a teacher-provided assignment
+  async function ensureIds(): Promise<{ assignment_id: string, page_id: string }> {
+    // If teacher handed off an assignment, JOIN it (no upsert)
+    if (rtAssignmentId) {
+      const pages = await listPages(rtAssignmentId)
+      const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
+      if (!curr) throw new Error('No pages available for assignment')
+      currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
+      setPdfStoragePath(curr.pdf_path || '') // keep pdf in sync
+      return { assignment_id: rtAssignmentId, page_id: curr.id }
+    }
+    // Fallback: preserve your original upsert boot path
+    const ids = await upsertAssignmentWithPage(assignmentTitle, DEFAULT_PDF_STORAGE_PATH, pageIndex)
+    currIds.current = ids
+    if (!rtAssignmentId && ids.assignment_id) setRtAssignmentId(ids.assignment_id!)
+    // We still need a storage path for the PDF (for your default boot case)
+    try {
+      const pages = await listPages(ids.assignment_id!)
+      const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
+      setPdfStoragePath(curr?.pdf_path || DEFAULT_PDF_STORAGE_PATH)
+    } catch {}
+    return ids as { assignment_id: string, page_id: string }
+  }
+
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
@@ -174,9 +219,8 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
-        currIds.current = { assignment_id, page_id }
-        if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
+        const { assignment_id, page_id } = await ensureIds() // CHANGED
+        if (!rtAssignmentId && assignment_id) setRtAssignmentId(assignment_id!)
 
         try {
           const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
@@ -282,8 +326,7 @@ export default function StudentAssignment(){
       const last = localStorage.getItem(lastKey)
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      const ids = currIds.current.assignment_id ? currIds.current
-        : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+      const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIds() // CHANGED
       currIds.current = ids
       if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
@@ -398,8 +441,8 @@ export default function StudentAssignment(){
 
     try{
       const { assignment_id, page_id } = currIds.current.assignment_id
-        ? currIds.current
-        : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+        ? currIds.current as any
+        : await ensureIds() // CHANGED
       currIds.current = { assignment_id, page_id }
       if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
 
@@ -430,8 +473,8 @@ export default function StudentAssignment(){
     ;(async ()=>{
       try{
         const ids = currIds.current.assignment_id
-          ? currIds.current
-          : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+          ? currIds.current as any
+          : await ensureIds() // CHANGED
         currIds.current = ids
         if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
@@ -557,7 +600,7 @@ export default function StudentAssignment(){
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
           <div style={{ position:'absolute', inset:0, zIndex:0 }}>
-            <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
+            <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} /> {/* CHANGED */}
           </div>
           <div style={{ position:'absolute', inset:0, zIndex:10 }}>
             <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
