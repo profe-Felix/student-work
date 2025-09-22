@@ -8,11 +8,10 @@ import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   supabase, getPageId,
 } from '../../lib/db'
-import { subscribeToAssignment, type AutoFollowPayload, type FocusPayload } from '../../lib/realtime'
+import { subscribeToClassroom, type AutoFollowPayload, type FocusPayload } from '../../lib/realtime'
 
-/** Fallback constants (used only if no teacher presence yet) */
+/** Fallback (used only until teacher broadcasts a real assignment) */
 const FALLBACK_ASSIGNMENT_TITLE = 'Handwriting - Daily'
-/** Served from your site bundle (public/aprende-m2.pdf), not Supabase: */
 const FALLBACK_PDF_URL = `${import.meta.env.BASE_URL || '/'}aprende-m2.pdf`
 
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
@@ -45,7 +44,7 @@ const SKIN_TONES = [
 
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
-/* ---------- Keys & helpers ---------- */
+/* ---------- Local storage helpers ---------- */
 const draftKey      = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
 const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
 const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
@@ -55,7 +54,6 @@ function normalizeStrokes(data: unknown): StrokesPayload {
   const arr = Array.isArray((data as any).strokes) ? (data as any).strokes : []
   return { strokes: arr }
 }
-
 function saveDraft(student:string, assignment:string, page:number, strokes:any){
   try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
@@ -102,13 +100,8 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
-  // Assignment chosen by teacher (falls back to default)
   const [assignmentId, setAssignmentId] = useState<string | null>(null)
-
-  // PDF that we actually render
-  const [pdfUrl, setPdfUrl] = useState<string>('')   // start empty, we’ll set fallback in useEffect
-
-  // page state
+  const [pdfUrl, setPdfUrl] = useState<string>('') // fallback set below
   const [pageIndex, setPageIndex]   = useState(0)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
@@ -123,9 +116,7 @@ export default function StudentAssignment(){
   const [focusOn, setFocusOn] = useState(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
 
-  // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
-
   const drawRef = useRef<DrawCanvasHandle>(null)
   const audioRef = useRef<AudioRecorderHandle>(null)
   const audioBlob = useRef<Blob|null>(null)
@@ -147,7 +138,7 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // Convert "bucket/key" (from teacher) to public URL
+  // Convert "bucket/key" to public URL
   const toPublicUrl = (storagePath: string) => {
     const [bucket, ...rest] = storagePath.split('/')
     const path = rest.join('/')
@@ -155,17 +146,15 @@ export default function StudentAssignment(){
     return data.publicUrl
   }
 
-  // ==== Teacher presence / auto-follow ====
+  /** Subscribe to the single classroom channel so late-joiners also get the state */
   useEffect(() => {
-    // Subscribe to teacher channel keyed by fallback assignment title (so we learn the real one)
-    const ch = subscribeToAssignment(FALLBACK_ASSIGNMENT_TITLE, {
+    const ch = subscribeToClassroom({
       onAutoFollow: (p: AutoFollowPayload) => {
+        // switch to the teacher's assignment/PDF immediately
         if (p.assignmentId) setAssignmentId(p.assignmentId)
+        if (p.assignmentPdfPath) setPdfUrl(toPublicUrl(p.assignmentPdfPath))
         if (typeof p.teacherPageIndex === 'number') setPageIndex(p.teacherPageIndex)
         setAllowedPages(p.allowedPages ?? null)
-        if (p.assignmentPdfPath) {
-          setPdfUrl(toPublicUrl(p.assignmentPdfPath))
-        }
       },
       onFocus: (f: FocusPayload) => {
         setFocusOn(!!f.on)
@@ -178,24 +167,19 @@ export default function StudentAssignment(){
     return () => { ch?.unsubscribe?.() }
   }, [])
 
-  // Fallback initial PDF URL if teacher hasn't broadcast yet
+  // Fallback PDF (until the teacher broadcasts)
   useEffect(() => {
-    if (!pdfUrl) {
-      setPdfUrl(FALLBACK_PDF_URL)
-    }
+    if (!pdfUrl) setPdfUrl(FALLBACK_PDF_URL)
   }, [pdfUrl])
 
-  // assignment/page ids for submission
+  // --- rest of the file: unchanged save/load/submit/polling logic ---
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
-
-  // hashes/dirty tracking
-  const lastAppliedServerHash = useRef<string>('')   // last server ink we applied
-  const lastLocalHash = useRef<string>('')           // last local canvas snapshot
+  const lastAppliedServerHash = useRef<string>('')
+  const lastLocalHash = useRef<string>('')
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
@@ -211,12 +195,11 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        const aId = assignmentId // presence-driven if available
+        const aId = assignmentId
         let page_id: string | undefined
         if (aId) {
           try { page_id = await getPageId(aId, pageIndex) } catch {}
         }
-
         currIds.current = { assignment_id: aId ?? undefined, page_id }
 
         try {
@@ -257,7 +240,6 @@ export default function StudentAssignment(){
     return ()=>{ cancelled=true }
   }, [pageIndex, studentId, assignmentId])
 
-  /* ---------- Local dirty watcher ---------- */
   useEffect(()=>{
     let id: number | null = null
     const tick = async ()=>{
@@ -278,7 +260,6 @@ export default function StudentAssignment(){
     return ()=>{ if (id!=null) window.clearInterval(id) }
   }, [pageIndex, studentId, assignmentId])
 
-  /* ---------- Draft autosave ---------- */
   useEffect(()=>{
     let lastSerialized = ''
     let running = !document.hidden
@@ -315,7 +296,6 @@ export default function StudentAssignment(){
     }
   }, [pageIndex, studentId, assignmentId])
 
-  /* ---------- Submit + cache ---------- */
   const submit = async ()=>{
     if (submitInFlight.current) return
     submitInFlight.current = true
@@ -332,7 +312,6 @@ export default function StudentAssignment(){
       const last = localStorage.getItem(lastKey)
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      // need assignment & page ids
       let aId = assignmentId ?? undefined
       if (!aId) {
         showToast('Waiting for teacher assignment…', 'err', 1500)
@@ -369,7 +348,6 @@ export default function StudentAssignment(){
 
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
-    // obey teacher allow-list if present
     if (allowedPages && !allowedPages.includes(nextIndex)) return
     if (navLocked) return
 
@@ -392,7 +370,6 @@ export default function StudentAssignment(){
     setPageIndex(nextIndex)
   }
 
-  // polling to pick up server updates
   const reloadFromServer = async ()=>{
     if (!assignmentId) return
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
@@ -461,7 +438,6 @@ export default function StudentAssignment(){
       ...(toolbarOnRight ? { paddingRight:130 } : { paddingLeft:130 }),
       background:'#fafafa', WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
 
-      {/* Focus overlay + lock banner */}
       {focusOn && (
         <div
           style={{
@@ -507,7 +483,6 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      {/* Floating pager */}
       <div
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
@@ -535,8 +510,7 @@ export default function StudentAssignment(){
         </button>
       </div>
 
-      {/* Your toolbar + audio UI (unchanged) */}
-      {/* ... keep your existing toolbar/audio components here ... */}
+      {/* (Keep your existing toolbar + AudioRecorder UI as before) */}
 
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
     </div>
