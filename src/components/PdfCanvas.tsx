@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 
 type Props = {
   url: string               // PDF URL (Supabase public URL or /aprende-m2.pdf)
-  pageIndex: number         // 0-based index
+  pageIndex: number         // 0-based page index
   onReady?: (pdf: any, canvas: HTMLCanvasElement) => void
   scale?: number            // default 1.25
 }
@@ -20,9 +20,12 @@ export default function PdfCanvas({ url, pageIndex, onReady, scale = 1.25 }: Pro
       try {
         const pdfjs: any = await import('pdfjs-dist/build/pdf')
 
-        // ✅ v4 worker is an ES module (.mjs). Use a CDN that serves it.
+        // ✅ Match worker version to the runtime API version
+        const ver: string = (pdfjs && pdfjs.version) ? String(pdfjs.version) : '4.10.38'
+        // Use a CDN that serves ES module workers for v4
+        // (unpkg resolves to the exact package version)
         pdfjs.GlobalWorkerOptions.workerSrc =
-          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.worker.min.mjs'
+          `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`
 
         const loadingTask = pdfjs.getDocument(url)
         const pdf = await loadingTask.promise
