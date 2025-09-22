@@ -5,18 +5,26 @@ import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
+  upsertAssignmentWithPage,
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
-  supabase, getPageId,
+  supabase
 } from '../../lib/db'
-import { subscribeToClassroom, type AutoFollowPayload, type FocusPayload } from '../../lib/realtime'
+import {
+  subscribeToAssignment,
+  type SetPagePayload,
+  type FocusPayload,
+  type AutoFollowPayload,
+} from '../../lib/realtime'
 
-const FALLBACK_ASSIGNMENT_TITLE = 'Handwriting - Daily'
-const FALLBACK_PDF_URL = `${import.meta.env.BASE_URL || '/'}aprende-m2.pdf`
-
+/** Constants */
+const assignmentTitle = 'Handwriting - Daily'
+// We serve the demo PDF from the app bundle, so don't hit Supabase storage:
+const pdfStoragePath = '' // (was 'pdfs/aprende-m2.pdf')
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
 
+/* ---------- Colors ---------- */
 const CRAYOLA_24 = [
   { name:'Red',hex:'#EE204D' },{ name:'Yellow',hex:'#FCE883' },
   { name:'Blue',hex:'#1F75FE' },{ name:'Green',hex:'#1CAC78' },
@@ -39,8 +47,10 @@ const SKIN_TONES = [
   { name:'Deep',hex:'#94583F' },{ name:'Very Deep',hex:'#7C4936' },
   { name:'Rich Deep',hex:'#643B2C' },{ name:'Ultra Deep',hex:'#4E2F24' },
 ]
+
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
+/* ---------- Keys & helpers ---------- */
 const draftKey      = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
 const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
 const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
@@ -50,6 +60,7 @@ function normalizeStrokes(data: unknown): StrokesPayload {
   const arr = Array.isArray((data as any).strokes) ? (data as any).strokes : []
   return { strokes: arr }
 }
+
 function saveDraft(student:string, assignment:string, page:number, strokes:any){
   try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
@@ -96,11 +107,10 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
-  const [assignmentId, setAssignmentId] = useState<string | null>(null)
-  const [pdfUrl, setPdfUrl] = useState<string>(FALLBACK_PDF_URL)
-  const [pageIndex, setPageIndex] = useState(0)
-
+  const [pdfUrl] = useState<string>(`${import.meta.env.BASE_URL || '/' }aprende-m2.pdf`)
+  const [pageIndex, setPageIndex]   = useState(0)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
+
   const [color, setColor] = useState('#1F75FE')
   const [size,  setSize]  = useState(6)
   const [handMode, setHandMode] = useState(true)
@@ -108,11 +118,9 @@ export default function StudentAssignment(){
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
-  const [navLocked, setNavLocked] = useState(false)
-  const [focusOn, setFocusOn] = useState(false)
-  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
-
+  // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
+
   const drawRef = useRef<DrawCanvasHandle>(null)
   const audioRef = useRef<AudioRecorderHandle>(null)
   const audioBlob = useRef<Blob|null>(null)
@@ -130,86 +138,36 @@ export default function StudentAssignment(){
     try {
       const cssW = Math.round(parseFloat(getComputedStyle(canvas).width))
       const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
-      setCanvasSize(s => (s.w===cssW && s.h===cssH) ? s : { w: cssW, h: cssH })
+      setCanvasSize({ w: cssW, h: cssH })
     } catch {/* ignore */}
   }
 
-  const toPublicUrl = (storagePath: string) => {
-    const [bucket, ...rest] = storagePath.split('/')
-    const path = rest.join('/')
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path)
-    return data.publicUrl
-  }
-
-  // Validate a URL with a quick HEAD before switching (prevents broken 400 loops)
-  const testUrlOk = async (url: string): Promise<boolean> => {
-    try {
-      const res = await fetch(url, { method: 'HEAD' })
-      return !!res.ok
-    } catch { return false }
-  }
-
-  // === Realtime classroom subscription ===
-  useEffect(() => {
-    const ch = subscribeToClassroom({
-      onAutoFollow: async (p: AutoFollowPayload) => {
-        if (p.assignmentId && p.assignmentId !== assignmentId) {
-          setAssignmentId(p.assignmentId)
-        }
-
-        if (typeof p.teacherPageIndex === 'number' && p.teacherPageIndex !== pageIndex) {
-          setPageIndex(p.teacherPageIndex)
-        }
-
-        // Allowed pages (null => free roam)
-        const nextAllowed = p.allowedPages ?? null
-        setAllowedPages(curr => {
-          const a = curr?.join(',') ?? ''
-          const b = nextAllowed?.join(',') ?? ''
-          return a === b ? curr : nextAllowed
-        })
-
-        // Only switch PDFs if the teacher provided a path AND it is accessible
-        if (p.assignmentPdfPath) {
-          const nextUrl = toPublicUrl(p.assignmentPdfPath)
-          if (nextUrl && nextUrl !== pdfUrl) {
-            if (await testUrlOk(nextUrl)) {
-              setPdfUrl(nextUrl)
-            } else {
-              // keep current pdfUrl; optionally surface a small message once
-              // showToast('Teacher PDF not available yet', 'err', 1000)
-            }
-          }
-        }
-      },
-      onFocus: (f: FocusPayload) => {
-        setFocusOn(!!f.on)
-        setNavLocked(!!f.on && !!f.lockNav)
-      },
-      onSetPage: ({ pageIndex: idx }) => {
-        if (typeof idx === 'number' && idx !== pageIndex) setPageIndex(idx)
-      }
-    })
-    return () => { ch?.unsubscribe?.() }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignmentId, pdfUrl, pageIndex])
-
-  // ====== (The rest stays like your current version, with minor guards) ======
+  // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
-  const lastAppliedServerHash = useRef<string>('')
-  const lastLocalHash = useRef<string>('')
+  const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
+
+  // Realtime teacher controls
+  const [focusOn, setFocusOn] = useState(false)
+  const [navLocked, setNavLocked] = useState(false)
+  const [autoFollow, setAutoFollow] = useState(false)
+  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
+  const teacherPageIndexRef = useRef<number | null>(null)
+
+  // hashes/dirty tracking
+  const lastAppliedServerHash = useRef<string>('')   // last server ink we applied
+  const lastLocalHash = useRef<string>('')           // last local canvas snapshot
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
-  const justSavedAt = useRef<number>(0)
+  const justSavedAt = useRef<number>(0)              // ignore window after save
 
+  /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
 
     ;(async ()=>{
       try{
-        const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-        const draft = loadDraft(studentId, titleKey, pageIndex)
+        const draft = loadDraft(studentId, assignmentTitle, pageIndex)
         if (draft?.strokes) {
           try { drawRef.current?.loadStrokes(normalizeStrokes(draft.strokes)) } catch {}
           try { lastLocalHash.current = await hashStrokes(normalizeStrokes(draft.strokes)) } catch {}
@@ -217,41 +175,35 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        const aId = assignmentId
-        let page_id: string | undefined
-        if (aId) {
-          try { page_id = await getPageId(aId, pageIndex) } catch {}
-        }
-        currIds.current = { assignment_id: aId ?? undefined, page_id }
+        const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+        currIds.current = { assignment_id, page_id }
+        if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
 
         try {
-          if (aId && page_id) {
-            const latest = await loadLatestSubmission(aId, page_id, studentId)
-            if (!cancelled && latest) {
-              const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-              const norm = normalizeStrokes(strokes)
-              if (Array.isArray(norm.strokes) && norm.strokes.length > 0) {
-                const h = await hashStrokes(norm)
-                if (!localDirty.current) {
-                  drawRef.current?.loadStrokes(norm)
-                  lastAppliedServerHash.current = h
-                  lastLocalHash.current = h
-                }
-              } else if (!draft?.strokes) {
-                const cached = loadSubmittedCache(studentId, titleKey, pageIndex)
-                if (cached?.strokes) {
-                  const normC = normalizeStrokes(cached.strokes)
-                  drawRef.current?.loadStrokes(normC)
-                  lastLocalHash.current = await hashStrokes(normC)
-                }
+          const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
+          if (!cancelled && latest) {
+            const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+            const norm = normalizeStrokes(strokes)
+            if (Array.isArray(norm.strokes) && norm.strokes.length > 0) {
+              const h = await hashStrokes(norm)
+              if (!localDirty.current) {
+                drawRef.current?.loadStrokes(norm)
+                lastAppliedServerHash.current = h
+                lastLocalHash.current = h
+              }
+            } else if (!draft?.strokes) {
+              const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+              if (cached?.strokes) {
+                const normC = normalizeStrokes(cached.strokes)
+                drawRef.current?.loadStrokes(normC)
+                lastLocalHash.current = await hashStrokes(normC)
               }
             }
           }
         } catch {/* ignore */}
       }catch(e){
         console.error('init load failed', e)
-        const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-        const cached = loadSubmittedCache(studentId, titleKey, pageIndex)
+        const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
         if (cached?.strokes) {
           const norm = normalizeStrokes(cached.strokes)
           try { drawRef.current?.loadStrokes(norm); lastLocalHash.current = await hashStrokes(norm) } catch {}
@@ -260,8 +212,9 @@ export default function StudentAssignment(){
     })()
 
     return ()=>{ cancelled=true }
-  }, [pageIndex, studentId, assignmentId])
+  }, [pageIndex, studentId, rtAssignmentId])
 
+  /* ---------- Local dirty watcher ---------- */
   useEffect(()=>{
     let id: number | null = null
     const tick = async ()=>{
@@ -273,15 +226,15 @@ export default function StudentAssignment(){
           localDirty.current = true
           dirtySince.current = Date.now()
           lastLocalHash.current = h
-          const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-          saveDraft(studentId, titleKey, pageIndex, data)
+          saveDraft(studentId, assignmentTitle, pageIndex, data)
         }
       } catch {}
     }
     id = window.setInterval(tick, 800)
     return ()=>{ if (id!=null) window.clearInterval(id) }
-  }, [pageIndex, studentId, assignmentId])
+  }, [pageIndex, studentId])
 
+  /* ---------- Draft autosave (coarse) ---------- */
   useEffect(()=>{
     let lastSerialized = ''
     let running = !document.hidden
@@ -293,8 +246,7 @@ export default function StudentAssignment(){
         if (!data) return
         const s = JSON.stringify(data)
         if (s !== lastSerialized) {
-          const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-          saveDraft(studentId, titleKey, pageIndex, data)
+          saveDraft(studentId, assignmentTitle, pageIndex, data)
           lastSerialized = s
         }
       } catch {}
@@ -305,10 +257,7 @@ export default function StudentAssignment(){
     document.addEventListener('visibilitychange', onVis)
     start()
     const onBeforeUnload = ()=>{
-      try { const data = drawRef.current?.getStrokes(); if (data) {
-        const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-        saveDraft(studentId, titleKey, pageIndex, data)
-      }} catch {}
+      try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     return ()=>{
@@ -316,8 +265,9 @@ export default function StudentAssignment(){
       document.removeEventListener('visibilitychange', onVis)
       window.removeEventListener('beforeunload', onBeforeUnload)
     }
-  }, [pageIndex, studentId, assignmentId])
+  }, [pageIndex, studentId])
 
+  /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async ()=>{
     if (submitInFlight.current) return
     submitInFlight.current = true
@@ -329,25 +279,21 @@ export default function StudentAssignment(){
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       const encHash = await hashStrokes(strokes)
-      const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-      const lastKey = lastHashKey(studentId, titleKey, pageIndex)
+      const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
       const last = localStorage.getItem(lastKey)
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      let aId = assignmentId ?? undefined
-      if (!aId) {
-        showToast('Waiting for teacher assignment…', 'err', 1200)
-        setSaving(false); submitInFlight.current=false; return
-      }
-      const pId = await getPageId(aId, pageIndex)
-      currIds.current = { assignment_id: aId, page_id: pId }
+      const ids = currIds.current.assignment_id ? currIds.current
+        : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+      currIds.current = ids
+      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
-      const submission_id = await createSubmission(studentId, aId, pId)
+      const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       if (hasInk) {
         await saveStrokes(submission_id, strokes)
         localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, titleKey, pageIndex, strokes)
+        saveSubmittedCache(studentId, assignmentTitle, pageIndex, strokes)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
         localDirty.current = false
@@ -357,7 +303,7 @@ export default function StudentAssignment(){
         audioBlob.current = null
       }
 
-      clearDraft(studentId, titleKey, pageIndex)
+      clearDraft(studentId, assignmentTitle, pageIndex)
       showToast('Saved!', 'ok', 1200)
       justSavedAt.current = Date.now()
     } catch (e:any){
@@ -368,11 +314,39 @@ export default function StudentAssignment(){
     }
   }
 
+  /* ---------- Sync rules ---------- */
+  const isAllowed = (idx: number) => {
+    if (!autoFollow) return true
+    if (allowedPages && allowedPages.length > 0) return allowedPages.includes(idx)
+    // hard lock if no allow-list provided
+    const tpi = teacherPageIndexRef.current
+    return typeof tpi === 'number' ? idx === tpi : false
+  }
+
+  const nextAllowed = (from: number, dir: 1 | -1): number | null => {
+    if (!autoFollow) return from + dir
+    if (allowedPages && allowedPages.length > 0) {
+      // find next allowed index in that direction
+      const sorted = [...allowedPages].sort((a,b)=>a-b)
+      if (dir > 0) {
+        for (const p of sorted) if (p > from) return p
+        return null
+      } else {
+        for (let i = sorted.length - 1; i >= 0; i--) if (sorted[i] < from) return sorted[i]
+        return null
+      }
+    } else {
+      // hard lock to teacher page
+      const tpi = teacherPageIndexRef.current
+      if (typeof tpi !== 'number') return null
+      if (tpi === from) return null // no move
+      return tpi // jump directly to teacher page
+    }
+  }
+
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
-    if (allowedPages && !allowedPages.includes(nextIndex)) return
-    if (navLocked) return
-
+    if (!isAllowed(nextIndex)) return
     try { audioRef.current?.stop() } catch {}
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
@@ -380,28 +354,115 @@ export default function StudentAssignment(){
     const hasAudio = !!audioBlob.current
 
     if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasAudio)) {
-      try { await submit() } catch {
-        const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-        try { saveDraft(studentId, titleKey, pageIndex, current) } catch {}
-      }
+      try { await submit() } catch { try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {} }
     } else {
-      const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-      try { saveDraft(studentId, titleKey, pageIndex, current) } catch {}
+      try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
     }
 
     setPageIndex(nextIndex)
   }
 
+  // Prev/Next handlers that skip blocked pages
+  const onPrev = () => {
+    if (saving || submitInFlight.current || navLocked) return
+    const target = nextAllowed(pageIndex, -1)
+    if (target == null) return
+    void goToPage(target)
+  }
+  const onNext = () => {
+    if (saving || submitInFlight.current || navLocked) return
+    const target = nextAllowed(pageIndex, 1)
+    if (target == null) return
+    void goToPage(target)
+  }
+
+  // two-finger pan host (attach only when drawing; allow default scroll in hand mode)
+  const scrollHostRef = useRef<HTMLDivElement|null>(null)
+  useEffect(()=>{
+    const host = scrollHostRef.current
+    if (!host || handMode) return  // don't attach custom pan when in hand/scroll mode
+
+    let pan=false, startY=0, startX=0, startT=0, startL=0
+    const onTS=(e:TouchEvent)=>{
+      if(e.touches.length>=2){
+        pan=true
+        const [t1,t2]=[e.touches[0],e.touches[1]]
+        startY=(t1.clientY+t2.clientY)/2
+        startX=(t1.clientX+t2.clientX)/2
+        startT=host.scrollTop
+        startL=host.scrollLeft
+      }
+    }
+    const onTM=(e:TouchEvent)=>{
+      if(pan && e.touches.length>=2){
+        e.preventDefault()
+        const [t1,t2]=[e.touches[0],e.touches[1]]
+        const y=(t1.clientY+t2.clientY)/2, x=(t1.clientX+t2.clientX)/2
+        host.scrollTop=startT-(y-startY)
+        host.scrollLeft=startL-(x-startX)
+      }
+    }
+    const end=()=>{ pan=false }
+
+    host.addEventListener('touchstart',onTS,{passive:true,capture:true})
+    host.addEventListener('touchmove', onTM,{passive:false,capture:true})
+    host.addEventListener('touchend',  end,{passive:true,capture:true})
+    host.addEventListener('touchcancel',end,{passive:true,capture:true})
+    return ()=>{ 
+      host.removeEventListener('touchstart',onTS as any,true)
+      host.removeEventListener('touchmove', onTM as any,true)
+      host.removeEventListener('touchend',  end as any,true)
+      host.removeEventListener('touchcancel',end as any,true)
+    }
+  }, [handMode])
+
+  const flipToolbarSide = ()=> {
+    setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
+  }
+
+  /* ---------- Realtime + polling (defensive) ---------- */
+
+  // subscribe to teacher broadcast + presence once we know the assignment id
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    const ch = subscribeToAssignment(rtAssignmentId, {
+      onSetPage: ({ pageIndex }: SetPagePayload) => {
+        teacherPageIndexRef.current = pageIndex
+        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+      },
+      onFocus: ({ on, lockNav }: FocusPayload) => {
+        setFocusOn(!!on)
+        setNavLocked(!!on && !!lockNav)
+      },
+      onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
+        setAutoFollow(!!on)
+        setAllowedPages(allowedPages ?? null)
+        if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
+        if (on && typeof teacherPageIndexRef.current === 'number') {
+          setPageIndex(teacherPageIndexRef.current)
+        }
+      }
+    })
+    return () => {
+      try {
+        if (typeof (ch as any).unsubscribe === 'function') (ch as any).unsubscribe()
+        else (supabase as any)?.removeChannel?.(ch)
+      } catch {}
+    }
+  }, [rtAssignmentId, autoFollow])
+
   const reloadFromServer = async ()=>{
-    if (!assignmentId) return
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
     if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
 
     try{
-      const pId = await getPageId(assignmentId, pageIndex)
-      currIds.current = { assignment_id: assignmentId, page_id: pId }
+      const { assignment_id, page_id } = currIds.current.assignment_id
+        ? currIds.current
+        : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+      currIds.current = { assignment_id, page_id }
+      if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
 
-      const latest = await loadLatestSubmission(assignmentId, pId, studentId)
+      const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
       const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
       const normalized = normalizeStrokes(strokesPayload)
 
@@ -413,8 +474,7 @@ export default function StudentAssignment(){
 
       if (!localDirty.current) {
         drawRef.current?.loadStrokes(normalized)
-        const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
-        saveSubmittedCache(studentId, titleKey, pageIndex, normalized)
+        saveSubmittedCache(studentId, assignmentTitle, pageIndex, normalized)
         lastAppliedServerHash.current = serverHash
         lastLocalHash.current = serverHash
       }
@@ -428,14 +488,16 @@ export default function StudentAssignment(){
 
     ;(async ()=>{
       try{
-        if (!assignmentId) return
-        const pId = await getPageId(assignmentId, pageIndex)
-        currIds.current = { assignment_id: assignmentId, page_id: pId }
+        const ids = currIds.current.assignment_id
+          ? currIds.current
+          : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
+        currIds.current = ids
+        if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
-        const ch = supabase.channel(`art-strokes-${studentId}-${pId}`)
+        const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
           .on('postgres_changes', {
             event: '*', schema: 'public', table: 'artifacts',
-            filter: `page_id=eq.${pId},kind=eq.strokes`
+            filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
           }, ()=> reloadFromServer())
           .subscribe()
 
@@ -452,34 +514,88 @@ export default function StudentAssignment(){
       if (cleanup) cleanup()
       if (pollId!=null) window.clearInterval(pollId)
     }
-  }, [studentId, pageIndex, assignmentId])
+  }, [studentId, pageIndex, rtAssignmentId])
 
-  const flipToolbarSide = ()=> {
-    setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
-  }
+  /* ---------- UI ---------- */
+  const Toolbar = (
+    <div
+      style={{
+        position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
+        zIndex:10010, width:120, maxHeight:'80vh',
+        display:'flex', flexDirection:'column', gap:10,
+        padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
+        WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none', overflow:'hidden'
+      }}
+      onTouchStart={(e)=> e.stopPropagation()}
+    >
+      <div style={{ display:'flex', gap:6 }}>
+        <button onClick={flipToolbarSide} title="Flip toolbar side"
+          style={{ flex:1, background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0' }}>⇄</button>
+        <button onClick={()=>setHandMode(m=>!m)}
+          style={{ flex:1, background: handMode?'#f3f4f6':'#34d399', color: handMode?'#111827':'#064e3b',
+            border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0', fontWeight:600 }}>
+          {handMode ? '✋' : '✍️'}
+        </button>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+        {[
+          {label:'Pen',  icon:'✏️', val:'pen'},
+          {label:'Hi',   icon:'🖍️', val:'highlighter'},
+          {label:'Erase',icon:'🧽', val:'eraser'},
+          {label:'Obj',  icon:'🗑️', val:'eraserObject'},
+        ].map(t=>(
+          <button key={t.val} onClick={()=>setTool(t.val as Tool)}
+            style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
+              background: tool===t.val ? '#111' : '#fff', color: tool===t.val ? '#fff' : '#111' }}
+            title={t.label}>{t.icon}</button>
+        ))}
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6 }}>
+        {[{label:'S',val:3},{label:'M',val:6},{label:'L',val:10}].map(s=>(
+          <button key={s.label} onClick={()=>setSize(s.val)}
+            style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
+              background: size===s.val ? '#111' : '#fff', color: size===s.val ? '#fff' : '#111' }}>
+            {s.label}
+          </button>
+        ))}
+        <button onClick={()=>drawRef.current?.undo()}
+          style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
+      </div>
+
+      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
+        <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+          {CRAYOLA_24.map(c=>(
+            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+              style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+          ))}
+        </div>
+        <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+          {SKIN_TONES.map(c=>(
+            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+              style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        <AudioRecorder ref={audioRef} maxSec={180} onBlob={(b)=>{ audioBlob.current = b }} />
+        <button onClick={submit}
+          style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
+            color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
+          {saving ? 'Saving…' : 'Submit'}
+        </button>
+      </div>
+    </div>
+  )
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
       ...(toolbarOnRight ? { paddingRight:130 } : { paddingLeft:130 }),
       background:'#fafafa', WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
-
-      {focusOn && (
-        <div
-          style={{
-            position:'fixed', inset:0, background:'rgba(0,0,0,0.55)', backdropFilter:'blur(2px)',
-            zIndex:20000, display:'grid', placeItems:'center', color:'#fff', fontSize:20, fontWeight:700
-          }}
-        >
-          Focus Mode — watch the teacher ✋
-        </div>
-      )}
-      {allowedPages && (
-        <div style={{ position:'fixed', top:8, left:'50%', transform:'translateX(-50%)',
-          background:'#111', color:'#fff', padding:'6px 10px', borderRadius:999, zIndex:20010, fontSize:12 }}>
-          Teacher enabled Sync • Allowed pages: {allowedPages.map(p => p+1).join(', ')}
-        </div>
-      )}
-
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
         <h2>Student Assignment</h2>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
@@ -493,7 +609,10 @@ export default function StudentAssignment(){
       </div>
 
       <div
-        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch', touchAction:'none',
+        ref={scrollHostRef}
+        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
+          // ✅ allow native 1-finger scroll in hand mode; block in draw mode
+          touchAction: handMode ? 'auto' : 'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
@@ -501,13 +620,14 @@ export default function StudentAssignment(){
           <div style={{ position:'absolute', inset:0, zIndex:0 }}>
             <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
           </div>
-          <div style={{ position:'absolute', inset:0, zIndex:10, pointerEvents: focusOn ? 'none' : 'auto' }}>
+          <div style={{ position:'absolute', inset:0, zIndex:10 }}>
             <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
               color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
           </div>
         </div>
       </div>
 
+      {/* Floating pager (Prev/Next skip to next allowed page) */}
       <div
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
@@ -517,8 +637,8 @@ export default function StudentAssignment(){
         }}
       >
         <button
-          onClick={()=>goToPage(Math.max(0, pageIndex-1))}
-          disabled={saving || submitInFlight.current || navLocked}
+          onClick={onPrev}
+          disabled={saving || submitInFlight.current || navLocked || nextAllowed(pageIndex, -1) == null}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           ◀ Prev
@@ -527,8 +647,8 @@ export default function StudentAssignment(){
           Page {pageIndex+1}
         </span>
         <button
-          onClick={()=>goToPage(pageIndex+1)}
-          disabled={saving || submitInFlight.current || navLocked}
+          onClick={onNext}
+          disabled={saving || submitInFlight.current || navLocked || nextAllowed(pageIndex, 1) == null}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           Next ▶
@@ -536,81 +656,21 @@ export default function StudentAssignment(){
       </div>
 
       {/* Floating toolbar */}
-      <div
-        style={{
-          position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
-          zIndex:10010, width:120, maxHeight:'80vh',
-          display:'flex', flexDirection:'column', gap:10,
-          padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
-          WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none', overflow:'hidden',
-          pointerEvents: focusOn ? 'none' : 'auto'
-        }}
-      >
-        <div style={{ display:'flex', gap:6 }}>
-          <button onClick={()=> setToolbarOnRight(r=>{ const n=!r; try{ localStorage.setItem('toolbarSide', n?'right':'left') }catch{}; return n })}
-            title="Flip toolbar side"
-            style={{ flex:1, background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0' }}>⇄</button>
-          <button onClick={()=>setHandMode(m=>!m)}
-            style={{ flex:1, background: handMode?'#f3f4f6':'#34d399', color: handMode?'#111827':'#064e3b',
-              border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0', fontWeight:600 }}>
-            {handMode ? '✋' : '✍️'}
-          </button>
-        </div>
-
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-          {[
-            {label:'Pen',  icon:'✏️', val:'pen'},
-            {label:'Hi',   icon:'🖍️', val:'highlighter'},
-            {label:'Erase',icon:'🧽', val:'eraser'},
-            {label:'Obj',  icon:'🗑️', val:'eraserObject'},
-          ].map(t=>(
-            <button key={t.val} onClick={()=>setTool(t.val as Tool)}
-              style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
-                background: tool===t.val ? '#111' : '#fff', color: tool===t.val ? '#fff' : '#111' }}
-              title={t.label}>{t.icon}</button>
-          ))}
-        </div>
-
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6 }}>
-          {[{label:'S',val:3},{label:'M',val:6},{label:'L',val:10}].map(s=>(
-            <button key={s.label} onClick={()=>setSize(s.val)}
-              style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
-                background: size===s.val ? '#111' : '#fff', color: size===s.val ? '#fff' : '#111' }}>
-              {s.label}
-            </button>
-          ))}
-          <button onClick={()=>drawRef.current?.undo()}
-            style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
-        </div>
-
-        <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
-          <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
-            {CRAYOLA_24.map(c=>(
-              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
-                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
-            ))}
-          </div>
-          <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
-            {SKIN_TONES.map(c=>(
-              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
-                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-          <AudioRecorder ref={audioRef} maxSec={180} onBlob={(b)=>{ audioBlob.current = b }} />
-          <button onClick={submit}
-            style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
-              color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
-            {saving ? 'Saving…' : 'Submit'}
-          </button>
-        </div>
-      </div>
-
+      {Toolbar}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
+
+      {/* Focus overlay */}
+      {focusOn && (
+        <div
+          style={{
+            position:'fixed', inset:0, background:'rgba(0,0,0,0.6)',
+            backdropFilter:'blur(2px)', zIndex: 20050,
+            display:'grid', placeItems:'center', color:'#fff', fontSize:20, fontWeight:700
+          }}
+        >
+          Focus Mode — watch the teacher ✋
+        </div>
+      )}
     </div>
   )
 }
