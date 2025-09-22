@@ -1,4 +1,4 @@
-// src/components/PdfCanvas.tsx
+//src/components/PdfCanvas.tsx
 import { useEffect, useRef } from 'react'
 
 type Props = {
