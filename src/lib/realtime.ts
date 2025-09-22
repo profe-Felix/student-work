@@ -1,4 +1,4 @@
-// src/lib/realtime.ts
+//src/lib/realtime.ts
 // Realtime utilities: legacy-compatible + global assignment handoff.
 // - Accept either assignmentId (string) or a RealtimeChannel for publish* helpers
 // - Accept loose/legacy param shapes (booleans, numbers, strings)
