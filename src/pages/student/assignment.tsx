@@ -1,4 +1,4 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -9,17 +9,10 @@ import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   supabase
 } from '../../lib/db'
-import {
-  subscribeToAssignment,
-  type SetPagePayload,
-  type FocusPayload,
-  type AutoFollowPayload,
-} from '../../lib/realtime'
 
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
-// We serve the demo PDF from the app bundle, so don't hit Supabase storage:
-const pdfStoragePath = '' // (was 'pdfs/aprende-m2.pdf')
+const pdfStoragePath = 'pdfs/aprende-m2.pdf'
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
@@ -144,15 +137,6 @@ export default function StudentAssignment(){
 
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
-  const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
-
-  // Realtime teacher controls
-  const [focusOn, setFocusOn] = useState(false)
-  const [navLocked, setNavLocked] = useState(false)
-  const [autoFollow, setAutoFollow] = useState(false)
-  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
-  const teacherPageIndexRef = useRef<number | null>(null)
-
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')   // last server ink we applied
   const lastLocalHash = useRef<string>('')           // last local canvas snapshot
@@ -177,7 +161,6 @@ export default function StudentAssignment(){
 
         const { assignment_id, page_id } = await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = { assignment_id, page_id }
-        if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
 
         try {
           const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
@@ -212,7 +195,7 @@ export default function StudentAssignment(){
     })()
 
     return ()=>{ cancelled=true }
-  }, [pageIndex, studentId, rtAssignmentId])
+  }, [pageIndex, studentId])
 
   /* ---------- Local dirty watcher ---------- */
   useEffect(()=>{
@@ -286,7 +269,6 @@ export default function StudentAssignment(){
       const ids = currIds.current.assignment_id ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = ids
-      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
@@ -314,39 +296,16 @@ export default function StudentAssignment(){
     }
   }
 
-  /* ---------- Sync rules ---------- */
-  const isAllowed = (idx: number) => {
-    if (!autoFollow) return true
-    if (allowedPages && allowedPages.length > 0) return allowedPages.includes(idx)
-    // hard lock if no allow-list provided
-    const tpi = teacherPageIndexRef.current
-    return typeof tpi === 'number' ? idx === tpi : false
-  }
-
-  const nextAllowed = (from: number, dir: 1 | -1): number | null => {
-    if (!autoFollow) return from + dir
-    if (allowedPages && allowedPages.length > 0) {
-      // find next allowed index in that direction
-      const sorted = [...allowedPages].sort((a,b)=>a-b)
-      if (dir > 0) {
-        for (const p of sorted) if (p > from) return p
-        return null
-      } else {
-        for (let i = sorted.length - 1; i >= 0; i--) if (sorted[i] < from) return sorted[i]
-        return null
-      }
-    } else {
-      // hard lock to teacher page
-      const tpi = teacherPageIndexRef.current
-      if (typeof tpi !== 'number') return null
-      if (tpi === from) return null // no move
-      return tpi // jump directly to teacher page
-    }
+  const hasContent = ()=>{
+    try {
+      const strokes = drawRef.current?.getStrokes()
+      const count = Array.isArray(strokes?.strokes) ? strokes!.strokes.length : 0
+      return count > 0 || !!audioBlob.current
+    } catch { return !!audioBlob.current }
   }
 
   const goToPage = async (nextIndex:number)=>{
     if (nextIndex < 0) return
-    if (!isAllowed(nextIndex)) return
     try { audioRef.current?.stop() } catch {}
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
@@ -362,58 +321,19 @@ export default function StudentAssignment(){
     setPageIndex(nextIndex)
   }
 
-  // Prev/Next handlers that skip blocked pages
-  const onPrev = () => {
-    if (saving || submitInFlight.current || navLocked) return
-    const target = nextAllowed(pageIndex, -1)
-    if (target == null) return
-    void goToPage(target)
-  }
-  const onNext = () => {
-    if (saving || submitInFlight.current || navLocked) return
-    const target = nextAllowed(pageIndex, 1)
-    if (target == null) return
-    void goToPage(target)
-  }
-
-  // two-finger pan host (attach only when drawing; allow default scroll in hand mode)
+  // two-finger pan host
   const scrollHostRef = useRef<HTMLDivElement|null>(null)
   useEffect(()=>{
-    const host = scrollHostRef.current
-    if (!host || handMode) return  // don't attach custom pan when in hand/scroll mode
-
+    const host=scrollHostRef.current; if(!host) return
     let pan=false, startY=0, startX=0, startT=0, startL=0
-    const onTS=(e:TouchEvent)=>{
-      if(e.touches.length>=2){
-        pan=true
-        const [t1,t2]=[e.touches[0],e.touches[1]]
-        startY=(t1.clientY+t2.clientY)/2
-        startX=(t1.clientX+t2.clientX)/2
-        startT=host.scrollTop
-        startL=host.scrollLeft
-      }
-    }
-    const onTM=(e:TouchEvent)=>{
-      if(pan && e.touches.length>=2){
-        e.preventDefault()
-        const [t1,t2]=[e.touches[0],e.touches[1]]
-        const y=(t1.clientY+t2.clientY)/2, x=(t1.clientX+t2.clientX)/2
-        host.scrollTop=startT-(y-startY)
-        host.scrollLeft=startL-(x-startX)
-      }
-    }
+    const onTS=(e:TouchEvent)=>{ if(e.touches.length>=2 && !handMode){ pan=true; const [t1,t2]=[e.touches[0],e.touches[1]]; startY=(t1.clientY+t2.clientY)/2; startX=(t1.clientX+t2.clientX)/2; startT=host.scrollTop; startL=host.scrollLeft } }
+    const onTM=(e:TouchEvent)=>{ if(pan && e.touches.length>=2){ e.preventDefault(); const [t1,t2]=[e.touches[0],e.touches[1]]; const y=(t1.clientY+t2.clientY)/2, x=(t1.clientX+t2.clientX)/2; host.scrollTop=startT-(y-startY); host.scrollLeft=startL-(x-startX) } }
     const end=()=>{ pan=false }
-
     host.addEventListener('touchstart',onTS,{passive:true,capture:true})
     host.addEventListener('touchmove', onTM,{passive:false,capture:true})
     host.addEventListener('touchend',  end,{passive:true,capture:true})
     host.addEventListener('touchcancel',end,{passive:true,capture:true})
-    return ()=>{ 
-      host.removeEventListener('touchstart',onTS as any,true)
-      host.removeEventListener('touchmove', onTM as any,true)
-      host.removeEventListener('touchend',  end as any,true)
-      host.removeEventListener('touchcancel',end as any,true)
-    }
+    return ()=>{ host.removeEventListener('touchstart',onTS as any,true); host.removeEventListener('touchmove',onTM as any,true); host.removeEventListener('touchend',end as any,true); host.removeEventListener('touchcancel',end as any,true) }
   }, [handMode])
 
   const flipToolbarSide = ()=> {
@@ -421,36 +341,6 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Realtime + polling (defensive) ---------- */
-
-  // subscribe to teacher broadcast + presence once we know the assignment id
-  useEffect(() => {
-    if (!rtAssignmentId) return
-    const ch = subscribeToAssignment(rtAssignmentId, {
-      onSetPage: ({ pageIndex }: SetPagePayload) => {
-        teacherPageIndexRef.current = pageIndex
-        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
-      },
-      onFocus: ({ on, lockNav }: FocusPayload) => {
-        setFocusOn(!!on)
-        setNavLocked(!!on && !!lockNav)
-      },
-      onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
-        setAutoFollow(!!on)
-        setAllowedPages(allowedPages ?? null)
-        if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        if (on && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(teacherPageIndexRef.current)
-        }
-      }
-    })
-    return () => {
-      try {
-        if (typeof (ch as any).unsubscribe === 'function') (ch as any).unsubscribe()
-        else (supabase as any)?.removeChannel?.(ch)
-      } catch {}
-    }
-  }, [rtAssignmentId, autoFollow])
-
   const reloadFromServer = async ()=>{
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
     if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
@@ -460,7 +350,6 @@ export default function StudentAssignment(){
         ? currIds.current
         : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
       currIds.current = { assignment_id, page_id }
-      if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
 
       const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
       const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
@@ -492,7 +381,6 @@ export default function StudentAssignment(){
           ? currIds.current
           : await upsertAssignmentWithPage(assignmentTitle, pdfStoragePath, pageIndex)
         currIds.current = ids
-        if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
         const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
           .on('postgres_changes', {
@@ -514,7 +402,7 @@ export default function StudentAssignment(){
       if (cleanup) cleanup()
       if (pollId!=null) window.clearInterval(pollId)
     }
-  }, [studentId, pageIndex, rtAssignmentId])
+  }, [studentId, pageIndex])
 
   /* ---------- UI ---------- */
   const Toolbar = (
@@ -610,9 +498,7 @@ export default function StudentAssignment(){
 
       <div
         ref={scrollHostRef}
-        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-          // ✅ allow native 1-finger scroll in hand mode; block in draw mode
-          touchAction: handMode ? 'auto' : 'none',
+        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch', touchAction:'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
@@ -627,7 +513,7 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      {/* Floating pager (Prev/Next skip to next allowed page) */}
+      {/* Floating pager (always reachable) */}
       <div
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
@@ -637,8 +523,8 @@ export default function StudentAssignment(){
         }}
       >
         <button
-          onClick={onPrev}
-          disabled={saving || submitInFlight.current || navLocked || nextAllowed(pageIndex, -1) == null}
+          onClick={()=>goToPage(Math.max(0, pageIndex-1))}
+          disabled={saving || submitInFlight.current}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           ◀ Prev
@@ -647,8 +533,8 @@ export default function StudentAssignment(){
           Page {pageIndex+1}
         </span>
         <button
-          onClick={onNext}
-          disabled={saving || submitInFlight.current || navLocked || nextAllowed(pageIndex, 1) == null}
+          onClick={()=>goToPage(pageIndex+1)}
+          disabled={saving || submitInFlight.current}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           Next ▶
@@ -658,19 +544,6 @@ export default function StudentAssignment(){
       {/* Floating toolbar */}
       {Toolbar}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
-
-      {/* Focus overlay */}
-      {focusOn && (
-        <div
-          style={{
-            position:'fixed', inset:0, background:'rgba(0,0,0,0.6)',
-            backdropFilter:'blur(2px)', zIndex: 20050,
-            display:'grid', placeItems:'center', color:'#fff', fontSize:20, fontWeight:700
-          }}
-        >
-          Focus Mode — watch the teacher ✋
-        </div>
-      )}
     </div>
   )
 }

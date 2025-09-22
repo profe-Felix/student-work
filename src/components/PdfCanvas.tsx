@@ -1,78 +1,111 @@
-//src/components/PdfCanvas.tsx
 import { useEffect, useRef } from 'react'
+import * as pdfjsLib from 'pdfjs-dist'
+import 'pdfjs-dist/build/pdf.worker.min.mjs' // Vite-friendly worker import
 
-type Props = {
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString()
+
+export default function PdfCanvas({
+  url,
+  pageIndex,
+  onReady,
+}:{
   url: string
-  pageIndex: number    // 0-based
-  onReady?: (pdf: any, canvas: HTMLCanvasElement) => void
-  scale?: number       // default 1.25
-}
+  pageIndex: number
+  onReady?: (pdf:any, canvas:HTMLCanvasElement)=>void
+}){
+  const canvasRef = useRef<HTMLCanvasElement|null>(null)
+  const pdfRef    = useRef<any>(null)
+  const renderTaskRef = useRef<any>(null)
 
-export default function PdfCanvas({ url, pageIndex, onReady, scale = 1.25 }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const tokenRef = useRef(0)
-
-  useEffect(() => {
-    if (!url) return
-
+  useEffect(()=>{
     let cancelled = false
-    let renderTask: any | null = null
-    let loadingTask: any | null = null
-    let pdfDoc: any | null = null
+    let localPdf: any = null
 
-    const token = ++tokenRef.current
-
-    ;(async () => {
-      try {
-        const pdfjs: any = await import('pdfjs-dist/build/pdf')
-        const ver: string = (pdfjs && pdfjs.version) ? String(pdfjs.version) : '4.10.38'
-        // mjs worker works on GH Pages
-        pdfjs.GlobalWorkerOptions.workerSrc =
-          `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`
-
-        loadingTask = pdfjs.getDocument(url)
-        const pdf = await loadingTask.promise
-        if (cancelled || token !== tokenRef.current) return
-        pdfDoc = pdf
-
-        const page = await pdf.getPage(pageIndex + 1)
-        if (cancelled || token !== tokenRef.current) return
-
-        const viewport = page.getViewport({ scale })
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-
-        // Resize only if changed (reduces flicker)
-        if (canvas.width !== viewport.width)  canvas.width  = viewport.width
-        if (canvas.height !== viewport.height) canvas.height = viewport.height
-
-        renderTask = page.render({ canvasContext: ctx, viewport })
-        await renderTask.promise
-        if (cancelled || token !== tokenRef.current) return
-
-        onReady?.(pdf, canvas)
-      } catch (e: any) {
-        // Expected when a render is superseded by new props
-        const msg = (e && e.name) ? e.name : ''
-        if (msg === 'RenderingCancelledException' || msg === 'AbortException') {
-          // ignore — we’re cancelling on purpose
-        } else {
-          console.error('PdfCanvas load error', e)
+    const load = async ()=>{
+      try{
+        // Cancel any prior render
+        if (renderTaskRef.current && renderTaskRef.current.cancel) {
+          try { await renderTaskRef.current.cancel() } catch {}
         }
-      } finally {
-        // Don’t destroy worker on normal prop churn; let browser cache it
+        renderTaskRef.current = null
+
+        // Destroy old doc
+        if (pdfRef.current && pdfRef.current.destroy) {
+          try { await pdfRef.current.destroy() } catch {}
+          pdfRef.current = null
+        }
+
+        const loadingTask = pdfjsLib.getDocument(url)
+        localPdf = await loadingTask.promise
+        if (cancelled) return
+        pdfRef.current = localPdf
+
+        const page = await localPdf.getPage(pageIndex + 1)
+        if (cancelled) return
+
+        const viewport = page.getViewport({ scale: 1 })
+        const containerWidth = Math.min(900, window.innerWidth - 160) // keep it readable with toolbar
+        const scale = containerWidth / viewport.width
+        const scaledViewport = page.getViewport({ scale })
+
+        const canvas = canvasRef.current!
+        const ctx = canvas.getContext('2d')!
+        canvas.width  = Math.floor(scaledViewport.width * window.devicePixelRatio)
+        canvas.height = Math.floor(scaledViewport.height * window.devicePixelRatio)
+        canvas.style.width  = `${scaledViewport.width}px`
+        canvas.style.height = `${scaledViewport.height}px`
+
+        // Reset transform to dpr
+        ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0)
+        const renderContext = { canvasContext: ctx, viewport: scaledViewport }
+        const task = page.render(renderContext)
+        renderTaskRef.current = task
+        await task.promise
+        if (cancelled) return
+
+        onReady?.(localPdf, canvas)
+      } catch(e){
+        // swallow errors when unmounted/cancelled
+        // console.warn('PDF render error', e)
       }
-    })()
-
-    return () => {
-      cancelled = true
-      try { renderTask?.cancel() } catch {}
-      try { loadingTask?.destroy?.() } catch {}
-      try { pdfDoc?.destroy?.() } catch {}
     }
-  }, [url, pageIndex, scale, onReady])
 
-  return <canvas ref={canvasRef} style={{ width: '100%', height: 'auto', display: 'block' }} />
+    load()
+
+    const onResize = ()=>{
+      // Re-render on resize
+      load()
+    }
+    window.addEventListener('resize', onResize)
+
+    return ()=>{
+      cancelled = true
+      window.removeEventListener('resize', onResize)
+      if (renderTaskRef.current && renderTaskRef.current.cancel) {
+        try { renderTaskRef.current.cancel() } catch {}
+      }
+      // Let pdf.js clean up
+      if (pdfRef.current && pdfRef.current.destroy) {
+        try { pdfRef.current.destroy() } catch {}
+      }
+      pdfRef.current = null
+      renderTaskRef.current = null
+    }
+  }, [url, pageIndex])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        display:'block',
+        width:'100%',
+        height:'auto',
+        background:'#fff',
+        borderRadius: 8
+      }}
+    />
+  )
 }

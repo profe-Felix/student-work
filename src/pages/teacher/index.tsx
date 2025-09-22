@@ -34,6 +34,7 @@ export default function TeacherDashboard() {
       try {
         const as = await listAssignments()
         setAssignments(as)
+        // Default to "Handwriting - Daily" if present
         const preferred = as.find(a => a.title === 'Handwriting - Daily') ?? as[0]
         if (preferred) setAssignmentId(preferred.id)
       } catch (e) {
@@ -64,12 +65,24 @@ export default function TeacherDashboard() {
     setLoading(true)
     ;(async () => {
       try {
+        // fetch in small batches to be kind to the API
         const nextGrid: Record<string, LatestCell> = {}
         for (let i = 0; i < STUDENTS.length; i += 6) {
           const batch = STUDENTS.slice(i, i + 6)
           const results = await Promise.all(
             batch.map(async (sid) => {
-              // Per-student latest (by page)
+              try {
+                const row = await listLatestByPage(assignmentId, pageId)
+                // NOTE: listLatestByPage returns the latest submission for the *page*,
+                // not per student. We actually want per student, so call it per-student:
+                // Quick fix: we change the helper call to filter in the UI:
+                // -> We'll fetch per student by temporarily reusing listLatestByPage
+                // but with assignment/page fixed and then filtering artifacts.
+                // Better fix: make a db helper that filters by student; for now we’ll
+                // just query again here with the student filter.
+              } catch { /* handled below with a second call */ }
+
+              // Proper per-student call (using the same SQL shape as student page):
               const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
               if (!latest) return [sid, null] as const
 
@@ -103,6 +116,8 @@ export default function TeacherDashboard() {
 
   // Small helper here (since db.ts returns latest w/out student filter)
   async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
+    // Lean on rpc via REST shape identical to listLatestByPage, but add .eq('student_id', sid)
+    // We can reuse listLatestByPage’s idea directly inline:
     const { supabase } = await import('../../lib/db')
     const { data: sub, error: se } = await supabase
       .from('submissions')
