@@ -10,7 +10,6 @@ import {
 } from '../../lib/db'
 import { subscribeToClassroom, type AutoFollowPayload, type FocusPayload } from '../../lib/realtime'
 
-/** Fallbacks used until the teacher broadcasts a real assignment context */
 const FALLBACK_ASSIGNMENT_TITLE = 'Handwriting - Daily'
 const FALLBACK_PDF_URL = `${import.meta.env.BASE_URL || '/'}aprende-m2.pdf`
 
@@ -18,7 +17,6 @@ const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
 
-/* ---------- Colors ---------- */
 const CRAYOLA_24 = [
   { name:'Red',hex:'#EE204D' },{ name:'Yellow',hex:'#FCE883' },
   { name:'Blue',hex:'#1F75FE' },{ name:'Green',hex:'#1CAC78' },
@@ -41,10 +39,8 @@ const SKIN_TONES = [
   { name:'Deep',hex:'#94583F' },{ name:'Very Deep',hex:'#7C4936' },
   { name:'Rich Deep',hex:'#643B2C' },{ name:'Ultra Deep',hex:'#4E2F24' },
 ]
-
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
-/* ---------- Local storage helpers ---------- */
 const draftKey      = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
 const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
 const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
@@ -100,10 +96,9 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
-  // Teacher-controlled context
   const [assignmentId, setAssignmentId] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string>(FALLBACK_PDF_URL)
-  const [pageIndex, setPageIndex]   = useState(0)
+  const [pageIndex, setPageIndex] = useState(0)
 
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
   const [color, setColor] = useState('#1F75FE')
@@ -135,11 +130,10 @@ export default function StudentAssignment(){
     try {
       const cssW = Math.round(parseFloat(getComputedStyle(canvas).width))
       const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
-      setCanvasSize({ w: cssW, h: cssH })
+      setCanvasSize(s => (s.w===cssW && s.h===cssH) ? s : { w: cssW, h: cssH })
     } catch {/* ignore */}
   }
 
-  // Convert "bucket/key" to public URL
   const toPublicUrl = (storagePath: string) => {
     const [bucket, ...rest] = storagePath.split('/')
     const path = rest.join('/')
@@ -147,24 +141,46 @@ export default function StudentAssignment(){
     return data.publicUrl
   }
 
-  /** Subscribe to a single classroom channel so late-joiners snap in */
+  // Validate a URL with a quick HEAD before switching (prevents broken 400 loops)
+  const testUrlOk = async (url: string): Promise<boolean> => {
+    try {
+      const res = await fetch(url, { method: 'HEAD' })
+      return !!res.ok
+    } catch { return false }
+  }
+
+  // === Realtime classroom subscription ===
   useEffect(() => {
     const ch = subscribeToClassroom({
-      onAutoFollow: (p: AutoFollowPayload) => {
-        // Only set PDF if teacher supplied a valid storage path
-        if (p.assignmentPdfPath) {
-          const newUrl = toPublicUrl(p.assignmentPdfPath)
-          if (newUrl && newUrl !== pdfUrl) setPdfUrl(newUrl)
+      onAutoFollow: async (p: AutoFollowPayload) => {
+        if (p.assignmentId && p.assignmentId !== assignmentId) {
+          setAssignmentId(p.assignmentId)
         }
-        if (p.assignmentId && p.assignmentId !== assignmentId) setAssignmentId(p.assignmentId)
-        if (typeof p.teacherPageIndex === 'number' && p.teacherPageIndex !== pageIndex) setPageIndex(p.teacherPageIndex)
-        // allowed pages (null => free roam)
+
+        if (typeof p.teacherPageIndex === 'number' && p.teacherPageIndex !== pageIndex) {
+          setPageIndex(p.teacherPageIndex)
+        }
+
+        // Allowed pages (null => free roam)
         const nextAllowed = p.allowedPages ?? null
         setAllowedPages(curr => {
           const a = curr?.join(',') ?? ''
           const b = nextAllowed?.join(',') ?? ''
           return a === b ? curr : nextAllowed
         })
+
+        // Only switch PDFs if the teacher provided a path AND it is accessible
+        if (p.assignmentPdfPath) {
+          const nextUrl = toPublicUrl(p.assignmentPdfPath)
+          if (nextUrl && nextUrl !== pdfUrl) {
+            if (await testUrlOk(nextUrl)) {
+              setPdfUrl(nextUrl)
+            } else {
+              // keep current pdfUrl; optionally surface a small message once
+              // showToast('Teacher PDF not available yet', 'err', 1000)
+            }
+          }
+        }
       },
       onFocus: (f: FocusPayload) => {
         setFocusOn(!!f.on)
@@ -178,7 +194,7 @@ export default function StudentAssignment(){
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignmentId, pdfUrl, pageIndex])
 
-  /* ---------- Draft / server sync, same as before (with assignmentId guard) ---------- */
+  // ====== (The rest stays like your current version, with minor guards) ======
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
   const lastAppliedServerHash = useRef<string>('')
   const lastLocalHash = useRef<string>('')
@@ -313,7 +329,7 @@ export default function StudentAssignment(){
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       const encHash = await hashStrokes(strokes)
-      const titleKey = assignmentId ?? FALLBACK_PDF_URL
+      const titleKey = assignmentId ?? FALLBACK_ASSIGNMENT_TITLE
       const lastKey = lastHashKey(studentId, titleKey, pageIndex)
       const last = localStorage.getItem(lastKey)
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
@@ -438,7 +454,6 @@ export default function StudentAssignment(){
     }
   }, [studentId, pageIndex, assignmentId])
 
-  /* ---------- UI ---------- */
   const flipToolbarSide = ()=> {
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
@@ -448,7 +463,6 @@ export default function StudentAssignment(){
       ...(toolbarOnRight ? { paddingRight:130 } : { paddingLeft:130 }),
       background:'#fafafa', WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
 
-      {/* Focus overlay */}
       {focusOn && (
         <div
           style={{
@@ -494,7 +508,6 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      {/* Pager */}
       <div
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
@@ -522,7 +535,7 @@ export default function StudentAssignment(){
         </button>
       </div>
 
-      {/* Floating toolbar (restored) */}
+      {/* Floating toolbar */}
       <div
         style={{
           position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
@@ -534,7 +547,8 @@ export default function StudentAssignment(){
         }}
       >
         <div style={{ display:'flex', gap:6 }}>
-          <button onClick={flipToolbarSide} title="Flip toolbar side"
+          <button onClick={()=> setToolbarOnRight(r=>{ const n=!r; try{ localStorage.setItem('toolbarSide', n?'right':'left') }catch{}; return n })}
+            title="Flip toolbar side"
             style={{ flex:1, background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0' }}>⇄</button>
           <button onClick={()=>setHandMode(m=>!m)}
             style={{ flex:1, background: handMode?'#f3f4f6':'#34d399', color: handMode?'#111827':'#064e3b',
