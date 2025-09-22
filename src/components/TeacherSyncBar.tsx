@@ -1,4 +1,4 @@
-//src/components/TeacherSyncBar.tsx
+// src/components/TeacherSyncBar.tsx
 import { useEffect, useRef, useState } from 'react'
 import { ensureClassroomChannel, publishAutoFollow, publishFocus, publishSetPage } from '../lib/realtime'
 
@@ -7,7 +7,7 @@ type Props = {
   pageId: string
   pageIndex: number
   className?: string
-  /** If you have the storage path for the PDF (e.g. "pdfs/<uuid>.pdf"), pass it so students load it immediately */
+  /** Storage path like "pdfs/uuid.pdf" */
   assignmentPdfPath?: string | null
 }
 
@@ -47,19 +47,21 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     await publishSetPage(chRef.current, pageIndex, pageId)
   }
 
-  async function toggleAutoFollow() {
+  async function broadcastAutoFollow() {
     if (!chRef.current) return
-    const next = !autoFollowOn
-    setAutoFollowOn(next)
     const allowed = parseAllowedPages(rangeInput)
     await publishAutoFollow(chRef.current, {
-      on: next,
+      on: autoFollowOn,
       assignmentId,
       assignmentPdfPath: assignmentPdfPath ?? undefined,
       teacherPageIndex: pageIndex,
       allowedPages: allowed ?? null,
     })
-    if (next) await publishSetPage(chRef.current, pageIndex, pageId)
+  }
+
+  async function toggleAutoFollow() {
+    const next = !autoFollowOn
+    setAutoFollowOn(next)
   }
 
   async function toggleFocus() {
@@ -69,13 +71,27 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     await publishFocus(chRef.current, next, lockNav)
   }
 
-  // Update active page while auto-follow is ON
+  // Rebroadcast Auto-follow state whenever relevant inputs change (and it's on)
   useEffect(() => {
-    if (autoFollowOn && chRef.current) {
-      publishSetPage(chRef.current, pageIndex, pageId)
-    }
+    if (!autoFollowOn) return
+    broadcastAutoFollow()
+    if (chRef.current) publishSetPage(chRef.current, pageIndex, pageId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoFollowOn, pageIndex, pageId])
+  }, [autoFollowOn, assignmentId, assignmentPdfPath, pageIndex, pageId, rangeInput])
+
+  // Heartbeat every 5s while Auto-follow is ON — makes late joiners snap in
+  useEffect(() => {
+    if (!autoFollowOn) return
+    const id = window.setInterval(() => { broadcastAutoFollow() }, 5000)
+    return () => { window.clearInterval(id) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFollowOn, assignmentId, assignmentPdfPath, pageIndex, rangeInput])
+
+  // If focusOn and lockNav changes, rebroadcast focus
+  useEffect(() => {
+    if (!focusOn || !chRef.current) return
+    publishFocus(chRef.current, true, lockNav)
+  }, [focusOn, lockNav])
 
   return (
     <div className={`flex items-center gap-2 p-2 bg-white/80 rounded-xl shadow border ${className ?? ''}`}>
