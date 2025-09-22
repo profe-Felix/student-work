@@ -1,6 +1,6 @@
 // src/components/PdfDropZone.tsx
 import { useRef, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../lib/db';
 
 type Props = { onCreated: (assignmentId: string) => void };
 
@@ -21,8 +21,9 @@ export default function PdfDropZone({ onCreated }: Props) {
 
     setBusy(true);
     try {
-      const bucket = 'pdfs'; // your bucket
-      const key = `${crypto.randomUUID()}.pdf`;
+      // Use your existing *public* bucket and store under pdfs/...
+      const bucket = 'public';
+      const key = `pdfs/${crypto.randomUUID()}.pdf`;
 
       // 1) Upload the PDF
       const { error: upErr } = await supabase.storage.from(bucket).upload(key, file, {
@@ -33,7 +34,7 @@ export default function PdfDropZone({ onCreated }: Props) {
       const title = file.name.replace(/\.pdf$/i, '');
       const storage_path = `${bucket}/${key}`;
 
-      // 2) Create the assignment, or reuse if title already exists
+      // 2) Create the assignment (or re-use an existing title)
       let assignmentId: string | null = null;
       const ins = await supabase
         .from('assignments')
@@ -42,20 +43,16 @@ export default function PdfDropZone({ onCreated }: Props) {
         .maybeSingle();
 
       if (ins.error) {
-        // 23505 = unique_violation on assignments.title
+        // unique violation → look up by title
         if ((ins.error as any).code === '23505') {
-          // Look up existing assignment id by title
           const found = await supabase
             .from('assignments')
             .select('id,pdf_path')
             .eq('title', title)
             .maybeSingle();
-          if (found.error || !found.data?.id) {
-            throw ins.error; // surface original if lookup fails
-          }
+          if (found.error || !found.data?.id) throw ins.error;
           assignmentId = found.data.id;
 
-          // Optional: if existing assignment has no pdf_path, update it (ignore errors)
           if (!found.data.pdf_path) {
             await supabase.from('assignments')
               .update({ pdf_path: storage_path })
@@ -70,10 +67,10 @@ export default function PdfDropZone({ onCreated }: Props) {
 
       if (!assignmentId) throw new Error('Could not determine assignment id.');
 
-      // 3) Count pages with pdfjs
+      // 3) Count pages with pdfjs (client-side)
       const pageCount = await countPdfPages(URL.createObjectURL(file));
 
-      // 4) Ensure pages exist — insert only the missing ones (no 'title' column)
+      // 4) Ensure pages exist — insert any missing rows
       const existing = await supabase
         .from('pages')
         .select('page_index')
