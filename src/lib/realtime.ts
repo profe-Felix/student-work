@@ -1,5 +1,5 @@
-//src/lib/realtime.ts
-import { supabase } from './supabaseClient';
+// src/lib/realtime.ts
+import { supabase } from './db';
 
 export interface SetPagePayload {
   pageId: string;
@@ -134,7 +134,7 @@ export function subscribeToAssignment(
     } catch {}
   });
 
-  // Safety read shortly after subscribe
+  // Safety read shortly after subscribe (helps late joiners)
   ch.subscribe((status: string) => {
     if (status === 'SUBSCRIBED') {
       setTimeout(() => {
