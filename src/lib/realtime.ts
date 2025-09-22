@@ -1,171 +1,138 @@
 // src/lib/realtime.ts
+// Centralized realtime helpers, plus a tiny global channel to handoff assignment switches.
+
 import { supabase } from './supabaseClient';
 
+/** ---------- Types you were already using (kept here so other files keep compiling) ---------- */
 export interface SetPagePayload {
-  pageId: string;
-  pageIndex: number;
+  pageId: string;         // DB pages.id (uuid)
+  pageIndex: number;      // zero-based page index
   ts?: number;
 }
-
 export interface FocusPayload {
   on: boolean;
   lockNav?: boolean;
   ts?: number;
 }
-
 export interface AutoFollowPayload {
   on: boolean;
   allowedPages?: number[] | null; // zero-based allowed page indexes
   teacherPageIndex?: number;      // teacher's current page
   ts?: number;
 }
-
 export type TeacherPresenceState = {
   role: 'teacher';
   autoFollow: boolean;
   allowedPages: number[] | null;
-  teacherPageIndex?: number;
-  focusOn: boolean;
-  lockNav: boolean;
-  updatedAt: number;
+  teacherPageIndex: number | null;
 };
 
+/** -------------------------------------------------------------------------------------------
+ *  Global “class” channel (assignment-agnostic) used *only* to tell students to switch
+ *  to a different assignmentId.
+ *  ----------------------------------------------------------------------------------------- */
+export function globalChannel() {
+  return supabase.channel('global-class', {
+    config: { broadcast: { ack: true } },
+  });
+}
+
+/** Teacher fires this when changing the assignment dropdown. */
+export async function publishSetAssignment(assignmentId: string) {
+  const ch = globalChannel();
+  await ch.subscribe();
+  await ch.send({
+    type: 'broadcast',
+    event: 'set-assignment',
+    payload: { assignmentId, ts: Date.now() },
+  });
+  await supabase.removeChannel(ch);
+}
+
+/** Student bootstraps this once and will jump to any new assignmentId the teacher selects. */
+export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => void) {
+  const ch = globalChannel()
+    .on('broadcast', { event: 'set-assignment' }, (msg: any) => {
+      const id = msg?.payload?.assignmentId;
+      if (typeof id === 'string' && id) onSetAssignment(id);
+    })
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+}
+
+/** -------------------------------------------------------------------------------------------
+ *  (Optional) Per-assignment channel helpers — keep these if your app uses them elsewhere.
+ *  They’re generic and safe to include even if you don’t use every event.
+ *  ----------------------------------------------------------------------------------------- */
 export function assignmentChannel(assignmentId: string) {
-  return supabase.channel(`assign:${assignmentId}`, {
-    config: { broadcast: { ack: true }, presence: { key: 'teacher' } },
+  return supabase.channel(`assignment:${assignmentId}`, {
+    config: { broadcast: { ack: true } },
   });
 }
 
-/** Broadcast helpers */
-export async function publishSetPage(ch: any, pageId: string, pageIndex: number) {
-  const payload: SetPagePayload = { pageId, pageIndex, ts: Date.now() };
-  await ch.send({ type: 'broadcast', event: 'SET_PAGE', payload });
+/** ----- Set Page ----- */
+export async function publishSetPage(assignmentId: string, payload: SetPagePayload) {
+  const ch = assignmentChannel(assignmentId);
+  await ch.subscribe();
+  await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } });
+  await supabase.removeChannel(ch);
 }
-
-export async function publishAutoFollow(
-  ch: any,
-  on: boolean,
-  allowedPages?: number[] | null,
-  teacherPageIndex?: number
-) {
-  const payload: AutoFollowPayload = {
-    on,
-    allowedPages: allowedPages ?? null,
-    teacherPageIndex,
-    ts: Date.now(),
-  };
-  await ch.send({ type: 'broadcast', event: 'AUTO_FOLLOW', payload });
-}
-
-export async function publishFocus(ch: any, on: boolean, lockNav = true) {
-  const payload: FocusPayload = { on, lockNav, ts: Date.now() };
-  await ch.send({ type: 'broadcast', event: 'FOCUS', payload });
-}
-
-/** Presence helpers (teacher publishes current state; students read it on join) */
-export async function setTeacherPresence(
-  ch: any,
-  state: Omit<TeacherPresenceState, 'role' | 'updatedAt'> & Partial<Pick<TeacherPresenceState, 'updatedAt'>>
-) {
-  const payload: TeacherPresenceState = {
-    role: 'teacher',
-    autoFollow: !!state.autoFollow,
-    allowedPages: state.allowedPages ?? null,
-    teacherPageIndex: state.teacherPageIndex,
-    focusOn: !!state.focusOn,
-    lockNav: !!state.lockNav,
-    updatedAt: state.updatedAt ?? Date.now(),
-  };
-  await ch.track(payload);
-}
-
-export function subscribeToAssignment(
+export function subscribeToSetPage(
   assignmentId: string,
-  handlers: {
-    onSetPage?: (p: SetPagePayload) => void;
-    onFocus?: (p: FocusPayload) => void;
-    onAutoFollow?: (p: AutoFollowPayload) => void;
-  }
+  onPayload: (payload: SetPagePayload) => void
 ) {
-  const ch = supabase.channel(`assign:${assignmentId}`, {
-    config: { broadcast: { ack: true }, presence: { key: 'student' } },
+  const ch = assignmentChannel(assignmentId)
+    .on('broadcast', { event: 'set-page' }, (msg: any) => {
+      const p = msg?.payload as SetPagePayload;
+      if (!p) return;
+      onPayload(p);
+    })
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+}
+
+/** ----- Focus (teacher “eyes on me”) ----- */
+export async function publishFocus(assignmentId: string, payload: FocusPayload) {
+  const ch = assignmentChannel(assignmentId);
+  await ch.subscribe();
+  await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } });
+  await supabase.removeChannel(ch);
+}
+export function subscribeToFocus(
+  assignmentId: string,
+  onPayload: (payload: FocusPayload) => void
+) {
+  const ch = assignmentChannel(assignmentId)
+    .on('broadcast', { event: 'focus' }, (msg: any) => {
+      const p = msg?.payload as FocusPayload;
+      if (!p) return;
+      onPayload(p);
+    })
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+}
+
+/** ----- Auto-follow (optionally gate pages) ----- */
+export async function publishAutoFollow(assignmentId: string, payload: AutoFollowPayload) {
+  const ch = assignmentChannel(assignmentId);
+  await ch.subscribe();
+  await ch.send({
+    type: 'broadcast',
+    event: 'auto-follow',
+    payload: { ...payload, ts: Date.now() },
   });
-
-  // Broadcast listeners
-  ch
-    .on('broadcast', { event: 'SET_PAGE' }, ({ payload }) =>
-      handlers.onSetPage?.(payload as SetPagePayload)
-    )
-    .on('broadcast', { event: 'FOCUS' }, ({ payload }) =>
-      handlers.onFocus?.(payload as FocusPayload)
-    )
-    .on('broadcast', { event: 'AUTO_FOLLOW' }, ({ payload }) =>
-      handlers.onAutoFollow?.(payload as AutoFollowPayload)
-    );
-
-  // Presence listener — fires when we (student) join or teacher updates their presence.
-  ch.on('presence', { event: 'sync' }, () => {
-    try {
-      const state = ch.presenceState() as Record<string, TeacherPresenceState[]>;
-      const arr = (state?.teacher ?? []).filter(s => s?.role === 'teacher');
-      if (arr.length === 0) return;
-      const latest = arr.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
-      if (!latest) return;
-
-      handlers.onAutoFollow?.({
-        on: !!latest.autoFollow,
-        allowedPages: latest.allowedPages ?? null,
-        teacherPageIndex: latest.teacherPageIndex,
-        ts: latest.updatedAt,
-      });
-      handlers.onFocus?.({
-        on: !!latest.focusOn,
-        lockNav: !!latest.lockNav,
-        ts: latest.updatedAt,
-      });
-      if (typeof latest.teacherPageIndex === 'number') {
-        handlers.onSetPage?.({
-          pageId: '',
-          pageIndex: latest.teacherPageIndex,
-          ts: latest.updatedAt,
-        });
-      }
-    } catch {}
-  });
-
-  ch.subscribe((status: string) => {
-    // Safety: do a single read shortly after subscribe in case the initial 'sync' races.
-    if (status === 'SUBSCRIBED') {
-      setTimeout(() => {
-        try {
-          const state = ch.presenceState() as Record<string, TeacherPresenceState[]>;
-          const arr = (state?.teacher ?? []).filter(s => s?.role === 'teacher');
-          if (arr.length === 0) return;
-          const latest = arr.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
-          if (!latest) return;
-
-          handlers.onAutoFollow?.({
-            on: !!latest.autoFollow,
-            allowedPages: latest.allowedPages ?? null,
-            teacherPageIndex: latest.teacherPageIndex,
-            ts: latest.updatedAt,
-          });
-          handlers.onFocus?.({
-            on: !!latest.focusOn,
-            lockNav: !!latest.lockNav,
-            ts: latest.updatedAt,
-          });
-          if (typeof latest.teacherPageIndex === 'number') {
-            handlers.onSetPage?.({
-              pageId: '',
-              pageIndex: latest.teacherPageIndex,
-              ts: latest.updatedAt,
-            });
-          }
-        } catch {}
-      }, 50);
-    }
-  });
-
-  return ch;
+  await supabase.removeChannel(ch);
+}
+export function subscribeToAutoFollow(
+  assignmentId: string,
+  onPayload: (payload: AutoFollowPayload) => void
+) {
+  const ch = assignmentChannel(assignmentId)
+    .on('broadcast', { event: 'auto-follow' }, (msg: any) => {
+      const p = msg?.payload as AutoFollowPayload;
+      if (!p) return;
+      onPayload(p);
+    })
+    .subscribe();
+  return () => supabase.removeChannel(ch);
 }
