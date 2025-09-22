@@ -1,4 +1,4 @@
-// src/lib/supabaseHelpers.ts
+//src/lib/supabaseHelpers.ts
 import { supabase } from './supabaseClient';
 
 export function publicUrl(path: string) {

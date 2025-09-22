@@ -1,12 +1,12 @@
-// src/main.tsx
+//src/main.tsx
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 
 // PAGES
-import StudentAssignment from './pages/student/assignment'
-import Start from './pages/start'           // keep if you already have it
-import Teacher from './pages/teacher'       // NEW
+import Start from './pages/start'
+import Teacher from './pages/teacher'                 // src/pages/teacher/index.tsx
+import StudentWorkspace from './pages/student/StudentWorkspace' // NEW shim
 
 // Base styles (optional)
 const appStyle: React.CSSProperties = {
@@ -21,8 +21,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/" element={<Navigate to="/start" replace />} />
           <Route path="/start" element={<Start />} />
-          <Route path="/student/assignment" element={<StudentAssignment />} />
-          <Route path="/teacher" element={<Teacher />} /> {/* NEW */}
+
+          {/* Preferred student route */}
+          <Route path="/student/workspace" element={<StudentWorkspace />} />
+
+          {/* Back-compat aliases so old links keep working */}
+          <Route path="/student" element={<StudentWorkspace />} />
+          <Route path="/student/assignment" element={<StudentWorkspace />} />
+
+          <Route path="/teacher" element={<Teacher />} />
           <Route path="*" element={<Navigate to="/start" replace />} />
         </Routes>
       </HashRouter>
