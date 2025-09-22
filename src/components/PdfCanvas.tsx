@@ -2,14 +2,10 @@
 import { useEffect, useRef } from 'react'
 
 type Props = {
-  /** Full URL to a PDF (can be a public Supabase URL or your bundled /aprende-m2.pdf) */
-  url: string
-  /** 0-based page index to render */
-  pageIndex: number
-  /** Called after the page is rendered (pdf, canvas) */
+  url: string               // Full URL to the PDF (Supabase public URL or /aprende-m2.pdf)
+  pageIndex: number         // 0-based
   onReady?: (pdf: any, canvas: HTMLCanvasElement) => void
-  /** Render scale; default 1.25 */
-  scale?: number
+  scale?: number            // default 1.25
 }
 
 export default function PdfCanvas({ url, pageIndex, onReady, scale = 1.25 }: Props) {
@@ -23,11 +19,10 @@ export default function PdfCanvas({ url, pageIndex, onReady, scale = 1.25 }: Pro
       if (!url) return
       try {
         const pdfjs: any = await import('pdfjs-dist/build/pdf')
-        // ✅ ensure the web worker is used (prevents "Setting up fake worker" warning)
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-          'pdfjs-dist/build/pdf.worker.min.js',
-          import.meta.url
-        ).toString()
+
+        // ✅ Use CDN worker to avoid GitHub Pages asset path issues
+        pdfjs.GlobalWorkerOptions.workerSrc =
+          'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.5.136/build/pdf.worker.min.js'
 
         const loadingTask = pdfjs.getDocument(url)
         const pdf = await loadingTask.promise
