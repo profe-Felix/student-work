@@ -15,7 +15,6 @@ type LatestCell = {
   audioUrl?: string
 } | null
 
-// Simple roster: A_01..A_28
 const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
 
 export default function TeacherDashboard() {
@@ -26,9 +25,8 @@ export default function TeacherDashboard() {
   const [pageId, setPageId] = useState<string>('')
 
   const [loading, setLoading] = useState(false)
-  const [grid, setGrid] = useState<Record<string, LatestCell>>({}) // key = student_id
+  const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
-  // Load assignments on mount
   useEffect(() => {
     (async () => {
       try {
@@ -42,7 +40,6 @@ export default function TeacherDashboard() {
     })()
   }, [])
 
-  // When assignment changes, load its pages and pick first page
   useEffect(() => {
     if (!assignmentId) return
     (async () => {
@@ -57,7 +54,6 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
-  // Helper: fetch latest submission for a specific student on this page
   async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
     const { supabase } = await import('../../lib/db')
     const { data: sub, error: se } = await supabase
@@ -81,18 +77,15 @@ export default function TeacherDashboard() {
     } | null
   }
 
-  // Load latest per student for the selected page
   useEffect(() => {
     if (!assignmentId || !pageId) return
     let cancelled = false
-    setGrid({}) // clear grid when switching
+    setGrid({})
     setLoading(true)
 
     ;(async () => {
       try {
         const nextGrid: Record<string, LatestCell> = {}
-
-        // fetch in small batches
         for (let i = 0; i < STUDENTS.length; i += 6) {
           const batch = STUDENTS.slice(i, i + 6)
           const results = await Promise.all(
@@ -136,6 +129,9 @@ export default function TeacherDashboard() {
     () => pages.find(p => p.id === pageId) || null,
     [pages, pageId]
   )
+  const pageIndex = currentPage?.page_index ?? 0
+  const assignmentPdfPath =
+    (currentAssignment?.pdf_path ?? null) || (currentPage?.pdf_path ?? null) // ✅ prefer assignment-level pdf
 
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
@@ -143,7 +139,6 @@ export default function TeacherDashboard() {
 
       {/* Controls */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 16px' }}>
-        {/* Assignment select */}
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Assignment</span>
           <select
@@ -157,7 +152,6 @@ export default function TeacherDashboard() {
           </select>
         </label>
 
-        {/* Page select */}
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Page</span>
           <select
@@ -182,8 +176,8 @@ export default function TeacherDashboard() {
           <TeacherSyncBar
             assignmentId={assignmentId}
             pageId={pageId}
-            pageIndex={currentPage?.page_index ?? 0}
-            assignmentPdfPath={currentPage?.pdf_path ?? null}
+            pageIndex={pageIndex}
+            assignmentPdfPath={assignmentPdfPath}
           />
         </div>
       )}
@@ -231,7 +225,6 @@ export default function TeacherDashboard() {
         })}
       </div>
 
-      {/* Footnote */}
       <div style={{ marginTop: 16, fontSize: 12, color: '#6b7280' }}>
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
