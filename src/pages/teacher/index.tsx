@@ -114,7 +114,8 @@ export default function TeacherDashboard() {
     [pages, pageId]
   )
 
-  const assignmentPdfPath = currentPage?.pdf_path; // <-- pass to SyncBar
+  // IMPORTANT: coerce null -> undefined to satisfy prop type
+  const assignmentPdfPath: string | undefined = (currentPage?.pdf_path ?? undefined)
 
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
@@ -165,7 +166,7 @@ export default function TeacherDashboard() {
           assignmentId={assignmentId}
           pageId={pageId}
           pageIndex={pageIndex}
-          assignmentPdfPath={assignmentPdfPath}   // <-- NEW
+          assignmentPdfPath={assignmentPdfPath}
           className="sticky top-2 z-10"
         />
       )}
