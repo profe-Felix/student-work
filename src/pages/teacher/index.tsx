@@ -3,11 +3,12 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   listAssignments,
   listPages,
-  listLatestByPage,
   getAudioUrl,
   type AssignmentRow,
   type PageRow,
 } from '../../lib/db'
+import TeacherSyncBar from '../../components/TeacherSyncBar'
+import PdfDropZone from '../../components/PdfDropZone'
 
 type LatestCell = {
   submission_id: string
@@ -15,18 +16,19 @@ type LatestCell = {
   audioUrl?: string
 } | null
 
-// Simple roster: A_01..A_28 (matches your student format)
+// Simple roster: A_01..A_28
 const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
 
 export default function TeacherDashboard() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
-  const [assignmentId, setAssignmentId] = useState<string>('') // selected assignment id
+  const [assignmentId, setAssignmentId] = useState<string>('')
 
   const [pages, setPages] = useState<PageRow[]>([])
-  const [pageId, setPageId] = useState<string>('') // selected page id
+  const [pageId, setPageId] = useState<string>('')
+  const [pageIndex, setPageIndex] = useState<number>(0)
 
   const [loading, setLoading] = useState(false)
-  const [grid, setGrid] = useState<Record<string, LatestCell>>({}) // key = student_id
+  const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
   // Load assignments on mount
   useEffect(() => {
@@ -42,7 +44,7 @@ export default function TeacherDashboard() {
     })()
   }, [])
 
-  // When assignment changes, load its pages and pick page 0 if exists
+  // When assignment changes, load pages and pick page 0 if exists
   useEffect(() => {
     if (!assignmentId) return
     (async () => {
@@ -50,12 +52,23 @@ export default function TeacherDashboard() {
         const ps = await listPages(assignmentId)
         setPages(ps)
         const p0 = ps.find(p => p.page_index === 0) ?? ps[0]
-        if (p0) setPageId(p0.id)
+        if (p0) {
+          setPageId(p0.id)
+          setPageIndex(p0.page_index)
+        }
+        setGrid({})
       } catch (e) {
         console.error('load pages failed', e)
       }
     })()
   }, [assignmentId])
+
+  // Keep pageIndex synced when pageId changes
+  useEffect(() => {
+    if (!pageId) return
+    const idx = pages.find(p => p.id === pageId)?.page_index ?? 0
+    setPageIndex(idx)
+  }, [pageId, pages])
 
   // Load latest per student for the selected page
   useEffect(() => {
@@ -64,33 +77,33 @@ export default function TeacherDashboard() {
     setLoading(true)
     ;(async () => {
       try {
-        const nextGrid: Record<string, LatestCell> = {}
-        for (let i = 0; i < STUDENTS.length; i += 6) {
-          const batch = STUDENTS.slice(i, i + 6)
-          const results = await Promise.all(
-            batch.map(async (sid) => {
-              // Per-student latest (by page)
-              const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
-              if (!latest) return [sid, null] as const
-
-              const hasStrokes = !!latest.artifacts?.some(a => a.kind === 'strokes' && a.strokes_json)
-              const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
-              let audioUrl: string | undefined
-              if (audioArt?.storage_path) {
-                try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
-              }
-              return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
-            })
-          )
-
-          for (const pair of results) {
-            if (!pair) continue
-            const [sid, cell] = pair
-            nextGrid[sid] = cell
-          }
-          if (cancelled) return
-          setGrid(curr => ({ ...curr, ...nextGrid }))
-        }
+        const { supabase } = await import('../../lib/db')
+        const results = await Promise.all(
+          STUDENTS.map(async (sid) => {
+            const { data: sub, error } = await supabase
+              .from('submissions')
+              .select('id, student_id, created_at, artifacts(id,kind,strokes_json,storage_path,created_at)')
+              .eq('assignment_id', assignmentId)
+              .eq('page_id', pageId)
+              .eq('student_id', sid)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+            if (error) return [sid, null] as const
+            if (!sub) return [sid, null] as const
+            const hasStrokes = !!sub.artifacts?.some(a => a.kind === 'strokes' && a.strokes_json)
+            const audioArt = sub.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
+            let audioUrl: string | undefined
+            if (audioArt?.storage_path) {
+              try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
+            }
+            return [sid, { submission_id: sub.id, hasStrokes, audioUrl }] as const
+          })
+        )
+        if (cancelled) return
+        const next: Record<string, LatestCell> = {}
+        for (const [sid, cell] of results) next[sid] = cell
+        setGrid(next)
       } catch (e) {
         console.error('load latest grid failed', e)
       } finally {
@@ -100,25 +113,6 @@ export default function TeacherDashboard() {
 
     return () => { cancelled = true }
   }, [assignmentId, pageId])
-
-  // Small helper here (since db.ts returns latest w/out student filter)
-  async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
-    const { supabase } = await import('../../lib/db')
-    const { data: sub, error: se } = await supabase
-      .from('submissions')
-      .select('id, student_id, created_at, artifacts(id,kind,strokes_json,storage_path,created_at)')
-      .eq('assignment_id', assignment_id)
-      .eq('page_id', page_id)
-      .eq('student_id', student_id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if (se) {
-      console.error('per-student latest fetch error', se)
-      return null
-    }
-    return sub
-  }
 
   const currentAssignment = useMemo(
     () => assignments.find(a => a.id === assignmentId) || null,
@@ -131,11 +125,18 @@ export default function TeacherDashboard() {
 
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
-      <h2>Teacher Dashboard</h2>
+      <h2 className="text-xl font-semibold">Teacher Dashboard</h2>
 
-      {/* Controls */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 16px' }}>
-        {/* Assignment select */}
+      {/* Drag-drop new assignment */}
+      <div style={{ margin: '12px 0' }}>
+        <PdfDropZone onCreated={(newId) => {
+          setAssignmentId(newId)
+          setGrid({})
+        }} />
+      </div>
+
+      {/* Pickers */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Assignment</span>
           <select
@@ -143,24 +144,24 @@ export default function TeacherDashboard() {
             onChange={(e) => setAssignmentId(e.target.value)}
             style={{ padding: '6px 8px', minWidth: 260 }}
           >
+            <option value="">Select…</option>
             {assignments.map(a => (
               <option key={a.id} value={a.id}>{a.title}</option>
             ))}
           </select>
         </label>
 
-        {/* Page select */}
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Page</span>
           <select
             value={pageId}
             onChange={(e) => setPageId(e.target.value)}
             style={{ padding: '6px 8px', minWidth: 120 }}
+            disabled={!assignmentId}
           >
+            <option value="">Select…</option>
             {pages.map(p => (
-              <option key={p.id} value={p.id}>
-                Page {p.page_index + 1}
-              </option>
+              <option key={p.id} value={p.id}>Pg {p.page_index + 1}</option>
             ))}
           </select>
         </label>
@@ -168,9 +169,20 @@ export default function TeacherDashboard() {
         {loading && <span style={{ color: '#6b7280' }}>Loading…</span>}
       </div>
 
-      {/* Grid */}
+      {/* Sync/Focus controls */}
+      {assignmentId && pageId && (
+        <TeacherSyncBar
+          assignmentId={assignmentId}
+          pageId={pageId}
+          pageIndex={pageIndex}
+          className="sticky top-2 z-10"
+        />
+      )}
+
+      {/* Grid of students’ latest work flags */}
       <div
         style={{
+          marginTop: 12,
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
           gap: 12,
@@ -211,7 +223,6 @@ export default function TeacherDashboard() {
         })}
       </div>
 
-      {/* Footnote */}
       <div style={{ marginTop: 16, fontSize: 12, color: '#6b7280' }}>
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
