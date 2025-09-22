@@ -1,4 +1,4 @@
-//src/components/TeacherSyncBar.tsx
+// src/components/TeacherSyncBar.tsx
 import { useEffect, useRef, useState } from 'react';
 import {
   assignmentChannel,
@@ -63,7 +63,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignmentId]);
 
-  // Presence stays current with UI toggles and page changes
+  // Keep presence up-to-date when toggles/page change
   useEffect(() => {
     if (!chRef.current) return;
     void setTeacherPresence(chRef.current, {
@@ -75,7 +75,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     });
   }, [autoFollow, focus, lockNav, pageIndex]);
 
-  // When auto-follow is ON, rebroadcast current page on change (snappy)
+  // When auto-follow is ON, also rebroadcast page for snappy snap-to
   useEffect(() => {
     if (autoFollow && chRef.current && pageId) {
       void publishSetPage(chRef.current, pageId, pageIndex);
@@ -95,7 +95,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     const allowed = next ? parseRanges(rangeText) : null;
     allowedRef.current = allowed;
 
-    // presence first (so late joiners immediately see it)
+    // 1) presence first (late joiners get it)
     await setTeacherPresence(chRef.current, {
       autoFollow: next,
       allowedPages: allowed ?? null,
@@ -104,17 +104,16 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
       lockNav,
     });
 
-    // broadcast for currently connected students
+    // 2) broadcast to currently connected students
     await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
-    if (next) {
-      await publishSetPage(chRef.current, pageId, pageIndex);
-    }
+    if (next) await publishSetPage(chRef.current, pageId, pageIndex);
   }
 
   async function toggleFocus() {
     if (!chRef.current) return;
     const next = !focus;
     setFocus(next);
+
     await setTeacherPresence(chRef.current, {
       autoFollow,
       allowedPages: allowedRef.current ?? null,
@@ -128,19 +127,19 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
   return (
     <div className={`flex flex-wrap items-center gap-2 p-2 bg-white/80 rounded-xl shadow border ${className ?? ''}`}>
       <button
-        className="px-3 py-1 rounded bg-black text-white"
+        className="px-3 py-1 rounded bg-gray-900 text-white"
         onClick={pushOnce}
-        title="Push current page to all students one time"
+        title="Push current page to all students now"
       >
-        Sync to Me (once)
+        Sync now
       </button>
 
       <button
         className={`px-3 py-1 rounded ${autoFollow ? 'bg-black text-white' : 'bg-gray-100'}`}
         onClick={toggleAutoFollow}
-        title="While ON, students follow your page. Optionally allow a page range."
+        title="While ON, students follow your page (optionally restrict to a range)."
       >
-        {autoFollow ? 'Auto-follow: ON' : 'Auto-follow: OFF'}
+        {autoFollow ? 'Sync to Me: ON' : 'Sync to Me: OFF'}
       </button>
 
       <label className="flex items-center gap-1 text-sm">
@@ -150,7 +149,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
           placeholder="e.g. 1-3,5"
           value={rangeText}
           onChange={e => setRangeText(e.target.value)}
-          disabled={autoFollow} // lock input while active
+          disabled={autoFollow}
           style={{ minWidth: 120 }}
         />
       </label>
