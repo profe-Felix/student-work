@@ -1,75 +1,172 @@
 // src/lib/realtime.ts
-import { supabase } from './supabaseClient'
+import { supabase } from './supabaseClient';
 
-/** Events & payloads shared between teacher and students */
 export interface SetPagePayload {
-  pageIndex: number
-  pageId?: string
-  ts?: number
-}
-
-export interface AutoFollowPayload {
-  on: boolean
-  /** Active assignment context the teacher wants students on */
-  assignmentId?: string
-  /** Storage path like "pdfs/<uuid>.pdf" for the active assignment PDF */
-  assignmentPdfPath?: string
-  /** Teacher's current page index */
-  teacherPageIndex?: number
-  /** Allowed page indexes for navigation; null/undefined = free roam */
-  allowedPages?: number[] | null
-  ts?: number
+  pageId: string;
+  pageIndex: number;
+  ts?: number;
 }
 
 export interface FocusPayload {
-  on: boolean
-  lockNav?: boolean
-  ts?: number
+  on: boolean;
+  lockNav?: boolean;
+  ts?: number;
 }
 
-/** A single, always-on channel every client joins */
-const CLASSROOM_TOPIC = 'classroom'
-
-export function classroomChannel() {
-  return supabase.channel(CLASSROOM_TOPIC, {
-    config: { broadcast: { ack: true }, presence: { key: 'user' } },
-  })
+export interface AutoFollowPayload {
+  on: boolean;
+  allowedPages?: number[] | null; // zero-based allowed page indexes
+  teacherPageIndex?: number;      // teacher's current page
+  ts?: number;
 }
 
-/** Teacher: start the classroom channel */
-export function ensureClassroomChannel() {
-  const ch = classroomChannel()
-  ch.subscribe()
-  return ch
+export type TeacherPresenceState = {
+  role: 'teacher';
+  autoFollow: boolean;
+  allowedPages: number[] | null;
+  teacherPageIndex?: number;
+  focusOn: boolean;
+  lockNav: boolean;
+  updatedAt: number;
+};
+
+export function assignmentChannel(assignmentId: string) {
+  return supabase.channel(`assign:${assignmentId}`, {
+    config: { broadcast: { ack: true }, presence: { key: 'teacher' } },
+  });
 }
 
-/** Teacher: emit events */
-export async function publishSetPage(ch: any, pageIndex: number, pageId?: string) {
-  const payload: SetPagePayload = { pageIndex, pageId, ts: Date.now() }
-  await ch.send({ type: 'broadcast', event: 'SET_PAGE', payload })
+/** Broadcast helpers */
+export async function publishSetPage(ch: any, pageId: string, pageIndex: number) {
+  const payload: SetPagePayload = { pageId, pageIndex, ts: Date.now() };
+  await ch.send({ type: 'broadcast', event: 'SET_PAGE', payload });
 }
 
-export async function publishAutoFollow(ch: any, data: Omit<AutoFollowPayload, 'ts'>) {
-  const payload: AutoFollowPayload = { ...data, ts: Date.now() }
-  await ch.send({ type: 'broadcast', event: 'AUTO_FOLLOW', payload })
+export async function publishAutoFollow(
+  ch: any,
+  on: boolean,
+  allowedPages?: number[] | null,
+  teacherPageIndex?: number
+) {
+  const payload: AutoFollowPayload = {
+    on,
+    allowedPages: allowedPages ?? null,
+    teacherPageIndex,
+    ts: Date.now(),
+  };
+  await ch.send({ type: 'broadcast', event: 'AUTO_FOLLOW', payload });
 }
 
 export async function publishFocus(ch: any, on: boolean, lockNav = true) {
-  const payload: FocusPayload = { on, lockNav, ts: Date.now() }
-  await ch.send({ type: 'broadcast', event: 'FOCUS', payload })
+  const payload: FocusPayload = { on, lockNav, ts: Date.now() };
+  await ch.send({ type: 'broadcast', event: 'FOCUS', payload });
 }
 
-/** Student: subscribe */
-export function subscribeToClassroom(handlers: {
-  onSetPage?: (p: SetPagePayload) => void
-  onAutoFollow?: (p: AutoFollowPayload) => void
-  onFocus?: (p: FocusPayload) => void
-}) {
-  const ch = classroomChannel()
+/** Presence: teacher publishes current state; students read it on join */
+export async function setTeacherPresence(
+  ch: any,
+  state: Omit<TeacherPresenceState, 'role' | 'updatedAt'> & Partial<Pick<TeacherPresenceState, 'updatedAt'>>
+) {
+  const payload: TeacherPresenceState = {
+    role: 'teacher',
+    autoFollow: !!state.autoFollow,
+    allowedPages: state.allowedPages ?? null,
+    teacherPageIndex: state.teacherPageIndex,
+    focusOn: !!state.focusOn,
+    lockNav: !!state.lockNav,
+    updatedAt: state.updatedAt ?? Date.now(),
+  };
+  await ch.track(payload);
+}
+
+/** STUDENT side subscription: reads presence + listens to broadcasts */
+export function subscribeToAssignment(
+  assignmentId: string,
+  handlers: {
+    onSetPage?: (p: SetPagePayload) => void;
+    onFocus?: (p: FocusPayload) => void;
+    onAutoFollow?: (p: AutoFollowPayload) => void;
+  }
+) {
+  const ch = supabase.channel(`assign:${assignmentId}`, {
+    config: { broadcast: { ack: true }, presence: { key: 'student' } },
+  });
+
+  // Broadcasts
   ch
-    .on('broadcast', { event: 'SET_PAGE' }, ({ payload }) => handlers.onSetPage?.(payload as SetPagePayload))
-    .on('broadcast', { event: 'AUTO_FOLLOW' }, ({ payload }) => handlers.onAutoFollow?.(payload as AutoFollowPayload))
-    .on('broadcast', { event: 'FOCUS' }, ({ payload }) => handlers.onFocus?.(payload as FocusPayload))
-    .subscribe()
-  return ch
+    .on('broadcast', { event: 'SET_PAGE' }, ({ payload }) =>
+      handlers.onSetPage?.(payload as SetPagePayload)
+    )
+    .on('broadcast', { event: 'FOCUS' }, ({ payload }) =>
+      handlers.onFocus?.(payload as FocusPayload)
+    )
+    .on('broadcast', { event: 'AUTO_FOLLOW' }, ({ payload }) =>
+      handlers.onAutoFollow?.(payload as AutoFollowPayload)
+    );
+
+  // Presence sync
+  ch.on('presence', { event: 'sync' }, () => {
+    try {
+      const state = ch.presenceState() as Record<string, TeacherPresenceState[]>;
+      const arr = (state?.teacher ?? []).filter(s => s?.role === 'teacher');
+      if (arr.length === 0) return;
+      const latest = arr.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
+      if (!latest) return;
+
+      handlers.onAutoFollow?.({
+        on: !!latest.autoFollow,
+        allowedPages: latest.allowedPages ?? null,
+        teacherPageIndex: latest.teacherPageIndex,
+        ts: latest.updatedAt,
+      });
+      handlers.onFocus?.({
+        on: !!latest.focusOn,
+        lockNav: !!latest.lockNav,
+        ts: latest.updatedAt,
+      });
+      if (typeof latest.teacherPageIndex === 'number') {
+        handlers.onSetPage?.({
+          pageId: '',
+          pageIndex: latest.teacherPageIndex,
+          ts: latest.updatedAt,
+        });
+      }
+    } catch {}
+  });
+
+  // Safety read shortly after subscribe
+  ch.subscribe((status: string) => {
+    if (status === 'SUBSCRIBED') {
+      setTimeout(() => {
+        try {
+          const state = ch.presenceState() as Record<string, TeacherPresenceState[]>;
+          const arr = (state?.teacher ?? []).filter(s => s?.role === 'teacher');
+          if (arr.length === 0) return;
+          const latest = arr.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
+          if (!latest) return;
+
+          handlers.onAutoFollow?.({
+            on: !!latest.autoFollow,
+            allowedPages: latest.allowedPages ?? null,
+            teacherPageIndex: latest.teacherPageIndex,
+            ts: latest.updatedAt,
+          });
+          handlers.onFocus?.({
+            on: !!latest.focusOn,
+            lockNav: !!latest.lockNav,
+            ts: latest.updatedAt,
+          });
+          if (typeof latest.teacherPageIndex === 'number') {
+            handlers.onSetPage?.({
+              pageId: '',
+              pageIndex: latest.teacherPageIndex,
+              ts: latest.updatedAt,
+            });
+          }
+        } catch {}
+      }, 50);
+    }
+  });
+
+  return ch;
 }
