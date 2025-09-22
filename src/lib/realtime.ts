@@ -1,4 +1,4 @@
-// src/lib/realtime.ts
+//src/lib/realtime.ts
 import { supabase } from './supabaseClient'
 
 /** Events & payloads shared between teacher and students */
