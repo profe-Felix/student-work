@@ -16,7 +16,6 @@ type LatestCell = {
   audioUrl?: string
 } | null
 
-// Simple roster: A_01..A_28
 const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
 
 export default function TeacherDashboard() {
@@ -30,7 +29,6 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
-  // Load assignments on mount
   useEffect(() => {
     (async () => {
       try {
@@ -38,13 +36,10 @@ export default function TeacherDashboard() {
         setAssignments(as)
         const preferred = as.find(a => a.title === 'Handwriting - Daily') ?? as[0]
         if (preferred) setAssignmentId(preferred.id)
-      } catch (e) {
-        console.error('load assignments failed', e)
-      }
+      } catch (e) { console.error('load assignments failed', e) }
     })()
   }, [])
 
-  // When assignment changes, load pages and pick page 0 if exists
   useEffect(() => {
     if (!assignmentId) return
     (async () => {
@@ -57,20 +52,16 @@ export default function TeacherDashboard() {
           setPageIndex(p0.page_index)
         }
         setGrid({})
-      } catch (e) {
-        console.error('load pages failed', e)
-      }
+      } catch (e) { console.error('load pages failed', e) }
     })()
   }, [assignmentId])
 
-  // Keep pageIndex synced when pageId changes
   useEffect(() => {
     if (!pageId) return
     const idx = pages.find(p => p.id === pageId)?.page_index ?? 0
     setPageIndex(idx)
   }, [pageId, pages])
 
-  // Load latest per student for the selected page
   useEffect(() => {
     if (!assignmentId || !pageId) return
     let cancelled = false
@@ -123,11 +114,12 @@ export default function TeacherDashboard() {
     [pages, pageId]
   )
 
+  const assignmentPdfPath = currentPage?.pdf_path; // <-- pass to SyncBar
+
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2 className="text-xl font-semibold">Teacher Dashboard</h2>
 
-      {/* Drag-drop new assignment */}
       <div style={{ margin: '12px 0' }}>
         <PdfDropZone onCreated={(newId) => {
           setAssignmentId(newId)
@@ -135,7 +127,6 @@ export default function TeacherDashboard() {
         }} />
       </div>
 
-      {/* Pickers */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Assignment</span>
@@ -169,17 +160,16 @@ export default function TeacherDashboard() {
         {loading && <span style={{ color: '#6b7280' }}>Loading…</span>}
       </div>
 
-      {/* Sync/Focus controls */}
       {assignmentId && pageId && (
         <TeacherSyncBar
           assignmentId={assignmentId}
           pageId={pageId}
           pageIndex={pageIndex}
+          assignmentPdfPath={assignmentPdfPath}   // <-- NEW
           className="sticky top-2 z-10"
         />
       )}
 
-      {/* Grid of students’ latest work flags */}
       <div
         style={{
           marginTop: 12,
