@@ -172,7 +172,12 @@ export default function StudentAssignment(){
 
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
-  const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
+
+  // >>> NEW: persist assignment id so refresh stays on the teacher’s assignment
+  const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
+  const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
+    try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
+  })
 
   // Realtime teacher controls
   const [focusOn, setFocusOn] = useState(false)
@@ -191,6 +196,8 @@ export default function StudentAssignment(){
   // assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
+      // >>> NEW: cache the assignment id so a page refresh keeps the same assignment
+      try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
       setPageIndex(0) // snap to page 0 on switch
       currIds.current = {}
