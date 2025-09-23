@@ -26,6 +26,7 @@ export default function TeacherDashboard() {
 
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
+  const lastAnnouncedAssignment = useRef<string>('') // NEW: prevent double-broadcasts
 
   const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
@@ -112,6 +113,20 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
+  // NEW: after assignmentId is resolved (initial load), broadcast it once.
+  useEffect(() => {
+    if (!assignmentId) return
+    if (lastAnnouncedAssignment.current === assignmentId) return
+    ;(async () => {
+      try {
+        await publishSetAssignment(assignmentId)
+        lastAnnouncedAssignment.current = assignmentId
+      } catch (err) {
+        console.error('initial broadcast failed', err)
+      }
+    })()
+  }, [assignmentId])
+
   useEffect(() => {
     if (!assignmentId || !pageId) return
     setGrid({})
@@ -192,6 +207,7 @@ export default function TeacherDashboard() {
           setAssignmentId(newId)
           try {
             await publishSetAssignment(newId)
+            lastAnnouncedAssignment.current = newId // record to avoid duplicate initial effect
           } catch (err) {
             console.error('broadcast onCreated failed', err)
           }
@@ -208,6 +224,7 @@ export default function TeacherDashboard() {
               setAssignmentId(next)
               try {
                 await publishSetAssignment(next) // NEW: tell students to switch
+                lastAnnouncedAssignment.current = next // avoid double fire with the effect
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
               }
