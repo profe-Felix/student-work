@@ -213,6 +213,7 @@ export default function StudentAssignment(){
           }
           setAutoFollow(!!p.autoFollow)
           setAllowedPages(p.allowedPages ?? null)
+          setFocusOn(!!p.focusOn)            // <<< NEW
           setNavLocked(!!p.focusOn && !!p.lockNav)
         } else {
           setPageIndex(0)
@@ -234,6 +235,7 @@ export default function StudentAssignment(){
       const p = JSON.parse(raw) as TeacherPresenceState
       setAutoFollow(!!p.autoFollow)
       setAllowedPages(p.allowedPages ?? null)
+      setFocusOn(!!p.focusOn)                // <<< NEW
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
@@ -488,6 +490,7 @@ export default function StudentAssignment(){
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
         setAllowedPages(p.allowedPages ?? null)
+        setFocusOn(!!p.focusOn)              // <<< NEW
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
