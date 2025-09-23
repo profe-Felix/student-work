@@ -201,18 +201,28 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
-      <div style={{ margin: '12px 0 16px' }}>
-        {/* NEW: broadcast when a brand-new assignment is created via drop zone */}
-        <PdfDropZone onCreated={async (newId: string) => {
-          setAssignmentId(newId)
-          try {
-            await publishSetAssignment(newId)
-            lastAnnouncedAssignment.current = newId // record to avoid duplicate initial effect
-          } catch (err) {
-            console.error('broadcast onCreated failed', err)
-          }
-        }} />
-      </div>
+<div style={{ margin: '12px 0 16px' }}>
+  <PdfDropZone
+    onCreated={async (newId: string, title: string) => {
+      // Show it immediately in the dropdown
+      setAssignments((prev) => {
+        if (prev.some((a) => a.id === newId)) return prev
+        return [{ id: newId, title }, ...prev]
+      })
+
+      // Select it
+      setAssignmentId(newId)
+
+      // Broadcast to students now and mark as announced to avoid double-fire
+      try {
+        await publishSetAssignment(newId)
+        lastAnnouncedAssignment.current = newId
+      } catch (err) {
+        console.error('broadcast onCreated failed', err)
+      }
+    }}
+  />
+</div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
