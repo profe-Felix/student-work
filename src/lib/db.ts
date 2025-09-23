@@ -68,9 +68,9 @@ export async function saveStrokes(submission_id: string, strokes_json: any) {
   if (error) throw error
 }
 
+// ===== CHANGED: audio bucket hard-coded to "student-audio" + signed URL support =====
 export async function saveAudio(submission_id: string, blob: Blob) {
-  // store audio in storage then record artifact row with storage path
-  const bucket = 'audio'
+  const bucket = 'student-audio' // <— your bucket
   const key = `${submission_id}/${Date.now()}.webm`
 
   const { error: upErr } = await supabase.storage.from(bucket).upload(key, blob, {
@@ -88,6 +88,14 @@ export async function saveAudio(submission_id: string, blob: Blob) {
 export async function getAudioUrl(storage_path: string) {
   const [bucket, ...rest] = storage_path.split('/')
   const path = rest.join('/')
+
+  // Try a signed URL (works with private buckets); fall back to public URL
+  try {
+    const { data: signed, error: signErr } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60)
+    if (!signErr && signed?.signedUrl) return signed.signedUrl
+  } catch {
+    // ignore and try public
+  }
   const { data } = supabase.storage.from(bucket).getPublicUrl(path)
   return data.publicUrl
 }
