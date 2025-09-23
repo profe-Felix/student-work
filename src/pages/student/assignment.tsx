@@ -660,7 +660,8 @@ export default function StudentAssignment(){
 
       <div
         ref={scrollHostRef}
-        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch', touchAction:'none',
+        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
+          touchAction: handMode ? 'auto' : 'none', /* NEW: allow native scroll when hand mode */
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
@@ -668,7 +669,10 @@ export default function StudentAssignment(){
           <div style={{ position:'absolute', inset:0, zIndex:0 }}>
             <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
           </div>
-          <div style={{ position:'absolute', inset:0, zIndex:10 }}>
+          <div style={{
+              position:'absolute', inset:0, zIndex:10,
+              pointerEvents: handMode ? 'none' : 'auto' /* NEW: let touches pass through in hand mode */
+            }}>
             <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
               color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
           </div>
