@@ -1,4 +1,4 @@
-// src/pages/student/assignment.tsx
+//src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -16,6 +16,7 @@ import {
   type FocusPayload,
   type AutoFollowPayload,
   subscribeToGlobal,
+  type TeacherPresenceState, // (type only; helps with cache shape)
 } from '../../lib/realtime'
 
 /** Constants */
@@ -55,6 +56,10 @@ type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 const draftKey      = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
 const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
 const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
+
+// >>> NEW: cache keys (assignment handoff + presence snapshot)
+const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
+const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
 
 function normalizeStrokes(data: unknown): StrokesPayload {
   if (!data || typeof data !== 'object') return { strokes: [] }
@@ -116,9 +121,9 @@ export default function StudentAssignment(){
   const STORAGE_BUCKET = 'pdfs'
   function keyForBucket(path: string) {
     if (!path) return ''
-    let k = path.replace(/^\/+/, '')     // strip leading slash
-    k = k.replace(/^public\//, '')       // strip "public/" prefix
-    k = k.replace(/^pdfs\//, '')         // strip "pdfs/" if present; keys should be relative to bucket
+    let k = path.replace(/^\/+/, '')
+    k = k.replace(/^public\//, '')
+    k = k.replace(/^pdfs\//, '')
     return k
   }
   useEffect(() => {
@@ -126,10 +131,8 @@ export default function StudentAssignment(){
     ;(async () => {
       if (!pdfStoragePath) { setPdfUrl(''); return }
       const key = keyForBucket(pdfStoragePath)
-      // Prefer a signed URL (works even for private bucket)
-      const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60) // 1h
+      const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
       if (!cancelled && sData?.signedUrl) { setPdfUrl(sData.signedUrl); return }
-      // Fallback to public URL if signing isn’t allowed / not needed
       const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
       if (!cancelled) setPdfUrl(pData?.publicUrl ?? '')
     })()
@@ -173,8 +176,7 @@ export default function StudentAssignment(){
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
-  // >>> NEW: persist assignment id so refresh stays on the teacher’s assignment
-  const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
+  // >>> Persist assignment id so refresh stays on the teacher’s assignment
   const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
@@ -187,23 +189,58 @@ export default function StudentAssignment(){
   const teacherPageIndexRef = useRef<number | null>(null)
 
   // hashes/dirty tracking
-  const lastAppliedServerHash = useRef<string>('')   // last server ink we applied
-  const lastLocalHash = useRef<string>('')           // last local canvas snapshot
+  const lastAppliedServerHash = useRef<string>('')
+  const lastLocalHash = useRef<string>('')
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
-  const justSavedAt = useRef<number>(0)              // ignore window after save
+  const justSavedAt = useRef<number>(0)
 
   // assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
-      // >>> NEW: cache the assignment id so a page refresh keeps the same assignment
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      setPageIndex(0) // snap to page 0 on switch
+      // On assignment switch, try to snap to teacher’s last page if we have presence cached
+      try {
+        const raw = localStorage.getItem(presenceKey(nextAssignmentId))
+        if (raw) {
+          const p = JSON.parse(raw) as TeacherPresenceState
+          if (typeof p.teacherPageIndex === 'number') {
+            teacherPageIndexRef.current = p.teacherPageIndex
+            setPageIndex(p.teacherPageIndex)
+          } else {
+            setPageIndex(0)
+          }
+          setAutoFollow(!!p.autoFollow)
+          setAllowedPages(p.allowedPages ?? null)
+          setNavLocked(!!p.focusOn && !!p.lockNav)
+        } else {
+          setPageIndex(0)
+        }
+      } catch {
+        setPageIndex(0)
+      }
       currIds.current = {}
     })
     return off
   }, [])
+
+  // >>> When we know which assignment to use (including on refresh), hydrate presence from cache
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    try {
+      const raw = localStorage.getItem(presenceKey(rtAssignmentId))
+      if (!raw) return
+      const p = JSON.parse(raw) as TeacherPresenceState
+      setAutoFollow(!!p.autoFollow)
+      setAllowedPages(p.allowedPages ?? null)
+      setNavLocked(!!p.focusOn && !!p.lockNav)
+      if (typeof p.teacherPageIndex === 'number') {
+        teacherPageIndexRef.current = p.teacherPageIndex
+        setPageIndex(p.teacherPageIndex) // snap immediately on refresh
+      }
+    } catch {}
+  }, [rtAssignmentId])
 
   // Resolve assignment/page depending on whether we have a teacher-provided assignment
   async function ensureIds(): Promise<{ assignment_id: string, page_id: string }> {
@@ -444,6 +481,17 @@ export default function StudentAssignment(){
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
         if (on && typeof teacherPageIndexRef.current === 'number') {
           setPageIndex(teacherPageIndexRef.current)
+        }
+      },
+      // >>> NEW: listen for presence snapshots and cache/apply immediately
+      onPresence: (p: TeacherPresenceState) => {
+        try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+        setAutoFollow(!!p.autoFollow)
+        setAllowedPages(p.allowedPages ?? null)
+        setNavLocked(!!p.focusOn && !!p.lockNav)
+        if (typeof p.teacherPageIndex === 'number') {
+          teacherPageIndexRef.current = p.teacherPageIndex
+          if (p.autoFollow) setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
         }
       }
     })
