@@ -21,7 +21,6 @@ type PlayMode = 'strokes' | 'together'  // strokes only vs strokes + audio
 export default function PlaybackDrawer({
   pdfUrl,
   pageIndex,
-  // accept both names; teacher/index.tsx used strokesPayload + onClose, student
   strokesJson,
   strokesPayload,
   audioUrl,
@@ -46,9 +45,10 @@ export default function PlaybackDrawer({
   const [isPlaying, setIsPlaying] = useState(false)
   const [nowMs, setNowMs] = useState(0)
   const [durationMs, setDurationMs] = useState(0)
+
+  // RAF handles both modes; in together-mode, it reads audio.currentTime each frame
   const rafRef = useRef<number| null>(null)
 
-  // NEW: top menu toggle
   const audioAvailable = !!audioUrl
   const [playMode, setPlayMode] = useState<PlayMode>(audioAvailable ? 'together' : 'strokes')
 
@@ -78,74 +78,69 @@ export default function PlaybackDrawer({
     return () => ro.disconnect()
   }, [nowMs])
 
-  // Initialize duration (from audio or fallback to built.duration)
+  // Initialize / update duration
   useEffect(() => {
     if (playMode === 'together' && audioAvailable) {
       const a = audioRef.current
       if (!a) return
-      const onLoaded = () => { setDurationMs(Math.max(0, (a.duration || 0) * 1000)) }
-      const onTime = () => {
-        const t = Math.max(0, a.currentTime * 1000)
-        setNowMs(t)
-        drawUpTo(t)
-      }
-      const onEnd = () => { setIsPlaying(false) }
+      const onLoaded = () => setDurationMs(Math.max(0, (a.duration || 0) * 1000))
+      const onEnded  = () => setIsPlaying(false)
       a.addEventListener('loadedmetadata', onLoaded)
-      a.addEventListener('timeupdate', onTime)
-      a.addEventListener('ended', onEnd)
+      a.addEventListener('ended', onEnded)
       if (a.duration && !Number.isNaN(a.duration)) setDurationMs(a.duration * 1000)
       return () => {
         a.removeEventListener('loadedmetadata', onLoaded)
-        a.removeEventListener('timeupdate', onTime)
-        a.removeEventListener('ended', onEnd)
+        a.removeEventListener('ended', onEnded)
       }
     } else {
-      // no audio driving: derive duration from drawing length
       setDurationMs(built.duration)
       setNowMs(0)
     }
   }, [audioAvailable, playMode, built.duration])
 
-  // If user toggles modes while playing, keep behavior sane
+  // Unified animation loop
   useEffect(() => {
-    if (playMode === 'together' && audioAvailable) {
-      // switch to audio timebase
-      const a = audioRef.current
-      if (a) {
-        a.currentTime = nowMs / 1000
-        if (isPlaying) { a.play().catch(()=>{}) } else { a.pause() }
-      }
-    } else {
-      // switch to RAF; pause audio if any
-      const a = audioRef.current
-      if (a) a.pause()
+    // stop any existing loop first
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playMode])
 
-  // Animation loop when no audio (or user chose strokes-only)
-  useEffect(() => {
-    if (playMode === 'together' && audioAvailable) return // audio drives time
-    if (!isPlaying) {
-      if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
-      return
-    }
-    const start = performance.now() - nowMs
+    if (!isPlaying) return
+
+    // strokes-only loop uses a timebase we control
+    let start = performance.now() - nowMs
     const tick = (t:number) => {
-      const elapsed = t - start
-      const clamped = Math.min(durationMs, Math.max(0, elapsed))
+      let tMs = 0
+      if (playMode === 'together' && audioAvailable) {
+        const a = audioRef.current
+        tMs = Math.max(0, (a?.currentTime || 0) * 1000) // read audio time EVERY frame
+      } else {
+        const elapsed = t - start
+        tMs = Math.max(0, elapsed)
+      }
+
+      const clamped = Math.min(durationMs, tMs)
       setNowMs(clamped)
       drawUpTo(clamped)
-      if (clamped >= durationMs) {
+
+      if (clamped >= durationMs - 0.5) {
         setIsPlaying(false)
         rafRef.current = null
         return
       }
       rafRef.current = requestAnimationFrame(tick)
     }
+
+    // If switching from pause to play in strokes-only, reset base clock
+    if (!(playMode === 'together' && audioAvailable)) {
+      start = performance.now() - nowMs
+    }
+
     rafRef.current = requestAnimationFrame(tick)
     return () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); rafRef.current = null }
-  }, [isPlaying, durationMs, playMode, audioAvailable]) // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, playMode, audioAvailable, durationMs])
 
   function onPdfReady(_pdf:any, canvas:HTMLCanvasElement) {
     try {
@@ -291,7 +286,12 @@ export default function PlaybackDrawer({
     const t = Math.max(0, Math.min(durationMs, v))
     if (playMode === 'together' && audioAvailable) {
       const a = audioRef.current
-      if (a) a.currentTime = t / 1000
+      if (a) {
+        a.currentTime = t / 1000
+        // draw immediately at the new position for visual snap
+        drawUpTo(t)
+        setNowMs(t)
+      }
     } else {
       setNowMs(t)
       drawUpTo(t)
@@ -338,7 +338,7 @@ export default function PlaybackDrawer({
           </button>
         </div>
 
-        {/* Floating top controls (like your pager but top/center). Stays visible while scrolling */}
+        {/* Floating top controls */}
         <div
           style={{
             position:'absolute',
@@ -428,7 +428,7 @@ export default function PlaybackDrawer({
             <audio
               ref={audioRef}
               src={audioUrl || undefined}
-              preload="metadata"
+              preload="auto"
               style={{ display:'none' }}
             />
           )}
