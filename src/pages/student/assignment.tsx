@@ -51,7 +51,6 @@ const SKIN_TONES = [
 ]
 
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
-
 type StrokesPayload = { strokes: Array<any> }
 
 /* ---------- Keys & helpers ---------- */
@@ -114,8 +113,10 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
+  // storage path comes from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
 
+  // Resolved URL used by PdfCanvas (bucket is really "pdfs")
   const [pdfUrl, setPdfUrl] = useState<string>('')
   const STORAGE_BUCKET = 'pdfs'
   function keyForBucket(path: string) {
@@ -143,12 +144,12 @@ export default function StudentAssignment(){
 
   const [color, setColor] = useState('#1F75FE')
   const [size,  setSize]  = useState(6)
-  // DEFAULT TO DRAW MODE so you can ink immediately
-  const [handMode, setHandMode] = useState(false)
+  const [handMode, setHandMode] = useState(true)  // ← back to your original default
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
+  // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
 
   const drawRef = useRef<any>(null)
@@ -172,44 +173,34 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
+  // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
+  // >>> Persist assignment id so refresh stays on the teacher’s assignment
   const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
+  // Realtime teacher controls
   const [focusOn, setFocusOn] = useState(false)
   const [navLocked, setNavLocked] = useState(false)
   const [autoFollow, setAutoFollow] = useState(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
 
+  // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')
   const lastLocalHash = useRef<string>('')
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // --- NEW: eager resolve at mount so pdfStoragePath is set even before any other effect
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const ids = await ensureIds()
-        if (cancelled) return
-        currIds.current = ids
-      } catch (e) {
-        console.error('early ensureIds failed', e)
-      }
-    })()
-    return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
+  // assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
+      // On assignment switch, try to snap to teacher’s last page if we have presence cached
       try {
         const raw = localStorage.getItem(presenceKey(nextAssignmentId))
         if (raw) {
@@ -227,12 +218,15 @@ export default function StudentAssignment(){
         } else {
           setPageIndex(0)
         }
-      } catch { setPageIndex(0) }
+      } catch {
+        setPageIndex(0)
+      }
       currIds.current = {}
     })
     return off
   }, [])
 
+  // >>> When we know which assignment to use (including on refresh), hydrate presence from cache
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
@@ -245,12 +239,14 @@ export default function StudentAssignment(){
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        setPageIndex(p.teacherPageIndex)
+        setPageIndex(p.teacherPageIndex) // snap immediately on refresh
       }
     } catch {}
   }, [rtAssignmentId])
 
+  // Resolve assignment/page depending on whether we have a teacher-provided assignment
   async function ensureIds(): Promise<{ assignment_id: string, page_id: string }> {
+    // STRICT: if teacher assignment is known, always use it
     if (rtAssignmentId) {
       const pages = await listPages(rtAssignmentId)
       const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
@@ -259,6 +255,7 @@ export default function StudentAssignment(){
       setPdfStoragePath(curr.pdf_path || '')
       return { assignment_id: rtAssignmentId, page_id: curr.id }
     }
+    // Fallback boot path (your original upsert)
     const ids = await upsertAssignmentWithPage(assignmentTitle, DEFAULT_PDF_STORAGE_PATH, pageIndex)
     currIds.current = ids
     if (!rtAssignmentId && ids.assignment_id) setRtAssignmentId(ids.assignment_id!)
@@ -285,9 +282,7 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        const { assignment_id, page_id } = currIds.current.assignment_id
-          ? (currIds.current as any)
-          : await ensureIds()
+        const { assignment_id, page_id } = await ensureIds()
 
         try {
           const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
@@ -369,11 +364,12 @@ export default function StudentAssignment(){
     const onBeforeUnload = ()=>{
       try { const data = drawRef.current?.getStrokes?.(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
     }
-    window.addEventListener('beforeunload', onBeforeUnload)
+    window.addEventListener('beforeunload', onBeforeunload as any)
+    function onBeforeunload(){} // TS quirk
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload)
+      window.removeEventListener('beforeunload', onBeforeunload as any)
     }
   }, [pageIndex, studentId])
 
@@ -393,7 +389,9 @@ export default function StudentAssignment(){
       const last = localStorage.getItem(lastKey)
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIds()
+      const ids = currIds.current.assignment_id
+        ? (currIds.current as any)
+        : await ensureIds()
       currIds.current = ids
       if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
@@ -449,11 +447,12 @@ export default function StudentAssignment(){
     setPageIndex(nextIndex)
   }
 
+  // two-finger pan host
   const scrollHostRef = useRef<HTMLDivElement|null>(null)
   useEffect(()=>{
     const host=scrollHostRef.current; if(!host) return
     let pan=false, startY=0, startX=0, startT=0, startL=0
-    const onTS=(e:TouchEvent)=>{ if(e.touches.length>=2 && handMode===false){ pan=true; const [t1,t2]=[e.touches[0],e.touches[1]]; startY=(t1.clientY+t2.clientY)/2; startX=(t1.clientX+t2.clientX)/2; startT=host.scrollTop; startL=host.scrollLeft } }
+    const onTS=(e:TouchEvent)=>{ if(e.touches.length>=2 && !handMode){ pan=true; const [t1,t2]=[e.touches[0],e.touches[1]]; startY=(t1.clientY+t2.clientY)/2; startX=(t1.clientX+t2.clientX)/2; startT=host.scrollTop; startL=host.scrollLeft } }
     const onTM=(e:TouchEvent)=>{ if(pan && e.touches.length>=2){ e.preventDefault(); const [t1,t2]=[e.touches[0],e.touches[1]]; const y=(t1.clientY+t2.clientY)/2, x=(t1.clientX+t2.clientX)/2; host.scrollTop=startT-(y-startY); host.scrollLeft=startL-(x-startX) } }
     const end=()=>{ pan=false }
     host.addEventListener('touchstart',onTS,{passive:true,capture:true})
@@ -467,7 +466,9 @@ export default function StudentAssignment(){
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  /* ---------- Realtime + polling ---------- */
+  /* ---------- Realtime + polling (defensive) ---------- */
+
+  // subscribe to teacher broadcast once we know the assignment id
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
@@ -487,6 +488,7 @@ export default function StudentAssignment(){
           setPageIndex(teacherPageIndexRef.current)
         }
       },
+      // >>> presence cache/apply
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
@@ -668,8 +670,7 @@ export default function StudentAssignment(){
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
           <div style={{ position:'absolute', inset:0, zIndex:0 }}>
-            {/* key={pdfUrl} forces PdfCanvas to fully reload when url changes */}
-            <PdfCanvas key={pdfUrl} url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
+            <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
           </div>
           <div style={{
               position:'absolute', inset:0, zIndex:10,
@@ -720,9 +721,11 @@ export default function StudentAssignment(){
         </button>
       </div>
 
+      {/* Floating toolbar */}
       {Toolbar}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
 
+      {/* Focus overlay */}
       {focusOn && (
         <div
           style={{
