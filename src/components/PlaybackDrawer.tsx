@@ -7,11 +7,41 @@ export type Props = {
   student: string
   pdfUrl: string
   pageIndex: number
-  strokesPayload: any
+  strokesPayload: any // may be string | object | array
   audioUrl?: string
 }
 
 type Size = { w: number; h: number }
+
+type TimedPoint = { x: number; y: number; t?: number }
+type Stroke = { color?: string; size?: number; points: TimedPoint[] }
+
+function coerceStrokes(payload: any): Stroke[] {
+  try {
+    // If it's a string, try to parse it
+    if (typeof payload === 'string') {
+      payload = JSON.parse(payload)
+    }
+
+    // If it's already an array of strokes
+    if (Array.isArray(payload)) {
+      return payload as Stroke[]
+    }
+
+    // If it's an object with .strokes
+    if (payload && Array.isArray(payload.strokes)) {
+      return payload.strokes as Stroke[]
+    }
+
+    // Some older payloads could be { lines: [...] }
+    if (payload && Array.isArray(payload.lines)) {
+      return payload.lines as Stroke[]
+    }
+  } catch {
+    // swallow parse error and fall through
+  }
+  return []
+}
 
 export default function PlaybackDrawer({
   onClose,
@@ -28,19 +58,12 @@ export default function PlaybackDrawer({
   const animRef = useRef<number | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  // Normalize payload (back-compat)
-  const normalized = useMemo(() => {
-    const payload = strokesPayload || {}
-    if (payload && Array.isArray(payload.strokes)) return payload as { strokes: any[] }
-    // Some older artifacts may store strokes directly
-    if (Array.isArray(payload)) return { strokes: payload }
-    return { strokes: [] as any[] }
-  }, [strokesPayload])
+  // Normalize strokes regardless of payload shape
+  const strokes: Stroke[] = useMemo(() => coerceStrokes(strokesPayload), [strokesPayload])
 
-  // Render all strokes immediately (static)
+  // Draw full static image of all strokes
   function drawAll(ctx: CanvasRenderingContext2D, W: number, H: number) {
     ctx.clearRect(0, 0, W, H)
-    const strokes = normalized.strokes || []
     for (const s of strokes) {
       const pts = s.points || []
       if (!pts.length) continue
@@ -57,7 +80,7 @@ export default function PlaybackDrawer({
     }
   }
 
-  // Replay animation (time-based if t exists; otherwise segment-by-segment)
+  // Build replay timeline and animate
   function startReplay() {
     if (!canvasRef.current) return
     const ctx = canvasRef.current.getContext('2d')
@@ -65,9 +88,7 @@ export default function PlaybackDrawer({
 
     const W = canvasRef.current.width
     const H = canvasRef.current.height
-    const strokes = normalized.strokes || []
 
-    // Build a timeline of segments
     type Seg = { x0: number; y0: number; x1: number; y1: number; color: string; size: number; t: number }
     const segs: Seg[] = []
     for (const s of strokes) {
@@ -77,7 +98,7 @@ export default function PlaybackDrawer({
       for (let i = 1; i < pts.length; i++) {
         const p0 = pts[i - 1]
         const p1 = pts[i]
-        const t = hasT ? p1.t : i * 12 // ~12ms fallback
+        const t = hasT ? (p1.t as number) : i * 12 // ~12ms fallback when no timestamps
         segs.push({ x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y, color: s.color || '#111', size: s.size || 4, t })
       }
     }
@@ -129,7 +150,7 @@ export default function PlaybackDrawer({
     }
   }, [])
 
-  // When switching to replay: clear and animate; when stopping: redraw static
+  // When switching modes or sizes, (re)draw appropriately
   useEffect(() => {
     const c = canvasRef.current
     if (!c) return
@@ -137,31 +158,35 @@ export default function PlaybackDrawer({
     if (!ctx) return
 
     if (anim === 'replay') {
+      // Ensure canvas matches latest size before replay
+      c.width = size.w
+      c.height = size.h
+
       ctx.clearRect(0, 0, c.width, c.height)
-      // Sync audio to 0 if present
       if (audioRef.current) {
         try { audioRef.current.currentTime = 0; audioRef.current.play().catch(() => {}) } catch {}
       }
       startReplay()
     } else {
       cancelReplay()
+      // Ensure canvas matches size, then draw static
+      c.width = size.w
+      c.height = size.h
       drawAll(ctx, c.width, c.height)
-      // Stop audio if playing
       if (audioRef.current) {
         try { audioRef.current.pause() } catch {}
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [anim, size.w, size.h, normalized])
+  }, [anim, size.w, size.h, strokes])
 
   // PdfCanvas tells us its actual pixel size; sync overlay canvas to match 1:1
   function onPdfReady(info: { width?: number; height?: number; cssWidth?: number; cssHeight?: number }) {
-    // Prefer device pixel width/height if provided; fall back to css
     const w = info.width ?? info.cssWidth ?? 800
     const h = info.height ?? info.cssHeight ?? 600
     setSize({ w, h })
 
-    // Also immediately draw static strokes on the fresh canvas
+    // Draw static immediately once sized
     requestAnimationFrame(() => {
       const c = canvasRef.current
       if (!c) return
@@ -175,6 +200,7 @@ export default function PlaybackDrawer({
 
   // Download strokes JSON
   function downloadStrokes() {
+    const normalized = { strokes }
     const blob = new Blob([JSON.stringify(normalized)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -252,7 +278,7 @@ export default function PlaybackDrawer({
           </div>
         </div>
 
-        {/* Top toolbar (moved from right side) */}
+        {/* Top toolbar */}
         <div
           style={{
             display: 'flex',
@@ -272,7 +298,7 @@ export default function PlaybackDrawer({
           </span>
         </div>
 
-        {/* Content: PDF uses the full width; controls are above */}
+        {/* Content */}
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: '#fafafa' }}>
           <div style={{ position: 'relative', width: `${size.w}px`, margin: '12px auto' }}>
             <div style={{ position: 'relative' }}>
