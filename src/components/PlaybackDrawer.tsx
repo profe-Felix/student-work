@@ -1,387 +1,230 @@
-// src/components/PlaybackDrawer.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import PdfCanvas from './PdfCanvas'
 
-export type Props = {
-  onClose: () => void
-  student: string
+type Pt = { x:number; y:number }
+type Stroke = { color:string; size:number; tool:'pen'|'highlighter'; pts:Pt[] }
+type StrokesPayload = {
+  strokes: Stroke[]
+  // new-ish meta we now save on student side
+  canvasWidth?: number
+  canvasHeight?: number
+  // tolerate older/alt names
+  canvas_w?: number
+  canvas_h?: number
+  w?: number
+  h?: number
+  width?: number
+  height?: number
+}
+
+type Seg = { t0:number; t1:number; x0:number; y0:number; x1:number; y1:number; color:string; size:number; tool:'pen'|'highlighter' }
+type Built = { segs: Seg[]; duration: number }
+
+export default function PlaybackDrawer({
+  pdfUrl,
+  pageIndex,
+  strokesJson,     // raw JSON from DB
+  audioUrl,        // (optional) synced audio, not used in this fix
+  title = 'Preview'
+}:{
   pdfUrl: string
   pageIndex: number
-  strokesPayload: any
-  audioUrl?: string
-}
+  strokesJson: unknown
+  audioUrl?: string | null
+  title?: string
+}) {
+  const overlayRef = useRef<HTMLCanvasElement|null>(null)
+  const pdfCssRef  = useRef<{ w:number; h:number }>({ w: 800, h: 600 })
+  const [ready, setReady] = useState(false)
 
-type TimedPoint = { x: number; y: number; t?: number }
-type Stroke = { color?: string; size?: number; points: TimedPoint[] }
-type Seg = { x0:number; y0:number; x1:number; y1:number; color:string; size:number; t:number }
+  // Parse strokes (be VERY tolerant)
+  const parsed = useMemo(() => parseStrokes(strokesJson), [strokesJson])
 
-type OverlaySize = { cssW: number; cssH: number; dpr: number }
-
-/* ------------ tiny utils ------------ */
-const N = (v:any) => {
-  const x = typeof v === 'string' ? parseFloat(v) : v
-  return Number.isFinite(x) ? x : 0
-}
-
-/* ------------ parse strokes (supports your {strokes:[{pts:[]}]}) ------------ */
-function asPoints(maybe:any): TimedPoint[] {
-  if (!maybe) return []
-  if (Array.isArray(maybe) && maybe.length && typeof maybe[0] === 'object' && 'x' in maybe[0]) {
-    return maybe.map((p:any) => ({ x: N(p.x), y: N(p.y), t: p.t != null ? N(p.t) : undefined }))
-  }
-  return []
-}
-function toStroke(obj:any): Stroke | null {
-  if (!obj) return null
-  if (Array.isArray(obj.pts))    return { color: obj.color, size: obj.size, points: asPoints(obj.pts) }
-  if (Array.isArray(obj.points)) return { color: obj.color, size: obj.size, points: asPoints(obj.points) }
-  if (Array.isArray(obj.path))   return { color: obj.color, size: obj.size, points: asPoints(obj.path) }
-  if (Array.isArray(obj) && obj.length && typeof obj[0] === 'object' && 'x' in obj[0]) {
-    return { color: (obj as any).color, size: (obj as any).size, points: asPoints(obj) }
-  }
-  return null
-}
-type Parsed = { strokes: Stroke[]; metaW: number; metaH: number }
-function parseStrokes(payload:any): Parsed {
-  let raw = payload
-  try { if (typeof raw === 'string') raw = JSON.parse(raw) } catch {}
-  if (!raw) return { strokes: [], metaW: 0, metaH: 0 }
-
-  // try to read capture canvas size if present (not in your current save, but future-proof)
-  let metaW = N(raw.canvasWidth ?? raw.canvas_w ?? raw.canvasW ?? raw.width ?? raw.w ?? raw.pageWidth ?? raw.page?.width)
-  let metaH = N(raw.canvasHeight ?? raw.canvas_h ?? raw.canvasH ?? raw.height ?? raw.h ?? raw.pageHeight ?? raw.page?.height)
-  if (raw && raw.data) raw = raw.data
-
-  const toParsed = (arr:any[]): Parsed => ({ strokes: (arr.map(toStroke).filter(Boolean) as Stroke[]), metaW, metaH })
-
-  if (Array.isArray(raw)) {
-    if (raw.length && typeof raw[0] === 'object' && ('x' in raw[0] || 'pts' in raw[0])) {
-      const s = toStroke(raw); return { strokes: s ? [s] : [], metaW, metaH }
-    }
-    return toParsed(raw)
-  }
-
-  const buckets:any[] = []
-  if (Array.isArray(raw.strokes)) buckets.push(...raw.strokes)
-  if (Array.isArray(raw.lines))   buckets.push(...raw.lines)
-  if (Array.isArray(raw.paths))   buckets.push(...raw.paths)
-
-  if (!buckets.length && Array.isArray(raw.points)) {
-    const s = toStroke(raw); return { strokes: s ? [s] : [], metaW, metaH }
-  }
-  if (buckets.length) return toParsed(buckets)
-
-  const vals = Object.values(raw)
-  if (vals.length && Array.isArray(vals[0])) {
-    const s = toStroke(vals[0]); return { strokes: s ? [s] : [], metaW, metaH }
-  }
-  return { strokes: [], metaW, metaH }
-}
-
-/* ------------ synthesize sequential timing across ALL strokes ------------ */
-function buildSequentialSegments(strokes: Stroke[]): { segs: Seg[]; duration: number } {
-  const segs: Seg[] = []
-
-  const SEG_DT = 0.010   // 10ms per segment → ~100 fps reveal
-  const GAP_DT = 0.150   // 150ms between strokes (gives a visible pause)
-  let t = 0
-
-  for (const s of strokes) {
-    const pts = s.points || []
-    if (pts.length < 2) { t += GAP_DT; continue }
-    for (let i = 1; i < pts.length; i++) {
-      const p0 = pts[i - 1], p1 = pts[i]
-      segs.push({
-        x0: N(p0.x), y0: N(p0.y), x1: N(p1.x), y1: N(p1.y),
-        color: s.color || '#111', size: s.size || 4, t
-      })
-      t += SEG_DT
-    }
-    t += GAP_DT
-  }
-  return { segs, duration: t }
-}
-
-/* ------------ source space inference ------------ */
-function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
-  // Prefer capture metadata if sane
-  if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
-  // Fallback: assume capture used the PDF CSS size at the time (best we can do without meta)
-  return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
-}
-
-/* =================== Component =================== */
-export default function PlaybackDrawer({
-  onClose, student, pdfUrl, pageIndex, strokesPayload, audioUrl,
-}: Props) {
-  // PDF CSS size (what the user sees), plus DPR for crispness
-  const [overlay, setOverlay] = useState<OverlaySize>({
-    cssW: 800, cssH: 600, dpr: window.devicePixelRatio || 1
-  })
-
-  // PDF CSS size at render time (from PdfCanvas onReady)
-  const pdfCssRef = useRef<{ w:number; h:number }>({ w: 800, h: 600 })
-
-  const parsed = useMemo(() => parseStrokes(strokesPayload), [strokesPayload])
-  const strokes = parsed.strokes
-
-  // Build a single global timeline across all strokes (so they don’t appear at once)
-  const { segs, duration } = useMemo(() => buildSequentialSegments(strokes), [strokes])
-
-  // Decide the stroke coordinate space to scale from
-  const { sw, sh } = useMemo(
-    () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
-    [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH] // re-evaluate if page size changes
-  )
-
-  const overlayRef = useRef<HTMLCanvasElement | null>(null)
-  const pdfHostRef = useRef<HTMLDivElement | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const rafRef = useRef<number | null>(null)
-
-  const [syncToAudio, setSyncToAudio] = useState<boolean>(!!audioUrl)
-  const [strokesPlaying, setStrokesPlaying] = useState(false)
-
-  /* ---- Bind overlay size to PDF canvas CSS size, and track DPR ---- */
+  // Keep overlay canvas sized to the PDF's CSS box (and crisp via DPR)
   useEffect(() => {
-    const host = pdfHostRef.current
+    const host = document.querySelector('[data-preview-pdf-host]') as HTMLElement | null
     if (!host) return
+    const ro = new ResizeObserver(() => {
+      const c = host.querySelector('canvas') as HTMLCanvasElement | null
+      if (!c) return
+      const cssW = Math.round(parseFloat(getComputedStyle(c).width))
+      const cssH = Math.round(parseFloat(getComputedStyle(c).height))
+      pdfCssRef.current = { w: cssW, h: cssH }
+      setupOverlayCanvas(cssW, cssH, overlayRef.current)
+      if (ready) drawAllStatic()
+    })
+    ro.observe(host)
+    return () => ro.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready])
 
-    const findPdfCanvas = () => {
-      const canvases = Array.from(host.querySelectorAll('canvas')) as HTMLCanvasElement[]
-      const overlayEl = overlayRef.current
-      return canvases.find(c => c !== overlayEl) || null
+  function onPdfReady(_pdf:any, canvas:HTMLCanvasElement) {
+    try {
+      const cssW = Math.round(parseFloat(getComputedStyle(canvas).width))
+      const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
+      pdfCssRef.current = { w: cssW, h: cssH }
+      setupOverlayCanvas(cssW, cssH, overlayRef.current)
+      setReady(true)
+      drawAllStatic()
+    } catch {
+      setReady(true)
     }
-
-    const syncSize = () => {
-      const pdfC = findPdfCanvas()
-      if (!pdfC) return
-      const rect = pdfC.getBoundingClientRect()
-      const cssW = Math.max(1, Math.round(rect.width))
-      const cssH = Math.max(1, Math.round(rect.height))
-      const dpr = window.devicePixelRatio || 1
-      setOverlay(prev => (prev.cssW === cssW && prev.cssH === cssH && prev.dpr === dpr) ? prev : { cssW, cssH, dpr })
-    }
-
-    syncSize()
-    const pdfC = findPdfCanvas()
-    let ro: ResizeObserver | null = null
-    if (pdfC && 'ResizeObserver' in window) {
-      ro = new ResizeObserver(syncSize)
-      ro.observe(pdfC)
-    }
-    const onResize = () => syncSize()
-    window.addEventListener('resize', onResize)
-
-    const poll = window.setInterval(syncSize, 200)
-    const stopPoll = window.setTimeout(() => window.clearInterval(poll), 3000)
-
-    return () => {
-      window.removeEventListener('resize', onResize)
-      if (ro) ro.disconnect()
-      window.clearInterval(poll)
-      window.clearTimeout(stopPoll)
-    }
-  }, [pdfUrl, pageIndex])
-
-  /* ---- Drawing helpers (DPR-aware, scales from stroke space sw×sh to current CSS space) ---- */
-  function ensureCtx(): CanvasRenderingContext2D | null {
-    const c = overlayRef.current
-    if (!c) return null
-    const { cssW, cssH, dpr } = overlay
-    c.style.width = `${cssW}px`
-    c.style.height = `${cssH}px`
-    const bw = Math.max(1, Math.round(cssW * dpr))
-    const bh = Math.max(1, Math.round(cssH * dpr))
-    if (c.width !== bw) c.width = bw
-    if (c.height !== bh) c.height = bh
-    const ctx = c.getContext('2d')
-    if (!ctx) return null
-    ctx.setTransform(1, 0, 0, 1, 0, 0) // reset
-    ctx.scale(dpr, dpr) // map drawing units → CSS pixels
-    return ctx
   }
 
-  function withScale(ctx: CanvasRenderingContext2D, draw: () => void) {
-    // Scale from stroke capture space (sw×sh) to current PDF CSS size (overlay.cssW×overlay.cssH)
-    const sx = overlay.cssW / Math.max(1, sw)
-    const sy = overlay.cssH / Math.max(1, sh)
+  // ===== Drawing =====
+
+  function setupOverlayCanvas(cssW:number, cssH:number, cnv:HTMLCanvasElement|null) {
+    if (!cnv) return
+    const dpr = (window.devicePixelRatio || 1)
+    cnv.width  = Math.max(1, Math.floor(cssW * dpr))
+    cnv.height = Math.max(1, Math.floor(cssH * dpr))
+    cnv.style.width  = cssW + 'px'
+    cnv.style.height = cssH + 'px'
+    const ctx = cnv.getContext('2d')
+    if (!ctx) return
+    // Reset and apply DPR
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  }
+
+  function clearOverlay() {
+    const cnv = overlayRef.current
+    if (!cnv) return
+    const ctx = cnv.getContext('2d')
+    if (!ctx) return
+    // clear in CSS pixels (since we set DPR via setTransform)
     ctx.save()
-    ctx.scale(sx, sy)
-    draw()
+    ctx.setTransform(1,0,0,1,0,0)
+    ctx.clearRect(0,0, cnv.width, cnv.height)
+    ctx.restore()
+    // re-apply DPR transform for subsequent drawing
+    const dpr = (window.devicePixelRatio || 1)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  }
+
+  // Map from source space (capture canvas size) -> current PDF CSS box
+  function withScale<T>(ctx:CanvasRenderingContext2D, srcW:number, srcH:number, dstW:number, dstH:number, fn:()=>T):T {
+    const sx = dstW / Math.max(1, srcW)
+    const sy = dstH / Math.max(1, srcH)
+    ctx.save()
+    ctx.scale(sx, sy) // we draw in source coordinates; scale does the mapping
+    const out = fn()
+    ctx.restore()
+    return out
+  }
+
+  function drawStroke(ctx:CanvasRenderingContext2D, s:Stroke) {
+    if (!s.pts || s.pts.length === 0) return
+    ctx.save()
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
+    ctx.strokeStyle = s.color
+    ctx.lineWidth = s.size // NOTE: this will be scaled by ctx.scale(sx,sy) from withScale()
+    ctx.beginPath()
+    for (let i = 0; i < s.pts.length; i++) {
+      const p = s.pts[i]
+      if (i === 0) ctx.moveTo(p.x, p.y)
+      else ctx.lineTo(p.x, p.y)
+    }
+    ctx.stroke()
     ctx.restore()
   }
 
   function drawAllStatic() {
-    const ctx = ensureCtx()
+    const cnv = overlayRef.current
+    if (!cnv) return
+    const ctx = cnv.getContext('2d')
     if (!ctx) return
-    const { cssW, cssH } = overlay
-    ctx.clearRect(0, 0, cssW, cssH)
-    withScale(ctx, () => {
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      for (const s of strokes) {
-        const pts = s.points || []
-        if (!pts.length) continue
-        ctx.strokeStyle = s.color || '#111'
-        ctx.lineWidth = s.size || 4
-        if (pts.length === 1) {
-          const p = pts[0]
-          ctx.beginPath()
-          ctx.arc(p.x, p.y, (s.size || 4) * 0.5, 0, Math.PI * 2)
-          ctx.fillStyle = s.color || '#111'
-          ctx.fill()
-        } else {
-          ctx.beginPath()
-          ctx.moveTo(pts[0].x, pts[0].y)
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
-          ctx.stroke()
-        }
+    clearOverlay()
+
+    const { w: cssW, h: cssH } = pdfCssRef.current
+    const { sw, sh } = inferSourceDimsFromMetaOrPdf(parsed, cssW, cssH)
+
+    // draw each stroke in source coords, scaled to current PDF CSS box
+    withScale(ctx, sw, sh, cssW, cssH, () => {
+      for (const s of parsed.strokes) {
+        drawStroke(ctx, s)
       }
     })
   }
 
-  function drawUpTo(timeSec:number) {
-    const ctx = ensureCtx()
-    if (!ctx) return
-    const { cssW, cssH } = overlay
-    ctx.clearRect(0, 0, cssW, cssH)
-    if (!segs.length) { drawAllStatic(); return }
-    withScale(ctx, () => {
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      let lastColor = ''
-      let lastSize = -1
-      for (let i = 0; i < segs.length; i++) {
-        const s = segs[i]
-        if (s.t > timeSec) break
-        if (s.color !== lastColor) { ctx.strokeStyle = s.color; lastColor = s.color }
-        if (s.size !== lastSize) { ctx.lineWidth = s.size; lastSize = s.size }
-        ctx.beginPath()
-        ctx.moveTo(s.x0, s.y0)
-        ctx.lineTo(s.x1, s.y1)
-        ctx.stroke()
-      }
-    })
-  }
-
-  function stopRAF() {
-    if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
-  }
-
-  /* ---- Always draw static ink when sizes change ---- */
-  useEffect(() => { drawAllStatic() }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload])
-
-  /* ---- Audio-synced mode ---- */
-  useEffect(() => {
-    if (!syncToAudio) { stopRAF(); return }
-    const el = audioRef.current; if (!el) return
-
-    const onPlay = () => {
-      stopRAF()
-      const loop = () => { drawUpTo(el.currentTime); rafRef.current = requestAnimationFrame(loop) }
-      rafRef.current = requestAnimationFrame(loop)
-    }
-    const onPause = () => { stopRAF(); drawUpTo(el.currentTime) }
-    const onSeeked = () => { drawUpTo(el.currentTime) }
-    const onTimeUpdate = () => { if (!rafRef.current) drawUpTo(el.currentTime) }
-    const onEnded = () => { stopRAF(); drawAllStatic() }
-
-    el.addEventListener('play', onPlay)
-    el.addEventListener('pause', onPause)
-    el.addEventListener('seeked', onSeeked)
-    el.addEventListener('timeupdate', onTimeUpdate)
-    el.addEventListener('ended', onEnded)
-
-    drawUpTo(el.currentTime)
-    return () => {
-      el.removeEventListener('play', onPlay)
-      el.removeEventListener('pause', onPause)
-      el.removeEventListener('seeked', onSeeked)
-      el.removeEventListener('timeupdate', onTimeUpdate)
-      el.removeEventListener('ended', onEnded)
-      stopRAF()
-    }
-  }, [syncToAudio, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, segs.length])
-
-  /* ---- Strokes-only replay (no audio) using the synthesized global timeline ---- */
-  useEffect(() => {
-    if (!strokesPlaying) return
-    const start = performance.now()
-    const tick = () => {
-      const t = (performance.now() - start) / 1000
-      drawUpTo(Math.min(t, duration))
-      if (t >= duration) { setStrokesPlaying(false); return }
-      rafRef.current = requestAnimationFrame(tick)
-    }
-    stopRAF()
-    rafRef.current = requestAnimationFrame(tick)
-    return () => stopRAF()
-  }, [strokesPlaying, duration, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh])
-
-  const hasAudio = !!audioUrl
+  // (Optional) animated draw could use built segments; static fix is enough for alignment.
+  // Keeping hook for future:
+  // function drawUpTo(ms:number) { ... }
 
   return (
-    <div role="dialog" aria-modal="true" style={{ position:'fixed', inset:0, background:'rgba(17,24,39,0.55)', display:'flex', justifyContent:'center', zIndex:50 }}>
-      <div style={{ background:'#fff', width:'min(1200px, 96vw)', height:'min(92vh, 980px)', margin:'2vh auto', borderRadius:12, boxShadow:'0 10px 30px rgba(0,0,0,0.2)', display:'flex', flexDirection:'column', overflow:'hidden' }}>
-        {/* Header */}
-        <div style={{ display:'flex', alignItems:'center', gap:12, padding:12, borderBottom:'1px solid #e5e7eb', background:'#f9fafb' }}>
-          <strong style={{ fontSize:14 }}>Preview — {student || 'Student'}</strong>
-          <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
-            <button
-              onClick={() => { setSyncToAudio(false); setStrokesPlaying(p => !p) }}
-              style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
-              title="Replay without audio"
-            >
-              {strokesPlaying ? 'Stop Replay' : 'Replay Strokes'}
-            </button>
-            <button
-              onClick={() => { setStrokesPlaying(false); setSyncToAudio(s => !s) }}
-              disabled={!hasAudio}
-              style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: hasAudio ? '#fff' : '#f3f4f6' }}
-              title={hasAudio ? 'Tie ink to audio playback' : 'No audio available'}
-            >
-              {syncToAudio ? 'Sync: ON' : 'Sync: OFF'}
-            </button>
-            <button onClick={onClose} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}>
-              Close
-            </button>
-          </div>
-        </div>
-
-        {/* Controls */}
-        <div style={{ display:'flex', alignItems:'center', gap:12, padding:12, borderBottom:'1px solid #e5e7eb' }}>
-          {hasAudio ? (<audio ref={audioRef} controls src={audioUrl} style={{ width:'min(600px, 100%)' }} />) : (<span style={{ fontSize:12, color:'#6b7280' }}>No audio</span>)}
-          <span style={{ marginLeft:'auto', fontSize:12, color:'#6b7280' }}>Page {pageIndex + 1}</span>
-        </div>
-
-        {/* Content: PDF underlay + overlay */}
-        <div style={{ flex:1, minHeight:0, overflow:'auto', background:'#fafafa' }}>
-          <div ref={pdfHostRef} style={{ position:'relative', width:`${overlay.cssW}px`, margin:'12px auto' }}>
-            <div style={{ position:'relative' }}>
-              {/* IMPORTANT: capture the PDF CSS size right when it’s ready */}
-              <PdfCanvas
-                url={pdfUrl}
-                pageIndex={pageIndex}
-                onReady={(_pdf:any, canvas:HTMLCanvasElement) => {
-                  const rect = canvas.getBoundingClientRect()
-                  pdfCssRef.current = { w: Math.max(1, Math.round(rect.width)), h: Math.max(1, Math.round(rect.height)) }
-                  // Also sync overlay immediately
-                  const dpr = window.devicePixelRatio || 1
-                  setOverlay(prev => {
-                    const cssW = pdfCssRef.current.w, cssH = pdfCssRef.current.h
-                    return (prev.cssW === cssW && prev.cssH === cssH && prev.dpr === dpr) ? prev : { cssW, cssH, dpr }
-                  })
-                }}
-              />
-              <canvas
-                ref={overlayRef}
-                style={{ position:'absolute', inset:0, width:`${overlay.cssW}px`, height:`${overlay.cssH}px`, pointerEvents:'none' }}
-              />
-            </div>
-          </div>
-        </div>
+    <div style={{ position:'relative' }}>
+      <div data-preview-pdf-host style={{ position:'relative' }}>
+        <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
       </div>
+      <canvas
+        ref={overlayRef}
+        style={{
+          position:'absolute',
+          inset:0,
+          pointerEvents:'none'
+        }}
+      />
+      <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>{title}</div>
     </div>
   )
+}
+
+/* ================= helpers ================= */
+
+function parseStrokes(raw: unknown): StrokesPayload {
+  // Accept: object with strokes[], plus any of these meta fields for width/height
+  const out: StrokesPayload = { strokes: [] }
+
+  if (!raw || typeof raw !== 'object') return out
+  const obj = raw as any
+
+  // strokes
+  const arr = Array.isArray(obj.strokes) ? obj.strokes : []
+  out.strokes = arr
+    .map((s:any) => sanitizeStroke(s))
+    .filter(Boolean) as Stroke[]
+
+  // meta (many aliases tolerated)
+  const metaW =
+    num(obj.canvasWidth) ??
+    num(obj.canvas_w) ??
+    num(obj.w) ??
+    num(obj.width)
+  const metaH =
+    num(obj.canvasHeight) ??
+    num(obj.canvas_h) ??
+    num(obj.h) ??
+    num(obj.height)
+
+  if (metaW && metaH) {
+    out.canvasWidth = metaW
+    out.canvasHeight = metaH
+  }
+  return out
+}
+
+function sanitizeStroke(s:any): Stroke | null {
+  if (!s || typeof s !== 'object') return null
+  const color = typeof s.color === 'string' ? s.color : '#000'
+  const size  = Number.isFinite(s.size) ? s.size : 4
+  const tool  = s.tool === 'highlighter' ? 'highlighter' : 'pen'
+  const pts   = Array.isArray(s.pts) ? s.pts.filter((p:any)=> p && Number.isFinite(p.x) && Number.isFinite(p.y)) : []
+  if (pts.length === 0) return null
+  return { color, size, tool, pts }
+}
+
+function num(v:any): number | undefined {
+  return Number.isFinite(v) ? (v as number) : undefined
+}
+
+function inferSourceDimsFromMetaOrPdf(payload: StrokesPayload, fallbackW:number, fallbackH:number) {
+  // Prefer capture-time meta if present
+  const mw = num(payload.canvasWidth)
+  const mh = num(payload.canvasHeight)
+  if (mw && mh && mw > 0 && mh > 0) {
+    return { sw: mw, sh: mh }
+  }
+  // Else, fall back to current PDF CSS size (old artifacts)
+  return { sw: fallbackW, sh: fallbackH }
 }
