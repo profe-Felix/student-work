@@ -5,10 +5,8 @@ type Pt = { x:number; y:number }
 type Stroke = { color:string; size:number; tool:'pen'|'highlighter'; pts:Pt[] }
 type StrokesPayload = {
   strokes: Stroke[]
-  // new-ish meta we now save on student side
   canvasWidth?: number
   canvasHeight?: number
-  // tolerate older/alt names
   canvas_w?: number
   canvas_h?: number
   w?: number
@@ -21,24 +19,36 @@ type Seg = { t0:number; t1:number; x0:number; y0:number; x1:number; y1:number; c
 type Built = { segs: Seg[]; duration: number }
 
 export default function PlaybackDrawer({
+  // required/normal
   pdfUrl,
   pageIndex,
-  strokesJson,     // raw JSON from DB
-  audioUrl,        // (optional) synced audio, not used in this fix
-  title = 'Preview'
+  // old vs new prop names – accept both
+  strokesJson,
+  strokesPayload,
+  // optional extras from teacher/index.tsx
+  audioUrl,
+  title = 'Preview',
+  onClose,          // optional, we just ignore if provided
+  student,          // optional, we just ignore if provided
 }:{
   pdfUrl: string
   pageIndex: number
-  strokesJson: unknown
+  strokesJson?: unknown
+  strokesPayload?: unknown
   audioUrl?: string | null
   title?: string
+  onClose?: () => void
+  student?: string
 }) {
   const overlayRef = useRef<HTMLCanvasElement|null>(null)
   const pdfCssRef  = useRef<{ w:number; h:number }>({ w: 800, h: 600 })
   const [ready, setReady] = useState(false)
 
-  // Parse strokes (be VERY tolerant)
-  const parsed = useMemo(() => parseStrokes(strokesJson), [strokesJson])
+  // Prefer the explicitly-named strokesJson if present; otherwise accept strokesPayload
+  const parsed = useMemo(
+    () => parseStrokes(strokesJson ?? strokesPayload),
+    [strokesJson, strokesPayload]
+  )
 
   // Keep overlay canvas sized to the PDF's CSS box (and crisp via DPR)
   useEffect(() => {
@@ -119,7 +129,7 @@ export default function PlaybackDrawer({
     ctx.lineJoin = 'round'
     ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
     ctx.strokeStyle = s.color
-    ctx.lineWidth = s.size // NOTE: this will be scaled by ctx.scale(sx,sy) from withScale()
+    ctx.lineWidth = s.size // scaled by ctx.scale in withScale()
     ctx.beginPath()
     for (let i = 0; i < s.pts.length; i++) {
       const p = s.pts[i]
@@ -140,17 +150,12 @@ export default function PlaybackDrawer({
     const { w: cssW, h: cssH } = pdfCssRef.current
     const { sw, sh } = inferSourceDimsFromMetaOrPdf(parsed, cssW, cssH)
 
-    // draw each stroke in source coords, scaled to current PDF CSS box
     withScale(ctx, sw, sh, cssW, cssH, () => {
       for (const s of parsed.strokes) {
         drawStroke(ctx, s)
       }
     })
   }
-
-  // (Optional) animated draw could use built segments; static fix is enough for alignment.
-  // Keeping hook for future:
-  // function drawUpTo(ms:number) { ... }
 
   return (
     <div style={{ position:'relative' }}>
@@ -173,7 +178,6 @@ export default function PlaybackDrawer({
 /* ================= helpers ================= */
 
 function parseStrokes(raw: unknown): StrokesPayload {
-  // Accept: object with strokes[], plus any of these meta fields for width/height
   const out: StrokesPayload = { strokes: [] }
 
   if (!raw || typeof raw !== 'object') return out
@@ -185,7 +189,7 @@ function parseStrokes(raw: unknown): StrokesPayload {
     .map((s:any) => sanitizeStroke(s))
     .filter(Boolean) as Stroke[]
 
-  // meta (many aliases tolerated)
+  // meta (aliases tolerated)
   const metaW =
     num(obj.canvasWidth) ??
     num(obj.canvas_w) ??
@@ -219,12 +223,10 @@ function num(v:any): number | undefined {
 }
 
 function inferSourceDimsFromMetaOrPdf(payload: StrokesPayload, fallbackW:number, fallbackH:number) {
-  // Prefer capture-time meta if present
   const mw = num(payload.canvasWidth)
   const mh = num(payload.canvasHeight)
   if (mw && mh && mw > 0 && mh > 0) {
     return { sw: mw, sh: mh }
-  }
-  // Else, fall back to current PDF CSS size (old artifacts)
+    }
   return { sw: fallbackW, sh: fallbackH }
 }
