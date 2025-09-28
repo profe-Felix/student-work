@@ -19,7 +19,7 @@ type Seg = {
   color: string; size: number; t: number; // seconds from 0
 }
 
-/* ---------- Robust stroke parsing ---------- */
+/* ---------- Extremely defensive stroke parsing ---------- */
 function n(v: any) { const x = typeof v === 'string' ? parseFloat(v) : v; return Number.isFinite(x) ? x : 0 }
 function asPoints(maybe: any): TimedPoint[] {
   if (!maybe) return []
@@ -42,14 +42,12 @@ function coerceStrokes(payload: any): Stroke[] {
   if (!payload) return []
   if ((payload as any).data) payload = (payload as any).data
 
-  // Array cases
   if (Array.isArray(payload)) {
     if (payload.length && typeof payload[0] === 'object' && 'x' in payload[0]) {
       const s = toStroke(payload); return s ? [s] : []
     }
     return (payload.map(toStroke).filter(Boolean) as Stroke[])
   }
-  // Object cases
   const buckets: any[] = []
   if (Array.isArray(payload.strokes)) buckets.push(...payload.strokes)
   if (Array.isArray(payload.lines))   buckets.push(...payload.lines)
@@ -58,7 +56,6 @@ function coerceStrokes(payload: any): Stroke[] {
     const s = toStroke(payload); return s ? [s] : []
   }
   if (buckets.length) return (buckets.map(toStroke).filter(Boolean) as Stroke[])
-
   const vals = Object.values(payload)
   if (vals.length && Array.isArray(vals[0])) {
     const s = toStroke(vals[0]); return s ? [s] : []
@@ -66,7 +63,7 @@ function coerceStrokes(payload: any): Stroke[] {
   return []
 }
 
-/* ---------- Build segments & normalize time ---------- */
+/* ---------- Build segments for timed replay; static draw never depends on this ---------- */
 function buildSegments(strokes: Stroke[]): { segs: Seg[]; duration: number } {
   const segs: Seg[] = []
   for (const s of strokes) {
@@ -75,15 +72,16 @@ function buildSegments(strokes: Stroke[]): { segs: Seg[]; duration: number } {
     const hasT = typeof pts[0]?.t === 'number'
     for (let i = 1; i < pts.length; i++) {
       const p0 = pts[i - 1], p1 = pts[i]
-      let t = hasT ? n(p1.t) : i * 0.012 // ~12ms fallback in seconds
+      let t = hasT ? n(p1.t) : i * 0.012 // ~12ms fallback
       segs.push({ x0: n(p0.x), y0: n(p0.y), x1: n(p1.x), y1: n(p1.y), color: s.color || '#111', size: s.size || 4, t })
     }
   }
   if (!segs.length) return { segs, duration: 0 }
+  // normalize to start at 0; convert ms->s if needed
   const t0 = Math.min(...segs.map(s => s.t))
   for (const s of segs) s.t -= t0
   const maxAfter = Math.max(...segs.map(s => s.t))
-  if (maxAfter > 600) { for (const s of segs) s.t = s.t / 1000 } // ms -> s
+  if (maxAfter > 600) { for (const s of segs) s.t = s.t / 1000 }
   segs.sort((a, b) => a.t - b.t)
   return { segs, duration: segs[segs.length - 1].t }
 }
@@ -93,7 +91,6 @@ export default function PlaybackDrawer({
   onClose, student, pdfUrl, pageIndex, strokesPayload, audioUrl,
 }: Props) {
   const [size, setSize] = useState<Size>({ w: 800, h: 600 })
-  const [pdfReady, setPdfReady] = useState(false)
 
   const strokes = useMemo(() => coerceStrokes(strokesPayload), [strokesPayload])
   const { segs, duration } = useMemo(() => buildSegments(strokes), [strokes])
@@ -103,31 +100,107 @@ export default function PlaybackDrawer({
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   const rafRef = useRef<number | null>(null)
-
   const [syncToAudio, setSyncToAudio] = useState<boolean>(!!audioUrl)
   const [strokesPlaying, setStrokesPlaying] = useState(false)
   const strokeClock = useRef<{ startMs: number; offsetSec: number }>({ startMs: 0, offsetSec: 0 })
 
-  /* ------- PDF ready ------- */
-  function onPdfReady(info: { width?: number; height?: number; cssWidth?: number; cssHeight?: number }) {
-    const w = info.width ?? info.cssWidth ?? 800
-    const h = info.height ?? info.cssHeight ?? 600
-    setSize({ w, h })
-    setPdfReady(true)
-    // draw static immediately
-    requestAnimationFrame(() => drawAtTime('static'))
-  }
+  /* ------- Keep overlay size in lockstep with the actual PDF canvas (no onReady dependency) ------- */
+  useEffect(() => {
+    const host = pdfHostRef.current
+    if (!host) return
 
-  /* ------- Drawing ------- */
-  function drawSegmentsUpTo(ctx: CanvasRenderingContext2D, tSec: number | 'static') {
-    const W = size.w, H = size.h
-    ctx.clearRect(0, 0, W, H)
+    const getPdfCanvas = () => {
+      const canvases = Array.from(host.querySelectorAll('canvas')) as HTMLCanvasElement[]
+      // our overlay canvas is also inside; exclude it
+      const overlay = overlayRef.current
+      const pdfCanvas = canvases.find(c => c !== overlay) || null
+      return pdfCanvas
+    }
+
+    const syncSize = () => {
+      const pdfC = getPdfCanvas()
+      if (!pdfC) return
+      const w = pdfC.width || Math.round(pdfC.getBoundingClientRect().width * (window.devicePixelRatio || 1))
+      const h = pdfC.height || Math.round(pdfC.getBoundingClientRect().height * (window.devicePixelRatio || 1))
+      setSize(prev => (prev.w === w && prev.h === h) ? prev : { w, h })
+    }
+
+    // try immediately, then observe changes
+    syncSize()
+    const pdfC = getPdfCanvas()
+    let ro: ResizeObserver | null = null
+    if (pdfC && 'ResizeObserver' in window) {
+      ro = new ResizeObserver(() => syncSize())
+      ro.observe(pdfC)
+    }
+
+    // also poll a few times in case PDF renders a bit later
+    const poll = window.setInterval(syncSize, 250)
+    const stopPoll = window.setTimeout(() => window.clearInterval(poll), 4000)
+
+    return () => {
+      if (ro) ro.disconnect()
+      window.clearInterval(poll)
+      window.clearTimeout(stopPoll)
+    }
+  }, [pdfUrl, pageIndex])
+
+  /* ------- Low-level drawing ------- */
+  function drawStaticAll() {
+    const c = overlayRef.current
+    if (!c) return
+    if (c.width !== size.w) c.width = size.w
+    if (c.height !== size.h) c.height = size.h
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+
+    ctx.clearRect(0, 0, size.w, size.h)
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    let lastColor = '', lastSize = -1
+
+    for (const s of strokes) {
+      const pts = s.points || []
+      if (!pts.length) continue
+      ctx.strokeStyle = s.color || '#111'
+      ctx.lineWidth = s.size || 4
+      if (pts.length === 1) {
+        // draw a dot if only one point
+        const p = pts[0]
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, (s.size || 4) * 0.5, 0, Math.PI * 2)
+        ctx.fillStyle = s.color || '#111'
+        ctx.fill()
+        continue
+      }
+      ctx.beginPath()
+      ctx.moveTo(pts[0].x, pts[0].y)
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
+      ctx.stroke()
+    }
+  }
+
+  function drawUpTo(timeSec: number) {
+    const c = overlayRef.current
+    if (!c) return
+    if (c.width !== size.w) c.width = size.w
+    if (c.height !== size.h) c.height = size.h
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+
+    // if we don't have segs (no timing info), just draw all
+    if (!segs.length) {
+      drawStaticAll()
+      return
+    }
+
+    ctx.clearRect(0, 0, size.w, size.h)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    let lastColor = ''
+    let lastSize = -1
     for (let i = 0; i < segs.length; i++) {
       const s = segs[i]
-      if (tSec !== 'static' && s.t > tSec) break
+      if (s.t > timeSec) break
       if (s.color !== lastColor) { ctx.strokeStyle = s.color; lastColor = s.color }
       if (s.size !== lastSize) { ctx.lineWidth = s.size; lastSize = s.size }
       ctx.beginPath()
@@ -136,21 +209,18 @@ export default function PlaybackDrawer({
       ctx.stroke()
     }
   }
-  function drawAtTime(tSec: number | 'static') {
-    const c = overlayRef.current
-    if (!c || !pdfReady) return
-    if (c.width !== size.w) c.width = size.w
-    if (c.height !== size.h) c.height = size.h
-    const ctx = c.getContext('2d')
-    if (!ctx) return
-    drawSegmentsUpTo(ctx, tSec)
-  }
 
   function stopRAF() {
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
   }
 
-  /* ------- Audio-synced mode ------- */
+  /* ------- Always render static ink when size or data changes ------- */
+  useEffect(() => {
+    drawStaticAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size.w, size.h, strokesPayload])
+
+  /* ------- Audio-synced mode (optional) ------- */
   useEffect(() => {
     if (!syncToAudio) { stopRAF(); return }
     const el = audioRef.current
@@ -159,15 +229,15 @@ export default function PlaybackDrawer({
     const onPlay = () => {
       stopRAF()
       const loop = () => {
-        drawAtTime(el.currentTime)
+        drawUpTo(el.currentTime)
         rafRef.current = requestAnimationFrame(loop)
       }
       rafRef.current = requestAnimationFrame(loop)
     }
-    const onPause = () => { stopRAF(); drawAtTime(el.currentTime) }
-    const onSeeked = () => { drawAtTime(el.currentTime) }
-    const onTimeUpdate = () => { if (!rafRef.current) drawAtTime(el.currentTime) }
-    const onEnded = () => { stopRAF(); drawAtTime('static') }
+    const onPause = () => { stopRAF(); drawUpTo(el.currentTime) }
+    const onSeeked = () => { drawUpTo(el.currentTime) }
+    const onTimeUpdate = () => { if (!rafRef.current) drawUpTo(el.currentTime) }
+    const onEnded = () => { stopRAF(); drawStaticAll() }
 
     el.addEventListener('play', onPlay)
     el.addEventListener('pause', onPause)
@@ -176,7 +246,7 @@ export default function PlaybackDrawer({
     el.addEventListener('ended', onEnded)
 
     // first frame
-    drawAtTime(el.currentTime)
+    drawUpTo(el.currentTime)
 
     return () => {
       el.removeEventListener('play', onPlay)
@@ -186,31 +256,69 @@ export default function PlaybackDrawer({
       el.removeEventListener('ended', onEnded)
       stopRAF()
     }
-  }, [syncToAudio, pdfReady, size.w, size.h, segs.length])
+  }, [syncToAudio, size.w, size.h, segs.length])
 
-  /* ------- Strokes-only replay ------- */
+  /* ------- Strokes-only replay (works with NO audio) ------- */
   useEffect(() => {
     if (!strokesPlaying) return
-    strokeClock.current.startMs = performance.now()
+    // if we have no timing, just animate at a steady cadence through segments we synthesize
+    const hasTiming = segs.length > 0
+    const start = performance.now()
     const tick = () => {
-      const elapsed = (performance.now() - strokeClock.current.startMs) / 1000 + strokeClock.current.offsetSec
-      if (elapsed >= duration) {
-        drawAtTime(duration)
-        setStrokesPlaying(false)
-        strokeClock.current.offsetSec = 0
-        return
+      const elapsedSec = (performance.now() - start) / 1000
+      if (!hasTiming) {
+        // slow reveal over 5s if no timing at all
+        const total = 5
+        const t = Math.min(1, elapsedSec / total)
+        // draw partial by slicing strokes proportionally
+        drawStaticPortion(t)
+        if (t >= 1) { setStrokesPlaying(false); return }
+      } else {
+        const t = Math.min(duration, elapsedSec)
+        drawUpTo(t)
+        if (t >= duration) { setStrokesPlaying(false); return }
       }
-      drawAtTime(elapsed)
       rafRef.current = requestAnimationFrame(tick)
     }
     stopRAF()
     rafRef.current = requestAnimationFrame(tick)
     return () => stopRAF()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strokesPlaying, duration, pdfReady, size.w, size.h, segs.length])
+  }, [strokesPlaying, duration, segs.length, size.w, size.h])
 
-  // Always draw a static frame when size or segs change
-  useEffect(() => { drawAtTime('static') }, [pdfReady, size.w, size.h, segs.length])
+  // helper for no-timing gradual reveal: draw first N% of each stroke
+  function drawStaticPortion(pct: number) {
+    const c = overlayRef.current
+    if (!c) return
+    if (c.width !== size.w) c.width = size.w
+    if (c.height !== size.h) c.height = size.h
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+
+    ctx.clearRect(0, 0, size.w, size.h)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+
+    for (const s of strokes) {
+      const pts = s.points || []
+      if (pts.length === 0) continue
+      ctx.strokeStyle = s.color || '#111'
+      ctx.lineWidth = s.size || 4
+      const upto = Math.max(1, Math.floor(pts.length * pct))
+      if (upto === 1) {
+        const p = pts[0]
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, (s.size || 4) * 0.5, 0, Math.PI * 2)
+        ctx.fillStyle = s.color || '#111'
+        ctx.fill()
+        continue
+      }
+      ctx.beginPath()
+      ctx.moveTo(pts[0].x, pts[0].y)
+      for (let i = 1; i < upto; i++) ctx.lineTo(pts[i].x, pts[i].y)
+      ctx.stroke()
+    }
+  }
 
   const hasAudio = !!audioUrl
 
@@ -317,7 +425,8 @@ export default function PlaybackDrawer({
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: '#fafafa' }}>
           <div ref={pdfHostRef} style={{ position: 'relative', width: `${size.w}px`, margin: '12px auto' }}>
             <div style={{ position: 'relative' }}>
-              <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
+              {/* We still render PdfCanvas exactly as before; we just don't depend on its callbacks */}
+              <PdfCanvas url={pdfUrl} pageIndex={pageIndex} />
               <canvas
                 ref={overlayRef}
                 style={{
