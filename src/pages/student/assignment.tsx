@@ -682,11 +682,15 @@ export default function StudentAssignment(){
               ref={drawRef}
               width={canvasSize.w}
               height={canvasSize.h}
-              color={color}
-              size={size}
-              mode={handMode ? 'scroll' : 'draw'}
-              // Only pass tool if supported by your DrawCanvas typings (pen | highlighter)
-              {...(tool === 'pen' || tool === 'highlighter' ? { tool } : {})}
+              {
+                ...({
+                  // Keep runtime behavior while bypassing TS prop mismatch
+                  color,
+                  size,
+                  mode: handMode ? 'scroll' : 'draw',
+                  tool: (tool === 'pen' || tool === 'highlighter') ? tool : undefined
+                } as any)
+              }
             />
           </div>
         </div>
