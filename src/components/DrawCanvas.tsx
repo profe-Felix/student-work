@@ -1,326 +1,229 @@
-//src/components/DrawCanvas.tsx
-import React, {
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-  forwardRef,
-} from 'react'
+import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 
-type Tool = 'pen' | 'highlighter'
-type Pt = { x: number; y: number; t: number } // <-- t is milliseconds since drawStartMs
+export type StrokePoint = { x: number; y: number }
+export type Stroke = { color: string; size: number; tool: 'pen'|'highlighter'; pts: StrokePoint[] }
+export type StrokesPayload = { strokes: Stroke[] }
 
-type Stroke = {
-  color: string
-  size: number
-  tool: Tool
-  pts: Pt[]
+export type DrawCanvasHandle = {
+  getStrokes: () => StrokesPayload
+  loadStrokes: (data: StrokesPayload | null | undefined) => void
+  clearStrokes: () => void
+  undo: () => void
 }
 
-type InkPayload = {
-  meta: {
-    canvasW: number
-    canvasH: number
-    drawStartMs: number
-    audioStartMs?: number
-    audioOffsetMs?: number
+/* ---------- Type guards (no any) ---------- */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+function isPoint(v: unknown): v is StrokePoint {
+  return isRecord(v) && Number.isFinite((v as Record<string, unknown>).x) && Number.isFinite((v as Record<string, unknown>).y)
+}
+function isStroke(v: unknown): v is Stroke {
+  if (!isRecord(v)) return false
+  const color = typeof v.color === 'string'
+  const size  = Number.isFinite(v.size as number)
+  const tool  = v.tool === 'pen' || v.tool === 'highlighter'
+  const pts   = Array.isArray(v.pts) && (v.pts as unknown[]).every(isPoint)
+  return color && size && tool && pts
+}
+function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
+  if (!isRecord(input) || !Array.isArray((input as Record<string, unknown>).strokes)) {
+    return { strokes: [] }
   }
-  strokes: Stroke[]
+  const raw = (input as Record<string, unknown>).strokes as unknown[]
+  const safe: Stroke[] = raw
+    .map((s) => {
+      if (isStroke(s)) return s
+      // Try to salvage partially-formed strokes
+      if (isRecord(s)) {
+        const color = typeof s.color === 'string' ? (s.color as string) : '#000000'
+        const size  = Number.isFinite(s.size as number) ? (s.size as number) : 4
+        const tool  = s.tool === 'highlighter' ? 'highlighter' : 'pen'
+        const pts   = Array.isArray(s.pts) ? (s.pts as unknown[]).filter(isPoint) : []
+        return { color, size, tool, pts }
+      }
+      return null
+    })
+    .filter((x): x is Stroke => !!x)
+  return { strokes: safe }
 }
 
-export type DrawCanvasRef = {
-  /** Call right when audio starts recording */
-  markAudioStarted: () => void
-  /** Returns the full payload to save (strokes_json) */
-  exportPayload: () => InkPayload
-  /** Clear the canvas + strokes */
-  clear: () => void
+/* ---------- Render helpers ---------- */
+function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
+  if (!s.pts || s.pts.length === 0) return
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.lineWidth = s.size
+  ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
+  ctx.strokeStyle = s.color
+  ctx.beginPath()
+  for (let i = 0; i < s.pts.length; i++) {
+    const p = s.pts[i]
+    if (i === 0) ctx.moveTo(p.x, p.y)
+    else ctx.lineTo(p.x, p.y)
+  }
+  ctx.stroke()
+  ctx.restore()
 }
 
-type Props = {
-  width: number
-  height: number
-  penColor?: string
-  penSize?: number
-  tool?: Tool
-  /** optional background image (e.g., a rendered PDF page) */
-  backgroundUrl?: string
-  /** Called whenever strokes change (e.g., to enable Save button) */
-  onDirtyChange?: (dirty: boolean) => void
-}
-
-const DrawCanvas = forwardRef<DrawCanvasRef, Props>(function DrawCanvas(
+export default forwardRef(function DrawCanvas(
   {
-    width,
-    height,
-    penColor = '#111111',
-    penSize = 4,
-    tool = 'pen',
-    backgroundUrl,
-    onDirtyChange,
+    width, height,
+    color, size,
+    mode, // 'scroll' | 'draw'
+    tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'
+  }:{
+    width:number; height:number
+    color:string; size:number
+    mode:'scroll'|'draw'
+    tool:'pen'|'highlighter'|'eraser'|'eraserObject'
   },
   ref
-) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const bgRef = useRef<HTMLImageElement | null>(null)
+){
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const ctxRef    = useRef<CanvasRenderingContext2D|null>(null)
+  const strokes   = useRef<Stroke[]>([])
+  const current   = useRef<Stroke|null>(null)
 
-  // timing anchors
-  const drawStartMsRef = useRef<number>(0)
-  const audioStartMsRef = useRef<number | undefined>(undefined)
+  // Pointer state for two-finger detection & pencil
+  const activePointers = useRef<Set<number>>(new Set())
+  const drawingPointerId = useRef<number|null>(null)
 
-  // strokes state
-  const [strokes, setStrokes] = useState<Stroke[]>([])
-  const currentStrokeRef = useRef<Stroke | null>(null)
-  const drawingRef = useRef(false)
-
-  // device pixel ratio scaling for crisp lines
-  const dpr = Math.max(1, window.devicePixelRatio || 1)
-  const cssW = width
-  const cssH = height
-  const bufW = Math.round(cssW * dpr)
-  const bufH = Math.round(cssH * dpr)
-
-  // initialize drawStart on first pointer down
-  const ensureDrawStart = () => {
-    if (drawStartMsRef.current <= 0) {
-      drawStartMsRef.current = performance.now()
-    }
-  }
-
-  // convert event to canvas space (CSS pixels)
-  const getCanvasPoint = (e: PointerEvent | MouseEvent | TouchEvent) => {
-    const c = canvasRef.current!
-    const rect = c.getBoundingClientRect()
-    // PointerEvent path: pageX/pageY
-    // Normalize to CSS pixels relative to canvas
-    let clientX = 0
-    let clientY = 0
-
-    if ('clientX' in e && typeof (e as any).clientX === 'number') {
-      clientX = (e as any).clientX
-      clientY = (e as any).clientY
-    } else if ('touches' in e && (e as TouchEvent).touches.length > 0) {
-      clientX = (e as TouchEvent).touches[0].clientX
-      clientY = (e as TouchEvent).touches[0].clientY
-    }
-
-    const xCss = Math.max(0, Math.min(cssW, clientX - rect.left))
-    const yCss = Math.max(0, Math.min(cssH, clientY - rect.top))
-
-    // Store points in **capture space = CSS pixels**.
-    // On playback we’ll scale from meta.canvasW/H to whatever preview size.
-    const t = performance.now() - drawStartMsRef.current
-    return { x: xCss, y: yCss, t }
-  }
-
-  // start a stroke
-  const beginStroke = (p: Pt) => {
-    const s: Stroke = {
-      color: penColor,
-      size: tool === 'highlighter' ? Math.max(6, penSize) : penSize,
-      tool,
-      pts: [p],
-    }
-    currentStrokeRef.current = s
-    setStrokes(prev => {
-      const next = prev.concat(s)
-      onDirtyChange?.(next.length > 0)
-      return next
-    })
-    drawingRef.current = true
-  }
-
-  // add point
-  const addPoint = (p: Pt) => {
-    const s = currentStrokeRef.current
-    if (!s) return
-    s.pts.push(p)
-    drawLive() // incremental draw for responsiveness
-  }
-
-  // end stroke
-  const endStroke = () => {
-    drawingRef.current = false
-    currentStrokeRef.current = null
-    drawAll()
-  }
-
-  // drawing routines
-  const ensureCtx = (): CanvasRenderingContext2D | null => {
-    const c = canvasRef.current
-    if (!c) return null
-    if (c.width !== bufW) c.width = bufW
-    if (c.height !== bufH) c.height = bufH
-    const ctx = c.getContext('2d')
-    if (!ctx) return null
-    ctx.setTransform(1, 0, 0, 1, 0, 0) // reset
-    ctx.scale(dpr, dpr) // map drawing units → CSS pixels
-    return ctx
-  }
-
-  const drawBackground = (ctx: CanvasRenderingContext2D) => {
-    const img = bgRef.current
-    if (img && img.complete) {
-      ctx.drawImage(img, 0, 0, cssW, cssH)
-    }
-  }
-
-  const drawAll = () => {
-    const ctx = ensureCtx()
+  const redraw = ()=>{
+    const ctx = ctxRef.current
     if (!ctx) return
-    ctx.clearRect(0, 0, cssW, cssH)
-    drawBackground(ctx)
+    ctx.clearRect(0,0, ctx.canvas.width, ctx.canvas.height)
+    for (const s of strokes.current) drawStroke(ctx, s)
+    if (current.current) drawStroke(ctx, current.current)
+  }
 
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
+  useEffect(()=>{
+    const c = canvasRef.current
+    if (!c) return
+    c.width = width; c.height = height
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+    ctxRef.current = ctx
+    redraw()
+  }, [width, height])
 
-    for (const s of strokes) {
-      if (s.pts.length === 0) continue
-      ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
-      ctx.strokeStyle = s.color
-      ctx.lineWidth = s.size
-      const pts = s.pts
-      if (pts.length === 1) {
-        const p = pts[0]
-        ctx.beginPath()
-        ctx.arc(p.x, p.y, (s.size) * 0.5, 0, Math.PI * 2)
-        ctx.fillStyle = s.color
-        ctx.fill()
-      } else {
-        ctx.beginPath()
-        ctx.moveTo(pts[0].x, pts[0].y)
-        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
-        ctx.stroke()
-      }
+  useEffect(()=>{
+    const c = canvasRef.current
+    if (!c) return
+    if (mode === 'scroll') {
+      c.style.pointerEvents = 'none'
+      c.style.touchAction   = 'auto'
+    } else {
+      c.style.pointerEvents = 'auto'
+      c.style.touchAction   = 'pan-y pinch-zoom'
     }
-    ctx.globalAlpha = 1
+  }, [mode])
+
+  useImperativeHandle(ref, () => ({
+    getStrokes: (): StrokesPayload => ({ strokes: strokes.current }),
+    loadStrokes: (data: StrokesPayload | null | undefined): void => {
+      const safe = normalize(data)
+      strokes.current = safe.strokes
+      current.current = null
+      redraw()
+    },
+    clearStrokes: (): void => {
+      strokes.current = []
+      current.current = null
+      redraw()
+    },
+    undo: (): void => {
+      strokes.current.pop()
+      redraw()
+    }
+  }))
+
+  const getPos = (e: PointerEvent)=>{
+    const c = canvasRef.current!
+    const r = c.getBoundingClientRect()
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
 
-  const drawLive = () => {
-    // Draw everything; for perf you could only draw last segment,
-    // but full redraw is simpler and reliable.
-    drawAll()
-  }
-
-  // pointer event handlers
-  useEffect(() => {
+  useEffect(()=>{
     const c = canvasRef.current
     if (!c) return
 
-    const onPointerDown = (e: PointerEvent) => {
+    const shouldDraw = (e: PointerEvent) => {
+      if (mode !== 'draw') return false
+      if (e.pointerType === 'pen') return true // allow Apple Pencil even with palm
+      // fingers/mouse: draw only if a single non-pen pointer is down
+      return activePointers.current.size <= 1
+    }
+
+    const onPointerDown = (e: PointerEvent)=>{
+      if (e.pointerType !== 'pen') activePointers.current.add(e.pointerId)
+      if (!shouldDraw(e)) return
+      drawingPointerId.current = e.pointerId
       c.setPointerCapture(e.pointerId)
-      ensureDrawStart()
-      const p = getCanvasPoint(e)
-      beginStroke(p)
+      const p = getPos(e)
+      current.current = { color, size, tool: tool === 'highlighter' ? 'highlighter' : 'pen', pts: [p] }
+      redraw()
+      if ((e as any).preventDefault) e.preventDefault()
     }
-    const onPointerMove = (e: PointerEvent) => {
-      if (!drawingRef.current) return
-      const p = getCanvasPoint(e)
-      addPoint(p)
-    }
-    const onPointerUp = (_e: PointerEvent) => endStroke()
-    const onPointerCancel = (_e: PointerEvent) => endStroke()
-
-    c.addEventListener('pointerdown', onPointerDown)
-    c.addEventListener('pointermove', onPointerMove)
-    c.addEventListener('pointerup', onPointerUp)
-    c.addEventListener('pointercancel', onPointerCancel)
-
-    return () => {
-      c.removeEventListener('pointerdown', onPointerDown)
-      c.removeEventListener('pointermove', onPointerMove)
-      c.removeEventListener('pointerup', onPointerUp)
-      c.removeEventListener('pointercancel', onPointerCancel)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [penColor, penSize, tool, cssW, cssH])
-
-  // redraw on bg load / dimension change
-  useEffect(() => {
-    drawAll()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backgroundUrl, cssW, cssH, dpr])
-
-  useImperativeHandle(ref, (): DrawCanvasRef => ({
-    markAudioStarted: () => {
-      audioStartMsRef.current = performance.now()
-    },
-    exportPayload: (): InkPayload => {
-      const meta = {
-        canvasW: cssW,
-        canvasH: cssH,
-        drawStartMs: drawStartMsRef.current || performance.now(), // fallback
-        audioStartMs: audioStartMsRef.current,
-        audioOffsetMs:
-          audioStartMsRef.current != null && drawStartMsRef.current > 0
-            ? audioStartMsRef.current - drawStartMsRef.current
-            : undefined,
+    const onPointerMove = (e: PointerEvent)=>{
+      if (drawingPointerId.current !== e.pointerId) return
+      if (!current.current) return
+      if (!shouldDraw(e)) {
+        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        current.current = null
+        drawingPointerId.current = null
+        redraw()
+        return
       }
-      // Return a deep clone that is plain JSON (avoid React state refs)
-      const cloned: Stroke[] = strokes.map(s => ({
-        color: s.color,
-        size: s.size,
-        tool: s.tool,
-        pts: s.pts.map(p => ({ x: p.x, y: p.y, t: p.t })),
-      }))
-      return { meta, strokes: cloned }
-    },
-    clear: () => {
-      setStrokes([])
-      currentStrokeRef.current = null
-      drawingRef.current = false
-      drawStartMsRef.current = 0
-      audioStartMsRef.current = undefined
-      onDirtyChange?.(false)
-      drawAll()
-    },
-  }))
+      const p = getPos(e)
+      current.current.pts.push(p)
+      redraw()
+      if ((e as any).preventDefault) e.preventDefault()
+    }
+    const endStroke = ()=>{
+      if (current.current) {
+        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        current.current = null
+        redraw()
+      }
+      drawingPointerId.current = null
+    }
+    const onPointerUp = (e: PointerEvent)=>{
+      if (e.pointerType !== 'pen') activePointers.current.delete(e.pointerId)
+      if (drawingPointerId.current === e.pointerId) endStroke()
+      try { c.releasePointerCapture(e.pointerId) } catch {}
+    }
+    const onPointerCancel = (e: PointerEvent)=>{
+      if (e.pointerType !== 'pen') activePointers.current.delete(e.pointerId)
+      if (drawingPointerId.current === e.pointerId) endStroke()
+      try { c.releasePointerCapture(e.pointerId) } catch {}
+    }
+
+    c.addEventListener('pointerdown', onPointerDown as EventListener, { passive:false })
+    c.addEventListener('pointermove', onPointerMove as EventListener, { passive:false })
+    c.addEventListener('pointerup', onPointerUp as EventListener, { passive:true })
+    c.addEventListener('pointercancel', onPointerCancel as EventListener, { passive:true })
+    return ()=>{
+      c.removeEventListener('pointerdown', onPointerDown as EventListener)
+      c.removeEventListener('pointermove', onPointerMove as EventListener)
+      c.removeEventListener('pointerup', onPointerUp as EventListener)
+      c.removeEventListener('pointercancel', onPointerCancel as EventListener)
+      activePointers.current.clear()
+      drawingPointerId.current = null
+    }
+  }, [mode, color, size, tool])
 
   return (
-    <div
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
       style={{
-        position: 'relative',
-        width: `${cssW}px`,
-        height: `${cssH}px`,
-        touchAction: 'none', // better Apple Pencil behavior
-        background: '#ffffff',
-        border: '1px solid #e5e7eb',
-        borderRadius: 8,
-        overflow: 'hidden',
+        position:'absolute', inset:0, zIndex:10,
+        display:'block', width:'100%', height:'100%',
+        touchAction:'pan-y pinch-zoom', background:'transparent'
       }}
-    >
-      {backgroundUrl ? (
-        <img
-          ref={bgRef}
-          src={backgroundUrl}
-          alt=""
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'fill',
-            userSelect: 'none',
-            pointerEvents: 'none',
-          }}
-          onLoad={() => drawAll()}
-        />
-      ) : null}
-      <canvas
-        ref={canvasRef}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: `${cssW}px`,
-          height: `${cssH}px`,
-          cursor: tool === 'highlighter' ? 'crosshair' : 'crosshair',
-        }}
-        width={bufW}
-        height={bufH}
-      />
-    </div>
+    />
   )
 })
-
-export default DrawCanvas
