@@ -1,4 +1,4 @@
-// src/pages/teacher/index.tsx
+//src/pages/teacher/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   listAssignments,
@@ -37,9 +37,13 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
-  // PREVIEW STATE (NEW) — note audioUrl is string | undefined to match PlaybackDrawer
+  // PREVIEW STATE (NEW) — audioUrl is string | undefined to match PlaybackDrawer
   const [previewOpen, setPreviewOpen] = useState(false)
-  const [preview, setPreview] = useState<{ studentId: string; strokes: any | null; audioUrl: string | undefined } | null>(null)
+  const [preview, setPreview] = useState<{
+    studentId: string
+    strokes: any | null
+    audioUrl: string | undefined
+  } | null>(null)
   const [previewLoadingSid, setPreviewLoadingSid] = useState<string | null>(null)
 
   // fetch helper
@@ -382,15 +386,17 @@ export default function TeacherDashboard() {
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
 
-      {/* NEW: Drawer instance */}
-      <PlaybackDrawer
-        open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-        pdfUrl={currentPage?.pdf_path ?? ''}
-        pageIndex={currentPage?.page_index ?? 0}
-        strokes={preview?.strokes ?? null}
-        audioUrl={preview?.audioUrl ?? undefined}
-      />
+      {/* NEW: Drawer instance — render only when open */}
+      {previewOpen && (
+        <PlaybackDrawer
+          onClose={() => setPreviewOpen(false)}
+          student={preview?.studentId ?? ''}
+          pdfUrl={currentPage?.pdf_path ?? ''}
+          pageIndex={currentPage?.page_index ?? 0}
+          strokesPayload={(preview?.strokes as any) ?? {}}
+          audioUrl={preview?.audioUrl}
+        />
+      )}
     </div>
   )
 }
