@@ -11,6 +11,7 @@ import {
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
 import { publishSetAssignment } from '../../lib/realtime' // NEW
+import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
 type LatestCell = {
   submission_id: string
@@ -35,6 +36,44 @@ export default function TeacherDashboard() {
 
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
+
+  // PREVIEW STATE (NEW) — audioUrl is string | undefined to match PlaybackDrawer
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [preview, setPreview] = useState<{
+    studentId: string
+    strokes: any | null
+    audioUrl: string | undefined
+  } | null>(null)
+  const [previewLoadingSid, setPreviewLoadingSid] = useState<string | null>(null)
+
+  // ===== NEW: resolve a URL for the current page's PDF (for PlaybackDrawer/PdfCanvas) =====
+  const STORAGE_BUCKET = 'pdfs'
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('')
+
+  function keyForBucket(path: string) {
+    if (!path) return ''
+    let k = path.replace(/^\/+/, '')
+    k = k.replace(/^public\//, '')
+    k = k.replace(/^pdfs\//, '')
+    return k
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const storagePath = pages.find(p => p.id === pageId)?.pdf_path || ''
+      if (!storagePath) { setPreviewPdfUrl(''); return }
+      const key = keyForBucket(storagePath)
+      // try a signed URL first (one hour)
+      const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
+      if (!cancelled && sData?.signedUrl) { setPreviewPdfUrl(sData.signedUrl); return }
+      // fallback to public URL
+      const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
+      if (!cancelled) setPreviewPdfUrl(pData?.publicUrl ?? '')
+    })()
+    return () => { cancelled = true }
+  }, [pageId, pages])
+  // ===== END NEW =====
 
   // fetch helper
   const refreshGrid = useRef<(why?: string) => Promise<void>>(async () => {})
@@ -188,6 +227,43 @@ export default function TeacherDashboard() {
     } | null
   }
 
+  // PREVIEW LOADER (NEW)
+  async function openPreviewForStudent(sid: string) {
+    if (!assignmentId || !pageId) return
+    setPreviewLoadingSid(sid)
+    try {
+      const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
+      if (!latest) {
+        alert('No submission yet for this student on this page.')
+        return
+      }
+      const strokesArt = latest.artifacts?.find(a => a.kind === 'strokes' && (a as any).strokes_json) as any | undefined
+      const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
+
+      let audioUrl: string | undefined = undefined
+      if (audioArt?.storage_path) {
+        try {
+          audioUrl = await getAudioUrl(audioArt.storage_path)
+        } catch (e) {
+          console.warn('getAudioUrl failed', e)
+          audioUrl = undefined
+        }
+      }
+
+      setPreview({
+        studentId: sid,
+        strokes: strokesArt?.strokes_json ?? null,
+        audioUrl
+      })
+      setPreviewOpen(true)
+    } catch (e) {
+      console.error('openPreviewForStudent failed', e)
+      alert('Failed to load preview.')
+    } finally {
+      setPreviewLoadingSid(null)
+    }
+  }
+
   const currentAssignment = useMemo(
     () => assignments.find(a => a.id === assignmentId) || null,
     [assignments, assignmentId]
@@ -313,10 +389,20 @@ export default function TeacherDashboard() {
                     {cell!.hasStrokes ? '✍️ Strokes' : '—'}
                     {cell!.audioUrl ? ' • 🔊 Audio' : ''}
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     {cell!.audioUrl && (
                       <audio controls src={cell!.audioUrl} style={{ width: '100%' }} />
                     )}
+                    {/* NEW: Preview button */}
+                    <button
+                      type="button"
+                      onClick={() => openPreviewForStudent(sid)}
+                      disabled={previewLoadingSid === sid}
+                      style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', whiteSpace: 'nowrap' }}
+                      title="Preview latest submission"
+                    >
+                      {previewLoadingSid === sid ? 'Loading…' : 'Preview'}
+                    </button>
                   </div>
                 </>
               )}
@@ -328,6 +414,18 @@ export default function TeacherDashboard() {
       <div style={{ marginTop: 16, fontSize: 12, color: '#6b7280' }}>
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
+
+      {/* NEW: Drawer instance — render only when open */}
+      {previewOpen && (
+        <PlaybackDrawer
+          onClose={() => setPreviewOpen(false)}
+          student={preview?.studentId ?? ''}
+          pdfUrl={previewPdfUrl}
+          pageIndex={currentPage?.page_index ?? 0}
+          strokesPayload={(preview?.strokes as any) ?? {}}
+          audioUrl={preview?.audioUrl}
+        />
+      )}
     </div>
   )
 }
