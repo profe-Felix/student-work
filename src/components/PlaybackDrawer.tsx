@@ -39,25 +39,17 @@ function buildSegments(strokes: Stroke[]): Seg[] {
     for (let i = 1; i < pts.length; i++) {
       const p0 = pts[i - 1]
       const p1 = pts[i]
-      let t = hasT ? (p1.t as number) : i * 0.012 // 12ms fallback in *seconds*
-      segs.push({
-        x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y,
-        color: s.color || '#111', size: s.size || 4, t
-      })
+      let t = hasT ? (p1.t as number) : i * 0.012 // 12ms fallback in seconds
+      segs.push({ x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y, color: s.color || '#111', size: s.size || 4, t })
     }
   }
   if (!segs.length) return segs
-
-  // Shift so first segment starts at 0 (handles absolute timestamps)
   const t0 = Math.min(...segs.map(s => s.t))
   for (const s of segs) s.t -= t0
-
-  // If values look like ms (very large), convert to seconds
   const maxAfterShift = Math.max(...segs.map(s => s.t))
-  if (maxAfterShift > 600) { // >10 minutes likely ms
+  if (maxAfterShift > 600) { // looks like ms -> convert to s
     for (const s of segs) s.t = s.t / 1000
   }
-
   segs.sort((a, b) => a.t - b.t)
   return segs
 }
@@ -71,29 +63,24 @@ export default function PlaybackDrawer({
   audioUrl,
 }: Props) {
   const [size, setSize] = useState<Size>({ w: 800, h: 600 })
+  const [pdfReady, setPdfReady] = useState(false)
 
-  // Parsed strokes and precomputed timeline
   const strokes: Stroke[] = useMemo(() => coerceStrokes(strokesPayload), [strokesPayload])
   const segs: Seg[] = useMemo(() => buildSegments(strokes), [strokes])
 
-  // Refs for canvases & audio
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
-  const pdfHostRef = useRef<HTMLDivElement | null>(null) // wrapper around PdfCanvas to locate its inner <canvas>
+  const pdfHostRef = useRef<HTMLDivElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  // Animation (synced to audio currentTime)
   const rafRef = useRef<number | null>(null)
-
-  // Snapshot of the PDF page (drawn once for export loop)
   const [pdfSnapshot, setPdfSnapshot] = useState<HTMLImageElement | null>(null)
 
-  // Ensure overlay canvas follows the PDF canvas size
   function onPdfReady(info: { width?: number; height?: number; cssWidth?: number; cssHeight?: number }) {
     const w = info.width ?? info.cssWidth ?? 800
     const h = info.height ?? info.cssHeight ?? 600
     setSize({ w, h })
+    setPdfReady(true)
 
-    // Capture a snapshot of the PDF canvas for faster export rendering
     requestAnimationFrame(() => {
       if (!pdfHostRef.current) return
       const innerCanvas = pdfHostRef.current.querySelector('canvas') as HTMLCanvasElement | null
@@ -108,20 +95,16 @@ export default function PlaybackDrawer({
       }
     })
 
-    // Also draw static strokes immediately
     requestAnimationFrame(() => drawAtTime('static'))
   }
 
-  // Draw helper: draw all segments with t <= timeSec
   function renderFrame(ctx: CanvasRenderingContext2D, timeSec: number | 'static') {
     const W = size.w, H = size.h
     ctx.clearRect(0, 0, W, H)
-
     let lastColor = ''
     let lastSize = -1
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-
     for (let i = 0; i < segs.length; i++) {
       const s = segs[i]
       if (timeSec !== 'static' && s.t > timeSec) break
@@ -137,6 +120,7 @@ export default function PlaybackDrawer({
   function drawAtTime(time: number | 'static') {
     const c = overlayRef.current
     if (!c) return
+    if (!pdfReady) return
     const ctx = c.getContext('2d')
     if (!ctx) return
     if (c.width !== size.w) c.width = size.w
@@ -144,16 +128,17 @@ export default function PlaybackDrawer({
     renderFrame(ctx, time)
   }
 
-  // Live sync loop (ties to audio currentTime)
   function startLiveSync() {
     cancelLiveSync()
     const loop = () => {
-      const t = audioRef.current ? audioRef.current.currentTime : 0
+      const el = audioRef.current
+      const t = el ? el.currentTime : 0
       drawAtTime(t)
       rafRef.current = requestAnimationFrame(loop)
     }
     rafRef.current = requestAnimationFrame(loop)
   }
+
   function cancelLiveSync() {
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current)
@@ -161,37 +146,55 @@ export default function PlaybackDrawer({
     }
   }
 
-  // Start/stop sync when audio plays/pauses or on mount/unmount
+  // Attach audio listeners once element is available, and whenever segs/pdfReady change
   useEffect(() => {
     const el = audioRef.current
     if (!el) return
 
-    const onPlay = () => startLiveSync()
-    const onPause = () => { cancelLiveSync(); drawAtTime(el.currentTime) }
-    const onSeeked = () => drawAtTime(el.currentTime)
+    const ensureDrawNow = () => {
+      if (!pdfReady) return
+      drawAtTime(el.currentTime)
+    }
+
+    const onPlay = () => {
+      if (!pdfReady) {
+        // Wait until PDF is ready, then start syncing
+        const id = requestAnimationFrame(function wait() {
+          if (pdfReady) startLiveSync()
+          else requestAnimationFrame(wait)
+        })
+        return
+      }
+      startLiveSync()
+    }
+    const onPause = () => { cancelLiveSync(); ensureDrawNow() }
+    const onSeeked = () => { ensureDrawNow() }
+    const onTimeUpdate = () => { if (!rafRef.current) ensureDrawNow() } // keeps UI responsive when paused/scrubbing
     const onEnded = () => { cancelLiveSync(); drawAtTime('static') }
 
     el.addEventListener('play', onPlay)
     el.addEventListener('pause', onPause)
     el.addEventListener('seeked', onSeeked)
+    el.addEventListener('timeupdate', onTimeUpdate)
     el.addEventListener('ended', onEnded)
 
-    drawAtTime('static')
+    // Initial frame
+    ensureDrawNow()
 
     return () => {
       el.removeEventListener('play', onPlay)
       el.removeEventListener('pause', onPause)
       el.removeEventListener('seeked', onSeeked)
+      el.removeEventListener('timeupdate', onTimeUpdate)
       el.removeEventListener('ended', onEnded)
       cancelLiveSync()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h, segs.length])
+  }, [pdfReady, size.w, size.h, segs.length])
 
-  // Export to WebM: composite PDF + ink onto an offscreen canvas, record + mux audio
+  // Export to WebM (desktop capable browsers)
   async function exportWebM() {
     const W = size.w, H = size.h
-    if (W <= 0 || H <= 0) {
+    if (W <= 0 || H <= 0 || !pdfReady) {
       alert('PDF page size not ready yet.')
       return
     }
@@ -202,7 +205,6 @@ export default function PlaybackDrawer({
     const ctx = off.getContext('2d')
     if (!ctx) { alert('Canvas not supported'); return }
 
-    // Get audio stream (native capture if available; otherwise WebAudio fallback)
     let audioStream: MediaStream | null = null
     const audioEl = audioRef.current || undefined
 
@@ -219,28 +221,25 @@ export default function PlaybackDrawer({
         const src = ac.createMediaElementSource(audioEl)
         const dest = ac.createMediaStreamDestination()
         src.connect(dest)
-        src.connect(ac.destination) // keep audible
+        src.connect(ac.destination)
         audioStream = dest.stream
       } catch {
         audioStream = null
       }
     }
 
-    // Video stream from canvas
     const fps = 60
     const anyCanvas = off as any
     const videoStream: MediaStream | undefined = typeof anyCanvas.captureStream === 'function'
       ? anyCanvas.captureStream(fps)
       : undefined
-    if (!videoStream) { alert('Canvas captureStream not supported'); return }
+    if (!videoStream) { alert('Canvas captureStream not supported in this browser.'); return }
 
-    // Combine into single stream
     const stream = new MediaStream([
       ...videoStream.getVideoTracks(),
       ...(audioStream ? audioStream.getAudioTracks() : []),
     ])
 
-    // Recorder
     const preferred = 'video/webm;codecs=vp9,opus'
     const mime = (window as any).MediaRecorder && (MediaRecorder as any).isTypeSupported && MediaRecorder.isTypeSupported(preferred)
       ? preferred
@@ -258,8 +257,7 @@ export default function PlaybackDrawer({
       URL.revokeObjectURL(url)
     }
 
-    // PDF draw source (snapshot or live)
-    const getPdfDraw = () => {
+    const drawPdf = (() => {
       if (pdfSnapshot) {
         return () => { ctx.drawImage(pdfSnapshot, 0, 0, W, H) }
       }
@@ -267,10 +265,8 @@ export default function PlaybackDrawer({
         const innerCanvas = pdfHostRef.current?.querySelector('canvas') as HTMLCanvasElement | null
         if (innerCanvas) ctx.drawImage(innerCanvas, 0, 0, W, H)
       }
-    }
-    const drawPdf = getPdfDraw()
+    })()
 
-    // Precompute ink drawer for export loop
     const drawInkAt = (timeSec: number) => {
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
@@ -290,11 +286,9 @@ export default function PlaybackDrawer({
 
     if (!audioEl) { alert('No audio found to sync export.'); return }
 
-    // Prepare playback
     audioEl.currentTime = 0
     try { await audioEl.play() } catch {}
 
-    // Start recording & RAF loop
     rec.start(100)
     const loop = () => {
       const t = audioEl.currentTime
@@ -313,7 +307,6 @@ export default function PlaybackDrawer({
     audioEl.addEventListener('ended', onEnded)
   }
 
-  // Download strokes JSON
   function downloadStrokes() {
     const blob = new Blob([JSON.stringify({ strokes })], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -338,7 +331,6 @@ export default function PlaybackDrawer({
         zIndex: 50,
       }}
     >
-      {/* Panel */}
       <div
         style={{
           background: '#fff',
@@ -400,7 +392,7 @@ export default function PlaybackDrawer({
           </div>
         </div>
 
-        {/* Top toolbar */}
+        {/* Toolbar */}
         <div
           style={{
             display: 'flex',
@@ -420,7 +412,7 @@ export default function PlaybackDrawer({
           </span>
         </div>
 
-        {/* Content: PDF full width (underlay) + overlay ink */}
+        {/* Content */}
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: '#fafafa' }}>
           <div ref={pdfHostRef} style={{ position: 'relative', width: `${size.w}px`, margin: '12px auto' }}>
             <div style={{ position: 'relative' }}>
