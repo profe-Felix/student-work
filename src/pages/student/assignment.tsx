@@ -1,4 +1,4 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -16,7 +16,7 @@ import {
   type FocusPayload,
   type AutoFollowPayload,
   subscribeToGlobal,
-  type TeacherPresenceState, // (type only; helps with cache shape)
+  type TeacherPresenceState,
 } from '../../lib/realtime'
 
 /** Constants */
@@ -200,7 +200,6 @@ export default function StudentAssignment(){
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      // On assignment switch, try to snap to teacher’s last page if we have presence cached
       try {
         const raw = localStorage.getItem(presenceKey(nextAssignmentId))
         if (raw) {
@@ -213,7 +212,7 @@ export default function StudentAssignment(){
           }
           setAutoFollow(!!p.autoFollow)
           setAllowedPages(p.allowedPages ?? null)
-          setFocusOn(!!p.focusOn)            // <<< NEW
+          setFocusOn(!!p.focusOn)
           setNavLocked(!!p.focusOn && !!p.lockNav)
         } else {
           setPageIndex(0)
@@ -226,7 +225,6 @@ export default function StudentAssignment(){
     return off
   }, [])
 
-  // >>> When we know which assignment to use (including on refresh), hydrate presence from cache
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
@@ -235,11 +233,11 @@ export default function StudentAssignment(){
       const p = JSON.parse(raw) as TeacherPresenceState
       setAutoFollow(!!p.autoFollow)
       setAllowedPages(p.allowedPages ?? null)
-      setFocusOn(!!p.focusOn)                // <<< NEW
+      setFocusOn(!!p.focusOn)
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        setPageIndex(p.teacherPageIndex) // snap immediately on refresh
+        setPageIndex(p.teacherPageIndex)
       }
     } catch {}
   }, [rtAssignmentId])
@@ -254,7 +252,6 @@ export default function StudentAssignment(){
       setPdfStoragePath(curr.pdf_path || '')
       return { assignment_id: rtAssignmentId, page_id: curr.id }
     }
-    // Fallback boot path (your original upsert)
     const ids = await upsertAssignmentWithPage(assignmentTitle, DEFAULT_PDF_STORAGE_PATH, pageIndex)
     currIds.current = ids
     if (!rtAssignmentId && ids.assignment_id) setRtAssignmentId(ids.assignment_id!)
@@ -485,12 +482,11 @@ export default function StudentAssignment(){
           setPageIndex(teacherPageIndexRef.current)
         }
       },
-      // >>> NEW: listen for presence snapshots and cache/apply immediately
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
         setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)              // <<< NEW
+        setFocusOn(!!p.focusOn)
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
@@ -631,8 +627,25 @@ export default function StudentAssignment(){
         </div>
       </div>
 
+      {/* ---- Audio & Save ---- */}
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        {/* Keep your existing AudioRecorder (onBlob stays the source of truth) */}
         <AudioRecorder ref={audioRef} maxSec={180} onBlob={(b)=>{ audioBlob.current = b }} />
+        {/* External controls that call the recorder directly.
+            On start, also mark the ink session's audio start time (if DrawCanvas exposes it). */}
+        <button
+          onClick={() => { (drawRef.current as any)?.markAudioStarted?.(); audioRef.current?.start?.() }}
+          style={{ background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0' }}
+        >
+          Start Rec
+        </button>
+        <button
+          onClick={() => { audioRef.current?.stop?.() }}
+          style={{ background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0' }}
+        >
+          Stop Rec
+        </button>
+
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
@@ -661,7 +674,7 @@ export default function StudentAssignment(){
       <div
         ref={scrollHostRef}
         style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-          touchAction: handMode ? 'auto' : 'none', /* NEW: allow native scroll when hand mode */
+          touchAction: handMode ? 'auto' : 'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
@@ -671,7 +684,7 @@ export default function StudentAssignment(){
           </div>
           <div style={{
               position:'absolute', inset:0, zIndex:10,
-              pointerEvents: handMode ? 'none' : 'auto' /* NEW: let touches pass through in hand mode */
+              pointerEvents: handMode ? 'none' : 'auto'
             }}>
             <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
               color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
@@ -691,7 +704,7 @@ export default function StudentAssignment(){
         <button
           onClick={()=>goToPage(Math.max(0, pageIndex-1))}
           disabled={saving || submitInFlight.current || navLocked || blockedBySync(Math.max(0, pageIndex-1))}
-          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9f9fb' }}
         >
           ◀ Prev
         </button>
@@ -701,7 +714,7 @@ export default function StudentAssignment(){
         <button
           onClick={()=>goToPage(pageIndex+1)}
           disabled={saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
-          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9f9fb' }}
         >
           Next ▶
         </button>
