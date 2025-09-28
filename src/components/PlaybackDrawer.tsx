@@ -25,7 +25,7 @@ function n(v: any) {
   return Number.isFinite(x) ? (x as number) : 0
 }
 
-/* ---------- Extremely defensive stroke parsing ---------- */
+/* ---------- Robust stroke parsing (now supports your `{pts:[]}`) ---------- */
 function asPoints(maybe: any): TimedPoint[] {
   if (!maybe) return []
   if (Array.isArray(maybe) && maybe.length && typeof maybe[0] === 'object' && 'x' in maybe[0]) {
@@ -37,10 +37,20 @@ function asPoints(maybe: any): TimedPoint[] {
   }
   return []
 }
+
 function toStroke(obj: any): Stroke | null {
   if (!obj) return null
+
+  // Your schema: { color, size, tool, pts: [{x,y}] }
+  if (Array.isArray(obj.pts)) {
+    return { color: obj.color, size: obj.size, points: asPoints(obj.pts) }
+  }
+
+  // Other accepted shapes
   if (Array.isArray(obj.points)) return { color: obj.color, size: obj.size, points: asPoints(obj.points) }
   if (Array.isArray(obj.path))   return { color: obj.color, size: obj.size, points: asPoints(obj.path) }
+
+  // Raw array-of-points fallback
   if (Array.isArray(obj) && obj.length && typeof obj[0] === 'object' && 'x' in obj[0]) {
     return { color: (obj as any).color, size: (obj as any).size, points: asPoints(obj) }
   }
@@ -54,19 +64,15 @@ function parseStrokes(payload: any): Parsed {
   try { if (typeof raw === 'string') raw = JSON.parse(raw) } catch {}
   if (!raw) return { strokes: [], metaW: 0, metaH: 0 }
 
-  // common wrappers/meta locations for source canvas size
+  // try to pull possible source canvas size (optional)
   let metaW = n(raw.canvasWidth ?? raw.canvas_w ?? raw.canvasW ?? raw.width ?? raw.w ?? raw.pageWidth ?? raw.page?.width)
   let metaH = n(raw.canvasHeight ?? raw.canvas_h ?? raw.canvasH ?? raw.height ?? raw.h ?? raw.pageHeight ?? raw.page?.height)
   if (raw && raw.data) raw = raw.data
 
-  const toParsed = (sArr: any[]): Parsed => ({
-    strokes: (sArr.map(toStroke).filter(Boolean) as Stroke[]),
-    metaW,
-    metaH
-  })
+  const toParsed = (arr: any[]): Parsed => ({ strokes: (arr.map(toStroke).filter(Boolean) as Stroke[]), metaW, metaH })
 
   if (Array.isArray(raw)) {
-    if (raw.length && typeof raw[0] === 'object' && 'x' in raw[0]) {
+    if (raw.length && typeof raw[0] === 'object' && ('x' in raw[0] || 'pts' in raw[0])) {
       const s = toStroke(raw)
       return { strokes: s ? [s] : [], metaW, metaH }
     }
@@ -74,7 +80,7 @@ function parseStrokes(payload: any): Parsed {
   }
 
   const buckets: any[] = []
-  if (Array.isArray(raw.strokes)) buckets.push(...raw.strokes)
+  if (Array.isArray(raw.strokes)) buckets.push(...raw.strokes)   // <-- your shape lands here
   if (Array.isArray(raw.lines))   buckets.push(...raw.lines)
   if (Array.isArray(raw.paths))   buckets.push(...raw.paths)
 
@@ -93,7 +99,7 @@ function parseStrokes(payload: any): Parsed {
   return { strokes: [], metaW, metaH }
 }
 
-/* ---------- Compute segments for timed replay; static drawing uses raw strokes ---------- */
+/* ---------- Build segments for timed replay (optional) ---------- */
 function buildSegments(strokes: Stroke[]): { segs: Seg[]; duration: number } {
   const segs: Seg[] = []
   for (const s of strokes) {
@@ -102,7 +108,7 @@ function buildSegments(strokes: Stroke[]): { segs: Seg[]; duration: number } {
     const hasT = typeof pts[0]?.t === 'number'
     for (let i = 1; i < pts.length; i++) {
       const p0 = pts[i - 1], p1 = pts[i]
-      let t = hasT ? n(p1.t) : i * 0.012 // ~12ms fallback
+      const t = hasT ? n(p1.t) : i * 0.012 // ~12ms fallback
       segs.push({ x0: n(p0.x), y0: n(p0.y), x1: n(p1.x), y1: n(p1.y), color: s.color || '#111', size: s.size || 4, t })
     }
   }
@@ -110,17 +116,14 @@ function buildSegments(strokes: Stroke[]): { segs: Seg[]; duration: number } {
   const t0 = Math.min(...segs.map(s => s.t))
   for (const s of segs) s.t -= t0
   const maxAfter = Math.max(...segs.map(s => s.t))
-  if (maxAfter > 600) { for (const s of segs) s.t = s.t / 1000 }
+  if (maxAfter > 600) { for (const s of segs) s.t = s.t / 1000 } // ms -> s
   segs.sort((a, b) => a.t - b.t)
   return { segs, duration: segs[segs.length - 1].t }
 }
 
-/* ---------- Infer source-drawing dimensions (for scaling) ---------- */
+/* ---------- Infer source drawing dims (for scaling) ---------- */
 function inferSourceDims(strokes: Stroke[], metaW: number, metaH: number): { sw: number; sh: number } {
-  // If metadata provided and sensible, use it
   if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
-
-  // Otherwise, infer from bounds of all points
   let maxX = 0, maxY = 0
   for (const s of strokes) {
     for (const p of (s.points || [])) {
@@ -128,13 +131,7 @@ function inferSourceDims(strokes: Stroke[], metaW: number, metaH: number): { sw:
       if (p.y > maxY) maxY = p.y
     }
   }
-
-  // Handle normalized [0..1] data (rare)
-  if (maxX > 0 && maxX <= 2 && maxY > 0 && maxY <= 2) {
-    return { sw: 1, sh: 1 }
-  }
-
-  // Fallback to bounds
+  if (maxX > 0 && maxX <= 2 && maxY > 0 && maxY <= 2) return { sw: 1, sh: 1 } // normalized case
   return { sw: Math.max(1, Math.round(maxX)), sh: Math.max(1, Math.round(maxY)) }
 }
 
@@ -157,7 +154,7 @@ export default function PlaybackDrawer({
   const [syncToAudio, setSyncToAudio] = useState<boolean>(!!audioUrl)
   const [strokesPlaying, setStrokesPlaying] = useState(false)
 
-  /* ------- Keep overlay size in lockstep with the actual PDF canvas (no onReady dependency) ------- */
+  /* ------- Lock overlay size to actual PDF canvas (no flaky onReady dependency) ------- */
   useEffect(() => {
     const host = pdfHostRef.current
     if (!host) return
@@ -165,20 +162,17 @@ export default function PlaybackDrawer({
     const getPdfCanvas = () => {
       const canvases = Array.from(host.querySelectorAll('canvas')) as HTMLCanvasElement[]
       const overlay = overlayRef.current
-      const pdfCanvas = canvases.find(c => c !== overlay) || null
-      return pdfCanvas
+      return canvases.find(c => c !== overlay) || null
     }
 
     const syncSize = () => {
       const pdfC = getPdfCanvas()
       if (!pdfC) return
-      // Use the PDF canvas internal pixel size (not CSS)
       const w = pdfC.width || Math.round(pdfC.getBoundingClientRect().width * (window.devicePixelRatio || 1))
       const h = pdfC.height || Math.round(pdfC.getBoundingClientRect().height * (window.devicePixelRatio || 1))
       setSize(prev => (prev.w === w && prev.h === h) ? prev : { w, h })
     }
 
-    // Try immediately, then observe
     syncSize()
     const pdfC = getPdfCanvas()
     let ro: ResizeObserver | null = null
@@ -196,7 +190,7 @@ export default function PlaybackDrawer({
     }
   }, [pdfUrl, pageIndex])
 
-  /* ------- Low-level drawing with auto-scale to fit current PDF page ------- */
+  /* ------- Drawing with autoscale ------- */
   function withScale(ctx: CanvasRenderingContext2D, draw: () => void) {
     const sx = size.w / Math.max(1, sw)
     const sy = size.h / Math.max(1, sh)
@@ -206,7 +200,7 @@ export default function PlaybackDrawer({
     ctx.restore()
   }
 
-  function ensureCanvas(): CanvasRenderingContext2D | null {
+  function ensureCtx(): CanvasRenderingContext2D | null {
     const c = overlayRef.current
     if (!c) return null
     if (c.width !== size.w) c.width = size.w
@@ -215,7 +209,7 @@ export default function PlaybackDrawer({
   }
 
   function drawStaticAll() {
-    const ctx = ensureCanvas()
+    const ctx = ensureCtx()
     if (!ctx) return
     ctx.clearRect(0, 0, size.w, size.h)
     withScale(ctx, () => {
@@ -243,7 +237,7 @@ export default function PlaybackDrawer({
   }
 
   function drawUpTo(timeSec: number) {
-    const ctx = ensureCanvas()
+    const ctx = ensureCtx()
     if (!ctx) return
     if (!segs.length) { drawStaticAll(); return }
     ctx.clearRect(0, 0, size.w, size.h)
@@ -266,7 +260,7 @@ export default function PlaybackDrawer({
   }
 
   function drawStaticPortion(pct: number) {
-    const ctx = ensureCanvas()
+    const ctx = ensureCtx()
     if (!ctx) return
     ctx.clearRect(0, 0, size.w, size.h)
     withScale(ctx, () => {
@@ -298,13 +292,10 @@ export default function PlaybackDrawer({
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
   }
 
-  /* ------- Always draw static ink when size or data changes ------- */
-  useEffect(() => {
-    drawStaticAll()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h, strokesPayload, sw, sh])
+  /* Always render static ink when size or data changes */
+  useEffect(() => { drawStaticAll() }, [size.w, size.h, strokesPayload, sw, sh])
 
-  /* ------- Audio-synced mode (optional) ------- */
+  /* Audio-synced mode (optional) */
   useEffect(() => {
     if (!syncToAudio) { stopRAF(); return }
     const el = audioRef.current
@@ -341,7 +332,7 @@ export default function PlaybackDrawer({
     }
   }, [syncToAudio, size.w, size.h, segs.length, sw, sh])
 
-  /* ------- Strokes-only replay (works with NO audio) ------- */
+  /* Strokes-only replay (works with NO audio) */
   useEffect(() => {
     if (!strokesPlaying) return
 
@@ -365,7 +356,6 @@ export default function PlaybackDrawer({
     stopRAF()
     rafRef.current = requestAnimationFrame(tick)
     return () => stopRAF()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strokesPlaying, duration, segs.length, size.w, size.h, sw, sh])
 
   const hasAudio = !!audioUrl
@@ -473,7 +463,6 @@ export default function PlaybackDrawer({
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: '#fafafa' }}>
           <div ref={pdfHostRef} style={{ position: 'relative', width: `${size.w}px`, margin: '12px auto' }}>
             <div style={{ position: 'relative' }}>
-              {/* Render PdfCanvas as before; we don’t rely on its callbacks */}
               <PdfCanvas url={pdfUrl} pageIndex={pageIndex} />
               <canvas
                 ref={overlayRef}
