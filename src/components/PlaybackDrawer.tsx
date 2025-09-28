@@ -16,6 +16,7 @@ type StrokesPayload = {
 
 type Seg = { x0:number; y0:number; x1:number; y1:number; color:string; size:number; tool:'pen'|'highlighter'; len:number }
 type Built = { segs: Seg[]; totalLen: number; duration: number }
+type PlayMode = 'strokes' | 'together'  // strokes only vs strokes + audio
 
 export default function PlaybackDrawer({
   pdfUrl,
@@ -43,9 +44,13 @@ export default function PlaybackDrawer({
 
   const audioRef = useRef<HTMLAudioElement|null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [nowMs, setNowMs] = useState(0)        // current time (ms)
-  const [durationMs, setDurationMs] = useState(0) // total ms
+  const [nowMs, setNowMs] = useState(0)
+  const [durationMs, setDurationMs] = useState(0)
   const rafRef = useRef<number| null>(null)
+
+  // NEW: top menu toggle
+  const audioAvailable = !!audioUrl
+  const [playMode, setPlayMode] = useState<PlayMode>(audioAvailable ? 'together' : 'strokes')
 
   // Parse strokes (tolerant)
   const parsed = useMemo(
@@ -75,24 +80,19 @@ export default function PlaybackDrawer({
 
   // Initialize duration (from audio or fallback to built.duration)
   useEffect(() => {
-    if (audioUrl) {
+    if (playMode === 'together' && audioAvailable) {
       const a = audioRef.current
       if (!a) return
-      const onLoaded = () => {
-        setDurationMs(Math.max(0, (a.duration || 0) * 1000))
-      }
+      const onLoaded = () => { setDurationMs(Math.max(0, (a.duration || 0) * 1000)) }
       const onTime = () => {
         const t = Math.max(0, a.currentTime * 1000)
         setNowMs(t)
         drawUpTo(t)
       }
-      const onEnd = () => {
-        setIsPlaying(false)
-      }
+      const onEnd = () => { setIsPlaying(false) }
       a.addEventListener('loadedmetadata', onLoaded)
       a.addEventListener('timeupdate', onTime)
       a.addEventListener('ended', onEnd)
-      // if metadata already available
       if (a.duration && !Number.isNaN(a.duration)) setDurationMs(a.duration * 1000)
       return () => {
         a.removeEventListener('loadedmetadata', onLoaded)
@@ -100,15 +100,32 @@ export default function PlaybackDrawer({
         a.removeEventListener('ended', onEnd)
       }
     } else {
-      // no audio: derive duration from drawing length
+      // no audio driving: derive duration from drawing length
       setDurationMs(built.duration)
       setNowMs(0)
     }
-  }, [audioUrl, built.duration])
+  }, [audioAvailable, playMode, built.duration])
 
-  // Animation loop when no audio
+  // If user toggles modes while playing, keep behavior sane
   useEffect(() => {
-    if (audioUrl) return // audio drives time
+    if (playMode === 'together' && audioAvailable) {
+      // switch to audio timebase
+      const a = audioRef.current
+      if (a) {
+        a.currentTime = nowMs / 1000
+        if (isPlaying) { a.play().catch(()=>{}) } else { a.pause() }
+      }
+    } else {
+      // switch to RAF; pause audio if any
+      const a = audioRef.current
+      if (a) a.pause()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playMode])
+
+  // Animation loop when no audio (or user chose strokes-only)
+  useEffect(() => {
+    if (playMode === 'together' && audioAvailable) return // audio drives time
     if (!isPlaying) {
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
       return
@@ -128,7 +145,7 @@ export default function PlaybackDrawer({
     }
     rafRef.current = requestAnimationFrame(tick)
     return () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); rafRef.current = null }
-  }, [isPlaying, durationMs, audioUrl]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPlaying, durationMs, playMode, audioAvailable]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function onPdfReady(_pdf:any, canvas:HTMLCanvasElement) {
     try {
@@ -215,13 +232,11 @@ export default function PlaybackDrawer({
 
     let acc = 0
     withScale(ctx, sw, sh, dw, dh, () => {
-      // draw full segments up to cutoff
       for (const seg of built.segs) {
         if (acc + seg.len <= cutoffLen) {
           strokeSegment(ctx, seg, 1) // full
           acc += seg.len
         } else {
-          // draw partial of this segment if needed
           const remain = cutoffLen - acc
           if (remain > 0 && seg.len > 0) {
             const partial = Math.max(0, Math.min(1, remain / seg.len))
@@ -251,14 +266,13 @@ export default function PlaybackDrawer({
 
   // Controls
   const togglePlay = async () => {
-    if (audioUrl) {
+    if (playMode === 'together' && audioAvailable) {
       const a = audioRef.current
       if (!a) return
       if (isPlaying) {
         a.pause()
         setIsPlaying(false)
       } else {
-        // if we were at end, restart
         if (a.currentTime * 1000 >= durationMs - 10) a.currentTime = 0
         try { await a.play(); setIsPlaying(true) } catch {/* autoplay blocked? */}
       }
@@ -266,7 +280,6 @@ export default function PlaybackDrawer({
       if (isPlaying) {
         setIsPlaying(false)
       } else {
-        // restart if at end
         if (nowMs >= durationMs - 1) setNowMs(0)
         setIsPlaying(true)
       }
@@ -276,7 +289,7 @@ export default function PlaybackDrawer({
   const onScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = Number(e.target.value)
     const t = Math.max(0, Math.min(durationMs, v))
-    if (audioUrl) {
+    if (playMode === 'together' && audioAvailable) {
       const a = audioRef.current
       if (a) a.currentTime = t / 1000
     } else {
@@ -303,16 +316,18 @@ export default function PlaybackDrawer({
     >
       <div
         style={{
-          width:'min(980px, 94vw)',
+          width:'min(1100px, 94vw)',
           maxHeight:'88vh',
           background:'#fff',
           borderRadius:14,
           boxShadow:'0 18px 40px rgba(0,0,0,0.35)',
           display:'flex',
           flexDirection:'column',
-          overflow:'hidden'
+          overflow:'hidden',
+          position:'relative'
         }}
       >
+        {/* Header */}
         <div style={{ padding:'10px 14px', borderBottom:'1px solid #e5e7eb', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div style={{ fontWeight:800 }}>{title}{student ? ` — ${student}` : ''}</div>
           <button
@@ -323,7 +338,77 @@ export default function PlaybackDrawer({
           </button>
         </div>
 
-        <div style={{ padding:12, overflow:'auto' }}>
+        {/* Floating top controls (like your pager but top/center). Stays visible while scrolling */}
+        <div
+          style={{
+            position:'absolute',
+            left:'50%', top:12, transform:'translateX(-50%)',
+            zIndex: 2,
+            display:'flex', alignItems:'center', gap:10,
+            padding:'8px 12px',
+            background:'rgba(255,255,255,0.95)',
+            border:'1px solid #e5e7eb',
+            borderRadius:999,
+            boxShadow:'0 6px 18px rgba(0,0,0,0.15)',
+            backdropFilter:'saturate(1.0) blur(4px)'
+          }}
+        >
+          {/* Play/Pause */}
+          <button
+            onClick={togglePlay}
+            style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#fff', minWidth:88, fontWeight:700 }}
+          >
+            {isPlaying ? 'Pause' : 'Play'}
+          </button>
+
+          {/* Mode toggle */}
+          <div
+            style={{
+              display:'inline-flex', border:'1px solid #ddd', borderRadius:999, overflow:'hidden'
+            }}
+            title={audioAvailable ? 'Choose what to play' : 'Audio not available'}
+          >
+            <button
+              onClick={()=> setPlayMode('strokes')}
+              disabled={playMode==='strokes'}
+              style={{
+                padding:'6px 10px',
+                background: playMode==='strokes' ? '#111' : '#fff',
+                color: playMode==='strokes' ? '#fff' : '#111',
+                border:'none', fontWeight:700
+              }}
+            >
+              Strokes
+            </button>
+            <button
+              onClick={()=> setPlayMode('together')}
+              disabled={!audioAvailable || playMode==='together'}
+              style={{
+                padding:'6px 10px',
+                background: playMode==='together' ? '#111' : '#fff',
+                color: playMode==='together' ? '#fff' : '#111',
+                borderLeft:'1px solid #ddd', fontWeight:700, opacity: audioAvailable ? 1 : 0.5
+              }}
+            >
+              Together
+            </button>
+          </div>
+
+          {/* Time + Scrubber */}
+          <div style={{ fontVariantNumeric:'tabular-nums', minWidth:60, textAlign:'right' }}>{fmt(nowMs)}</div>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(1, Math.floor(durationMs))}
+            value={Math.min(Math.floor(nowMs), Math.floor(durationMs))}
+            onChange={onScrub}
+            style={{ width:300 }}
+          />
+          <div style={{ fontVariantNumeric:'tabular-nums', minWidth:60 }}>{fmt(durationMs)}</div>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding:'52px 12px 12px', overflow:'auto' }}>
           <div style={{ position:'relative', margin:'0 auto', width: pdfCssRef.current.w + 'px' }}>
             <div data-preview-pdf-host style={{ position:'relative' }}>
               <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
@@ -338,28 +423,8 @@ export default function PlaybackDrawer({
             />
           </div>
 
-          {/* Controls */}
-          <div style={{ marginTop:12, display:'flex', alignItems:'center', gap:10 }}>
-            <button
-              onClick={togglePlay}
-              style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #ddd', background:'#fff', minWidth:88, fontWeight:700 }}
-            >
-              {isPlaying ? 'Pause' : 'Play'}
-            </button>
-            <div style={{ fontVariantNumeric:'tabular-nums', minWidth:60, textAlign:'right' }}>{fmt(nowMs)}</div>
-            <input
-              type="range"
-              min={0}
-              max={Math.max(1, Math.floor(durationMs))}
-              value={Math.min(Math.floor(nowMs), Math.floor(durationMs))}
-              onChange={onScrub}
-              style={{ flex:1 }}
-            />
-            <div style={{ fontVariantNumeric:'tabular-nums', minWidth:60 }}>{fmt(durationMs)}</div>
-          </div>
-
           {/* Hidden audio element when present */}
-          {audioUrl && (
+          {audioAvailable && (
             <audio
               ref={audioRef}
               src={audioUrl || undefined}
@@ -417,7 +482,7 @@ function inferSourceDims(payload: StrokesPayload, fallbackW:number, fallbackH:nu
   return { sw: fallbackW, sh: fallbackH }
 }
 
-// Build segments for animation. If no audio, derive duration from total length (px) / speed.
+// Build segments for animation. If no audio (or strokes-only), derive duration from total length (px) / speed.
 function buildSegments(payload: StrokesPayload): Built {
   const segs: Seg[] = []
   let totalLen = 0
@@ -434,8 +499,7 @@ function buildSegments(payload: StrokesPayload): Built {
     }
   }
 
-  // Heuristic speed (pixels per millisecond) for no-audio animation.
-  // Tune if desired. Larger => faster.
+  // Heuristic speed (pixels per millisecond) for animation without audio.
   const pxPerMs = 0.8
   const duration = totalLen > 0 ? Math.max(800, Math.round(totalLen / pxPerMs)) : 0
 
