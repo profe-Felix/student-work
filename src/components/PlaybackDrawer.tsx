@@ -32,7 +32,6 @@ function coerceStrokes(payload: any): Stroke[] {
 
 function buildSegments(strokes: Stroke[]): Seg[] {
   const segs: Seg[] = []
-  let maxT = 0
   for (const s of strokes) {
     const pts = s.points || []
     if (pts.length < 2) continue
@@ -45,23 +44,20 @@ function buildSegments(strokes: Stroke[]): Seg[] {
         x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y,
         color: s.color || '#111', size: s.size || 4, t
       })
-      if (t > maxT) maxT = t
     }
   }
   if (!segs.length) return segs
 
-  // Normalize timestamps:
-  // 1) Shift so first segment starts at 0 (handles absolute timestamps)
+  // Shift so first segment starts at 0 (handles absolute timestamps)
   const t0 = Math.min(...segs.map(s => s.t))
   for (const s of segs) s.t -= t0
 
-  // 2) If values look like milliseconds (very large), convert to seconds
+  // If values look like ms (very large), convert to seconds
   const maxAfterShift = Math.max(...segs.map(s => s.t))
   if (maxAfterShift > 600) { // >10 minutes likely ms
     for (const s of segs) s.t = s.t / 1000
   }
 
-  // Sort by time
   segs.sort((a, b) => a.t - b.t)
   return segs
 }
@@ -108,8 +104,6 @@ export default function PlaybackDrawer({
         img.onload = () => setPdfSnapshot(img)
         img.src = url
       } catch {
-        // If tainted (shouldn't be, since pdfjs draws locally), just skip snapshot;
-        // export will still work by copying the canvas each frame.
         setPdfSnapshot(null)
       }
     })
@@ -123,15 +117,11 @@ export default function PlaybackDrawer({
     const W = size.w, H = size.h
     ctx.clearRect(0, 0, W, H)
 
-    // We only draw ink on the overlay. The PDF is a separate canvas beneath for preview.
-    // For export, we draw the PDF snapshot elsewhere (see exportWebM).
-    // Here we only render strokes.
     let lastColor = ''
     let lastSize = -1
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
 
-    // Draw all segments up to time
     for (let i = 0; i < segs.length; i++) {
       const s = segs[i]
       if (timeSec !== 'static' && s.t > timeSec) break
@@ -149,7 +139,6 @@ export default function PlaybackDrawer({
     if (!c) return
     const ctx = c.getContext('2d')
     if (!ctx) return
-    // Keep canvas in device pixels, not just CSS
     if (c.width !== size.w) c.width = size.w
     if (c.height !== size.h) c.height = size.h
     renderFrame(ctx, time)
@@ -178,11 +167,7 @@ export default function PlaybackDrawer({
     if (!el) return
 
     const onPlay = () => startLiveSync()
-    const onPause = () => {
-      cancelLiveSync()
-      // draw the exact paused frame
-      drawAtTime(el.currentTime)
-    }
+    const onPause = () => { cancelLiveSync(); drawAtTime(el.currentTime) }
     const onSeeked = () => drawAtTime(el.currentTime)
     const onEnded = () => { cancelLiveSync(); drawAtTime('static') }
 
@@ -191,7 +176,6 @@ export default function PlaybackDrawer({
     el.addEventListener('seeked', onSeeked)
     el.addEventListener('ended', onEnded)
 
-    // Initial static draw
     drawAtTime('static')
 
     return () => {
@@ -212,7 +196,6 @@ export default function PlaybackDrawer({
       return
     }
 
-    // Build composition canvas
     const off = document.createElement('canvas')
     off.width = W
     off.height = H
@@ -222,12 +205,16 @@ export default function PlaybackDrawer({
     // Get audio stream (native capture if available; otherwise WebAudio fallback)
     let audioStream: MediaStream | null = null
     const audioEl = audioRef.current || undefined
-    if (audioEl && typeof audioEl.captureStream === 'function') {
-      try { audioStream = audioEl.captureStream() } catch {}
+
+    if (audioEl) {
+      const anyAudio = audioEl as any
+      if (typeof anyAudio.captureStream === 'function') {
+        try { audioStream = anyAudio.captureStream() as MediaStream } catch { audioStream = null }
+      }
     }
     if (!audioStream && audioEl) {
       try {
-        const AC = (window.AudioContext || (window as any).webkitAudioContext)
+        const AC: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext
         const ac = new AC()
         const src = ac.createMediaElementSource(audioEl)
         const dest = ac.createMediaStreamDestination()
@@ -241,7 +228,10 @@ export default function PlaybackDrawer({
 
     // Video stream from canvas
     const fps = 60
-    const videoStream = (off as any).captureStream?.(fps) as MediaStream | undefined
+    const anyCanvas = off as any
+    const videoStream: MediaStream | undefined = typeof anyCanvas.captureStream === 'function'
+      ? anyCanvas.captureStream(fps)
+      : undefined
     if (!videoStream) { alert('Canvas captureStream not supported'); return }
 
     // Combine into single stream
@@ -251,12 +241,11 @@ export default function PlaybackDrawer({
     ])
 
     // Recorder
-    const mime =
-      'video/webm;codecs=vp9,opus' in MediaRecorder.isTypeSupported
-        ? 'video/webm;codecs=vp9,opus'
-        : 'video/webm'
-    let options: MediaRecorderOptions = { mimeType: mime }
-    const rec = new MediaRecorder(stream, options)
+    const preferred = 'video/webm;codecs=vp9,opus'
+    const mime = (window as any).MediaRecorder && (MediaRecorder as any).isTypeSupported && MediaRecorder.isTypeSupported(preferred)
+      ? preferred
+      : 'video/webm'
+    const rec = new MediaRecorder(stream, { mimeType: mime })
     const chunks: BlobPart[] = []
     rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data) }
     rec.onstop = () => {
@@ -269,8 +258,7 @@ export default function PlaybackDrawer({
       URL.revokeObjectURL(url)
     }
 
-    // Build a static PDF source to draw quickly each frame
-    // Prefer using our snapshot; fall back to copying from the on-screen pdf canvas
+    // PDF draw source (snapshot or live)
     const getPdfDraw = () => {
       if (pdfSnapshot) {
         return () => { ctx.drawImage(pdfSnapshot, 0, 0, W, H) }
@@ -282,7 +270,7 @@ export default function PlaybackDrawer({
     }
     const drawPdf = getPdfDraw()
 
-    // Precompute for drawAtTime during export (avoid dependency on overlay state)
+    // Precompute ink drawer for export loop
     const drawInkAt = (timeSec: number) => {
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
@@ -300,44 +288,32 @@ export default function PlaybackDrawer({
       }
     }
 
-    // Drive the export with the audio clock for perfect sync
-    if (!audioEl) {
-      alert('No audio found to sync export.')
-      return
-    }
+    if (!audioEl) { alert('No audio found to sync export.'); return }
 
     // Prepare playback
     audioEl.currentTime = 0
-    try { await audioEl.play() } catch { /* user gesture may be needed; best effort */ }
+    try { await audioEl.play() } catch {}
 
-    // Start recording
-    rec.start(100) // gather chunks every 100ms
-
-    // Render loop (ties to audio currentTime)
-    const startRaf = () => {
-      const loop = () => {
-        const t = audioEl.currentTime
-        ctx.clearRect(0, 0, W, H)
-        drawPdf()
-        drawInkAt(t)
-        rafRef.current = requestAnimationFrame(loop)
-      }
+    // Start recording & RAF loop
+    rec.start(100)
+    const loop = () => {
+      const t = audioEl.currentTime
+      ctx.clearRect(0, 0, W, H)
+      drawPdf()
+      drawInkAt(t)
       rafRef.current = requestAnimationFrame(loop)
     }
+    rafRef.current = requestAnimationFrame(loop)
 
-    // Stop conditions
     const onEnded = () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       rec.stop()
       audioEl.removeEventListener('ended', onEnded)
     }
     audioEl.addEventListener('ended', onEnded)
-
-    // Kick off the RAF loop
-    startRaf()
   }
 
-  // Download strokes JSON (unchanged helper)
+  // Download strokes JSON
   function downloadStrokes() {
     const blob = new Blob([JSON.stringify({ strokes })], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
