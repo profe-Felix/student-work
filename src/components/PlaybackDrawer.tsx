@@ -20,13 +20,20 @@ type Seg = {
 }
 
 /* ---------- Utilities ---------- */
-function n(v: any) { const x = typeof v === 'string' ? parseFloat(v) : v; return Number.isFinite(x) ? x : 0 }
+function n(v: any) {
+  const x = typeof v === 'string' ? parseFloat(v) : v
+  return Number.isFinite(x) ? (x as number) : 0
+}
 
 /* ---------- Extremely defensive stroke parsing ---------- */
 function asPoints(maybe: any): TimedPoint[] {
   if (!maybe) return []
   if (Array.isArray(maybe) && maybe.length && typeof maybe[0] === 'object' && 'x' in maybe[0]) {
-    return (maybe as any[]).map(p => ({ x: n(p.x), y: n(p.y), t: p.t != null ? n(p.t) : undefined }))
+    return (maybe as any[]).map(p => ({
+      x: n((p as any).x),
+      y: n((p as any).y),
+      t: (p as any).t != null ? n((p as any).t) : undefined
+    }))
   }
   return []
 }
@@ -40,23 +47,28 @@ function toStroke(obj: any): Stroke | null {
   return null
 }
 
-type Parsed = { strokes: Stroke[]; metaW?: number; metaH?: number }
+type Parsed = { strokes: Stroke[]; metaW: number; metaH: number }
+
 function parseStrokes(payload: any): Parsed {
   let raw = payload
   try { if (typeof raw === 'string') raw = JSON.parse(raw) } catch {}
-  if (!raw) return { strokes: [] }
+  if (!raw) return { strokes: [], metaW: 0, metaH: 0 }
 
   // common wrappers/meta locations for source canvas size
-  const metaW = n(raw.canvasWidth ?? raw.canvas_w ?? raw.canvasW ?? raw.width ?? raw.w ?? raw.pageWidth ?? raw.page?.width)
-  const metaH = n(raw.canvasHeight ?? raw.canvas_h ?? raw.canvasH ?? raw.height ?? raw.h ?? raw.pageHeight ?? raw.page?.height)
-
-  const toParsed = (sArr: any[]): Parsed => ({ strokes: (sArr.map(toStroke).filter(Boolean) as Stroke[]), metaW, metaH })
-
+  let metaW = n(raw.canvasWidth ?? raw.canvas_w ?? raw.canvasW ?? raw.width ?? raw.w ?? raw.pageWidth ?? raw.page?.width)
+  let metaH = n(raw.canvasHeight ?? raw.canvas_h ?? raw.canvasH ?? raw.height ?? raw.h ?? raw.pageHeight ?? raw.page?.height)
   if (raw && raw.data) raw = raw.data
+
+  const toParsed = (sArr: any[]): Parsed => ({
+    strokes: (sArr.map(toStroke).filter(Boolean) as Stroke[]),
+    metaW,
+    metaH
+  })
 
   if (Array.isArray(raw)) {
     if (raw.length && typeof raw[0] === 'object' && 'x' in raw[0]) {
-      const s = toStroke(raw); return { strokes: s ? [s] : [], metaW, metaH }
+      const s = toStroke(raw)
+      return { strokes: s ? [s] : [], metaW, metaH }
     }
     return toParsed(raw)
   }
@@ -65,15 +77,19 @@ function parseStrokes(payload: any): Parsed {
   if (Array.isArray(raw.strokes)) buckets.push(...raw.strokes)
   if (Array.isArray(raw.lines))   buckets.push(...raw.lines)
   if (Array.isArray(raw.paths))   buckets.push(...raw.paths)
+
   if (!buckets.length && Array.isArray(raw.points)) {
-    const s = toStroke(raw); return { strokes: s ? [s] : [], metaW, metaH }
+    const s = toStroke(raw)
+    return { strokes: s ? [s] : [], metaW, metaH }
   }
   if (buckets.length) return toParsed(buckets)
 
   const vals = Object.values(raw)
   if (vals.length && Array.isArray(vals[0])) {
-    const s = toStroke(vals[0]); return { strokes: s ? [s] : [], metaW, metaH }
+    const s = toStroke(vals[0])
+    return { strokes: s ? [s] : [], metaW, metaH }
   }
+
   return { strokes: [], metaW, metaH }
 }
 
@@ -100,7 +116,7 @@ function buildSegments(strokes: Stroke[]): { segs: Seg[]; duration: number } {
 }
 
 /* ---------- Infer source-drawing dimensions (for scaling) ---------- */
-function inferSourceDims(strokes: Stroke[], metaW?: number, metaH?: number): { sw: number; sh: number } {
+function inferSourceDims(strokes: Stroke[], metaW: number, metaH: number): { sw: number; sh: number } {
   // If metadata provided and sensible, use it
   if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
 
@@ -113,7 +129,7 @@ function inferSourceDims(strokes: Stroke[], metaW?: number, metaH?: number): { s
     }
   }
 
-  // Handle normalized [0..1] data (rare): if max <= 2, treat as normalized
+  // Handle normalized [0..1] data (rare)
   if (maxX > 0 && maxX <= 2 && maxY > 0 && maxY <= 2) {
     return { sw: 1, sh: 1 }
   }
@@ -156,7 +172,7 @@ export default function PlaybackDrawer({
     const syncSize = () => {
       const pdfC = getPdfCanvas()
       if (!pdfC) return
-      // Use the PDF canvas *internal* pixel size (not CSS)
+      // Use the PDF canvas internal pixel size (not CSS)
       const w = pdfC.width || Math.round(pdfC.getBoundingClientRect().width * (window.devicePixelRatio || 1))
       const h = pdfC.height || Math.round(pdfC.getBoundingClientRect().height * (window.devicePixelRatio || 1))
       setSize(prev => (prev.w === w && prev.h === h) ? prev : { w, h })
@@ -182,7 +198,6 @@ export default function PlaybackDrawer({
 
   /* ------- Low-level drawing with auto-scale to fit current PDF page ------- */
   function withScale(ctx: CanvasRenderingContext2D, draw: () => void) {
-    // Scale raw stroke space (sw x sh) to current overlay size (size.w x size.h)
     const sx = size.w / Math.max(1, sw)
     const sy = size.h / Math.max(1, sh)
     ctx.save()
@@ -230,9 +245,7 @@ export default function PlaybackDrawer({
   function drawUpTo(timeSec: number) {
     const ctx = ensureCanvas()
     if (!ctx) return
-    // If no timing, show everything (or we could do proportional reveal)
     if (!segs.length) { drawStaticAll(); return }
-
     ctx.clearRect(0, 0, size.w, size.h)
     withScale(ctx, () => {
       ctx.lineCap = 'round'
@@ -316,7 +329,6 @@ export default function PlaybackDrawer({
     el.addEventListener('timeupdate', onTimeUpdate)
     el.addEventListener('ended', onEnded)
 
-    // first frame
     drawUpTo(el.currentTime)
 
     return () => {
