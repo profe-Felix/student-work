@@ -1,4 +1,3 @@
-//src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -213,7 +212,7 @@ export default function StudentAssignment(){
           }
           setAutoFollow(!!p.autoFollow)
           setAllowedPages(p.allowedPages ?? null)
-          setFocusOn(!!p.focusOn)            // <<< NEW
+          setFocusOn(!!p.focusOn)
           setNavLocked(!!p.focusOn && !!p.lockNav)
         } else {
           setPageIndex(0)
@@ -235,7 +234,7 @@ export default function StudentAssignment(){
       const p = JSON.parse(raw) as TeacherPresenceState
       setAutoFollow(!!p.autoFollow)
       setAllowedPages(p.allowedPages ?? null)
-      setFocusOn(!!p.focusOn)                // <<< NEW
+      setFocusOn(!!p.focusOn)
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
@@ -378,12 +377,13 @@ export default function StudentAssignment(){
     submitInFlight.current = true
     try{
       setSaving(true)
-      const strokes = drawRef.current?.getStrokes() || { strokes: [] }
-      const hasInk   = Array.isArray(strokes?.strokes) && strokes.strokes.length > 0
+      // NEW: include capture canvas CSS width/height so preview can scale correctly
+      const payload = drawRef.current?.getStrokes() || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+      const hasInk   = Array.isArray(payload?.strokes) && payload.strokes.length > 0
       const hasAudio = !!audioBlob.current
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      const encHash = await hashStrokes(strokes)
+      const encHash = await hashStrokes(payload)
       const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
       const last = localStorage.getItem(lastKey)
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
@@ -395,9 +395,9 @@ export default function StudentAssignment(){
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       if (hasInk) {
-        await saveStrokes(submission_id, strokes)
+        await saveStrokes(submission_id, payload)
         localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, strokes)
+        saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
         localDirty.current = false
@@ -490,7 +490,7 @@ export default function StudentAssignment(){
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
         setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)              // <<< NEW
+        setFocusOn(!!p.focusOn)
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
