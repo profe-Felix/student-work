@@ -37,9 +37,9 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
-  // PREVIEW STATE (NEW)
+  // PREVIEW STATE (NEW) — note audioUrl is string | undefined to match PlaybackDrawer
   const [previewOpen, setPreviewOpen] = useState(false)
-  const [preview, setPreview] = useState<{ studentId: string; strokes: any | null; audioUrl: string | null } | null>(null)
+  const [preview, setPreview] = useState<{ studentId: string; strokes: any | null; audioUrl: string | undefined } | null>(null)
   const [previewLoadingSid, setPreviewLoadingSid] = useState<string | null>(null)
 
   // fetch helper
@@ -207,13 +207,13 @@ export default function TeacherDashboard() {
       const strokesArt = latest.artifacts?.find(a => a.kind === 'strokes' && (a as any).strokes_json) as any | undefined
       const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
 
-      let audioUrl: string | null = null
+      let audioUrl: string | undefined = undefined
       if (audioArt?.storage_path) {
         try {
           audioUrl = await getAudioUrl(audioArt.storage_path)
         } catch (e) {
           console.warn('getAudioUrl failed', e)
-          audioUrl = null
+          audioUrl = undefined
         }
       }
 
@@ -389,7 +389,7 @@ export default function TeacherDashboard() {
         pdfUrl={currentPage?.pdf_path ?? ''}
         pageIndex={currentPage?.page_index ?? 0}
         strokes={preview?.strokes ?? null}
-        audioUrl={preview?.audioUrl ?? null}
+        audioUrl={preview?.audioUrl ?? undefined}
       />
     </div>
   )
