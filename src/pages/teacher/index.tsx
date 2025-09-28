@@ -46,6 +46,35 @@ export default function TeacherDashboard() {
   } | null>(null)
   const [previewLoadingSid, setPreviewLoadingSid] = useState<string | null>(null)
 
+  // ===== NEW: resolve a URL for the current page's PDF (for PlaybackDrawer/PdfCanvas) =====
+  const STORAGE_BUCKET = 'pdfs'
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('')
+
+  function keyForBucket(path: string) {
+    if (!path) return ''
+    let k = path.replace(/^\/+/, '')
+    k = k.replace(/^public\//, '')
+    k = k.replace(/^pdfs\//, '')
+    return k
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const storagePath = pages.find(p => p.id === pageId)?.pdf_path || ''
+      if (!storagePath) { setPreviewPdfUrl(''); return }
+      const key = keyForBucket(storagePath)
+      // try a signed URL first (one hour)
+      const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
+      if (!cancelled && sData?.signedUrl) { setPreviewPdfUrl(sData.signedUrl); return }
+      // fallback to public URL
+      const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
+      if (!cancelled) setPreviewPdfUrl(pData?.publicUrl ?? '')
+    })()
+    return () => { cancelled = true }
+  }, [pageId, pages])
+  // ===== END NEW =====
+
   // fetch helper
   const refreshGrid = useRef<(why?: string) => Promise<void>>(async () => {})
   refreshGrid.current = async (_why?: string) => {
@@ -391,7 +420,7 @@ export default function TeacherDashboard() {
         <PlaybackDrawer
           onClose={() => setPreviewOpen(false)}
           student={preview?.studentId ?? ''}
-          pdfUrl={currentPage?.pdf_path ?? ''}
+          pdfUrl={previewPdfUrl}
           pageIndex={currentPage?.page_index ?? 0}
           strokesPayload={(preview?.strokes as any) ?? {}}
           audioUrl={preview?.audioUrl}
