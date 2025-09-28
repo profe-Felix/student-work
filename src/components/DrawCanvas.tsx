@@ -3,9 +3,11 @@ import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 export type StrokePoint = { x: number; y: number }
 export type Stroke = { color: string; size: number; tool: 'pen'|'highlighter'; pts: StrokePoint[] }
 export type StrokesPayload = { strokes: Stroke[] }
+// NEW: include capture canvas CSS dimensions for correct preview scaling
+export type StrokesPayloadWithMeta = StrokesPayload & { canvasWidth: number; canvasHeight: number }
 
 export type DrawCanvasHandle = {
-  getStrokes: () => StrokesPayload
+  getStrokes: () => StrokesPayloadWithMeta
   loadStrokes: (data: StrokesPayload | null | undefined) => void
   clearStrokes: () => void
   undo: () => void
@@ -120,20 +122,30 @@ export default forwardRef(function DrawCanvas(
     }
   }, [mode])
 
-  useImperativeHandle(ref, () => ({
-    getStrokes: (): StrokesPayload => ({ strokes: strokes.current }),
-    loadStrokes: (data: StrokesPayload | null | undefined): void => {
+  // === Expose imperative API (now returns capture canvas size too) ===
+  useImperativeHandle(ref, (): DrawCanvasHandle => ({
+    getStrokes: () => {
+      // These are the CSS drawing units used when collecting pts
+      const cssW = Number.isFinite(width) ? width : (canvasRef.current?.clientWidth ?? 0)
+      const cssH = Number.isFinite(height) ? height : (canvasRef.current?.clientHeight ?? 0)
+      return {
+        strokes: [...strokes.current],
+        canvasWidth: Math.max(1, Math.round(cssW)),
+        canvasHeight: Math.max(1, Math.round(cssH)),
+      }
+    },
+    loadStrokes: (data: StrokesPayload | null | undefined) => {
       const safe = normalize(data)
       strokes.current = safe.strokes
       current.current = null
       redraw()
     },
-    clearStrokes: (): void => {
+    clearStrokes: () => {
       strokes.current = []
       current.current = null
       redraw()
     },
-    undo: (): void => {
+    undo: () => {
       strokes.current.pop()
       redraw()
     }
