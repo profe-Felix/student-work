@@ -1,101 +1,121 @@
 // src/components/PlaybackDrawer.tsx
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import PdfCanvas from './PdfCanvas'
 
-type Props = {
+export type Props = {
   onClose: () => void
   student: string
   pdfUrl: string
   pageIndex: number
-  strokesPayload: { strokes?: { color: string; size: number; tool: 'pen'|'highlighter'; pts: {x:number;y:number}[] }[] }
+  strokesPayload: any
   audioUrl?: string
 }
 
-function drawAll(ctx: CanvasRenderingContext2D, payload: Props['strokesPayload']) {
-  ctx.clearRect(0,0, ctx.canvas.width, ctx.canvas.height)
-  const strokes = Array.isArray(payload?.strokes) ? payload!.strokes! : []
-  for (const s of strokes) {
-    if (!Array.isArray(s.pts) || s.pts.length === 0) continue
-    ctx.save()
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.lineWidth = s.size
-    ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
-    ctx.strokeStyle = s.color
-    ctx.beginPath()
-    for (let i = 0; i < s.pts.length; i++) {
-      const p = s.pts[i]
-      if (i === 0) ctx.moveTo(p.x, p.y)
-      else ctx.lineTo(p.x, p.y)
-    }
-    ctx.stroke()
-    ctx.restore()
-  }
-}
+type Size = { w: number; h: number }
 
-export default function PlaybackDrawer(props: Props) {
-  const { onClose, student, pdfUrl, pageIndex, strokesPayload, audioUrl } = props
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [size, setSize] = useState({ w: 800, h: 600 })
-  const [anim, setAnim] = useState<'none'|'replay'>('none')
+export default function PlaybackDrawer({
+  onClose,
+  student,
+  pdfUrl,
+  pageIndex,
+  strokesPayload,
+  audioUrl,
+}: Props) {
+  const [size, setSize] = useState<Size>({ w: 800, h: 600 })
+  const [anim, setAnim] = useState<'none' | 'replay'>('none')
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const animRef = useRef<number | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  // When PDF is ready, sync canvas size
-  const onPdfReady = (_pdf: any, canvas: HTMLCanvasElement) => {
-    try {
-      const w = Math.round(parseFloat(getComputedStyle(canvas).width))
-      const h = Math.round(parseFloat(getComputedStyle(canvas).height))
-      setSize({ w, h })
-      // draw once
-      const c = canvasRef.current!
-      c.width = w; c.height = h
-      const ctx = c.getContext('2d')!
-      drawAll(ctx, strokesPayload)
-    } catch {}
-  }
+  // Normalize payload (back-compat)
+  const normalized = useMemo(() => {
+    const payload = strokesPayload || {}
+    if (payload && Array.isArray(payload.strokes)) return payload as { strokes: any[] }
+    // Some older artifacts may store strokes directly
+    if (Array.isArray(payload)) return { strokes: payload }
+    return { strokes: [] as any[] }
+  }, [strokesPayload])
 
-  // Replay animation
-  const startReplay = () => {
-    if (!canvasRef.current) return
-    cancelReplay()
-    const c = canvasRef.current
-    const ctx = c.getContext('2d')!
-    ctx.clearRect(0,0,c.width,c.height)
-
-    const strokes = Array.isArray(strokesPayload?.strokes) ? strokesPayload!.strokes! : []
-    let sIdx = 0, pIdx = 0
-
-    const step = () => {
-      // finished
-      if (sIdx >= strokes.length) { animRef.current = null; return }
-      const s = strokes[sIdx]
-      if (!s || !Array.isArray(s.pts) || s.pts.length < 2) { sIdx++; pIdx = 0; animRef.current = requestAnimationFrame(step); return }
-
-      // draw segment by segment
-      ctx.save()
+  // Render all strokes immediately (static)
+  function drawAll(ctx: CanvasRenderingContext2D, W: number, H: number) {
+    ctx.clearRect(0, 0, W, H)
+    const strokes = normalized.strokes || []
+    for (const s of strokes) {
+      const pts = s.points || []
+      if (!pts.length) continue
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
-      ctx.lineWidth = s.size
-      ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
-      ctx.strokeStyle = s.color
+      ctx.strokeStyle = s.color || '#111'
+      ctx.lineWidth = s.size || 4
       ctx.beginPath()
-      ctx.moveTo(s.pts[0].x, s.pts[0].y)
-      for (let i = 1; i <= pIdx && i < s.pts.length; i++) {
-        const p = s.pts[i]
-        ctx.lineTo(p.x, p.y)
+      ctx.moveTo(pts[0].x, pts[0].y)
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y)
       }
       ctx.stroke()
-      ctx.restore()
+    }
+  }
 
-      pIdx++
-      if (pIdx >= s.pts.length) { sIdx++; pIdx = 0 }
-      animRef.current = requestAnimationFrame(step)
+  // Replay animation (time-based if t exists; otherwise segment-by-segment)
+  function startReplay() {
+    if (!canvasRef.current) return
+    const ctx = canvasRef.current.getContext('2d')
+    if (!ctx) return
+
+    const W = canvasRef.current.width
+    const H = canvasRef.current.height
+    const strokes = normalized.strokes || []
+
+    // Build a timeline of segments
+    type Seg = { x0: number; y0: number; x1: number; y1: number; color: string; size: number; t: number }
+    const segs: Seg[] = []
+    for (const s of strokes) {
+      const pts = s.points || []
+      if (pts.length < 2) continue
+      const hasT = typeof pts[0]?.t === 'number'
+      for (let i = 1; i < pts.length; i++) {
+        const p0 = pts[i - 1]
+        const p1 = pts[i]
+        const t = hasT ? p1.t : i * 12 // ~12ms fallback
+        segs.push({ x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y, color: s.color || '#111', size: s.size || 4, t })
+      }
+    }
+    segs.sort((a, b) => a.t - b.t)
+
+    ctx.clearRect(0, 0, W, H)
+    let start: number | null = null
+    let idx = 0
+
+    const step = (ts: number) => {
+      if (start == null) start = ts
+      const elapsed = ts - start
+
+      while (idx < segs.length && segs[idx].t <= elapsed) {
+        const seg = segs[idx]
+        ctx.strokeStyle = seg.color
+        ctx.lineWidth = seg.size
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.beginPath()
+        ctx.moveTo(seg.x0, seg.y0)
+        ctx.lineTo(seg.x1, seg.y1)
+        ctx.stroke()
+        idx++
+      }
+
+      if (idx < segs.length && animRef.current != null) {
+        animRef.current = requestAnimationFrame(step)
+      } else {
+        animRef.current = null
+        setAnim('none')
+      }
     }
 
     animRef.current = requestAnimationFrame(step)
   }
 
-  const cancelReplay = () => {
+  function cancelReplay() {
     if (animRef.current != null) {
       cancelAnimationFrame(animRef.current)
       animRef.current = null
@@ -103,115 +123,173 @@ export default function PlaybackDrawer(props: Props) {
   }
 
   useEffect(() => {
-    // cleanup on unmount
-    return () => cancelReplay()
+    // Cleanup on unmount
+    return () => {
+      if (animRef.current != null) cancelAnimationFrame(animRef.current)
+    }
   }, [])
 
+  // When switching to replay: clear and animate; when stopping: redraw static
   useEffect(() => {
-    if (!canvasRef.current) return
     const c = canvasRef.current
-    c.width = size.w; c.height = size.h
-    const ctx = c.getContext('2d')!
-    if (anim === 'none') {
-      cancelReplay()
-      drawAll(ctx, strokesPayload)
-    } else {
+    if (!c) return
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+
+    if (anim === 'replay') {
+      ctx.clearRect(0, 0, c.width, c.height)
+      // Sync audio to 0 if present
+      if (audioRef.current) {
+        try { audioRef.current.currentTime = 0; audioRef.current.play().catch(() => {}) } catch {}
+      }
       startReplay()
+    } else {
+      cancelReplay()
+      drawAll(ctx, c.width, c.height)
+      // Stop audio if playing
+      if (audioRef.current) {
+        try { audioRef.current.pause() } catch {}
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h, anim, strokesPayload])
+  }, [anim, size.w, size.h, normalized])
+
+  // PdfCanvas tells us its actual pixel size; sync overlay canvas to match 1:1
+  function onPdfReady(info: { width?: number; height?: number; cssWidth?: number; cssHeight?: number }) {
+    // Prefer device pixel width/height if provided; fall back to css
+    const w = info.width ?? info.cssWidth ?? 800
+    const h = info.height ?? info.cssHeight ?? 600
+    setSize({ w, h })
+
+    // Also immediately draw static strokes on the fresh canvas
+    requestAnimationFrame(() => {
+      const c = canvasRef.current
+      if (!c) return
+      c.width = w
+      c.height = h
+      const ctx = c.getContext('2d')
+      if (!ctx) return
+      drawAll(ctx, w, h)
+    })
+  }
+
+  // Download strokes JSON
+  function downloadStrokes() {
+    const blob = new Blob([JSON.stringify(normalized)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${student || 'student'}_strokes.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
       style={{
-        position: 'fixed', right: 0, top: 0, bottom: 0, width: 'min(900px, 92vw)',
-        background: '#fff', borderLeft: '1px solid #e5e7eb', zIndex: 20050,
-        boxShadow: '-8px 0 24px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column'
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(17,24,39,0.55)',
+        display: 'flex',
+        alignItems: 'stretch',
+        justifyContent: 'center',
+        zIndex: 50,
       }}
     >
-      {/* Header */}
-      <div style={{ padding: 12, borderBottom: '1px solid #e5e7eb', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-        <div style={{ fontWeight: 700 }}>Review • {student} • Page {props.pageIndex + 1}</div>
-        <button onClick={onClose} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e5e7eb' }}>Close</button>
-      </div>
-
-      {/* Content */}
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1.2fr 1fr', minHeight: 0 }}>
-        {/* Left: PDF + strokes overlay */}
-        <div style={{ position: 'relative', padding: 12, overflow: 'auto', background:'#fafafa' }}>
-          <div style={{ position: 'relative', width: `${size.w}px`, margin: '0 auto' }}>
-            <div style={{ position: 'relative' }}>
-              <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
-              <canvas ref={canvasRef}
-                style={{ position: 'absolute', inset: 0, width: `${size.w}px`, height: `${size.h}px`, pointerEvents: 'none' }}
-                width={size.w} height={size.h}
-              />
-            </div>
+      {/* Panel */}
+      <div
+        style={{
+          background: '#fff',
+          width: 'min(1200px, 96vw)',
+          height: 'min(92vh, 980px)',
+          margin: '2vh auto',
+          borderRadius: 12,
+          boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: 12,
+            borderBottom: '1px solid #e5e7eb',
+            background: '#f9fafb',
+          }}
+        >
+          <strong style={{ fontSize: 14 }}>Preview — {student || 'Student'}</strong>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => setAnim(a => (a === 'replay' ? 'none' : 'replay'))}
+              style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff' }}
+            >
+              {anim === 'replay' ? 'Stop Replay' : 'Replay'}
+            </button>
+            <button
+              onClick={downloadStrokes}
+              style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff' }}
+              title="Download strokes JSON"
+            >
+              Download
+            </button>
+            <button
+              onClick={onClose}
+              style={{
+                padding: '6px 10px',
+                borderRadius: 8,
+                border: '1px solid #e5e7eb',
+                background: '#fff',
+              }}
+            >
+              Close
+            </button>
           </div>
         </div>
 
-        {/* Right: controls */}
-        <div style={{ padding: 12, borderLeft: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={() => setAnim(a => a === 'replay' ? 'none' : 'replay')}
-              style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e5e7eb', background:'#f9fafb' }}
-            >
-              {anim === 'replay' ? 'Stop' : 'Replay'}
-            </button>
-            <button
-              onClick={() => {
-                // download strokes JSON
-                const blob = new Blob([JSON.stringify(strokesPayload || {strokes:[]})], { type: 'application/json' })
-                const url = URL.createObjectURL(blob)
-                const a = document.createElement('a')
-                a.href = url
-                a.download = `strokes-${student}-p${pageIndex+1}.json`
-                a.click()
-                URL.revokeObjectURL(url)
-              }}
-              style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e5e7eb', background:'#f9fafb' }}
-            >
-              Download JSON
-            </button>
-            <button
-              onClick={() => {
-                // “inked PDF” quick export: download a PNG of the combined canvas area
-                const host = (canvasRef.current?.parentElement as HTMLElement)
-                if (!host) return
-                // Make a temp canvas and draw PDF area (we only have the strokes canvas; export strokes only)
-                const c = document.createElement('canvas')
-                c.width = canvasRef.current!.width
-                c.height = canvasRef.current!.height
-                const ctx = c.getContext('2d')!
-                // draw only strokes (for v0). For full inked PDF we’d need to re-draw PDF to canvas.
-                ctx.drawImage(canvasRef.current!, 0, 0)
-                c.toBlob((blob) => {
-                  if (!blob) return
-                  const url = URL.createObjectURL(blob)
-                  const a = document.createElement('a')
-                  a.href = url
-                  a.download = `inked-${student}-p${pageIndex+1}.png`
-                  a.click()
-                  URL.revokeObjectURL(url)
-                }, 'image/png')
-              }}
-              style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e5e7eb', background:'#f9fafb' }}
-            >
-              Download PNG
-            </button>
-          </div>
+        {/* Top toolbar (moved from right side) */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: 12,
+            borderBottom: '1px solid #e5e7eb',
+          }}
+        >
+          {audioUrl ? (
+            <audio ref={audioRef} controls src={audioUrl} style={{ width: 'min(600px, 100%)' }} />
+          ) : (
+            <span style={{ fontSize: 12, color: '#6b7280' }}>No audio</span>
+          )}
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280' }}>
+            Page {pageIndex + 1}
+          </span>
+        </div>
 
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>Audio</div>
-            {audioUrl
-              ? <audio src={audioUrl} controls style={{ width: '100%' }} />
-              : <div style={{ color: '#6b7280' }}>No audio</div>
-            }
-          </div>
-
-          <div style={{ marginTop: 'auto', color: '#6b7280', fontSize: 12 }}>
-            v0 — read only. We’ll add teacher comments/grades next.
+        {/* Content: PDF uses the full width; controls are above */}
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: '#fafafa' }}>
+          <div style={{ position: 'relative', width: `${size.w}px`, margin: '12px auto' }}>
+            <div style={{ position: 'relative' }}>
+              <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
+              <canvas
+                ref={canvasRef}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: `${size.w}px`,
+                  height: `${size.h}px`,
+                  pointerEvents: 'none',
+                }}
+                width={size.w}
+                height={size.h}
+              />
+            </div>
           </div>
         </div>
       </div>
