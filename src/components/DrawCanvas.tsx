@@ -7,7 +7,7 @@ export type StrokesPayload = {
   canvasWidth?: number
   canvasHeight?: number
   timing?: {
-    capturePerf0Ms?: number  // perf time (ms) when first stroke on this page started (or rebased)
+    capturePerf0Ms?: number  // perf time (ms) when first stroke on this page started
   }
 }
 
@@ -16,7 +16,7 @@ export type DrawCanvasHandle = {
   loadStrokes: (data: StrokesPayload | null | undefined) => void
   clearStrokes: () => void
   undo: () => void
-  /** Rebase timing so future audio aligns to this exact perf timestamp */
+  /** Rebase timing so future audio aligns to this new "now" (ts = perf timestamp from AudioRecorder) */
   markTimingZero: (ts?: number) => void
 }
 
@@ -93,7 +93,7 @@ export default forwardRef(function DrawCanvas(
     width, height,
     color, size,
     mode, // 'scroll' | 'draw'
-    tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'
+    tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'  (erasers not implemented here)
   }:{
     width:number; height:number
     color:string; size:number
@@ -107,7 +107,7 @@ export default forwardRef(function DrawCanvas(
   const strokes   = useRef<Stroke[]>([])
   const current   = useRef<Stroke|null>(null)
 
-  // perf timebase for this page (rebased when requested)
+  // timing reference (first time we actually begin drawing on this page)
   const capturePerf0Ms = useRef<number | null>(null)
 
   // pointers
@@ -168,13 +168,11 @@ export default forwardRef(function DrawCanvas(
       strokes.current.pop()
       redraw()
     },
-    /** Rebase all timestamps so a new audio recording can align to exact ts (perf clock). */
+    /** Rebase all timestamps so a new audio recording can align to "now" */
     markTimingZero: (ts?: number): void => {
-      const oldZero = capturePerf0Ms.current
       const newZero = typeof ts === 'number' ? ts : performance.now()
+      const oldZero = capturePerf0Ms.current
       if (oldZero == null) { capturePerf0Ms.current = newZero; return }
-
-      // Keep absolute time: oldZero + tOld = newZero + tNew  => tNew = tOld + (oldZero - newZero)
       const delta = oldZero - newZero
       if (delta !== 0) {
         for (const s of strokes.current) {
