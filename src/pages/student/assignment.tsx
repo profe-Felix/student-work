@@ -536,23 +536,35 @@ export default function StudentAssignment(){
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
-      // Save strokes first
-      if (hasInk) {
-        await saveStrokes(submission_id, payload)
-        localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
-        lastAppliedServerHash.current = encHash
-        lastLocalHash.current = encHash
-        localDirty.current = false
-      }
-
-      // Merge & save audio if we have takes
+      // If we have audio takes, merge them first so we can stamp the timing before saving strokes
       if (hasAudioTakes) {
         const captureZero = payload.timing?.capturePerf0Ms
         const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
-        await saveAudio(submission_id, merged)
         // after merge, audio aligns to ink (offset 0)
         payload.timing = { ...(payload.timing || {}), audioOffsetMs: 0 }
+
+        // Save strokes with the updated timing (includes audioOffsetMs:0)
+        if (hasInk) {
+          await saveStrokes(submission_id, payload)
+          localStorage.setItem(lastKey, encHash)
+          saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
+          lastAppliedServerHash.current = encHash
+          lastLocalHash.current = encHash
+          localDirty.current = false
+        }
+
+        // Save the merged audio
+        await saveAudio(submission_id, merged)
+      } else {
+        // No audio changes; just save strokes if needed
+        if (hasInk) {
+          await saveStrokes(submission_id, payload)
+          localStorage.setItem(lastKey, encHash)
+          saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
+          lastAppliedServerHash.current = encHash
+          lastLocalHash.current = encHash
+          localDirty.current = false
+        }
       }
 
       clearDraft(studentId, assignmentTitle, pageIndex)
@@ -578,10 +590,6 @@ export default function StudentAssignment(){
     if (nextIndex < 0) return
     if (navLocked || blockedBySync(nextIndex)) return
     try { audioRef.current?.stop() } catch {}
-    // Page-local audio should not bleed across pages
-    audioTakes.current = []
-    audioBlob.current = null
-    pendingTakeStart.current = null
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
     const hasInk   = Array.isArray(current.strokes) && current.strokes.length > 0
@@ -592,6 +600,11 @@ export default function StudentAssignment(){
     } else {
       try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
     }
+
+    // now that we've dealt with saving, reset page-local audio
+    audioTakes.current = []
+    audioBlob.current = null
+    pendingTakeStart.current = null
 
     setPageIndex(nextIndex)
   }
@@ -804,31 +817,28 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-<AudioRecorder
-  ref={audioRef}
-  maxSec={180}
-  onStart={(ts: number) => {
-    // Replace mode: drop old takes and rebase ink to this exact timestamp
-    if (recordMode === 'replace') {
-      audioTakes.current = []
-      try { drawRef.current?.markTimingZero?.(ts) } catch {}
-    } else {
-      // Append mode: only set zero if we don't have one yet
-      try {
-        const zero = (drawRef.current?.getStrokes() as any)?.timing?.capturePerf0Ms
-        if (zero == null) (drawRef.current as any)?.markTimingZero?.(ts)
-      } catch {}
-    }
-    pendingTakeStart.current = ts
-  }}
-  onBlob={(b: Blob) => {
-    const ts = pendingTakeStart.current ?? performance.now()
-    audioTakes.current.push({ blob: b, startPerfMs: ts })
-    audioBlob.current = b // optional: keep last blob if you preview elsewhere
-    pendingTakeStart.current = null
-  }}
-/>
-
+        <AudioRecorder
+          ref={audioRef}
+          maxSec={180}
+          onStart={(ts: number) => {
+            // Replace mode: drop old takes and rebase ink to this exact timestamp
+            if (recordMode === 'replace') {
+              audioTakes.current = []
+              try { (drawRef.current as any)?.markTimingZero?.(ts) } catch {}
+            } else {
+              // Append mode: only set a zero if none exists yet
+              const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
+              if (cap0 == null) { try { (drawRef.current as any)?.markTimingZero?.(ts) } catch {} }
+            }
+            pendingTakeStart.current = ts
+          }}
+          onBlob={(b: Blob) => {
+            const ts = pendingTakeStart.current ?? performance.now()
+            audioTakes.current.push({ blob: b, startPerfMs: ts })
+            audioBlob.current = b
+            pendingTakeStart.current = null
+          }}
+        />
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
