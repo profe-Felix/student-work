@@ -227,38 +227,44 @@ export default function PlaybackDrawer({
   }
 
   function drawUpTo(tMs:number) {
-    if (!pdfReady) return
-    const cnv = overlayRef.current
-    if (!cnv) return
-    const ctx = cnv.getContext('2d')
-    if (!ctx) return
+  if (!pdfReady) return
+  const cnv = overlayRef.current
+  if (!cnv) return
+  const ctx = cnv.getContext('2d')
+  if (!ctx) return
 
-    clearOverlay()
+  clearOverlay()
 
-    const { w: dw, h: dh } = pdfCssRef.current
-    const { sw, sh } = inferSourceDims(parsed, dw, dh)
+  const { w: dw, h: dh } = pdfCssRef.current
+  const { sw, sh } = inferSourceDims(parsed, dw, dh)
 
-    const total = built.duration || 1
-    const ratio = Math.max(0, Math.min(1, tMs / total))
-    const cutoffLen = built.totalLen * ratio
+  // <<< key change: pick the correct total timebase
+  const totalTime =
+    (playMode === 'together' && audioAvailable)
+      ? Math.max(1, durationMs)
+      : Math.max(1, built.duration)
 
-    let acc = 0
-    withScale(ctx, sw, sh, dw, dh, () => {
-      for (const seg of built.segs) {
-        if (acc + seg.len <= cutoffLen) {
-          strokeSegment(ctx, seg, 1) // full
-          acc += seg.len
-        } else {
-          const remain = cutoffLen - acc
-          if (remain > 0 && seg.len > 0) {
-            const partial = Math.max(0, Math.min(1, remain / seg.len))
-            strokeSegment(ctx, seg, partial)
-          }
-          break
+  const ratio = Math.max(0, Math.min(1, tMs / totalTime))
+  const cutoffLen = built.totalLen * ratio
+
+  let acc = 0
+  withScale(ctx, sw, sh, dw, dh, () => {
+    for (const seg of built.segs) {
+      if (acc + seg.len <= cutoffLen) {
+        strokeSegment(ctx, seg, 1) // full
+        acc += seg.len
+      } else {
+        const remain = cutoffLen - acc
+        if (remain > 0 && seg.len > 0) {
+          const partial = Math.max(0, Math.min(1, remain / seg.len))
+          strokeSegment(ctx, seg, partial)
         }
+        break
       }
-    })
-  }
+    }
+  })
+}
+
 
   function strokeSegment(ctx:CanvasRenderingContext2D, seg:Seg, portion:number) {
     ctx.save()
