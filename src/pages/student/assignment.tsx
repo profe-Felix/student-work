@@ -805,26 +805,31 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-        <AudioRecorder
-          ref={audioRef}
-          maxSec={180}
-          onStart={(ts) => {
-            // Replace mode: drop old takes and rebase ink to this exact timestamp
-            if (recordMode === 'replace') {
-              audioTakes.current = []
-            }
-            pendingTakeStart.current = ts
-            try { (drawRef.current as any)?.markTimingZero?.(ts) } catch {}
-          }}
-          onBlob={(b) => {
-            // If we somehow didn’t get a start time, assume “now”
-            const ts = pendingTakeStart.current ?? performance.now()
-            audioTakes.current.push({ blob: b, startPerfMs: ts })
-            // keep the last recorded audio around TOO (optional)
-            audioBlob.current = b
-            pendingTakeStart.current = null
-          }}
-        />
+<AudioRecorder
+  ref={audioRef}
+  maxSec={180}
+  onStart={(ts: number) => {
+    // Replace mode: drop old takes and rebase ink to this exact timestamp
+    if (recordMode === 'replace') {
+      audioTakes.current = []
+      try { drawRef.current?.markTimingZero?.(ts) } catch {}
+    } else {
+      // Append mode: only set zero if we don't have one yet
+      try {
+        const zero = (drawRef.current?.getStrokes() as any)?.timing?.capturePerf0Ms
+        if (zero == null) (drawRef.current as any)?.markTimingZero?.(ts)
+      } catch {}
+    }
+    pendingTakeStart.current = ts
+  }}
+  onBlob={(b: Blob) => {
+    const ts = pendingTakeStart.current ?? performance.now()
+    audioTakes.current.push({ blob: b, startPerfMs: ts })
+    audioBlob.current = b // optional: keep last blob if you preview elsewhere
+    pendingTakeStart.current = null
+  }}
+/>
+
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
