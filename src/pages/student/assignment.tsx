@@ -61,9 +61,21 @@ const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
 const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
 
 function normalizeStrokes(data: unknown): StrokesPayload {
+  // <<< make this tolerant + carry canvas + timing
   if (!data || typeof data !== 'object') return { strokes: [] }
-  const arr = Array.isArray((data as any).strokes) ? (data as any).strokes : []
-  return { strokes: arr }
+  const obj = data as any
+  const arr = Array.isArray(obj.strokes) ? obj.strokes : []
+  const out: StrokesPayload = { strokes: arr }
+
+  if (Number.isFinite(obj.canvasWidth))  out.canvasWidth  = obj.canvasWidth
+  if (Number.isFinite(obj.canvasHeight)) out.canvasHeight = obj.canvasHeight
+
+  if (obj.timing && typeof obj.timing === 'object') {
+    out.timing = {}
+    if (Number.isFinite(obj.timing.capturePerf0Ms)) out.timing.capturePerf0Ms = obj.timing.capturePerf0Ms
+    if (Number.isFinite(obj.timing.audioOffsetMs))  out.timing.audioOffsetMs  = obj.timing.audioOffsetMs
+  }
+  return out
 }
 
 function saveDraft(student:string, assignment:string, page:number, strokes:any){
@@ -383,6 +395,13 @@ export default function StudentAssignment(){
       const hasAudio = !!audioBlob.current
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
+      // <<< A/V ALIGNMENT: attach audioOffsetMs when possible
+      const audioMeta = audioRef.current?.getAudioMeta?.()
+      if (hasInk && audioMeta?.audioStartPerfMs != null && payload?.timing?.capturePerf0Ms != null) {
+        const audioOffsetMs = audioMeta.audioStartPerfMs - (payload.timing.capturePerf0Ms || 0)
+        payload.timing = { ...(payload.timing || {}), audioOffsetMs }
+      }
+
       const encHash = await hashStrokes(payload)
       const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
       const last = localStorage.getItem(lastKey)
@@ -663,7 +682,7 @@ export default function StudentAssignment(){
         style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
           touchAction: handMode ? 'auto' : 'none', /* NEW: allow native scroll when hand mode */
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-          background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
+          background:'#fff', border:'1px solid '#eee', borderRadius:12, position:'relative' }}
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
           <div style={{ position:'absolute', inset:0, zIndex:0 }}>
