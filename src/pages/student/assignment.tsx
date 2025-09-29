@@ -126,6 +126,9 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
 
 type AudioTake = { blob: Blob; startPerfMs: number }
 
+/**
+ * Proper resampling (no slowdown/warble) and alignment to the ink timeline.
+ */
 async function mergeAudioTakesToWav(
   takes: AudioTake[],
   capturePerf0Ms: number | undefined
@@ -160,16 +163,15 @@ async function mergeAudioTakesToWav(
   }
   const mono = decoded.map(d => ({ buf: toMono(d.buf), offsetSec: d.offsetSec }))
 
-  // Resample to 44.1k only if needed (avoid resampling if rates match to keep voice crisp)
+  // Resample to 44.1k only if needed (avoid resampling if rates match)
   const ResampleCtx = (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext
   const resampled = await Promise.all(mono.map(async ({ buf, offsetSec }) => {
     if (buf.sampleRate === sampleRate) return { buf, offsetSec }
     const length = Math.ceil(buf.duration * sampleRate)
     const oc = new ResampleCtx(1, length, sampleRate)
     const src = oc.createBufferSource()
-    const copy = oc.createBuffer(1, length, sampleRate)
-    copy.copyToChannel(buf.getChannelData(0), 0)
-    src.buffer = copy
+    // feed the original buffer; the offline context resamples correctly
+    src.buffer = buf
     src.connect(oc.destination)
     src.start(0)
     const rendered: AudioBuffer = await oc.startRendering()
@@ -806,7 +808,7 @@ export default function StudentAssignment(){
         </button>
         <button
           onClick={() => { audioTakes.current = []; audioBlob.current = null; pendingTakeStart.current = null }}
-          style={{ padding:'6px 8px', border:'1px solid '#ddd', borderRadius:8, background:'#fff' }}
+          style={{ padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}
           title="Clear all audio for this page"
         >
           Reset Audio
@@ -870,7 +872,7 @@ export default function StudentAssignment(){
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
         <h2>Student Assignment</h2>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-          <div style={{ padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}>
+          <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
             Student: <strong>{studentId}</strong>
           </div>
           <button onClick={()=> nav('/start')} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}>
