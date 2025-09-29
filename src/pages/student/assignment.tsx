@@ -17,13 +17,15 @@ import {
   subscribeToGlobal,
   type TeacherPresenceState, // (type only; helps with cache shape)
 } from '../../lib/realtime'
-// Allow audioOffsetMs locally without changing DrawCanvas' exported type
+
+// ---------- Extend DrawCanvas StrokesPayload just for runtime (so audioOffsetMs is allowed) ----------
 type StrokesPayloadRT = StrokesPayload & {
   timing?: {
     capturePerf0Ms?: number
     audioOffsetMs?: number
   }
 }
+
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
 const DEFAULT_PDF_STORAGE_PATH = 'pdfs/aprende-m2.pdf'
@@ -82,7 +84,6 @@ function normalizeStrokes(data: unknown): StrokesPayloadRT {
   }
   return out
 }
-
 
 function saveDraft(student:string, assignment:string, page:number, strokes:any){
   try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
@@ -212,6 +213,29 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
+  // ---------- ensureIdsFor(index): bind index, no fallback to page 0 ----------
+  async function ensureIdsFor(index:number): Promise<{ assignment_id: string, page_id: string }> {
+    if (rtAssignmentId) {
+      const pages = await listPages(rtAssignmentId)
+      const curr = pages.find(p => p.page_index === index)
+      if (!curr) throw new Error(`No pages available for assignment (page_index=${index})`)
+      currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
+      setPdfStoragePath(curr.pdf_path || '')
+      return { assignment_id: rtAssignmentId, page_id: curr.id }
+    }
+    // Fallback boot path (your original upsert)
+    const ids = await upsertAssignmentWithPage(assignmentTitle, DEFAULT_PDF_STORAGE_PATH, index)
+    currIds.current = ids
+    if (!rtAssignmentId && ids.assignment_id) setRtAssignmentId(ids.assignment_id!)
+    try {
+      const pages = await listPages(ids.assignment_id!)
+      const curr = pages.find(p => p.page_index === index)
+      if (!curr) throw new Error(`No page row after upsert for page_index=${index}`)
+      setPdfStoragePath(curr?.pdf_path || DEFAULT_PDF_STORAGE_PATH)
+    } catch {}
+    return ids as { assignment_id: string, page_id: string }
+  }
+
   // assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
@@ -261,28 +285,6 @@ export default function StudentAssignment(){
     } catch {}
   }, [rtAssignmentId])
 
-  // Resolve assignment/page depending on whether we have a teacher-provided assignment
-  async function ensureIds(): Promise<{ assignment_id: string, page_id: string }> {
-    if (rtAssignmentId) {
-      const pages = await listPages(rtAssignmentId)
-      const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
-      if (!curr) throw new Error('No pages available for assignment')
-      currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
-      setPdfStoragePath(curr.pdf_path || '')
-      return { assignment_id: rtAssignmentId, page_id: curr.id }
-    }
-    // Fallback boot path (your original upsert)
-    const ids = await upsertAssignmentWithPage(assignmentTitle, DEFAULT_PDF_STORAGE_PATH, pageIndex)
-    currIds.current = ids
-    if (!rtAssignmentId && ids.assignment_id) setRtAssignmentId(ids.assignment_id!)
-    try {
-      const pages = await listPages(ids.assignment_id!)
-      const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
-      setPdfStoragePath(curr?.pdf_path || DEFAULT_PDF_STORAGE_PATH)
-    } catch {}
-    return ids as { assignment_id: string, page_id: string }
-  }
-
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
@@ -298,7 +300,8 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        const { assignment_id, page_id } = await ensureIds()
+        const thisIndex = pageIndex
+        const { assignment_id, page_id } = await ensureIdsFor(thisIndex)
         if (!rtAssignmentId && assignment_id) setRtAssignmentId(assignment_id!)
 
         try {
@@ -395,27 +398,28 @@ export default function StudentAssignment(){
     submitInFlight.current = true
     try{
       setSaving(true)
-      // NEW: include capture canvas CSS width/height so preview can scale correctly
-      const payload = drawRef.current?.getStrokes() || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+      // include capture canvas CSS width/height so preview can scale correctly
+      const payload: StrokesPayloadRT =
+        (drawRef.current?.getStrokes() as StrokesPayloadRT)
+        || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
       const hasInk   = Array.isArray(payload?.strokes) && payload.strokes.length > 0
       const hasAudio = !!audioBlob.current
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      // <<< A/V ALIGNMENT: attach audioOffsetMs when possible
-const audioMeta = audioRef.current?.getAudioMeta?.()
-const p = payload as StrokesPayloadRT
-if (hasInk && audioMeta?.audioStartPerfMs != null && p?.timing?.capturePerf0Ms != null) {
-  const audioOffsetMs = audioMeta.audioStartPerfMs - (p.timing!.capturePerf0Ms || 0)
-  p.timing = { ...(p.timing || {}), audioOffsetMs }
-}
-
+      // A/V ALIGNMENT: attach audioOffsetMs when possible
+      const audioMeta = audioRef.current?.getAudioMeta?.()
+      if (hasInk && audioMeta?.audioStartPerfMs != null && payload?.timing?.capturePerf0Ms != null) {
+        const audioOffsetMs = audioMeta.audioStartPerfMs - (payload.timing.capturePerf0Ms || 0)
+        payload.timing = { ...(payload.timing || {}), audioOffsetMs }
+      }
 
       const encHash = await hashStrokes(payload)
       const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
       const last = localStorage.getItem(lastKey)
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIds()
+      const thisIndex = pageIndex
+      const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIdsFor(thisIndex)
       currIds.current = ids
       if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
@@ -512,7 +516,7 @@ if (hasInk && audioMeta?.audioStartPerfMs != null && p?.timing?.capturePerf0Ms !
           setPageIndex(teacherPageIndexRef.current)
         }
       },
-      // >>> NEW: listen for presence snapshots and cache/apply immediately
+      // listen for presence snapshots and cache/apply immediately
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
@@ -533,9 +537,10 @@ if (hasInk && audioMeta?.audioStartPerfMs != null && p?.timing?.capturePerf0Ms !
     if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
 
     try{
+      const thisIndex = pageIndex
       const { assignment_id, page_id } = currIds.current.assignment_id
         ? currIds.current as any
-        : await ensureIds()
+        : await ensureIdsFor(thisIndex)
       currIds.current = { assignment_id, page_id }
       if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
 
@@ -565,9 +570,10 @@ if (hasInk && audioMeta?.audioStartPerfMs != null && p?.timing?.capturePerf0Ms !
 
     ;(async ()=>{
       try{
+        const thisIndex = pageIndex
         const ids = currIds.current.assignment_id
           ? currIds.current as any
-          : await ensureIds()
+          : await ensureIdsFor(thisIndex)
         currIds.current = ids
         if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
@@ -688,7 +694,7 @@ if (hasInk && audioMeta?.audioStartPerfMs != null && p?.timing?.capturePerf0Ms !
       <div
         ref={scrollHostRef}
         style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-          touchAction: handMode ? 'auto' : 'none', /* NEW: allow native scroll when hand mode */
+          touchAction: handMode ? 'auto' : 'none', /* allow native scroll when hand mode */
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
@@ -698,7 +704,7 @@ if (hasInk && audioMeta?.audioStartPerfMs != null && p?.timing?.capturePerf0Ms !
           </div>
           <div style={{
               position:'absolute', inset:0, zIndex:10,
-              pointerEvents: handMode ? 'none' : 'auto' /* NEW: let touches pass through in hand mode */
+              pointerEvents: handMode ? 'none' : 'auto' /* let touches pass in hand mode */
             }}>
             <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
               color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
