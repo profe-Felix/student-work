@@ -279,8 +279,10 @@ export default function StudentAssignment(){
   const audioRef = useRef<AudioRecorderHandle>(null)
 
   // --- Multi-take audio (per page) ---
-  const audioTakes = useRef<AudioTake[]>([])                 // all takes for this page
-  const [recordMode, setRecordMode] = useState<'append'|'replace'>('append') // UX toggle
+  const audioTakes = useRef<AudioTake[]>([]) // all takes for this page
+  const [recordMode, setRecordMode] = useState<'append'|'replace'>('append')
+  const audioBlob = useRef<Blob|null>(null)  // optional: last blob (for previews, etc.)
+  const pendingTakeStart = useRef<number|null>(null) // start ts from onStart(ts)
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
@@ -371,8 +373,10 @@ export default function StudentAssignment(){
         setPageIndex(0)
       }
       currIds.current = {}
-      // reset takes when assignment switches
+      // reset audio per new assignment
       audioTakes.current = []
+      audioBlob.current = null
+      pendingTakeStart.current = null
     })
     return off
   }, [])
@@ -399,7 +403,9 @@ export default function StudentAssignment(){
   useEffect(()=>{
     let cancelled=false
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
-    audioTakes.current = [] // audio is per-page
+    audioTakes.current = []
+    audioBlob.current = null
+    pendingTakeStart.current = null
 
     ;(async ()=>{
       try{
@@ -545,9 +551,8 @@ export default function StudentAssignment(){
         const captureZero = payload.timing?.capturePerf0Ms
         const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
         await saveAudio(submission_id, merged)
-        // After merging, the audio timeline == ink timeline
+        // after merge, audio aligns to ink (offset 0)
         payload.timing = { ...(payload.timing || {}), audioOffsetMs: 0 }
-        // We keep the takes in memory so subsequent submits can re-merge (or clear on page change)
       }
 
       clearDraft(studentId, assignmentTitle, pageIndex)
@@ -575,6 +580,8 @@ export default function StudentAssignment(){
     try { audioRef.current?.stop() } catch {}
     // Page-local audio should not bleed across pages
     audioTakes.current = []
+    audioBlob.current = null
+    pendingTakeStart.current = null
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
     const hasInk   = Array.isArray(current.strokes) && current.strokes.length > 0
@@ -718,7 +725,7 @@ export default function StudentAssignment(){
     <div
       style={{
         position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
-        zIndex:10010, width:140, maxHeight:'80vh',
+        zIndex:10010, width:150, maxHeight:'80vh',
         display:'flex', flexDirection:'column', gap:10,
         padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
         WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none', overflow:'hidden'
@@ -761,24 +768,25 @@ export default function StudentAssignment(){
           style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
       </div>
 
-      <div style={{ display:'flex', gap:6, marginTop:2 }}>
+      {/* Quick record mode + reset */}
+      <div style={{ display:'flex', gap:6 }}>
         <button
-          onClick={()=> setRecordMode(m => (m === 'append' ? 'replace' : 'append'))}
-          style={{ flex:1, padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}
+          onClick={() => setRecordMode(m => (m === 'append' ? 'replace' : 'append'))}
+          style={{ padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}
           title="Toggle recording mode"
         >
           Mode: {recordMode === 'append' ? 'Append' : 'Replace'}
         </button>
         <button
-          onClick={()=> { audioTakes.current = [] }}
+          onClick={() => { audioTakes.current = []; audioBlob.current = null; pendingTakeStart.current = null }}
           style={{ padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}
-          title="Clear audio for this page"
+          title="Clear all audio for this page"
         >
-          Reset
+          Reset Audio
         </button>
       </div>
 
-      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'36vh' }}>
+      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'34vh' }}>
         <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
           {CRAYOLA_24.map(c=>(
@@ -799,16 +807,21 @@ export default function StudentAssignment(){
         <AudioRecorder
           ref={audioRef}
           maxSec={180}
-          onStart={()=>{
-            // Replace mode: drop previous takes
-            if (recordMode === 'replace') audioTakes.current = []
-            // Rebase ink timing to the exact moment we start recording
-            try { (drawRef.current as any)?.markTimingZero?.() } catch {}
+          onStart={(ts) => {
+            // Replace mode: drop old takes and rebase ink to this exact timestamp
+            if (recordMode === 'replace') {
+              audioTakes.current = []
+            }
+            pendingTakeStart.current = ts
+            try { (drawRef.current as any)?.markTimingZero?.(ts) } catch {}
           }}
-          onBlob={(b)=>{
-            // get precise start timestamp from the recorder meta
-            const ts = audioRef.current?.getAudioMeta?.().audioStartPerfMs ?? performance.now()
+          onBlob={(b) => {
+            // If we somehow didn’t get a start time, assume “now”
+            const ts = pendingTakeStart.current ?? performance.now()
             audioTakes.current.push({ blob: b, startPerfMs: ts })
+            // keep the last recorded audio around TOO (optional)
+            audioBlob.current = b
+            pendingTakeStart.current = null
           }}
         />
         <button onClick={submit}
