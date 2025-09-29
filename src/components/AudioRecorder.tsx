@@ -10,11 +10,11 @@ export default forwardRef(function AudioRecorder(
   {
     maxSec = 180,
     onBlob,
-    onStart,              // NEW
+    onStart, // now passes the perf timestamp
   }: {
     maxSec?: number
     onBlob: (blob: Blob) => void
-    onStart?: () => void // NEW
+    onStart?: (ts: number) => void
   },
   ref
 ) {
@@ -30,17 +30,26 @@ export default forwardRef(function AudioRecorder(
 
   async function start() {
     if (recording) return
+
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     const rec = new MediaRecorder(stream)
     mediaRecorder.current = rec
     chunks.current = []
-    startedAt.current = performance.now()
-    audioStartPerfMs.current = startedAt.current
 
-    rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.current.push(e.data) }
+    // capture perf timestamp we’ll use everywhere
+    const ts = performance.now()
+    startedAt.current = ts
+    audioStartPerfMs.current = ts
+
+    rec.ondataavailable = (e: BlobEvent | any) => {
+      const data: Blob = (e as any).data
+      if (data && data.size > 0) chunks.current.push(data)
+    }
+
     rec.onstop = () => {
       try { stream.getTracks().forEach(t => t.stop()) } catch {}
-      const blob = new Blob(chunks.current, { type: rec.mimeType || 'audio/webm' })
+      const mime = rec.mimeType || 'audio/webm'
+      const blob = new Blob(chunks.current, { type: mime })
       audioDurationMs.current = startedAt.current ? performance.now() - startedAt.current : undefined
       onBlob(blob)
     }
@@ -48,8 +57,8 @@ export default forwardRef(function AudioRecorder(
     rec.start()
     setRecording(true)
 
-    // 🔔 Fire AFTER we’ve actually started recording
-    try { onStart?.() } catch {}
+    // Notify caller with the exact perf timestamp we committed to
+    try { onStart?.(ts) } catch {}
 
     if (timeoutId.current) clearTimeout(timeoutId.current)
     timeoutId.current = window.setTimeout(() => { stop().catch(()=>{}) }, maxSec * 1000)
@@ -63,11 +72,14 @@ export default forwardRef(function AudioRecorder(
   }
 
   useImperativeHandle(ref, () => ({
-    start, stop,
+    start,
+    stop,
     getAudioMeta: () => ({ audioStartPerfMs: audioStartPerfMs.current, durationMs: audioDurationMs.current })
   }))
 
-  useEffect(() => () => { if (timeoutId.current) clearTimeout(timeoutId.current) }, [])
+  useEffect(() => {
+    return () => { if (timeoutId.current) clearTimeout(timeoutId.current) }
+  }, [])
 
   return (
     <div style={{ display:'flex', gap:8 }}>
