@@ -1,3 +1,4 @@
+
 import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 
 export type StrokePoint = { x: number; y: number; t?: number } // t added (optional for backward compat)
