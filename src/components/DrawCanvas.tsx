@@ -16,8 +16,8 @@ export type DrawCanvasHandle = {
   loadStrokes: (data: StrokesPayload | null | undefined) => void
   clearStrokes: () => void
   undo: () => void
-  /** NEW: rebase timing so future audio aligns to this new "now" */
-  markTimingZero: () => void
+  /** Rebase timing so audio aligns; if ts provided, use that absolute perf timestamp */
+  markTimingZero: (ts?: number) => void
 }
 
 /* ---------- Type guards ---------- */
@@ -44,7 +44,6 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
   }
   const raw = (input as any).strokes as unknown[]
 
-  // Explicitly type the mapped array so our type predicate in .filter(...) is valid under noImplicitAny
   const mapped: Array<Stroke | null> = raw.map((s) => {
     if (isStroke(s)) return s
     if (isRecord(s)) {
@@ -170,23 +169,28 @@ export default forwardRef(function DrawCanvas(
       strokes.current.pop()
       redraw()
     },
-    /** Rebase all timestamps so a new audio recording can align to "now" */
-    markTimingZero: (): void => {
+    /** Rebase timing: use provided ts if given; shift existing timestamps to preserve absolute time */
+    markTimingZero: (ts?: number): void => {
       const oldZero = capturePerf0Ms.current
-      const newZero = performance.now()
-      // first stroke ever on this page? just set and go.
+      const newZero = (typeof ts === 'number' && Number.isFinite(ts)) ? ts : performance.now()
       if (oldZero == null) { capturePerf0Ms.current = newZero; return }
 
-      // Shift all existing points to preserve absolute time:
-      // oldAbs = oldZero + tOld  ⇒  keep oldAbs = newZero + tNew
-      // tNew = tOld + (oldZero - newZero)
+      // Keep absolute time: oldZero + tOld === newZero + tNew  ⇒  tNew = tOld + (oldZero - newZero)
       const delta = oldZero - newZero
       if (delta !== 0) {
         for (const s of strokes.current) {
+          if (!s.pts) continue
           for (const p of s.pts) {
             const tOld = typeof p.t === 'number' ? p.t : 0
             const tNew = tOld + delta
-            p.t = Math.max(0, Math.round(tNew))
+            p.t = tNew < 0 ? 0 : Math.round(tNew)
+          }
+        }
+        if (current.current?.pts) {
+          for (const p of current.current.pts) {
+            const tOld = typeof p.t === 'number' ? p.t : 0
+            const tNew = tOld + delta
+            p.t = tNew < 0 ? 0 : Math.round(tNew)
           }
         }
       }
