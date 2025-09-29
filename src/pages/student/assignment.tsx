@@ -125,27 +125,29 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
 
 type AudioTake = { blob: Blob; startPerfMs: number }
 
+// ⬇⬇⬇ REPLACED FUNCTION: now keeps negative offsets and pads leading silence based on minOffset
 async function mergeAudioTakesToWav(
   takes: AudioTake[],
   capturePerf0Ms: number | undefined
 ): Promise<Blob> {
   if (!takes.length) throw new Error('No takes to merge')
 
-  const sampleRate = 44100
-  const ProbeCtx = (window as any).AudioContext || (window as any).webkitAudioContext
-  const probeCtx = new ProbeCtx()
+  const TARGET_SR = 44100
+  const AC = (window as any).AudioContext || (window as any).webkitAudioContext
+  const probe = new AC()
 
+  // 1) Decode and compute true offsets (CAN be negative; do NOT clamp)
   const decoded = await Promise.all(
     takes.map(async (t) => {
       const ab = await t.blob.arrayBuffer()
-      const buf: AudioBuffer = await probeCtx.decodeAudioData(ab.slice(0))
-      const offsetSec = Math.max(0, ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000)
+      const buf: AudioBuffer = await probe.decodeAudioData(ab.slice(0))
+      const offsetSec = ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000
       return { buf, offsetSec }
     })
   )
-  probeCtx.close?.()
+  probe.close?.()
 
-  // downmix to mono if needed
+  // 2) Downmix to mono if needed
   const toMono = (buf: AudioBuffer) => {
     if (buf.numberOfChannels === 1) return buf
     const out = new AudioBuffer({ length: buf.length, numberOfChannels: 1, sampleRate: buf.sampleRate })
@@ -156,17 +158,16 @@ async function mergeAudioTakesToWav(
     for (let i = 0; i < n; i++) d[i] = (l[i] + r[i]) * 0.5
     return out
   }
-
   const mono = decoded.map(d => ({ buf: toMono(d.buf), offsetSec: d.offsetSec }))
 
-  // resample to 44100 if needed via OfflineAudioContext
-  const ResampleCtx = (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext
+  // 3) Resample to 44.1k if needed
+  const OAC = (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext
   const resampled = await Promise.all(mono.map(async ({ buf, offsetSec }) => {
-    if (buf.sampleRate === sampleRate) return { buf, offsetSec }
-    const length = Math.ceil(buf.duration * sampleRate)
-    const oc = new ResampleCtx(1, length, sampleRate)
+    if (buf.sampleRate === TARGET_SR) return { buf, offsetSec }
+    const length = Math.ceil(buf.duration * TARGET_SR)
+    const oc = new OAC(1, length, TARGET_SR)
     const src = oc.createBufferSource()
-    const copy = oc.createBuffer(1, length, sampleRate)
+    const copy = oc.createBuffer(1, length, TARGET_SR)
     copy.copyToChannel(buf.getChannelData(0), 0)
     src.buffer = copy
     src.connect(oc.destination)
@@ -175,25 +176,29 @@ async function mergeAudioTakesToWav(
     return { buf: rendered, offsetSec }
   }))
 
-  // compute total length
-  let totalSec = 0
+  // 4) Determine earliest start and latest end; use minOffset to pad leading silence
+  let minOffset = 0
+  let maxEnd = 0
   for (const { buf, offsetSec } of resampled) {
-    totalSec = Math.max(totalSec, offsetSec + buf.duration)
+    minOffset = Math.min(minOffset, offsetSec)
+    maxEnd = Math.max(maxEnd, offsetSec + buf.duration)
   }
-  const totalLength = Math.ceil(totalSec * sampleRate)
-  const mix = new Float32Array(totalLength)
+  const totalSec = maxEnd - minOffset
+  const totalLen = Math.ceil(totalSec * TARGET_SR)
 
-  // naive sum mix (voice rarely clips; fine for now)
+  // 5) Mix into a single mono buffer (shift each take by -minOffset)
+  const mix = new Float32Array(totalLen)
   for (const { buf, offsetSec } of resampled) {
-    const startSample = Math.round(offsetSec * sampleRate)
+    const startSample = Math.round((offsetSec - minOffset) * TARGET_SR)
     const src = buf.getChannelData(0)
     for (let i = 0; i < src.length; i++) {
       const j = startSample + i
-      if (j < mix.length) mix[j] += src[i]
+      if (j >= 0 && j < mix.length) mix[j] += src[i]
     }
   }
 
-  return encodeWavMono16(mix, sampleRate)
+  // 6) Encode to WAV
+  return encodeWavMono16(mix, TARGET_SR)
 }
 
 // Minimal PCM WAV encoder (mono, 16-bit)
