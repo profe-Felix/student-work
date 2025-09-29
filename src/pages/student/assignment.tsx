@@ -847,7 +847,7 @@ export default function StudentAssignment(){
           ref={audioRef}
           maxSec={180}
           onStart={(ts: number) => {{
-  const REC_LATENCY_MS = 120
+  const REC_LATENCY_MS = 180
 
   // Do we already have an ink timing zero?
   const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
