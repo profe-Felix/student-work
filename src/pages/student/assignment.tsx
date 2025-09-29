@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -407,9 +406,9 @@ export default function StudentAssignment(){
       const hasAudio = !!audioBlob.current
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      // A/V ALIGNMENT: attach audioOffsetMs when possible
+      // A/V ALIGNMENT: attach audioOffsetMs when possible (only when we have fresh audio)
       const audioMeta = audioRef.current?.getAudioMeta?.()
-      if (hasInk && audioMeta?.audioStartPerfMs != null && payload?.timing?.capturePerf0Ms != null) {
+      if (hasInk && hasAudio && audioMeta?.audioStartPerfMs != null && payload?.timing?.capturePerf0Ms != null) {
         const audioOffsetMs = audioMeta.audioStartPerfMs - (payload.timing.capturePerf0Ms || 0)
         payload.timing = { ...(payload.timing || {}), audioOffsetMs }
       }
@@ -666,7 +665,15 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-        <AudioRecorder ref={audioRef} maxSec={180} onBlob={(b)=>{ audioBlob.current = b }} />
+        <AudioRecorder
+          ref={audioRef}
+          maxSec={180}
+          onBlob={(b)=>{ audioBlob.current = b }}
+          onStart={()=>{
+            // rebase stroke timing at the exact moment a new recording starts
+            try { (drawRef.current as any)?.markTimingZero?.() } catch {}
+          }}
+        />
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
