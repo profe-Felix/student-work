@@ -1,24 +1,37 @@
 import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 
-export type StrokePoint = { x: number; y: number }
+export type StrokePoint = { x: number; y: number; t?: number } // t added (optional for backward compat)
 export type Stroke = { color: string; size: number; tool: 'pen'|'highlighter'; pts: StrokePoint[] }
-export type StrokesPayload = { strokes: Stroke[] }
-// NEW: include capture canvas CSS dimensions for correct preview scaling
-export type StrokesPayloadWithMeta = StrokesPayload & { canvasWidth: number; canvasHeight: number }
+export type StrokesPayload = {
+  strokes: Stroke[]
+  canvasWidth?: number
+  canvasHeight?: number
+  timing?: {
+    // absolute capture base on performance.now() clock (used to compute audioOffsetMs at submit time)
+    capturePerf0Ms?: number
+    // optional offset saved with submission for perfect playback (computed in assignment submit)
+    audioOffsetMs?: number
+  }
+}
 
 export type DrawCanvasHandle = {
-  getStrokes: () => StrokesPayloadWithMeta
+  getStrokes: () => StrokesPayload
   loadStrokes: (data: StrokesPayload | null | undefined) => void
   clearStrokes: () => void
   undo: () => void
 }
 
-/* ---------- Type guards (no any) ---------- */
+/* ---------- Type guards ---------- */
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
 function isPoint(v: unknown): v is StrokePoint {
-  return isRecord(v) && Number.isFinite((v as Record<string, unknown>).x) && Number.isFinite((v as Record<string, unknown>).y)
+  return (
+    isRecord(v) &&
+    Number.isFinite((v as any).x) &&
+    Number.isFinite((v as any).y) &&
+    ((v as any).t === undefined || Number.isFinite((v as any).t))
+  )
 }
 function isStroke(v: unknown): v is Stroke {
   if (!isRecord(v)) return false
@@ -29,14 +42,13 @@ function isStroke(v: unknown): v is Stroke {
   return color && size && tool && pts
 }
 function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
-  if (!isRecord(input) || !Array.isArray((input as Record<string, unknown>).strokes)) {
+  if (!isRecord(input) || !Array.isArray((input as any).strokes)) {
     return { strokes: [] }
   }
-  const raw = (input as Record<string, unknown>).strokes as unknown[]
+  const raw = (input as any).strokes as unknown[]
   const safe: Stroke[] = raw
     .map((s) => {
       if (isStroke(s)) return s
-      // Try to salvage partially-formed strokes
       if (isRecord(s)) {
         const color = typeof s.color === 'string' ? (s.color as string) : '#000000'
         const size  = Number.isFinite(s.size as number) ? (s.size as number) : 4
@@ -47,7 +59,19 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
       return null
     })
     .filter((x): x is Stroke => !!x)
-  return { strokes: safe }
+  const out: StrokesPayload = { strokes: safe }
+  if (Number.isFinite((input as any).canvasWidth))  out.canvasWidth  = (input as any).canvasWidth as number
+  if (Number.isFinite((input as any).canvasHeight)) out.canvasHeight = (input as any).canvasHeight as number
+  if (isRecord((input as any).timing)) {
+    out.timing = {}
+    if (Number.isFinite(((input as any).timing as any).capturePerf0Ms)) {
+      out.timing.capturePerf0Ms = ((input as any).timing as any).capturePerf0Ms as number
+    }
+    if (Number.isFinite(((input as any).timing as any).audioOffsetMs)) {
+      out.timing.audioOffsetMs = ((input as any).timing as any).audioOffsetMs as number
+    }
+  }
+  return out
 }
 
 /* ---------- Render helpers ---------- */
@@ -92,6 +116,9 @@ export default forwardRef(function DrawCanvas(
   const activePointers = useRef<Set<number>>(new Set())
   const drawingPointerId = useRef<number|null>(null)
 
+  // Timing base for this capture session (performance.now() space)
+  const capturePerf0Ms = useRef<number>(performance.now())
+
   const redraw = ()=>{
     const ctx = ctxRef.current
     if (!ctx) return
@@ -122,30 +149,27 @@ export default forwardRef(function DrawCanvas(
     }
   }, [mode])
 
-  // === Expose imperative API (now returns capture canvas size too) ===
-  useImperativeHandle(ref, (): DrawCanvasHandle => ({
-    getStrokes: () => {
-      // These are the CSS drawing units used when collecting pts
-      const cssW = Number.isFinite(width) ? width : (canvasRef.current?.clientWidth ?? 0)
-      const cssH = Number.isFinite(height) ? height : (canvasRef.current?.clientHeight ?? 0)
-      return {
-        strokes: [...strokes.current],
-        canvasWidth: Math.max(1, Math.round(cssW)),
-        canvasHeight: Math.max(1, Math.round(cssH)),
-      }
-    },
-    loadStrokes: (data: StrokesPayload | null | undefined) => {
+  useImperativeHandle(ref, () => ({
+    getStrokes: (): StrokesPayload => ({
+      strokes: strokes.current,
+      canvasWidth:  ctxRef.current?.canvas.width,
+      canvasHeight: ctxRef.current?.canvas.height,
+      timing: { capturePerf0Ms: capturePerf0Ms.current }
+    }),
+    loadStrokes: (data: StrokesPayload | null | undefined): void => {
       const safe = normalize(data)
       strokes.current = safe.strokes
       current.current = null
       redraw()
     },
-    clearStrokes: () => {
+    clearStrokes: (): void => {
       strokes.current = []
       current.current = null
+      // reset timing base for a new capture
+      capturePerf0Ms.current = performance.now()
       redraw()
     },
-    undo: () => {
+    undo: (): void => {
       strokes.current.pop()
       redraw()
     }
@@ -163,8 +187,7 @@ export default forwardRef(function DrawCanvas(
 
     const shouldDraw = (e: PointerEvent) => {
       if (mode !== 'draw') return false
-      if (e.pointerType === 'pen') return true // allow Apple Pencil even with palm
-      // fingers/mouse: draw only if a single non-pen pointer is down
+      if (e.pointerType === 'pen') return true // Apple Pencil even with palm
       return activePointers.current.size <= 1
     }
 
@@ -174,9 +197,10 @@ export default forwardRef(function DrawCanvas(
       drawingPointerId.current = e.pointerId
       c.setPointerCapture(e.pointerId)
       const p = getPos(e)
-      current.current = { color, size, tool: tool === 'highlighter' ? 'highlighter' : 'pen', pts: [p] }
+      const t = performance.now() - capturePerf0Ms.current
+      current.current = { color, size, tool: tool === 'highlighter' ? 'highlighter' : 'pen', pts: [{ x:p.x, y:p.y, t }] }
       redraw()
-      if ((e as any).preventDefault) e.preventDefault()
+      ;(e as any).preventDefault?.()
     }
     const onPointerMove = (e: PointerEvent)=>{
       if (drawingPointerId.current !== e.pointerId) return
@@ -189,9 +213,10 @@ export default forwardRef(function DrawCanvas(
         return
       }
       const p = getPos(e)
-      current.current.pts.push(p)
+      const t = performance.now() - capturePerf0Ms.current
+      current.current.pts.push({ x:p.x, y:p.y, t })
       redraw()
-      if ((e as any).preventDefault) e.preventDefault()
+      ;(e as any).preventDefault?.()
     }
     const endStroke = ()=>{
       if (current.current) {
