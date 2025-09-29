@@ -10,9 +10,11 @@ export default forwardRef(function AudioRecorder(
   {
     maxSec = 180,
     onBlob,
+    onStart,              // NEW
   }: {
     maxSec?: number
     onBlob: (blob: Blob) => void
+    onStart?: () => void // NEW
   },
   ref
 ) {
@@ -21,7 +23,7 @@ export default forwardRef(function AudioRecorder(
   const [recording, setRecording] = useState(false)
   const timeoutId = useRef<number | null>(null)
 
-  // NEW: perf-clock start time & duration
+  // perf-clock start time & duration
   const audioStartPerfMs = useRef<number | undefined>(undefined)
   const audioDurationMs = useRef<number | undefined>(undefined)
   const startedAt = useRef<number | undefined>(undefined)
@@ -37,21 +39,25 @@ export default forwardRef(function AudioRecorder(
 
     rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.current.push(e.data) }
     rec.onstop = () => {
-      stream.getTracks().forEach(t => t.stop())
-      const blob = new Blob(chunks.current, { type: 'audio/webm' })
+      try { stream.getTracks().forEach(t => t.stop()) } catch {}
+      const blob = new Blob(chunks.current, { type: rec.mimeType || 'audio/webm' })
       audioDurationMs.current = startedAt.current ? performance.now() - startedAt.current : undefined
       onBlob(blob)
     }
 
     rec.start()
     setRecording(true)
+
+    // 🔔 Fire AFTER we’ve actually started recording
+    try { onStart?.() } catch {}
+
     if (timeoutId.current) clearTimeout(timeoutId.current)
     timeoutId.current = window.setTimeout(() => { stop().catch(()=>{}) }, maxSec * 1000)
   }
 
   async function stop() {
     if (!recording) return
-    mediaRecorder.current?.stop()
+    try { mediaRecorder.current?.stop() } catch {}
     setRecording(false)
     if (timeoutId.current) { clearTimeout(timeoutId.current); timeoutId.current = null }
   }
