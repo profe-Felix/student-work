@@ -41,7 +41,7 @@ export default forwardRef(function AudioRecorder(
     startedAt.current = ts
     audioStartPerfMs.current = ts
 
-    rec.ondataavailable = (e: BlobEvent | any) => {
+    rec.ondataavailable = (e: any) => {
       const data: Blob = (e as any).data
       if (data && data.size > 0) chunks.current.push(data)
     }
