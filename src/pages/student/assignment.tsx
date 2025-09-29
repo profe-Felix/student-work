@@ -828,17 +828,21 @@ export default function StudentAssignment(){
           ref={audioRef}
           maxSec={180}
           onStart={(ts: number) => {
-            // Replace mode: drop old takes and rebase ink to this exact timestamp
-            if (recordMode === 'replace') {
-              audioTakes.current = []
-              try { (drawRef.current as any)?.markTimingZero?.(ts) } catch {}
-            } else {
-              // Append mode: only set a zero if none exists yet
-              const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
-              if (cap0 == null) { try { (drawRef.current as any)?.markTimingZero?.(ts) } catch {} }
-            }
-            pendingTakeStart.current = ts
-          }}
+  // Replace mode: drop old takes and rebase ink to this exact timestamp
+  if (recordMode === 'replace') {
+    audioTakes.current = []
+    try { (drawRef.current as any)?.markTimingZero?.(ts) } catch {}
+  } else {
+    // Append mode:
+    // If this is the first take on this page, rebase ink to *record* time (not first stroke time).
+    // After that, do NOT rebase again — we want all later takes to align to the first record.
+    if (audioTakes.current.length === 0) {
+      try { (drawRef.current as any)?.markTimingZero?.(ts) } catch {}
+    }
+  }
+  pendingTakeStart.current = ts
+}}
+
           onBlob={(b: Blob) => {
             const ts = pendingTakeStart.current ?? performance.now()
             audioTakes.current.push({ blob: b, startPerfMs: ts })
