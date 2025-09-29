@@ -15,7 +15,7 @@ import {
   type FocusPayload,
   type AutoFollowPayload,
   subscribeToGlobal,
-  type TeacherPresenceState, // (type only; helps with cache shape)
+  type TeacherPresenceState,
 } from '../../lib/realtime'
 
 // ---------- Extend DrawCanvas StrokesPayload just for runtime (so audioOffsetMs is allowed) ----------
@@ -64,7 +64,7 @@ const draftKey      = (student:string, assignment:string, page:number)=> `draft:
 const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
 const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
 
-// >>> NEW: cache keys (assignment handoff + presence snapshot)
+// cache keys (assignment handoff + presence snapshot)
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
 const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
 
@@ -172,7 +172,10 @@ export default function StudentAssignment(){
 
   const drawRef = useRef<DrawCanvasHandle>(null)
   const audioRef = useRef<AudioRecorderHandle>(null)
-  const audioBlob = useRef<Blob|null>(null)
+
+  // NEW: keep both pending & last audio
+  const audioBlobPending = useRef<Blob|null>(null) // unsaved fresh recording
+  const audioBlobLast    = useRef<Blob|null>(null) // most recent recording (carry-forward)
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
@@ -194,7 +197,7 @@ export default function StudentAssignment(){
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
-  // >>> Persist assignment id so refresh stays on the teacher’s assignment
+  // Persist assignment id so refresh stays on the teacher’s assignment
   const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
@@ -267,7 +270,7 @@ export default function StudentAssignment(){
     return off
   }, [])
 
-  // >>> When we know which assignment to use (including on refresh), hydrate presence from cache
+  // hydrate presence from cache when we know which assignment to use
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
@@ -403,10 +406,19 @@ export default function StudentAssignment(){
         (drawRef.current?.getStrokes() as StrokesPayloadRT)
         || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
       const hasInk   = Array.isArray(payload?.strokes) && payload.strokes.length > 0
-      const hasAudio = !!audioBlob.current
+
+      // Decide which audio (if any) to attach:
+      // - Prefer a brand-new unsaved recording
+      // - Else carry-forward the most recent saved recording
+      const audioToSave: Blob | null =
+        audioBlobPending.current
+          ? audioBlobPending.current
+          : (hasInk && audioBlobLast.current ? audioBlobLast.current : null)
+
+      const hasAudio = !!audioToSave
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      // A/V ALIGNMENT: attach audioOffsetMs when possible (only when we have fresh audio)
+      // A/V ALIGNMENT: attach audioOffsetMs when possible (only when we actually attach audio)
       const audioMeta = audioRef.current?.getAudioMeta?.()
       if (hasInk && hasAudio && audioMeta?.audioStartPerfMs != null && payload?.timing?.capturePerf0Ms != null) {
         const audioOffsetMs = audioMeta.audioStartPerfMs - (payload.timing.capturePerf0Ms || 0)
@@ -433,9 +445,11 @@ export default function StudentAssignment(){
         lastLocalHash.current = encHash
         localDirty.current = false
       }
-      if (hasAudio) {
-        await saveAudio(submission_id, audioBlob.current!)
-        audioBlob.current = null
+      if (hasAudio && audioToSave) {
+        await saveAudio(submission_id, audioToSave)
+        // We just saved this; it becomes the new "last" audio and we clear "pending"
+        audioBlobLast.current = audioToSave
+        audioBlobPending.current = null
       }
 
       clearDraft(studentId, assignmentTitle, pageIndex)
@@ -461,12 +475,15 @@ export default function StudentAssignment(){
     if (nextIndex < 0) return
     if (navLocked || blockedBySync(nextIndex)) return
     try { audioRef.current?.stop() } catch {}
+    // Page-local audio should not bleed across pages
+    audioBlobPending.current = null
+    audioBlobLast.current = null
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
     const hasInk   = Array.isArray(current.strokes) && current.strokes.length > 0
-    const hasAudio = !!audioBlob.current
+    const hasPendingAudio = !!audioBlobPending.current
 
-    if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasAudio)) {
+    if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasPendingAudio)) {
       try { await submit() } catch { try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {} }
     } else {
       try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
@@ -668,7 +685,7 @@ export default function StudentAssignment(){
         <AudioRecorder
           ref={audioRef}
           maxSec={180}
-          onBlob={(b)=>{ audioBlob.current = b }}
+          onBlob={(b)=>{ audioBlobPending.current = b; audioBlobLast.current = b }}
           onStart={()=>{
             // rebase stroke timing at the exact moment a new recording starts
             try { (drawRef.current as any)?.markTimingZero?.() } catch {}
@@ -702,7 +719,7 @@ export default function StudentAssignment(){
       <div
         ref={scrollHostRef}
         style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-          touchAction: handMode ? 'auto' : 'none', /* allow native scroll when hand mode */
+          touchAction: handMode ? 'auto' : 'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
@@ -712,7 +729,7 @@ export default function StudentAssignment(){
           </div>
           <div style={{
               position:'absolute', inset:0, zIndex:10,
-              pointerEvents: handMode ? 'none' : 'auto' /* let touches pass in hand mode */
+              pointerEvents: handMode ? 'none' : 'auto'
             }}>
             <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
               color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
