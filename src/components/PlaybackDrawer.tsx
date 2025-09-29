@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import PdfCanvas from './PdfCanvas'
 
-type Pt = { x:number; y:number }
+/* ================= types ================= */
+
+type Pt = { x:number; y:number; t?:number }  // <-- t (ms since capture start) is optional
 type Stroke = { color:string; size:number; tool:'pen'|'highlighter'; pts:Pt[] }
 type StrokesPayload = {
   strokes: Stroke[]
@@ -15,13 +17,30 @@ type StrokesPayload = {
   // timing (optional, from capture/submission)
   timing?: {
     capturePerf0Ms?: number
-    audioOffsetMs?: number // positive means ink starts AFTER audio begins; negative means BEFORE
+    audioOffsetMs?: number // positive: ink starts AFTER audio; negative: BEFORE
   }
 }
 
-type Seg = { x0:number; y0:number; x1:number; y1:number; color:string; size:number; tool:'pen'|'highlighter'; len:number }
-type Built = { segs: Seg[]; totalLen: number; duration: number }
+type Seg = {
+  x0:number; y0:number; x1:number; y1:number;
+  color:string; size:number; tool:'pen'|'highlighter';
+  len:number;
+  // time bounds (ms since capture start) – filled only if timestamps exist
+  t0?:number; t1?:number;
+}
+
+type Built = {
+  segs: Seg[];
+  totalLen: number;
+  durationLenHeuristic: number; // old length-based duration (pxPerMs) as fallback
+  hasTimestamps: boolean;
+  timeStart:number;              // earliest seg.t0 when hasTimestamps
+  timeEnd:number;                // last seg.t1 when hasTimestamps
+}
+
 type PlayMode = 'strokes' | 'together'  // strokes only vs strokes + audio
+
+/* ================= component ================= */
 
 export default function PlaybackDrawer({
   pdfUrl,
@@ -50,8 +69,6 @@ export default function PlaybackDrawer({
   const [isPlaying, setIsPlaying] = useState(false)
   const [nowMs, setNowMs] = useState(0)
   const [durationMs, setDurationMs] = useState(0)
-
-  // RAF handles both modes; in together-mode, it reads audio.currentTime each frame
   const rafRef = useRef<number| null>(null)
 
   const audioAvailable = !!audioUrl
@@ -63,7 +80,7 @@ export default function PlaybackDrawer({
     [strokesJson, strokesPayload]
   )
 
-  // Build drawable segments + animation duration
+  // Build drawable segments + timing metadata
   const built = useMemo(() => buildSegments(parsed), [parsed])
 
   // Keep overlay canvas sized to the PDF's CSS box (and crisp via DPR)
@@ -90,27 +107,28 @@ export default function PlaybackDrawer({
       if (!a) return
       const onLoaded = () => {
         const baseDur = Math.max(0, (a.duration || 0) * 1000)
-        const off = parsed.timing?.audioOffsetMs ?? 0
-        // Total scrub window: from 0..(audio duration), visuals offset internally.
-        // We keep the slider range equal to audio length for intuitive scrubbing.
-        setDurationMs(Math.max(0, baseDur))
+        setDurationMs(baseDur) // slider range = audio length
       }
       const onEnded  = () => setIsPlaying(false)
       a.addEventListener('loadedmetadata', onLoaded)
       a.addEventListener('ended', onEnded)
-      if (a.duration && !Number.isNaN(a.duration)) {
-        const baseDur = a.duration * 1000
-        setDurationMs(Math.max(0, baseDur))
-      }
+      if (a.duration && !Number.isNaN(a.duration)) setDurationMs(a.duration * 1000)
       return () => {
         a.removeEventListener('loadedmetadata', onLoaded)
         a.removeEventListener('ended', onEnded)
       }
     } else {
-      setDurationMs(built.duration)
+      // Strokes-only duration:
+      // - if we have real timestamps, use actual capture span
+      // - else fall back to old length-based heuristic
+      if (built.hasTimestamps) {
+        setDurationMs(Math.max(0, built.timeEnd - built.timeStart))
+      } else {
+        setDurationMs(built.durationLenHeuristic)
+      }
       setNowMs(0)
     }
-  }, [audioAvailable, playMode, built.duration, parsed.timing?.audioOffsetMs])
+  }, [audioAvailable, playMode, built.hasTimestamps, built.timeEnd, built.timeStart, built.durationLenHeuristic])
 
   // Unified animation loop
   useEffect(() => {
@@ -119,25 +137,24 @@ export default function PlaybackDrawer({
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
-
     if (!isPlaying) return
 
     // strokes-only loop uses a timebase we control
     let start = performance.now() - nowMs
     const tick = (t:number) => {
-      let tMs = 0
+      let visualMs = 0
       if (playMode === 'together' && audioAvailable) {
         const a = audioRef.current
         const audioTimeMs = Math.max(0, (a?.currentTime || 0) * 1000)
         const off = parsed.timing?.audioOffsetMs ?? 0
-        // compute the visual time with offset; negative offset means strokes start before audio
-        tMs = Math.max(0, audioTimeMs + off)
+        // visual time = audio clock + offset
+        visualMs = Math.max(0, audioTimeMs + off)
       } else {
         const elapsed = t - start
-        tMs = Math.max(0, elapsed)
+        visualMs = Math.max(0, elapsed)
       }
 
-      const clamped = Math.min(durationMs, tMs)
+      const clamped = Math.min(durationMs, visualMs)
       setNowMs(clamped)
       drawUpTo(clamped)
 
@@ -156,8 +173,7 @@ export default function PlaybackDrawer({
 
     rafRef.current = requestAnimationFrame(tick)
     return () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); rafRef.current = null }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, playMode, audioAvailable, durationMs, parsed.timing?.audioOffsetMs])
+  }, [isPlaying, playMode, audioAvailable, durationMs, parsed.timing?.audioOffsetMs, nowMs])
 
   function onPdfReady(_pdf:any, canvas:HTMLCanvasElement) {
     try {
@@ -208,63 +224,63 @@ export default function PlaybackDrawer({
     return out
   }
 
-  function drawStroke(ctx:CanvasRenderingContext2D, s:Stroke) {
-    if (!s.pts || s.pts.length === 0) return
-    ctx.save()
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
-    ctx.strokeStyle = s.color
-    ctx.lineWidth = s.size
-    ctx.beginPath()
-    for (let i = 0; i < s.pts.length; i++) {
-      const p = s.pts[i]
-      if (i === 0) ctx.moveTo(p.x, p.y)
-      else ctx.lineTo(p.x, p.y)
-    }
-    ctx.stroke()
-    ctx.restore()
-  }
+  /* ---------- drawing ---------- */
 
   function drawUpTo(tMs:number) {
-  if (!pdfReady) return
-  const cnv = overlayRef.current
-  if (!cnv) return
-  const ctx = cnv.getContext('2d')
-  if (!ctx) return
+    if (!pdfReady) return
+    const cnv = overlayRef.current
+    if (!cnv) return
+    const ctx = cnv.getContext('2d')
+    if (!ctx) return
 
-  clearOverlay()
+    clearOverlay()
 
-  const { w: dw, h: dh } = pdfCssRef.current
-  const { sw, sh } = inferSourceDims(parsed, dw, dh)
+    const { w: dw, h: dh } = pdfCssRef.current
+    const { sw, sh } = inferSourceDims(parsed, dw, dh)
 
-  // <<< key change: pick the correct total timebase
-  const totalTime =
-    (playMode === 'together' && audioAvailable)
-      ? Math.max(1, durationMs)
-      : Math.max(1, built.duration)
-
-  const ratio = Math.max(0, Math.min(1, tMs / totalTime))
-  const cutoffLen = built.totalLen * ratio
-
-  let acc = 0
-  withScale(ctx, sw, sh, dw, dh, () => {
-    for (const seg of built.segs) {
-      if (acc + seg.len <= cutoffLen) {
-        strokeSegment(ctx, seg, 1) // full
-        acc += seg.len
-      } else {
-        const remain = cutoffLen - acc
-        if (remain > 0 && seg.len > 0) {
-          const partial = Math.max(0, Math.min(1, remain / seg.len))
-          strokeSegment(ctx, seg, partial)
+    if (built.hasTimestamps) {
+      // TIME-BASED playback (accurate): draw full segments with t1 <= cutoff,
+      // and partial for the first segment where t0 < cutoff < t1.
+      const cutoff = Math.max(0, tMs + built.timeStart) // built.timeStart is usually 0, but tolerate non-zero
+      withScale(ctx, sw, sh, dw, dh, () => {
+        for (const seg of built.segs) {
+          const segT0 = seg.t0 ?? 0
+          const segT1 = seg.t1 ?? segT0
+          if (cutoff >= segT1) {
+            strokeSegment(ctx, seg, 1)
+          } else if (cutoff <= segT0) {
+            break
+          } else {
+            const portion = (cutoff - segT0) / Math.max(1, segT1 - segT0)
+            strokeSegment(ctx, seg, Math.max(0, Math.min(1, portion)))
+            break
+          }
         }
-        break
-      }
-    }
-  })
-}
+      })
+    } else {
+      // LENGTH-BASED fallback (legacy): keep your original pacing
+      const totalTime = Math.max(1, built.durationLenHeuristic)
+      const ratio = Math.max(0, Math.min(1, tMs / totalTime))
+      const cutoffLen = built.totalLen * ratio
 
+      let acc = 0
+      withScale(ctx, sw, sh, dw, dh, () => {
+        for (const seg of built.segs) {
+          if (acc + seg.len <= cutoffLen) {
+            strokeSegment(ctx, seg, 1)
+            acc += seg.len
+          } else {
+            const remain = cutoffLen - acc
+            if (remain > 0 && seg.len > 0) {
+              const partial = Math.max(0, Math.min(1, remain / seg.len))
+              strokeSegment(ctx, seg, partial)
+            }
+            break
+          }
+        }
+      })
+    }
+  }
 
   function strokeSegment(ctx:CanvasRenderingContext2D, seg:Seg, portion:number) {
     ctx.save()
@@ -282,7 +298,8 @@ export default function PlaybackDrawer({
     ctx.restore()
   }
 
-  // Controls
+  /* ---------- controls ---------- */
+
   const togglePlay = async () => {
     if (playMode === 'together' && audioAvailable) {
       const a = audioRef.current
@@ -331,6 +348,8 @@ export default function PlaybackDrawer({
     const ss = (s % 60).toString().padStart(2,'0')
     return `${m}:${ss}`
   }
+
+  /* ---------- UI ---------- */
 
   return (
     <div
@@ -500,14 +519,15 @@ function sanitizeStroke(s:any): Stroke | null {
   const color = typeof s.color === 'string' ? s.color : '#000'
   const size  = Number.isFinite(s.size) ? s.size : 4
   const tool  = s.tool === 'highlighter' ? 'highlighter' : 'pen'
-  const pts   = Array.isArray(s.pts) ? s.pts.filter((p:any)=> p && Number.isFinite(p.x) && Number.isFinite(p.y)) : []
+  const ptsIn = Array.isArray(s.pts) ? s.pts : []
+  const pts: Pt[] = ptsIn
+    .filter((p:any)=> p && Number.isFinite(p.x) && Number.isFinite(p.y))
+    .map((p:any)=> ({ x:p.x, y:p.y, t: Number.isFinite(p.t) ? p.t : undefined })) // preserve t when present
   if (pts.length === 0) return null
   return { color, size, tool, pts }
 }
 
-function num(v:any): number | undefined {
-  return Number.isFinite(v) ? (v as number) : undefined
-}
+function num(v:any): number | undefined { return Number.isFinite(v) ? (v as number) : undefined }
 
 function inferSourceDims(payload: StrokesPayload, fallbackW:number, fallbackH:number) {
   const mw = num(payload.canvasWidth)
@@ -516,26 +536,54 @@ function inferSourceDims(payload: StrokesPayload, fallbackW:number, fallbackH:nu
   return { sw: fallbackW, sh: fallbackH }
 }
 
-// Build segments for animation. If no audio (or strokes-only), derive duration from total length (px) / speed.
+// Build segments. If any point has timestamps, produce time-based segments; otherwise, length-based fallback.
 function buildSegments(payload: StrokesPayload): Built {
   const segs: Seg[] = []
   let totalLen = 0
+  let hasTimestamps = payload.strokes.some(s => s.pts.some(p => Number.isFinite(p.t)))
+  let globalT0 = Number.POSITIVE_INFINITY
+  let globalT1 = 0
 
-  for (const s of payload.strokes) {
-    if (!s.pts || s.pts.length < 2) continue
-    for (let i = 1; i < s.pts.length; i++) {
-      const p0 = s.pts[i-1], p1 = s.pts[i]
-      const dx = p1.x - p0.x, dy = p1.y - p0.y
-      const len = Math.hypot(dx, dy)
-      if (len === 0) continue
-      segs.push({ x0:p0.x, y0:p0.y, x1:p1.x, y1:p1.y, color:s.color, size:s.size, tool:s.tool, len })
-      totalLen += len
+  if (hasTimestamps) {
+    for (const s of payload.strokes) {
+      if (!s.pts || s.pts.length < 2) continue
+      for (let i = 1; i < s.pts.length; i++) {
+        const p0 = s.pts[i-1], p1 = s.pts[i]
+        const dx = p1.x - p0.x, dy = p1.y - p0.y
+        const len = Math.hypot(dx, dy)
+        const t0 = Math.max(0, num(p0.t) ?? 0)
+        const t1 = Math.max(t0, num(p1.t) ?? t0)
+        segs.push({ x0:p0.x, y0:p0.y, x1:p1.x, y1:p1.y, color:s.color, size:s.size, tool:s.tool, len, t0, t1 })
+        totalLen += len
+        if (t0 < globalT0) globalT0 = t0
+        if (t1 > globalT1) globalT1 = t1
+      }
     }
+    if (!isFinite(globalT0)) { globalT0 = 0; globalT1 = 0 }
+  } else {
+    const pxPerMs = 0.8
+    let runningT = 0
+    for (const s of payload.strokes) {
+      if (!s.pts || s.pts.length < 2) continue
+      for (let i = 1; i < s.pts.length; i++) {
+        const p0 = s.pts[i-1], p1 = s.pts[i]
+        const dx = p1.x - p0.x, dy = p1.y - p0.y
+        const len = Math.hypot(dx, dy)
+        const dur = len / pxPerMs
+        const t0 = runningT
+        const t1 = runningT + dur
+        segs.push({ x0:p0.x, y0:p0.y, x1:p1.x, y1:p1.y, color:s.color, size:s.size, tool:s.tool, len, t0, t1 })
+        totalLen += len
+        runningT = t1
+      }
+    }
+    hasTimestamps = false
+    globalT0 = 0
+    globalT1 = segs.length ? segs[segs.length - 1].t1! : 0
   }
 
-  // Heuristic speed (pixels per millisecond) for animation without audio.
   const pxPerMs = 0.8
-  const duration = totalLen > 0 ? Math.max(800, Math.round(totalLen / pxPerMs)) : 0
+  const durationLenHeuristic = totalLen > 0 ? Math.max(800, Math.round(totalLen / pxPerMs)) : 0
 
-  return { segs, totalLen, duration }
+  return { segs, totalLen, durationLenHeuristic, hasTimestamps, timeStart: globalT0, timeEnd: globalT1 }
 }
