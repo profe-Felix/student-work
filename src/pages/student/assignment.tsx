@@ -870,7 +870,7 @@ export default function StudentAssignment(){
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
         <h2>Student Assignment</h2>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-          <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
+          <div style={{ padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}>
             Student: <strong>{studentId}</strong>
           </div>
           <button onClick={()=> nav('/start')} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}>
