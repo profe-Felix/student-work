@@ -17,7 +17,13 @@ import {
   subscribeToGlobal,
   type TeacherPresenceState, // (type only; helps with cache shape)
 } from '../../lib/realtime'
-
+// Allow audioOffsetMs locally without changing DrawCanvas' exported type
+type StrokesPayloadRT = StrokesPayload & {
+  timing?: {
+    capturePerf0Ms?: number
+    audioOffsetMs?: number
+  }
+}
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
 const DEFAULT_PDF_STORAGE_PATH = 'pdfs/aprende-m2.pdf'
@@ -60,12 +66,11 @@ const submittedKey  = (student:string, assignment:string, page:number)=> `submit
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
 const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
 
-function normalizeStrokes(data: unknown): StrokesPayload {
-  // <<< make this tolerant + carry canvas + timing
+function normalizeStrokes(data: unknown): StrokesPayloadRT {
   if (!data || typeof data !== 'object') return { strokes: [] }
   const obj = data as any
   const arr = Array.isArray(obj.strokes) ? obj.strokes : []
-  const out: StrokesPayload = { strokes: arr }
+  const out: StrokesPayloadRT = { strokes: arr }
 
   if (Number.isFinite(obj.canvasWidth))  out.canvasWidth  = obj.canvasWidth
   if (Number.isFinite(obj.canvasHeight)) out.canvasHeight = obj.canvasHeight
@@ -77,6 +82,7 @@ function normalizeStrokes(data: unknown): StrokesPayload {
   }
   return out
 }
+
 
 function saveDraft(student:string, assignment:string, page:number, strokes:any){
   try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
@@ -396,11 +402,13 @@ export default function StudentAssignment(){
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       // <<< A/V ALIGNMENT: attach audioOffsetMs when possible
-      const audioMeta = audioRef.current?.getAudioMeta?.()
-      if (hasInk && audioMeta?.audioStartPerfMs != null && payload?.timing?.capturePerf0Ms != null) {
-        const audioOffsetMs = audioMeta.audioStartPerfMs - (payload.timing.capturePerf0Ms || 0)
-        payload.timing = { ...(payload.timing || {}), audioOffsetMs }
-      }
+const audioMeta = audioRef.current?.getAudioMeta?.()
+const p = payload as StrokesPayloadRT
+if (hasInk && audioMeta?.audioStartPerfMs != null && p?.timing?.capturePerf0Ms != null) {
+  const audioOffsetMs = audioMeta.audioStartPerfMs - (p.timing!.capturePerf0Ms || 0)
+  p.timing = { ...(p.timing || {}), audioOffsetMs }
+}
+
 
       const encHash = await hashStrokes(payload)
       const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
