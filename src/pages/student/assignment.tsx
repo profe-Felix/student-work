@@ -847,21 +847,25 @@ export default function StudentAssignment(){
           ref={audioRef}
           maxSec={180}
           onStart={(ts: number) => {{
-  // Small, consistent fudge to account for MediaRecorder start & encoder padding
   const REC_LATENCY_MS = 120
-  const t0 = ts + REC_LATENCY_MS
 
-  if (recordMode === 'replace') {
-    audioTakes.current = []
+  // Do we already have an ink timing zero?
+  const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
+
+  if (recordMode === 'replace' || cap0 == null) {
+    // Recording-first (no ink yet) OR replace-mode: establish zero using a small latency fudge
+    const t0 = ts + REC_LATENCY_MS
     try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
-  } else {
-    // First take on this page? anchor ink to (adjusted) record time
-    if (audioTakes.current.length === 0) {
-      try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
+    pendingTakeStart.current = t0
+    if (recordMode === 'replace') {
+      audioTakes.current = []
     }
+  } else {
+    // Draw-first: DO NOT add latency; trimming in the merger handles encoder padding
+    pendingTakeStart.current = ts
   }
-  pendingTakeStart.current = t0
 }
+
 }}
 
           onBlob={(b: Blob) => {
