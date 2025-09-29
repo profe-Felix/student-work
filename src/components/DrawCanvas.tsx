@@ -16,9 +16,10 @@ export type DrawCanvasHandle = {
   loadStrokes: (data: StrokesPayload | null | undefined) => void
   clearStrokes: () => void
   undo: () => void
-  /** Rebase timing so future audio aligns to this new "now" (ts = perf timestamp from AudioRecorder) */
+  /** Rebase timing so future audio aligns to this exact perf timestamp (ms) */
   markTimingZero: (ts?: number) => void
 }
+
 
 /* ---------- Type guards ---------- */
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -170,22 +171,33 @@ export default forwardRef(function DrawCanvas(
     },
     /** Rebase all timestamps so a new audio recording can align to "now" */
     markTimingZero: (ts?: number): void => {
-      const newZero = typeof ts === 'number' ? ts : performance.now()
-      const oldZero = capturePerf0Ms.current
-      if (oldZero == null) { capturePerf0Ms.current = newZero; return }
-      const delta = oldZero - newZero
-      if (delta !== 0) {
-        for (const s of strokes.current) {
-          for (const p of s.pts) {
-            const tOld = typeof p.t === 'number' ? p.t : 0
-            const tNew = tOld + delta
-            p.t = Math.max(0, Math.round(tNew))
-          }
-        }
+  const oldZero = capturePerf0Ms.current
+  const newZero = typeof ts === 'number' ? ts : performance.now()
+
+  // First time setting timing? just set and return
+  if (oldZero == null) {
+    capturePerf0Ms.current = newZero
+    redraw()
+    return
+  }
+
+  // Shift all existing points to preserve absolute time:
+  // oldAbs = oldZero + tOld  ⇒  keep oldAbs = newZero + tNew
+  // tNew = tOld + (oldZero - newZero)
+  const delta = oldZero - newZero
+  if (delta !== 0) {
+    for (const s of strokes.current) {
+      for (const p of s.pts) {
+        const tOld = typeof p.t === 'number' ? p.t : 0
+        const tNew = tOld + delta
+        p.t = Math.max(0, Math.round(tNew))
       }
-      capturePerf0Ms.current = newZero
-      redraw()
     }
+  }
+  capturePerf0Ms.current = newZero
+  redraw()
+}
+
   }))
 
   const getPos = (e: PointerEvent)=>{
