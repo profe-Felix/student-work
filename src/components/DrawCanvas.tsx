@@ -7,7 +7,7 @@ export type StrokesPayload = {
   canvasWidth?: number
   canvasHeight?: number
   timing?: {
-    capturePerf0Ms?: number  // perf time (ms) when first stroke on this page started
+    capturePerf0Ms?: number  // perf time (ms) when first stroke on this page started (or rebased)
   }
 }
 
@@ -16,8 +16,7 @@ export type DrawCanvasHandle = {
   loadStrokes: (data: StrokesPayload | null | undefined) => void
   clearStrokes: () => void
   undo: () => void
-  /** Rebase timing so future audio aligns to this exact perf timestamp (ms).
-      If ts is omitted, uses performance.now(). */
+  /** Rebase timing so future audio aligns to this exact perf timestamp */
   markTimingZero: (ts?: number) => void
 }
 
@@ -45,7 +44,6 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
   }
   const raw = (input as any).strokes as unknown[]
 
-  // Explicitly type the mapped array so our type predicate in .filter(...) is valid under noImplicitAny
   const mapped: Array<Stroke | null> = raw.map((s) => {
     if (isStroke(s)) return s
     if (isRecord(s)) {
@@ -95,7 +93,7 @@ export default forwardRef(function DrawCanvas(
     width, height,
     color, size,
     mode, // 'scroll' | 'draw'
-    tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'  (erasers not implemented here)
+    tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'
   }:{
     width:number; height:number
     color:string; size:number
@@ -109,7 +107,7 @@ export default forwardRef(function DrawCanvas(
   const strokes   = useRef<Stroke[]>([])
   const current   = useRef<Stroke|null>(null)
 
-  // timing reference (first time we actually begin drawing on this page)
+  // perf timebase for this page (rebased when requested)
   const capturePerf0Ms = useRef<number | null>(null)
 
   // pointers
@@ -157,7 +155,6 @@ export default forwardRef(function DrawCanvas(
       const safe = normalize(data)
       strokes.current = safe.strokes
       current.current = null
-      // keep previous timing if any; do not overwrite capturePerf0Ms unless provided
       if (safe.timing?.capturePerf0Ms != null) capturePerf0Ms.current = safe.timing.capturePerf0Ms
       redraw()
     },
@@ -171,17 +168,13 @@ export default forwardRef(function DrawCanvas(
       strokes.current.pop()
       redraw()
     },
-    /** Rebase all timestamps so a new audio recording can align to given perf timestamp */
+    /** Rebase all timestamps so a new audio recording can align to exact ts (perf clock). */
     markTimingZero: (ts?: number): void => {
-      const newZero = ts ?? performance.now()
       const oldZero = capturePerf0Ms.current
-
-      // first stroke ever on this page? just set and go.
+      const newZero = typeof ts === 'number' ? ts : performance.now()
       if (oldZero == null) { capturePerf0Ms.current = newZero; return }
 
-      // Shift all existing points to preserve absolute time:
-      // oldAbs = oldZero + tOld  ⇒  keep oldAbs = newZero + tNew
-      // tNew = tOld + (oldZero - newZero)
+      // Keep absolute time: oldZero + tOld = newZero + tNew  => tNew = tOld + (oldZero - newZero)
       const delta = oldZero - newZero
       if (delta !== 0) {
         for (const s of strokes.current) {
@@ -220,7 +213,6 @@ export default forwardRef(function DrawCanvas(
       drawingPointerId.current = e.pointerId
       c.setPointerCapture(e.pointerId)
 
-      // establish timing zero on the FIRST real stroke only if not set by audio
       if (capturePerf0Ms.current == null) capturePerf0Ms.current = performance.now()
 
       const now = performance.now()
