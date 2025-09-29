@@ -834,28 +834,31 @@ export default function StudentAssignment(){
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
         <AudioRecorder
-          ref={audioRef}
-          maxSec={180}
-          onStart={(ts: number) => {
-            const REC_LATENCY_MS = 100 // tweak 60–150 if needed
-            const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
+  ref={audioRef}
+  maxSec={180}
+  onStart={(ts: number) => {
+    // Make AUDIO the source of truth for the timeline.
+    // Set capture zero EXACTLY at the recorder's start time.
+    const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
 
-            if (recordMode === 'replace' || cap0 == null) {
-              const t0 = ts + REC_LATENCY_MS
-              try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
-              pendingTakeStart.current = t0
-              if (recordMode === 'replace') audioTakes.current = []
-            } else {
-              pendingTakeStart.current = ts
-            }
-          }}
-          onBlob={(b: Blob) => {
-            const ts = pendingTakeStart.current ?? performance.now()
-            audioTakes.current.push({ blob: b, startPerfMs: ts })
-            audioBlob.current = b
-            pendingTakeStart.current = null
-          }}
-        />
+    if (recordMode === 'replace' || cap0 == null) {
+      const t0 = ts
+      try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
+      pendingTakeStart.current = t0
+      if (recordMode === 'replace') audioTakes.current = []
+    } else {
+      // ink-first case: still anchor this take at the real start time
+      pendingTakeStart.current = ts
+    }
+  }}
+  onBlob={(b: Blob) => {
+    const ts = pendingTakeStart.current ?? performance.now()
+    audioTakes.current.push({ blob: b, startPerfMs: ts })
+    audioBlob.current = b
+    pendingTakeStart.current = null
+  }}
+/>
+
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
