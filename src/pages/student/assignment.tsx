@@ -18,7 +18,7 @@ import {
   type TeacherPresenceState,
 } from '../../lib/realtime'
 
-// ---------- Extend DrawCanvas StrokesPayload just for runtime (so audioOffsetMs is allowed) ----------
+// ---------- Extend DrawCanvas StrokesPayload just for runtime (allow audioOffsetMs) ----------
 type StrokesPayloadRT = StrokesPayload & {
   timing?: {
     capturePerf0Ms?: number
@@ -121,6 +121,111 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   )
 }
 
+/* ---------- Audio merging helpers (takes -> one WAV aligned to ink) ---------- */
+
+type AudioTake = { blob: Blob; startPerfMs: number }
+
+async function mergeAudioTakesToWav(
+  takes: AudioTake[],
+  capturePerf0Ms: number | undefined
+): Promise<Blob> {
+  if (!takes.length) throw new Error('No takes to merge')
+
+  const sampleRate = 44100
+  const ProbeCtx = (window as any).AudioContext || (window as any).webkitAudioContext
+  const probeCtx = new ProbeCtx()
+
+  const decoded = await Promise.all(
+    takes.map(async (t) => {
+      const ab = await t.blob.arrayBuffer()
+      const buf: AudioBuffer = await probeCtx.decodeAudioData(ab.slice(0))
+      const offsetSec = Math.max(0, ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000)
+      return { buf, offsetSec }
+    })
+  )
+  probeCtx.close?.()
+
+  // downmix to mono if needed
+  const toMono = (buf: AudioBuffer) => {
+    if (buf.numberOfChannels === 1) return buf
+    const out = new AudioBuffer({ length: buf.length, numberOfChannels: 1, sampleRate: buf.sampleRate })
+    const l = buf.getChannelData(0)
+    const r = buf.getChannelData(1)
+    const d = out.getChannelData(0)
+    const n = Math.min(l.length, r.length)
+    for (let i = 0; i < n; i++) d[i] = (l[i] + r[i]) * 0.5
+    return out
+  }
+
+  const mono = decoded.map(d => ({ buf: toMono(d.buf), offsetSec: d.offsetSec }))
+
+  // resample to 44100 if needed via OfflineAudioContext
+  const ResampleCtx = (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext
+  const resampled = await Promise.all(mono.map(async ({ buf, offsetSec }) => {
+    if (buf.sampleRate === sampleRate) return { buf, offsetSec }
+    const length = Math.ceil(buf.duration * sampleRate)
+    const oc = new ResampleCtx(1, length, sampleRate)
+    const src = oc.createBufferSource()
+    const copy = oc.createBuffer(1, length, sampleRate)
+    copy.copyToChannel(buf.getChannelData(0), 0)
+    src.buffer = copy
+    src.connect(oc.destination)
+    src.start(0)
+    const rendered: AudioBuffer = await oc.startRendering()
+    return { buf: rendered, offsetSec }
+  }))
+
+  // compute total length
+  let totalSec = 0
+  for (const { buf, offsetSec } of resampled) {
+    totalSec = Math.max(totalSec, offsetSec + buf.duration)
+  }
+  const totalLength = Math.ceil(totalSec * sampleRate)
+  const mix = new Float32Array(totalLength)
+
+  // naive sum mix (voice rarely clips; fine for now)
+  for (const { buf, offsetSec } of resampled) {
+    const startSample = Math.round(offsetSec * sampleRate)
+    const src = buf.getChannelData(0)
+    for (let i = 0; i < src.length; i++) {
+      const j = startSample + i
+      if (j < mix.length) mix[j] += src[i]
+    }
+  }
+
+  return encodeWavMono16(mix, sampleRate)
+}
+
+// Minimal PCM WAV encoder (mono, 16-bit)
+function encodeWavMono16(samples: Float32Array, sampleRate: number): Blob {
+  const pcm = new Int16Array(samples.length)
+  for (let i = 0; i < samples.length; i++) {
+    let s = Math.max(-1, Math.min(1, samples[i]))
+    pcm[i] = (s * 0x7fff) | 0
+  }
+
+  const bytesPerSample = 2
+  const blockAlign = 1 * bytesPerSample
+  const byteRate = sampleRate * blockAlign
+  const dataSize = pcm.length * bytesPerSample
+  const buffer = new ArrayBuffer(44 + dataSize)
+  const view = new DataView(buffer)
+
+  let off = 0
+  const writeStr = (s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off++, s.charCodeAt(i)) }
+  const writeU32 = (v: number) => { view.setUint32(off, v, true); off += 4 }
+  const writeU16 = (v: number) => { view.setUint16(off, v, true); off += 2 }
+
+  writeStr('RIFF'); writeU32(36 + dataSize); writeStr('WAVE')
+  writeStr('fmt '); writeU32(16); writeU16(1) // PCM
+  writeU16(1) // mono
+  writeU32(sampleRate); writeU32(byteRate)
+  writeU16(blockAlign); writeU16(16) // bits per sample
+  writeStr('data'); writeU32(dataSize)
+  new Uint8Array(buffer, 44).set(new Uint8Array(pcm.buffer))
+  return new Blob([buffer], { type: 'audio/wav' })
+}
+
 export default function StudentAssignment(){
   const location = useLocation()
   const nav = useNavigate()
@@ -173,9 +278,9 @@ export default function StudentAssignment(){
   const drawRef = useRef<DrawCanvasHandle>(null)
   const audioRef = useRef<AudioRecorderHandle>(null)
 
-  // NEW: keep both pending & last audio
-  const audioBlobPending = useRef<Blob|null>(null) // unsaved fresh recording
-  const audioBlobLast    = useRef<Blob|null>(null) // most recent recording (carry-forward)
+  // --- Multi-take audio (per page) ---
+  const audioTakes = useRef<AudioTake[]>([])                 // all takes for this page
+  const [recordMode, setRecordMode] = useState<'append'|'replace'>('append') // UX toggle
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
@@ -266,6 +371,8 @@ export default function StudentAssignment(){
         setPageIndex(0)
       }
       currIds.current = {}
+      // reset takes when assignment switches
+      audioTakes.current = []
     })
     return off
   }, [])
@@ -292,6 +399,7 @@ export default function StudentAssignment(){
   useEffect(()=>{
     let cancelled=false
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
+    audioTakes.current = [] // audio is per-page
 
     ;(async ()=>{
       try{
@@ -407,28 +515,13 @@ export default function StudentAssignment(){
         || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
       const hasInk   = Array.isArray(payload?.strokes) && payload.strokes.length > 0
 
-      // Decide which audio (if any) to attach:
-      // - Prefer a brand-new unsaved recording
-      // - Else carry-forward the most recent saved recording
-      const audioToSave: Blob | null =
-        audioBlobPending.current
-          ? audioBlobPending.current
-          : (hasInk && audioBlobLast.current ? audioBlobLast.current : null)
-
-      const hasAudio = !!audioToSave
-      if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
-
-      // A/V ALIGNMENT: attach audioOffsetMs when possible (only when we actually attach audio)
-      const audioMeta = audioRef.current?.getAudioMeta?.()
-      if (hasInk && hasAudio && audioMeta?.audioStartPerfMs != null && payload?.timing?.capturePerf0Ms != null) {
-        const audioOffsetMs = audioMeta.audioStartPerfMs - (payload.timing.capturePerf0Ms || 0)
-        payload.timing = { ...(payload.timing || {}), audioOffsetMs }
-      }
+      const hasAudioTakes = audioTakes.current.length > 0
+      if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current=false; return }
 
       const encHash = await hashStrokes(payload)
       const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
       const last = localStorage.getItem(lastKey)
-      if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
+      if (last && last === encHash && !hasAudioTakes) { setSaving(false); submitInFlight.current=false; return }
 
       const thisIndex = pageIndex
       const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIdsFor(thisIndex)
@@ -437,6 +530,7 @@ export default function StudentAssignment(){
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
+      // Save strokes first
       if (hasInk) {
         await saveStrokes(submission_id, payload)
         localStorage.setItem(lastKey, encHash)
@@ -445,11 +539,15 @@ export default function StudentAssignment(){
         lastLocalHash.current = encHash
         localDirty.current = false
       }
-      if (hasAudio && audioToSave) {
-        await saveAudio(submission_id, audioToSave)
-        // We just saved this; it becomes the new "last" audio and we clear "pending"
-        audioBlobLast.current = audioToSave
-        audioBlobPending.current = null
+
+      // Merge & save audio if we have takes
+      if (hasAudioTakes) {
+        const captureZero = payload.timing?.capturePerf0Ms
+        const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
+        await saveAudio(submission_id, merged)
+        // After merging, the audio timeline == ink timeline
+        payload.timing = { ...(payload.timing || {}), audioOffsetMs: 0 }
+        // We keep the takes in memory so subsequent submits can re-merge (or clear on page change)
       }
 
       clearDraft(studentId, assignmentTitle, pageIndex)
@@ -476,14 +574,13 @@ export default function StudentAssignment(){
     if (navLocked || blockedBySync(nextIndex)) return
     try { audioRef.current?.stop() } catch {}
     // Page-local audio should not bleed across pages
-    audioBlobPending.current = null
-    audioBlobLast.current = null
+    audioTakes.current = []
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
     const hasInk   = Array.isArray(current.strokes) && current.strokes.length > 0
-    const hasPendingAudio = !!audioBlobPending.current
+    const hasNewAudio = audioTakes.current.length > 0
 
-    if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasPendingAudio)) {
+    if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasNewAudio)) {
       try { await submit() } catch { try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {} }
     } else {
       try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
@@ -621,7 +718,7 @@ export default function StudentAssignment(){
     <div
       style={{
         position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
-        zIndex:10010, width:120, maxHeight:'80vh',
+        zIndex:10010, width:140, maxHeight:'80vh',
         display:'flex', flexDirection:'column', gap:10,
         padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
         WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none', overflow:'hidden'
@@ -664,7 +761,24 @@ export default function StudentAssignment(){
           style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
       </div>
 
-      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
+      <div style={{ display:'flex', gap:6, marginTop:2 }}>
+        <button
+          onClick={()=> setRecordMode(m => (m === 'append' ? 'replace' : 'append'))}
+          style={{ flex:1, padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}
+          title="Toggle recording mode"
+        >
+          Mode: {recordMode === 'append' ? 'Append' : 'Replace'}
+        </button>
+        <button
+          onClick={()=> { audioTakes.current = [] }}
+          style={{ padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}
+          title="Clear audio for this page"
+        >
+          Reset
+        </button>
+      </div>
+
+      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'36vh' }}>
         <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
           {CRAYOLA_24.map(c=>(
@@ -685,10 +799,16 @@ export default function StudentAssignment(){
         <AudioRecorder
           ref={audioRef}
           maxSec={180}
-          onBlob={(b)=>{ audioBlobPending.current = b; audioBlobLast.current = b }}
           onStart={()=>{
-            // rebase stroke timing at the exact moment a new recording starts
+            // Replace mode: drop previous takes
+            if (recordMode === 'replace') audioTakes.current = []
+            // Rebase ink timing to the exact moment we start recording
             try { (drawRef.current as any)?.markTimingZero?.() } catch {}
+          }}
+          onBlob={(b)=>{
+            // get precise start timestamp from the recorder meta
+            const ts = audioRef.current?.getAudioMeta?.().audioStartPerfMs ?? performance.now()
+            audioTakes.current.push({ blob: b, startPerfMs: ts })
           }}
         />
         <button onClick={submit}
@@ -702,7 +822,7 @@ export default function StudentAssignment(){
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
-      ...(toolbarOnRight ? { paddingRight:130 } : { paddingLeft:130 }),
+      ...(toolbarOnRight ? { paddingRight:150 } : { paddingLeft:150 }),
       background:'#fafafa', WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
         <h2>Student Assignment</h2>
