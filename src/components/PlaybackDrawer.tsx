@@ -5,13 +5,18 @@ type Pt = { x:number; y:number }
 type Stroke = { color:string; size:number; tool:'pen'|'highlighter'; pts:Pt[] }
 type StrokesPayload = {
   strokes: Stroke[]
-  // meta saved at capture time (preferred)
+  // capture meta (preferred)
   canvasWidth?: number
   canvasHeight?: number
-  // tolerate older/alias names
+  // tolerant aliases
   canvas_w?: number; canvas_h?: number
   w?: number; h?: number
   width?: number; height?: number
+  // timing (optional, from capture/submission)
+  timing?: {
+    capturePerf0Ms?: number
+    audioOffsetMs?: number // positive means ink starts AFTER audio begins; negative means BEFORE
+  }
 }
 
 type Seg = { x0:number; y0:number; x1:number; y1:number; color:string; size:number; tool:'pen'|'highlighter'; len:number }
@@ -83,11 +88,20 @@ export default function PlaybackDrawer({
     if (playMode === 'together' && audioAvailable) {
       const a = audioRef.current
       if (!a) return
-      const onLoaded = () => setDurationMs(Math.max(0, (a.duration || 0) * 1000))
+      const onLoaded = () => {
+        const baseDur = Math.max(0, (a.duration || 0) * 1000)
+        const off = parsed.timing?.audioOffsetMs ?? 0
+        // Total scrub window: from 0..(audio duration), visuals offset internally.
+        // We keep the slider range equal to audio length for intuitive scrubbing.
+        setDurationMs(Math.max(0, baseDur))
+      }
       const onEnded  = () => setIsPlaying(false)
       a.addEventListener('loadedmetadata', onLoaded)
       a.addEventListener('ended', onEnded)
-      if (a.duration && !Number.isNaN(a.duration)) setDurationMs(a.duration * 1000)
+      if (a.duration && !Number.isNaN(a.duration)) {
+        const baseDur = a.duration * 1000
+        setDurationMs(Math.max(0, baseDur))
+      }
       return () => {
         a.removeEventListener('loadedmetadata', onLoaded)
         a.removeEventListener('ended', onEnded)
@@ -96,7 +110,7 @@ export default function PlaybackDrawer({
       setDurationMs(built.duration)
       setNowMs(0)
     }
-  }, [audioAvailable, playMode, built.duration])
+  }, [audioAvailable, playMode, built.duration, parsed.timing?.audioOffsetMs])
 
   // Unified animation loop
   useEffect(() => {
@@ -114,7 +128,10 @@ export default function PlaybackDrawer({
       let tMs = 0
       if (playMode === 'together' && audioAvailable) {
         const a = audioRef.current
-        tMs = Math.max(0, (a?.currentTime || 0) * 1000) // read audio time EVERY frame
+        const audioTimeMs = Math.max(0, (a?.currentTime || 0) * 1000)
+        const off = parsed.timing?.audioOffsetMs ?? 0
+        // compute the visual time with offset; negative offset means strokes start before audio
+        tMs = Math.max(0, audioTimeMs + off)
       } else {
         const elapsed = t - start
         tMs = Math.max(0, elapsed)
@@ -140,7 +157,7 @@ export default function PlaybackDrawer({
     rafRef.current = requestAnimationFrame(tick)
     return () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); rafRef.current = null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, playMode, audioAvailable, durationMs])
+  }, [isPlaying, playMode, audioAvailable, durationMs, parsed.timing?.audioOffsetMs])
 
   function onPdfReady(_pdf:any, canvas:HTMLCanvasElement) {
     try {
@@ -287,10 +304,14 @@ export default function PlaybackDrawer({
     if (playMode === 'together' && audioAvailable) {
       const a = audioRef.current
       if (a) {
-        a.currentTime = t / 1000
+        const off = parsed.timing?.audioOffsetMs ?? 0
+        // Convert desired visual time (t) back to audio time (audio = visual - offset)
+        const audioT = Math.max(0, (t - off) / 1000)
+        a.currentTime = audioT
         // draw immediately at the new position for visual snap
-        drawUpTo(t)
-        setNowMs(t)
+        const visualT = Math.max(0, Math.min(durationMs, (a.currentTime * 1000) + off))
+        drawUpTo(visualT)
+        setNowMs(visualT)
       }
     } else {
       setNowMs(t)
@@ -457,6 +478,13 @@ function parseStrokes(raw: unknown): StrokesPayload {
   if (metaW && metaH) {
     out.canvasWidth = metaW
     out.canvasHeight = metaH
+  }
+
+  // timing (optional)
+  if (obj.timing && typeof obj.timing === 'object') {
+    out.timing = {}
+    if (Number.isFinite(obj.timing.capturePerf0Ms)) out.timing.capturePerf0Ms = obj.timing.capturePerf0Ms
+    if (Number.isFinite(obj.timing.audioOffsetMs))  out.timing.audioOffsetMs  = obj.timing.audioOffsetMs
   }
   return out
 }
