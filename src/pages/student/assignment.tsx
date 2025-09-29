@@ -125,7 +125,12 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
 
 type AudioTake = { blob: Blob; startPerfMs: number }
 
-// ⬇⬇⬇ REPLACED FUNCTION: now keeps negative offsets and pads leading silence based on minOffset
+/**
+ * Proper resampling (no slowdown/warble) and true alignment:
+ * - Uses OfflineAudioContext at 44.1k and lets the engine resample each take.
+ * - Preserves negative offsets; pads leading silence using minOffset.
+ * - Soft-limits mix to avoid clipping distortion.
+ */
 async function mergeAudioTakesToWav(
   takes: AudioTake[],
   capturePerf0Ms: number | undefined
@@ -136,7 +141,7 @@ async function mergeAudioTakesToWav(
   const AC = (window as any).AudioContext || (window as any).webkitAudioContext
   const probe = new AC()
 
-  // 1) Decode and compute true offsets (CAN be negative; do NOT clamp)
+  // 1) Decode and compute offsets (allow negative; do NOT clamp)
   const decoded = await Promise.all(
     takes.map(async (t) => {
       const ab = await t.blob.arrayBuffer()
@@ -147,46 +152,33 @@ async function mergeAudioTakesToWav(
   )
   probe.close?.()
 
-  // 2) Downmix to mono if needed
-  const toMono = (buf: AudioBuffer) => {
-    if (buf.numberOfChannels === 1) return buf
-    const out = new AudioBuffer({ length: buf.length, numberOfChannels: 1, sampleRate: buf.sampleRate })
-    const l = buf.getChannelData(0)
-    const r = buf.getChannelData(1)
-    const d = out.getChannelData(0)
-    const n = Math.min(l.length, r.length)
-    for (let i = 0; i < n; i++) d[i] = (l[i] + r[i]) * 0.5
-    return out
-  }
-  const mono = decoded.map(d => ({ buf: toMono(d.buf), offsetSec: d.offsetSec }))
-
-  // 3) Resample to 44.1k if needed
+  // 2) Resample each take to 44.1k and downmix to mono via a 1-channel OfflineAudioContext
   const OAC = (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext
-  const resampled = await Promise.all(mono.map(async ({ buf, offsetSec }) => {
-    if (buf.sampleRate === TARGET_SR) return { buf, offsetSec }
+  const resampled = await Promise.all(decoded.map(async ({ buf, offsetSec }) => {
+    if (buf.sampleRate === TARGET_SR && buf.numberOfChannels === 1) {
+      return { buf, offsetSec }
+    }
     const length = Math.ceil(buf.duration * TARGET_SR)
-    const oc = new OAC(1, length, TARGET_SR)
+    const oc = new OAC(1, length, TARGET_SR) // 1 channel ⇒ engine mixes down to mono
     const src = oc.createBufferSource()
-    const copy = oc.createBuffer(1, length, TARGET_SR)
-    copy.copyToChannel(buf.getChannelData(0), 0)
-    src.buffer = copy
+    src.buffer = buf // let the engine handle resampling; no manual copyToChannel
     src.connect(oc.destination)
     src.start(0)
     const rendered: AudioBuffer = await oc.startRendering()
     return { buf: rendered, offsetSec }
   }))
 
-  // 4) Determine earliest start and latest end; use minOffset to pad leading silence
+  // 3) Determine earliest start and latest end
   let minOffset = 0
   let maxEnd = 0
   for (const { buf, offsetSec } of resampled) {
     minOffset = Math.min(minOffset, offsetSec)
     maxEnd = Math.max(maxEnd, offsetSec + buf.duration)
   }
-  const totalSec = maxEnd - minOffset
+  const totalSec = Math.max(0, maxEnd - minOffset)
   const totalLen = Math.ceil(totalSec * TARGET_SR)
 
-  // 5) Mix into a single mono buffer (shift each take by -minOffset)
+  // 4) Mix (shift each by -minOffset) and soft-limit to prevent clipping
   const mix = new Float32Array(totalLen)
   for (const { buf, offsetSec } of resampled) {
     const startSample = Math.round((offsetSec - minOffset) * TARGET_SR)
@@ -196,8 +188,17 @@ async function mergeAudioTakesToWav(
       if (j >= 0 && j < mix.length) mix[j] += src[i]
     }
   }
+  // Soft limiter: normalize if peak > 1
+  let peak = 0
+  for (let i = 0; i < mix.length; i++) {
+    const a = Math.abs(mix[i])
+    if (a > peak) peak = a
+  }
+  if (peak > 1) {
+    const scale = 1 / peak
+    for (let i = 0; i < mix.length; i++) mix[i] *= scale
+  }
 
-  // 6) Encode to WAV
   return encodeWavMono16(mix, TARGET_SR)
 }
 
@@ -230,6 +231,7 @@ function encodeWavMono16(samples: Float32Array, sampleRate: number): Blob {
   new Uint8Array(buffer, 44).set(new Uint8Array(pcm.buffer))
   return new Blob([buffer], { type: 'audio/wav' })
 }
+
 
 export default function StudentAssignment(){
   const location = useLocation()
