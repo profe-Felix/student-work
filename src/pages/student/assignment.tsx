@@ -125,26 +125,28 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
 /* ---------- Audio merging helpers (takes -> one WAV aligned to ink) ---------- */
 
 type AudioTake = { blob: Blob; startPerfMs: number }
+type MergeResult = { blob: Blob; onsetMs: number } // merged wav + detected audible onset (ms)
 
 /**
- * Proper resampling (no slowdown/warble) and alignment to the ink timeline.
+ * Merge multiple audio takes to mono WAV at 44.1k, detect earliest audible onset
+ * relative to capturePerf0Ms, and return both the merged blob and onset in ms.
  */
 async function mergeAudioTakesToWav(
   takes: AudioTake[],
   capturePerf0Ms: number | undefined
-): Promise<Blob> {
+): Promise<MergeResult> {
   if (!takes.length) throw new Error('No takes to merge')
 
   const sampleRate = 44100
   const ProbeCtx = (window as any).AudioContext || (window as any).webkitAudioContext
   const probeCtx = new ProbeCtx()
 
-  // Decode and compute nominal offsets relative to capture zero
+  // 1) Decode & compute nominal offsets (relative to capture zero)
   const decoded = await Promise.all(
     takes.map(async (t) => {
       const ab = await t.blob.arrayBuffer()
       const buf: AudioBuffer = await probeCtx.decodeAudioData(ab.slice(0))
-      const offsetSec = Math.max(0, ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000)
+      const offsetSec = ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000
       return { buf, offsetSec }
     })
   )
@@ -154,32 +156,33 @@ async function mergeAudioTakesToWav(
   const toMono = (buf: AudioBuffer) => {
     if (buf.numberOfChannels === 1) return buf
     const out = new AudioBuffer({ length: buf.length, numberOfChannels: 1, sampleRate: buf.sampleRate })
-    const l = buf.getChannelData(0)
-    const r = buf.getChannelData(1)
-    const d = out.getChannelData(0)
-    const n = Math.min(l.length, r.length)
-    for (let i = 0; i < n; i++) d[i] = (l[i] + r[i]) * 0.5
+    const L = buf.getChannelData(0)
+    const R = buf.getChannelData(1)
+    const D = out.getChannelData(0)
+    const n = Math.min(L.length, R.length)
+    for (let i = 0; i < n; i++) D[i] = (L[i] + R[i]) * 0.5
     return out
   }
   const mono = decoded.map(d => ({ buf: toMono(d.buf), offsetSec: d.offsetSec }))
 
-  // Resample to 44.1k only if needed (avoid resampling if rates match)
+  // Resample to 44.1k if needed
   const ResampleCtx = (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext
   const resampled = await Promise.all(mono.map(async ({ buf, offsetSec }) => {
     if (buf.sampleRate === sampleRate) return { buf, offsetSec }
     const length = Math.ceil(buf.duration * sampleRate)
     const oc = new ResampleCtx(1, length, sampleRate)
     const src = oc.createBufferSource()
-    // feed the original buffer; the offline context resamples correctly
-    src.buffer = buf
+    const copy = oc.createBuffer(1, length, sampleRate)
+    copy.copyToChannel(buf.getChannelData(0), 0)
+    src.buffer = copy
     src.connect(oc.destination)
     src.start(0)
     const rendered: AudioBuffer = await oc.startRendering()
     return { buf: rendered, offsetSec }
   }))
 
-  // Trim leading near-silence per take (handles encoder padding)
-  function measureLeadingSilenceSec(buf: AudioBuffer, threshold = 0.01, maxTrimSec = 0.25) {
+  // Leading-silence detector
+  const measureLeadingSilenceSec = (buf: AudioBuffer, threshold = 0.012, maxTrimSec = 0.5) => {
     const data = buf.getChannelData(0)
     const maxTrimSamples = Math.min(data.length, Math.floor(maxTrimSec * buf.sampleRate))
     let i = 0
@@ -187,29 +190,48 @@ async function mergeAudioTakesToWav(
     return i / buf.sampleRate
   }
 
-  const trimmed = resampled.map(({ buf, offsetSec }) => {
-    const trimSec = measureLeadingSilenceSec(buf)
-    const newOffset = Math.max(0, offsetSec - trimSec)
-    return { buf, offsetSec: newOffset }
+  // Compute per-take audible onset & prepare trimmed data for mixing
+  const takesWithOnset = resampled.map(({ buf, offsetSec }) => {
+    const leadSec = measureLeadingSilenceSec(buf)
+    const onsetSec = (offsetSec || 0) + leadSec // true audible onset vs capture zero
+    return { buf, offsetSec, leadSec, onsetSec }
   })
 
-  // Compute total length
+  // earliest audible onset across all takes
+  const earliestOnsetSec = Math.min(...takesWithOnset.map(t => t.onsetSec))
+
+  // For mixing, we trim the near-silence and position by (offset - lead)
+  const trimmed = takesWithOnset.map(t => {
+    const leadSamples = Math.floor(t.leadSec * sampleRate)
+    return {
+      data: t.buf.getChannelData(0).subarray(leadSamples),
+      adjOffsetSec: Math.max(0, t.offsetSec - t.leadSec),
+      length: t.buf.length - leadSamples
+    }
+  })
+
+  // Output length
   let totalSec = 0
-  for (const { buf, offsetSec } of trimmed) totalSec = Math.max(totalSec, offsetSec + buf.duration)
+  for (const t of trimmed) {
+    const dur = t.length / sampleRate
+    totalSec = Math.max(totalSec, t.adjOffsetSec + dur)
+  }
   const totalLength = Math.ceil(totalSec * sampleRate)
+  const mix = new Float32Array(totalLength)
 
   // Mix
-  const mix = new Float32Array(totalLength)
-  for (const { buf, offsetSec } of trimmed) {
-    const startSample = Math.round(offsetSec * sampleRate)
-    const src = buf.getChannelData(0)
+  for (const t of trimmed) {
+    const start = Math.round(t.adjOffsetSec * sampleRate)
+    const src = t.data
     for (let i = 0; i < src.length; i++) {
-      const j = startSample + i
+      const j = start + i
       if (j < mix.length) mix[j] += src[i]
     }
   }
 
-  return encodeWavMono16(mix, sampleRate)
+  // Encode WAV
+  const blob = encodeWavMono16(mix, sampleRate)
+  return { blob, onsetMs: Math.max(0, Math.round(earliestOnsetSec * 1000)) }
 }
 
 // Minimal PCM WAV encoder (mono, 16-bit)
@@ -552,14 +574,15 @@ export default function StudentAssignment(){
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
-      // If we have audio takes, merge them first so we can stamp the timing before saving strokes
+      // If we have audio takes, merge them first so we can set timing before saving strokes
       if (hasAudioTakes) {
         const captureZero = payload.timing?.capturePerf0Ms
-        const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
-        // after merge, audio aligns to ink (offset 0)
-        payload.timing = { ...(payload.timing || {}), audioOffsetMs: 0 }
+        const { blob: merged, onsetMs } = await mergeAudioTakesToWav(audioTakes.current, captureZero)
 
-        // Save strokes with the updated timing (includes audioOffsetMs:0)
+        // Align playback: delay audio by its earliest audible onset vs the capture zero
+        payload.timing = { ...(payload.timing || {}), audioOffsetMs: onsetMs }
+
+        // Save strokes with updated timing
         if (hasInk) {
           await saveStrokes(submission_id, payload)
           localStorage.setItem(lastKey, encHash)
@@ -569,7 +592,7 @@ export default function StudentAssignment(){
           localDirty.current = false
         }
 
-        // Save the merged audio
+        // Save merged audio
         await saveAudio(submission_id, merged)
       } else {
         // No audio changes; just save strokes if needed
@@ -834,31 +857,28 @@ export default function StudentAssignment(){
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
         <AudioRecorder
-  ref={audioRef}
-  maxSec={180}
-  onStart={(ts: number) => {
-    // Make AUDIO the source of truth for the timeline.
-    // Set capture zero EXACTLY at the recorder's start time.
-    const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
+          ref={audioRef}
+          maxSec={180}
+          onStart={(ts: number) => {
+            const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
 
-    if (recordMode === 'replace' || cap0 == null) {
-      const t0 = ts
-      try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
-      pendingTakeStart.current = t0
-      if (recordMode === 'replace') audioTakes.current = []
-    } else {
-      // ink-first case: still anchor this take at the real start time
-      pendingTakeStart.current = ts
-    }
-  }}
-  onBlob={(b: Blob) => {
-    const ts = pendingTakeStart.current ?? performance.now()
-    audioTakes.current.push({ blob: b, startPerfMs: ts })
-    audioBlob.current = b
-    pendingTakeStart.current = null
-  }}
-/>
-
+            if (recordMode === 'replace' || cap0 == null) {
+              // Recording-first: zero = the recorder's reported start
+              try { (drawRef.current as any)?.markTimingZero?.(ts) } catch {}
+              pendingTakeStart.current = ts
+              if (recordMode === 'replace') audioTakes.current = []
+            } else {
+              // Ink-first: keep existing zero
+              pendingTakeStart.current = ts
+            }
+          }}
+          onBlob={(b: Blob) => {
+            const ts = pendingTakeStart.current ?? performance.now()
+            audioTakes.current.push({ blob: b, startPerfMs: ts })
+            audioBlob.current = b
+            pendingTakeStart.current = null
+          }}
+        />
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
