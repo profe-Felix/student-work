@@ -16,6 +16,8 @@ export type DrawCanvasHandle = {
   loadStrokes: (data: StrokesPayload | null | undefined) => void
   clearStrokes: () => void
   undo: () => void
+  /** NEW: rebase timing so future audio aligns to this new "now" */
+  markTimingZero: () => void
 }
 
 /* ---------- Type guards ---------- */
@@ -166,6 +168,29 @@ export default forwardRef(function DrawCanvas(
     },
     undo: (): void => {
       strokes.current.pop()
+      redraw()
+    },
+    /** Rebase all timestamps so a new audio recording can align to "now" */
+    markTimingZero: (): void => {
+      const oldZero = capturePerf0Ms.current
+      const newZero = performance.now()
+      // first stroke ever on this page? just set and go.
+      if (oldZero == null) { capturePerf0Ms.current = newZero; return }
+
+      // Shift all existing points to preserve absolute time:
+      // oldAbs = oldZero + tOld  ⇒  keep oldAbs = newZero + tNew
+      // tNew = tOld + (oldZero - newZero)
+      const delta = oldZero - newZero
+      if (delta !== 0) {
+        for (const s of strokes.current) {
+          for (const p of s.pts) {
+            const tOld = typeof p.t === 'number' ? p.t : 0
+            const tNew = tOld + delta
+            p.t = Math.max(0, Math.round(tNew))
+          }
+        }
+      }
+      capturePerf0Ms.current = newZero
       redraw()
     }
   }))
