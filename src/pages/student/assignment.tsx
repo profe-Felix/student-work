@@ -535,68 +535,70 @@ export default function StudentAssignment(){
   }, [pageIndex, studentId])
 
   /* ---------- Submit (dirty-check) + cache ---------- */
-  const submit = async ()=>{
-    if (submitInFlight.current) return
-    submitInFlight.current = true
-    try{
-      setSaving(true)
-      // include capture canvas CSS width/height so preview can scale correctly
-      const payload: StrokesPayloadRT =
-        (drawRef.current?.getStrokes() as StrokesPayloadRT)
-        || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
-      const hasInk   = Array.isArray(payload?.strokes) && payload.strokes.length > 0
+  const submit = async () => {
+  if (submitInFlight.current) return
+  submitInFlight.current = true
+  try {
+    setSaving(true)
+    const payload: StrokesPayloadRT =
+      (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
+      { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
 
-      const hasAudioTakes = audioTakes.current.length > 0
-      if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current=false; return }
+    const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
+    const hasAudioTakes = audioTakes.current.length > 0
+    if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
-      const encHash = await hashStrokes(payload)
-      const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
-      const last = localStorage.getItem(lastKey)
-      if (last && last === encHash && !hasAudioTakes) { setSaving(false); submitInFlight.current=false; return }
+    const encHash = await hashStrokes(payload)
+    const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
+    const last = localStorage.getItem(lastKey)
+    if (last && last === encHash && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
-      const thisIndex = pageIndex
-      const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIdsFor(thisIndex)
-      currIds.current = ids
-      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
+    const thisIndex = pageIndex
+    const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIdsFor(thisIndex)
+    currIds.current = ids
+    if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
-      const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
+    const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
-      // If we have audio takes, merge them first so we can set timing before saving strokes
-     if (hasAudioTakes) {
-  const captureZero = payload.timing?.capturePerf0Ms
-  const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
+    if (hasAudioTakes) {
+      const captureZero = payload.timing?.capturePerf0Ms
+      const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
 
-  // after merge, audio aligns to ink (offset 0)
-  payload.timing = { ...(payload.timing || {}), audioOffsetMs: 0 }
+      // timing zero was set in onStart; keep audio aligned with ink
+      payload.timing = { ...(payload.timing || {}), audioOffsetMs: 0 }
 
-  if (hasInk) {
-    await saveStrokes(submission_id, payload)
-    ...
-  }
-  await saveAudio(submission_id, merged)
-}
- else {
-        // No audio changes; just save strokes if needed
-        if (hasInk) {
-          await saveStrokes(submission_id, payload)
-          localStorage.setItem(lastKey, encHash)
-          saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
-          lastAppliedServerHash.current = encHash
-          lastLocalHash.current = encHash
-          localDirty.current = false
-        }
+      if (hasInk) {
+        await saveStrokes(submission_id, payload)
+        localStorage.setItem(lastKey, encHash)
+        saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
+        lastAppliedServerHash.current = encHash
+        lastLocalHash.current = encHash
+        localDirty.current = false
       }
 
-      clearDraft(studentId, assignmentTitle, pageIndex)
-      showToast('Saved!', 'ok', 1200)
-      justSavedAt.current = Date.now()
-    } catch (e:any){
-      console.error(e); showToast('Save failed', 'err', 1800)
-    } finally {
-      setSaving(false)
-      submitInFlight.current = false
+      await saveAudio(submission_id, merged)
+    } else {
+      if (hasInk) {
+        await saveStrokes(submission_id, payload)
+        localStorage.setItem(lastKey, encHash)
+        saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
+        lastAppliedServerHash.current = encHash
+        lastLocalHash.current = encHash
+        localDirty.current = false
+      }
     }
+
+    clearDraft(studentId, assignmentTitle, pageIndex)
+    showToast('Saved!', 'ok', 1200)
+    justSavedAt.current = Date.now()
+  } catch (e: any) {
+    console.error(e); showToast('Save failed', 'err', 1800)
+  } finally {
+    setSaving(false)
+    submitInFlight.current = false
   }
+}
+
 
   const blockedBySync = (idx: number) => {
     if (!autoFollow) return false
