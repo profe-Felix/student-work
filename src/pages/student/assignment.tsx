@@ -143,7 +143,8 @@ async function mergeAudioTakesToWav(
       const ab = await t.blob.arrayBuffer()
       const buf: AudioBuffer = await probeCtx.decodeAudioData(ab.slice(0))
       // offsets computed vs SAME clock as markTimingZero (performance.now())
-      const offsetSec = Math.max(0, ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000)
+      let offsetSec = ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000
+      if (!Number.isFinite(offsetSec)) offsetSec = 0
       return { buf, offsetSec }
     })
   )
@@ -199,15 +200,23 @@ async function mergeAudioTakesToWav(
   const mix = new Float32Array(totalLen)
 
   // 6) Mix (leave a little headroom; avoid distortion)
-  const HEADROOM = 0.85
-  for (const t of trimmed) {
-    const start = Math.round(t.offsetSec * TARGET_RATE)
-    const src = t.data
-    for (let i = 0; i < src.length; i++) {
-      const j = start + i
-      if (j < mix.length) mix[j] += src[i] * HEADROOM
-    }
+const HEADROOM = 0.85
+for (const t of trimmed) {
+  let start = Math.round(t.offsetSec * TARGET_RATE)
+  let src = t.data
+
+  // NEW: handle negative offsets by trimming the start of the buffer
+  if (start < 0) {
+    const drop = Math.min(src.length, -start)
+    src = src.subarray(drop)
+    start = 0
   }
+
+  for (let i = 0; i < src.length; i++) {
+    const j = start + i
+    if (j < mix.length) mix[j] += src[i] * HEADROOM
+  }
+}
 
   // 7) Encode WAV
   return encodeWavMono16(mix, TARGET_RATE)
@@ -846,24 +855,33 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-        <AudioRecorder
-          ref={audioRef}
-          maxSec={180}
-          onStart={(_ts: number) => {
-            // One clock to rule them all.
-            const t0 = performance.now()
-            timingZeroRef.current = t0
-            try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
-            pendingTakeStart.current = t0
-            if (recordMode === 'replace') audioTakes.current = []
-          }}
-          onBlob={(b: Blob) => {
-            const ts = pendingTakeStart.current ?? performance.now()
-            audioTakes.current.push({ blob: b, startPerfMs: ts })
-            audioBlob.current = b
-            pendingTakeStart.current = null
-          }}
-        />
+<AudioRecorder
+  ref={audioRef}
+  maxSec={180}
+  onStart={(_ts: number) => {
+    // Use one clock for everything (perf.now) to avoid mismatches.
+    // Bias the timing zero forward so audio effectively starts earlier.
+    const RECORDING_ZERO_BIAS_MS = 450; // try 400–550 if audio is still behind
+    const now = performance.now();
+    const t0 = now + RECORDING_ZERO_BIAS_MS;
+
+    timingZeroRef.current = t0;
+    try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
+
+    // IMPORTANT: take start uses the SAME clock (no ts from recorder)
+    pendingTakeStart.current = now;
+
+    if (recordMode === 'replace') audioTakes.current = [];
+  }}
+  onBlob={(b: Blob) => {
+    const ts = pendingTakeStart.current ?? performance.now();
+    audioTakes.current.push({ blob: b, startPerfMs: ts });
+    audioBlob.current = b;
+    pendingTakeStart.current = null;
+  }}
+/>
+
+
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
