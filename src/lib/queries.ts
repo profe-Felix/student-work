@@ -1,30 +1,28 @@
 // src/lib/queries.ts
 import { supabase } from './supabaseClient';
 
-/**
- * List assignments, newest first.
- * If the column `is_archived` exists, filter to is_archived=false.
- * If it doesn't exist (fresh DB), we gracefully fall back without the filter.
- */
 export async function listAssignments() {
-  // Try with is_archived filter first
-  let q = supabase
+  const cols = 'id,title,created_at';
+
+  // Try with archive filter first (still only selecting id/title/created_at)
+  let res = await supabase
     .from('assignments')
-    .select('id,title,created_at,is_archived')
+    .select(cols)
     .eq('is_archived', false)
     .order('created_at', { ascending: false });
 
-  let res = await q;
-  // If the column doesn't exist yet, retry without it
-  if (res.error && String(res.error.message || '').toLowerCase().includes('column') && String(res.error.message || '').toLowerCase().includes('is_archived')) {
+  // If the column doesn't exist, retry without the filter
+  if (res.error && String(res.error.message || '').toLowerCase().includes('is_archived')) {
     res = await supabase
       .from('assignments')
-      .select('id,title,created_at')
+      .select(cols)
       .order('created_at', { ascending: false });
   }
+
   if (res.error) throw res.error;
-  return res;
+  return res; // PostgrestSingleResponse<{ id; title; created_at }[]>
 }
+
 
 /**
  * List pages for an assignment, ordered by page_index ascending (first page first).
