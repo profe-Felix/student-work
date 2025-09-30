@@ -847,7 +847,7 @@ export default function StudentAssignment(){
   // - If recording first (no capture zero yet) OR replace-mode,
   //   set the timing zero slightly in the future to account for device/startup latency.
   // - If inking first, keep existing zero and just record the exact ts.
-  const REC_LATENCY_MS = 2700 // adjust 150–220 if your hardware needs
+  const REC_LATENCY_MS = 180 // adjust 150–220 if your hardware needs
   const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
 
   if (recordMode === 'replace' || cap0 == null) {
