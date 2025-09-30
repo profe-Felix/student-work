@@ -125,8 +125,6 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
 /* ---------- Audio merging helpers (takes -> one WAV aligned to ink) ---------- */
 type AudioTake = { blob: Blob; startPerfMs: number }
 
-// Merge multiple takes -> mono 44.1k WAV, trim encoder padding, keep timing stable.
-// No onset detection; alignment is handled by onStart() via timing zero.
 // Merge takes -> mono 44.1k WAV. Trim encoder padding but DO NOT change offsets.
 async function mergeAudioTakesToWav(
   takes: AudioTake[],
@@ -144,7 +142,7 @@ async function mergeAudioTakesToWav(
     takes.map(async (t) => {
       const ab = await t.blob.arrayBuffer()
       const buf: AudioBuffer = await probeCtx.decodeAudioData(ab.slice(0))
-      // IMPORTANT: offsets computed vs the SAME clock as markTimingZero (performance.now())
+      // offsets computed vs SAME clock as markTimingZero (performance.now())
       const offsetSec = Math.max(0, ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000)
       return { buf, offsetSec }
     })
@@ -211,11 +209,9 @@ async function mergeAudioTakesToWav(
     }
   }
 
-  // 7) Encode WAV (uses your existing encodeWavMono16)
+  // 7) Encode WAV
   return encodeWavMono16(mix, TARGET_RATE)
 }
-
-
 
 // Minimal PCM WAV encoder (mono, 16-bit)
 function encodeWavMono16(samples: Float32Array, sampleRate: number): Blob {
@@ -304,6 +300,9 @@ export default function StudentAssignment(){
   const [recordMode, setRecordMode] = useState<'append'|'replace'>('append')
   const audioBlob = useRef<Blob|null>(null)  // optional: last blob (for previews, etc.)
   const pendingTakeStart = useRef<number|null>(null) // start ts from onStart(ts)
+
+  // IMPORTANT: timing origin for this page (same clock as startPerfMs)
+  const timingZeroRef = useRef<number | null>(null)
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
@@ -398,6 +397,7 @@ export default function StudentAssignment(){
       audioTakes.current = []
       audioBlob.current = null
       pendingTakeStart.current = null
+      timingZeroRef.current = null
     })
     return off
   }, [])
@@ -427,6 +427,7 @@ export default function StudentAssignment(){
     audioTakes.current = []
     audioBlob.current = null
     pendingTakeStart.current = null
+    timingZeroRef.current = null
 
     ;(async ()=>{
       try{
@@ -532,69 +533,80 @@ export default function StudentAssignment(){
 
   /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async () => {
-  if (submitInFlight.current) return
-  submitInFlight.current = true
-  try {
-    setSaving(true)
-    const payload: StrokesPayloadRT =
-      (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
-      { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+    if (submitInFlight.current) return
+    submitInFlight.current = true
+    try {
+      setSaving(true)
 
-    const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
-    const hasAudioTakes = audioTakes.current.length > 0
-    if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+      // Build payload and normalize timing BEFORE hashing
+      const payload: StrokesPayloadRT =
+        (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
+        { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
 
-    const encHash = await hashStrokes(payload)
-    const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
-    const last = localStorage.getItem(lastKey)
-    if (last && last === encHash && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+      payload.timing = payload.timing ? { ...payload.timing } : {}
 
-    const thisIndex = pageIndex
-    const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIdsFor(thisIndex)
-    currIds.current = ids
-    if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
+      // If DrawCanvas didn't set a capture zero yet, use the same one we set at onStart()
+      if (payload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+        payload.timing.capturePerf0Ms = timingZeroRef.current
+      }
+      // Recommended: default the audio offset to 0; alignment handled by timing zero
+      if (payload.timing.audioOffsetMs == null) payload.timing.audioOffsetMs = 0
 
-    const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
+      const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
+      const hasAudioTakes = audioTakes.current.length > 0
+      if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
-    if (hasAudioTakes) {
-      const captureZero = payload.timing?.capturePerf0Ms
-      const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
+      // Hash AFTER timing fields are finalized
+      const encHash = await hashStrokes(payload)
+      const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
+      const last = localStorage.getItem(lastKey)
+      if (last && last === encHash && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
-      // timing zero was set in onStart; keep audio aligned with ink
-      payload.timing = { ...(payload.timing || {}), audioOffsetMs: 0 }
+      const thisIndex = pageIndex
+      const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIdsFor(thisIndex)
+      currIds.current = ids
+      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
 
-      if (hasInk) {
-        await saveStrokes(submission_id, payload)
-        localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
-        lastAppliedServerHash.current = encHash
-        lastLocalHash.current = encHash
-        localDirty.current = false
+      const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
+
+      if (hasAudioTakes) {
+        // Merge using the SAME timing zero as the ink
+        const captureZero = payload.timing?.capturePerf0Ms
+        const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
+
+        // Do not mutate timing anymore; it's already in the payload & hash.
+
+        if (hasInk) {
+          await saveStrokes(submission_id, payload)
+          localStorage.setItem(lastKey, encHash)
+          saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
+          lastAppliedServerHash.current = encHash
+          lastLocalHash.current = encHash
+          localDirty.current = false
+        }
+
+        await saveAudio(submission_id, merged)
+      } else {
+        if (hasInk) {
+          await saveStrokes(submission_id, payload)
+          localStorage.setItem(lastKey, encHash)
+          saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
+          lastAppliedServerHash.current = encHash
+          lastLocalHash.current = encHash
+          localDirty.current = false
+        }
       }
 
-      await saveAudio(submission_id, merged)
-    } else {
-      if (hasInk) {
-        await saveStrokes(submission_id, payload)
-        localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
-        lastAppliedServerHash.current = encHash
-        lastLocalHash.current = encHash
-        localDirty.current = false
-      }
+      clearDraft(studentId, assignmentTitle, pageIndex)
+      showToast('Saved!', 'ok', 1200)
+      justSavedAt.current = Date.now()
+    } catch (e: any) {
+      console.error(e); showToast('Save failed', 'err', 1800)
+    } finally {
+      setSaving(false)
+      submitInFlight.current = false
     }
-
-    clearDraft(studentId, assignmentTitle, pageIndex)
-    showToast('Saved!', 'ok', 1200)
-    justSavedAt.current = Date.now()
-  } catch (e: any) {
-    console.error(e); showToast('Save failed', 'err', 1800)
-  } finally {
-    setSaving(false)
-    submitInFlight.current = false
   }
-}
-
 
   const blockedBySync = (idx: number) => {
     if (!autoFollow) return false
@@ -619,10 +631,11 @@ export default function StudentAssignment(){
       try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
     }
 
-    // now that we've dealt with saving, reset page-local audio
+    // reset page-local audio
     audioTakes.current = []
     audioBlob.current = null
     pendingTakeStart.current = null
+    timingZeroRef.current = null
 
     setPageIndex(nextIndex)
   }
@@ -647,8 +660,6 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Realtime + polling (defensive) ---------- */
-
-  // subscribe to teacher broadcast once we know the assignment id
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
@@ -836,24 +847,23 @@ export default function StudentAssignment(){
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
         <AudioRecorder
-  ref={audioRef}
-  maxSec={180}
-  onStart={(_ts: number) => {
-    // One clock to rule them all.
-    const t0 = performance.now(); // not _ts
-    try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
-    pendingTakeStart.current = t0;
-    if (recordMode === 'replace') audioTakes.current = [];
-  }}
-  onBlob={(b: Blob) => {
-    const ts = pendingTakeStart.current ?? performance.now();
-    audioTakes.current.push({ blob: b, startPerfMs: ts });
-    audioBlob.current = b;
-    pendingTakeStart.current = null;
-  }}
-/>
-
-
+          ref={audioRef}
+          maxSec={180}
+          onStart={(_ts: number) => {
+            // One clock to rule them all.
+            const t0 = performance.now()
+            timingZeroRef.current = t0
+            try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
+            pendingTakeStart.current = t0
+            if (recordMode === 'replace') audioTakes.current = []
+          }}
+          onBlob={(b: Blob) => {
+            const ts = pendingTakeStart.current ?? performance.now()
+            audioTakes.current.push({ blob: b, startPerfMs: ts })
+            audioBlob.current = b
+            pendingTakeStart.current = null
+          }}
+        />
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
