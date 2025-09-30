@@ -503,17 +503,18 @@ export default function StudentAssignment(){
     document.addEventListener('visibilitychange', onVis)
     start()
     const onBefore = ()=>{
-      try {
-        if (!rtAssignmentId) return
-        const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
-      } catch {}
-    }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return ()=>{
-      stop()
-      document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload as any)
-    }
+  try {
+    if (!rtAssignmentId) return
+    const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
+  } catch {}
+}
+window.addEventListener('beforeunload', onBefore)
+return ()=>{
+  stop()
+  document.removeEventListener('visibilitychange', onVis)
+  window.removeEventListener('beforeunload', onBefore as any)
+}
+
   }, [pageIndex, studentId, rtAssignmentId]) // eslint-disable-line
 
   /* ---------- Submit (dirty-check) + cache ---------- */
