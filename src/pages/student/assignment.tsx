@@ -5,7 +5,6 @@ import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
-  upsertAssignmentWithPage,
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   listPages,
   supabase
@@ -18,6 +17,7 @@ import {
   subscribeToGlobal,
   type TeacherPresenceState,
 } from '../../lib/realtime'
+import { fetchLatestAssignmentWithFirstPage } from '../../lib/queries'
 
 // ---------- Extend DrawCanvas StrokesPayload just for runtime (allow audioOffsetMs) ----------
 type StrokesPayloadRT = StrokesPayload & {
@@ -28,8 +28,6 @@ type StrokesPayloadRT = StrokesPayload & {
 }
 
 /** Constants */
-const assignmentTitle = 'Handwriting - Daily'
-const DEFAULT_PDF_STORAGE_PATH = 'pdfs/aprende-m2.pdf'
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
@@ -61,9 +59,9 @@ const SKIN_TONES = [
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
 /* ---------- Keys & helpers ---------- */
-const draftKey      = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
-const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
-const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
+const draftKey      = (student:string, assignmentId:string, page:number)=> `draft:${student}:${assignmentId}:${page}`
+const lastHashKey   = (student:string, assignmentId:string, page:number)=> `lastHash:${student}:${assignmentId}:${page}`
+const submittedKey  = (student:string, assignmentId:string, page:number)=> `submitted:${student}:${assignmentId}:${page}`
 
 // cache keys (assignment handoff + presence snapshot)
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
@@ -86,20 +84,20 @@ function normalizeStrokes(data: unknown): StrokesPayloadRT {
   return out
 }
 
-function saveDraft(student:string, assignment:string, page:number, strokes:any){
-  try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function saveDraft(student:string, assignmentId:string, page:number, strokes:any){
+  try { localStorage.setItem(draftKey(student, assignmentId, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
-function loadDraft(student:string, assignment:string, page:number){
-  try { const raw = localStorage.getItem(draftKey(student, assignment, page)); return raw ? JSON.parse(raw) : null } catch { return null }
+function loadDraft(student:string, assignmentId:string, page:number){
+  try { const raw = localStorage.getItem(draftKey(student, assignmentId, page)); return raw ? JSON.parse(raw) : null } catch { return null }
 }
-function clearDraft(student:string, assignment:string, page:number){
-  try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
+function clearDraft(student:string, assignmentId:string, page:number){
+  try { localStorage.removeItem(draftKey(student, assignmentId, page)) } catch {}
 }
-function saveSubmittedCache(student:string, assignment:string, page:number, strokes:any){
-  try { localStorage.setItem(submittedKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function saveSubmittedCache(student:string, assignmentId:string, page:number, strokes:any){
+  try { localStorage.setItem(submittedKey(student, assignmentId, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
-function loadSubmittedCache(student:string, assignment:string, page:number){
-  try { const raw = localStorage.getItem(submittedKey(student, assignment, page)); return raw ? JSON.parse(raw) : null } catch { return null }
+function loadSubmittedCache(student:string, assignmentId:string, page:number){
+  try { const raw = localStorage.getItem(submittedKey(student, assignmentId, page)); return raw ? JSON.parse(raw) : null } catch { return null }
 }
 
 async function hashStrokes(strokes:any): Promise<string> {
@@ -142,7 +140,6 @@ async function mergeAudioTakesToWav(
     takes.map(async (t) => {
       const ab = await t.blob.arrayBuffer()
       const buf: AudioBuffer = await probeCtx.decodeAudioData(ab.slice(0))
-      // offsets computed vs SAME clock as markTimingZero (performance.now())
       let offsetSec = ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000
       if (!Number.isFinite(offsetSec)) offsetSec = 0
       return { buf, offsetSec }
@@ -163,7 +160,7 @@ async function mergeAudioTakesToWav(
   }
   const mono = decoded.map(d => ({ buf: toMono(d.buf), offsetSec: d.offsetSec }))
 
-  // 3) Resample to 44.1k if needed (no pre-copy; let engine resample)
+  // 3) Resample to 44.1k if needed
   const OAC = (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext
   const resampled = await Promise.all(mono.map(async ({ buf, offsetSec }) => {
     if (buf.sampleRate === TARGET_RATE) return { buf, offsetSec }
@@ -185,7 +182,6 @@ async function mergeAudioTakesToWav(
     const maxTrim = Math.min(data.length, Math.floor(MAX_TRIM_SEC * buf.sampleRate))
     let lead = 0
     while (lead < maxTrim && Math.abs(data[lead]) < TRIM_THRESH) lead++
-    // DO NOT subtract lead/sampleRate from offsetSec — just advance read pointer
     const view = data.subarray(lead)
     return { data: view, offsetSec }
   })
@@ -199,24 +195,21 @@ async function mergeAudioTakesToWav(
   const totalLen = Math.max(1, Math.ceil(totalSec * TARGET_RATE))
   const mix = new Float32Array(totalLen)
 
-  // 6) Mix (leave a little headroom; avoid distortion)
-const HEADROOM = 0.85
-for (const t of trimmed) {
-  let start = Math.round(t.offsetSec * TARGET_RATE)
-  let src = t.data
-
-  // NEW: handle negative offsets by trimming the start of the buffer
-  if (start < 0) {
-    const drop = Math.min(src.length, -start)
-    src = src.subarray(drop)
-    start = 0
+  // 6) Mix
+  const HEADROOM = 0.85
+  for (const t of trimmed) {
+    let start = Math.round(t.offsetSec * TARGET_RATE)
+    let src = t.data
+    if (start < 0) {
+      const drop = Math.min(src.length, -start)
+      src = src.subarray(drop)
+      start = 0
+    }
+    for (let i = 0; i < src.length; i++) {
+      const j = start + i
+      if (j < mix.length) mix[j] += src[i] * HEADROOM
+    }
   }
-
-  for (let i = 0; i < src.length; i++) {
-    const j = start + i
-    if (j < mix.length) mix[j] += src[i] * HEADROOM
-  }
-}
 
   // 7) Encode WAV
   return encodeWavMono16(mix, TARGET_RATE)
@@ -243,10 +236,10 @@ function encodeWavMono16(samples: Float32Array, sampleRate: number): Blob {
   const writeU16 = (v: number) => { view.setUint16(off, v, true); off += 2 }
 
   writeStr('RIFF'); writeU32(36 + dataSize); writeStr('WAVE')
-  writeStr('fmt '); writeU32(16); writeU16(1) // PCM
-  writeU16(1) // mono
+  writeStr('fmt '); writeU32(16); writeU16(1)
+  writeU16(1)
   writeU32(sampleRate); writeU32(byteRate)
-  writeU16(blockAlign); writeU16(16) // bits per sample
+  writeU16(blockAlign); writeU16(16)
   writeStr('data'); writeU32(dataSize)
   new Uint8Array(buffer, 44).set(new Uint8Array(pcm.buffer))
   return new Blob([buffer], { type: 'audio/wav' })
@@ -338,6 +331,9 @@ export default function StudentAssignment(){
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
+  // derive a key to scope local caches, even when not yet connected
+  const assignmentKeyForCache = rtAssignmentId || 'none'
+
   // Realtime teacher controls
   const [focusOn, setFocusOn] = useState(false)
   const [navLocked, setNavLocked] = useState(false)
@@ -352,82 +348,45 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // ---------- ensureIdsFor(index): bind index, no fallback to page 0 ----------
-  async function ensureIdsFor(index:number): Promise<{ assignment_id: string, page_id: string }> {
-    if (rtAssignmentId) {
-      const pages = await listPages(rtAssignmentId)
-      const curr = pages.find(p => p.page_index === index)
-      if (!curr) throw new Error(`No pages available for assignment (page_index=${index})`)
-      currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
-      setPdfStoragePath(curr.pdf_path || '')
-      return { assignment_id: rtAssignmentId, page_id: curr.id }
-    }
-    // Fallback boot path (your original upsert)
-    const ids = await upsertAssignmentWithPage(assignmentTitle, DEFAULT_PDF_STORAGE_PATH, index)
-    currIds.current = ids
-    if (!rtAssignmentId && ids.assignment_id) setRtAssignmentId(ids.assignment_id!)
-    try {
-      const pages = await listPages(ids.assignment_id!)
-      const curr = pages.find(p => p.page_index === index)
-      if (!curr) throw new Error(`No page row after upsert for page_index=${index}`)
-      setPdfStoragePath(curr?.pdf_path || DEFAULT_PDF_STORAGE_PATH)
-    } catch {}
-    return ids as { assignment_id: string, page_id: string }
-  }
-
-  // assignment handoff listener (teacher broadcast)
+  // --------- Boot: pick the latest assignment + first page (or nothing) ---------
   useEffect(() => {
-    const off = subscribeToGlobal((nextAssignmentId) => {
-      try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
-      setRtAssignmentId(nextAssignmentId)
-      // On assignment switch, try to snap to teacher’s last page if we have presence cached
+    let alive = true
+    ;(async () => {
       try {
-        const raw = localStorage.getItem(presenceKey(nextAssignmentId))
-        if (raw) {
-          const p = JSON.parse(raw) as TeacherPresenceState
-          if (typeof p.teacherPageIndex === 'number') {
-            teacherPageIndexRef.current = p.teacherPageIndex
-            setPageIndex(p.teacherPageIndex)
-          } else {
-            setPageIndex(0)
-          }
-          setAutoFollow(!!p.autoFollow)
-          setAllowedPages(p.allowedPages ?? null)
-          setFocusOn(!!p.focusOn)
-          setNavLocked(!!p.focusOn && !!p.lockNav)
-        } else {
+        const { assignment, page } = await fetchLatestAssignmentWithFirstPage()
+        if (!alive) return
+        if (!assignment || !page) {
+          // No assignments: clear cached id and ensure empty state
+          try { localStorage.removeItem(ASSIGNMENT_CACHE_KEY) } catch {}
+          setRtAssignmentId('')
+          setPdfStoragePath('')
           setPageIndex(0)
+          currIds.current = {}
+          return
         }
-      } catch {
-        setPageIndex(0)
-      }
-      currIds.current = {}
-      // reset audio per new assignment
-      audioTakes.current = []
-      audioBlob.current = null
-      pendingTakeStart.current = null
-      timingZeroRef.current = null
-    })
-    return off
-  }, [])
+        // Found latest assignment
+        setRtAssignmentId(assignment.id)
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignment.id) } catch {}
+        // Ensure first page index and storage path
+        setPageIndex(page.page_index ?? 0)
 
-  // hydrate presence from cache when we know which assignment to use
-  useEffect(() => {
-    if (!rtAssignmentId) return
-    try {
-      const raw = localStorage.getItem(presenceKey(rtAssignmentId))
-      if (!raw) return
-      const p = JSON.parse(raw) as TeacherPresenceState
-      setAutoFollow(!!p.autoFollow)
-      setAllowedPages(p.allowedPages ?? null)
-      setFocusOn(!!p.focusOn)
-      setNavLocked(!!p.focusOn && !!p.lockNav)
-      if (typeof p.teacherPageIndex === 'number') {
-        teacherPageIndexRef.current = p.teacherPageIndex
-        setPageIndex(p.teacherPageIndex) // snap immediately on refresh
+        // fetch the page row to get pdf_path
+        const pages = await listPages(assignment.id)
+        const first = (pages || []).find((p:any) => (p.page_index ?? 0) === (page.page_index ?? 0)) || (pages || [])[0]
+        setPdfStoragePath(first?.pdf_path || '')
+        currIds.current = { assignment_id: assignment.id, page_id: first?.id }
+      } catch (e) {
+        console.error('initial latest assignment load failed', e)
+        // fallback to empty state
+        try { localStorage.removeItem(ASSIGNMENT_CACHE_KEY) } catch {}
+        setRtAssignmentId('')
+        setPdfStoragePath('')
+        setPageIndex(0)
+        currIds.current = {}
       }
-    } catch {}
-  }, [rtAssignmentId])
+    })()
+    return () => { alive = false }
+  }, [])
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
@@ -440,7 +399,13 @@ export default function StudentAssignment(){
 
     ;(async ()=>{
       try{
-        const draft = loadDraft(studentId, assignmentTitle, pageIndex)
+        if (!rtAssignmentId) {
+          // no assignment → ensure clean canvas
+          lastLocalHash.current = ''
+          return
+        }
+
+        const draft = loadDraft(studentId, assignmentKeyForCache, pageIndex)
         if (draft?.strokes) {
           try { drawRef.current?.loadStrokes(normalizeStrokes(draft.strokes)) } catch {}
           try { lastLocalHash.current = await hashStrokes(normalizeStrokes(draft.strokes)) } catch {}
@@ -448,12 +413,20 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        const thisIndex = pageIndex
-        const { assignment_id, page_id } = await ensureIdsFor(thisIndex)
-        if (!rtAssignmentId && assignment_id) setRtAssignmentId(assignment_id!)
+        // ensure page ids for this assignment
+        const pages = await listPages(rtAssignmentId)
+        const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+        if (!curr) {
+          // no page for this index — leave blank
+          currIds.current = { assignment_id: rtAssignmentId, page_id: undefined }
+          setPdfStoragePath('')
+          return
+        }
+        currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
+        setPdfStoragePath(curr?.pdf_path || '')
 
         try {
-          const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
+          const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
           if (!cancelled && latest) {
             const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
             const norm = normalizeStrokes(strokes)
@@ -465,7 +438,7 @@ export default function StudentAssignment(){
                 lastLocalHash.current = h
               }
             } else if (!draft?.strokes) {
-              const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+              const cached = loadSubmittedCache(studentId, assignmentKeyForCache, pageIndex)
               if (cached?.strokes) {
                 const normC = normalizeStrokes(cached.strokes)
                 drawRef.current?.loadStrokes(normC)
@@ -476,7 +449,7 @@ export default function StudentAssignment(){
         } catch {/* ignore */}
       }catch(e){
         console.error('init load failed', e)
-        const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+        const cached = loadSubmittedCache(studentId, assignmentKeyForCache, pageIndex)
         if (cached?.strokes) {
           const norm = normalizeStrokes(cached.strokes)
           try { drawRef.current?.loadStrokes(norm); lastLocalHash.current = await hashStrokes(norm) } catch {}
@@ -499,13 +472,13 @@ export default function StudentAssignment(){
           localDirty.current = true
           dirtySince.current = Date.now()
           lastLocalHash.current = h
-          saveDraft(studentId, assignmentTitle, pageIndex, data)
+          if (rtAssignmentId) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
         }
       } catch {}
     }
     id = window.setInterval(tick, 800)
     return ()=>{ if (id!=null) window.clearInterval(id) }
-  }, [pageIndex, studentId])
+  }, [pageIndex, studentId, rtAssignmentId])
 
   /* ---------- Draft autosave (coarse) ---------- */
   useEffect(()=>{
@@ -514,12 +487,12 @@ export default function StudentAssignment(){
     let intervalId: number | null = null
     const tick = ()=>{
       try {
-        if (!running) return
+        if (!running || !rtAssignmentId) return
         const data = drawRef.current?.getStrokes()
         if (!data) return
         const s = JSON.stringify(data)
         if (s !== lastSerialized) {
-          saveDraft(studentId, assignmentTitle, pageIndex, data)
+          saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
           lastSerialized = s
         }
       } catch {}
@@ -530,19 +503,23 @@ export default function StudentAssignment(){
     document.addEventListener('visibilitychange', onVis)
     start()
     const onBeforeUnload = ()=>{
-      try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
+      try {
+        if (!rtAssignmentId) return
+        const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
+      } catch {}
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload)
+      window.removeEventListener('beforeunload', onBeforeunload as any)
     }
-  }, [pageIndex, studentId])
+  }, [pageIndex, studentId, rtAssignmentId]) // eslint-disable-line
 
   /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async () => {
     if (submitInFlight.current) return
+    if (!rtAssignmentId) return
     submitInFlight.current = true
     try {
       setSaving(true)
@@ -554,11 +531,9 @@ export default function StudentAssignment(){
 
       payload.timing = payload.timing ? { ...payload.timing } : {}
 
-      // If DrawCanvas didn't set a capture zero yet, use the same one we set at onStart()
       if (payload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
         payload.timing.capturePerf0Ms = timingZeroRef.current
       }
-      // Recommended: default the audio offset to 0; alignment handled by timing zero
       if (payload.timing.audioOffsetMs == null) payload.timing.audioOffsetMs = 0
 
       const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
@@ -567,28 +542,24 @@ export default function StudentAssignment(){
 
       // Hash AFTER timing fields are finalized
       const encHash = await hashStrokes(payload)
-      const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
+      const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
       const last = localStorage.getItem(lastKey)
       if (last && last === encHash && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
-      const thisIndex = pageIndex
-      const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIdsFor(thisIndex)
-      currIds.current = ids
-      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
-
-      const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
+      // resolve current page row
+      const pages = await listPages(rtAssignmentId)
+      const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+      if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
+      const submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
 
       if (hasAudioTakes) {
-        // Merge using the SAME timing zero as the ink
         const captureZero = payload.timing?.capturePerf0Ms
         const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
-
-        // Do not mutate timing anymore; it's already in the payload & hash.
 
         if (hasInk) {
           await saveStrokes(submission_id, payload)
           localStorage.setItem(lastKey, encHash)
-          saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
+          saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
           lastAppliedServerHash.current = encHash
           lastLocalHash.current = encHash
           localDirty.current = false
@@ -599,14 +570,14 @@ export default function StudentAssignment(){
         if (hasInk) {
           await saveStrokes(submission_id, payload)
           localStorage.setItem(lastKey, encHash)
-          saveSubmittedCache(studentId, assignmentTitle, pageIndex, payload)
+          saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
           lastAppliedServerHash.current = encHash
           lastLocalHash.current = encHash
           localDirty.current = false
         }
       }
 
-      clearDraft(studentId, assignmentTitle, pageIndex)
+      clearDraft(studentId, assignmentKeyForCache, pageIndex)
       showToast('Saved!', 'ok', 1200)
       justSavedAt.current = Date.now()
     } catch (e: any) {
@@ -635,9 +606,9 @@ export default function StudentAssignment(){
     const hasNewAudio = audioTakes.current.length > 0
 
     if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasNewAudio)) {
-      try { await submit() } catch { try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {} }
+      try { await submit() } catch { try { if (rtAssignmentId) saveDraft(studentId, assignmentKeyForCache, pageIndex, current) } catch {} }
     } else {
-      try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
+      try { if (rtAssignmentId) saveDraft(studentId, assignmentKeyForCache, pageIndex, current) } catch {}
     }
 
     // reset page-local audio
@@ -705,18 +676,17 @@ export default function StudentAssignment(){
   }, [rtAssignmentId, autoFollow])
 
   const reloadFromServer = async ()=>{
+    if (!rtAssignmentId) return
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
     if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
 
     try{
-      const thisIndex = pageIndex
-      const { assignment_id, page_id } = currIds.current.assignment_id
-        ? currIds.current as any
-        : await ensureIdsFor(thisIndex)
-      currIds.current = { assignment_id, page_id }
-      if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
+      const pages = await listPages(rtAssignmentId)
+      const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+      if (!curr) return
+      currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
 
-      const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
+      const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
       const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
       const normalized = normalizeStrokes(strokesPayload)
 
@@ -728,7 +698,7 @@ export default function StudentAssignment(){
 
       if (!localDirty.current) {
         drawRef.current?.loadStrokes(normalized)
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, normalized)
+        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, normalized)
         lastAppliedServerHash.current = serverHash
         lastLocalHash.current = serverHash
       }
@@ -736,23 +706,22 @@ export default function StudentAssignment(){
   }
 
   useEffect(()=>{
+    if (!rtAssignmentId) return
     let cleanup: (()=>void)|null = null
     let pollId: number | null = null
     let mounted = true
 
     ;(async ()=>{
       try{
-        const thisIndex = pageIndex
-        const ids = currIds.current.assignment_id
-          ? currIds.current as any
-          : await ensureIdsFor(thisIndex)
-        currIds.current = ids
-        if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
+        const pages = await listPages(rtAssignmentId)
+        const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+        if (!curr) return
+        currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
 
-        const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
+        const ch = supabase.channel(`art-strokes-${studentId}-${curr.id}`)
           .on('postgres_changes', {
             event: '*', schema: 'public', table: 'artifacts',
-            filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
+            filter: `page_id=eq.${curr.id},kind=eq.strokes`
           }, ()=> reloadFromServer())
           .subscribe()
 
@@ -855,32 +824,27 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-<AudioRecorder
-  ref={audioRef}
-  maxSec={180}
-  onStart={(_ts: number) => {
-    // Use one clock for everything (perf.now) to avoid mismatches.
-    // Bias the timing zero forward so audio effectively starts earlier.
-    const RECORDING_ZERO_BIAS_MS = 1600; // try 400–550 if audio is still behind
-    const now = performance.now();
-    const t0 = now + RECORDING_ZERO_BIAS_MS;
+        <AudioRecorder
+          ref={audioRef}
+          maxSec={180}
+          onStart={(_ts: number) => {
+            const RECORDING_ZERO_BIAS_MS = 1600
+            const now = performance.now()
+            const t0 = now + RECORDING_ZERO_BIAS_MS
 
-    timingZeroRef.current = t0;
-    try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
+            timingZeroRef.current = t0
+            try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
 
-    // IMPORTANT: take start uses the SAME clock (no ts from recorder)
-    pendingTakeStart.current = now;
-
-    if (recordMode === 'replace') audioTakes.current = [];
-  }}
-  onBlob={(b: Blob) => {
-    const ts = pendingTakeStart.current ?? performance.now();
-    audioTakes.current.push({ blob: b, startPerfMs: ts });
-    audioBlob.current = b;
-    pendingTakeStart.current = null;
-  }}
-/>
-
+            pendingTakeStart.current = now
+            if (recordMode === 'replace') audioTakes.current = []
+          }}
+          onBlob={(b: Blob) => {
+            const ts = pendingTakeStart.current ?? performance.now()
+            audioTakes.current.push({ blob: b, startPerfMs: ts })
+            audioBlob.current = b
+            pendingTakeStart.current = null
+          }}
+        />
 
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
@@ -907,70 +871,86 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      <div
-        ref={scrollHostRef}
-        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-          touchAction: handMode ? 'auto' : 'none',
-          display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-          background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
-      >
-        <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
-          <div style={{ position:'absolute', inset:0, zIndex:0 }}>
-            <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
-          </div>
-          <div style={{
-              position:'absolute', inset:0, zIndex:10,
-              pointerEvents: handMode ? 'none' : 'auto'
-            }}>
-            <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
-              color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
+      {/* Empty state when there is no assignment yet */}
+      {!rtAssignmentId ? (
+        <div style={{
+          height:'calc(100vh - 160px)', display:'grid', placeItems:'center',
+          background:'#fff', border:'1px solid #eee', borderRadius:12, marginTop:12
+        }}>
+          <div style={{ textAlign:'center' }}>
+            <h3 style={{ margin:0 }}>No hay tareas todavía</h3>
+            <p style={{ marginTop:8, color:'#6b7280' }}>Cuando el maestro suba una tarea, aparecerá aquí automáticamente.</p>
           </div>
         </div>
-      </div>
+      ) : (
+        <>
+          <div
+            ref={scrollHostRef}
+            style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
+              touchAction: handMode ? 'auto' : 'none',
+              display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
+              background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
+          >
+            <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
+              <div style={{ position:'absolute', inset:0, zIndex:0 }}>
+                {/* If pdfUrl is empty (e.g., latest assignment but page not found), PdfCanvas will render nothing */}
+                <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
+              </div>
+              <div style={{
+                  position:'absolute', inset:0, zIndex:10,
+                  pointerEvents: handMode ? 'none' : 'auto'
+                }}>
+                <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
+                  color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
+              </div>
+            </div>
+          </div>
 
-      {/* Floating pager */}
-      <div
-        style={{
-          position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
-          zIndex: 10020, display:'flex', gap:10, alignItems:'center',
-          background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
-          boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
-        }}
-      >
-        <button
-          onClick={()=>goToPage(Math.max(0, pageIndex-1))}
-          disabled={saving || submitInFlight.current || navLocked || blockedBySync(Math.max(0, pageIndex-1))}
-          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
-        >
-          ◀ Prev
-        </button>
-        <span style={{ minWidth:90, textAlign:'center', fontWeight:600 }}>
-          Page {pageIndex+1}
-        </span>
-        <button
-          onClick={()=>goToPage(pageIndex+1)}
-          disabled={saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
-          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
-        >
-          Next ▶
-        </button>
-      </div>
+          {/* Floating pager */}
+          <div
+            style={{
+              position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
+              zIndex: 10020, display:'flex', gap:10, alignItems:'center',
+              background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
+              boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
+            }}
+          >
+            <button
+              onClick={()=>goToPage(Math.max(0, pageIndex-1))}
+              disabled={saving || submitInFlight.current || navLocked || blockedBySync(Math.max(0, pageIndex-1))}
+              style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+            >
+              ◀ Prev
+            </button>
+            <span style={{ minWidth:90, textAlign:'center', fontWeight:600 }}>
+              Page {pageIndex+1}
+            </span>
+            <button
+              onClick={()=>goToPage(pageIndex+1)}
+              disabled={saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
+              style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+            >
+              Next ▶
+            </button>
+          </div>
 
-      {/* Floating toolbar */}
-      {Toolbar}
-      {toast && <Toast text={toast.msg} kind={toast.kind} />}
+          {/* Floating toolbar */}
+          {Toolbar}
+          {toast && <Toast text={toast.msg} kind={toast.kind} />}
 
-      {/* Focus overlay */}
-      {focusOn && (
-        <div
-          style={{
-            position:'fixed', inset:0, background:'rgba(0,0,0,0.6)',
-            backdropFilter:'blur(2px)', zIndex: 20050,
-            display:'grid', placeItems:'center', color:'#fff', fontSize:20, fontWeight:700
-          }}
-        >
-          Focus Mode — watch the teacher ✋
-        </div>
+          {/* Focus overlay */}
+          {focusOn && (
+            <div
+              style={{
+                position:'fixed', inset:0, background:'rgba(0,0,0,0.6)',
+                backdropFilter:'blur(2px)', zIndex: 20050,
+                display:'grid', placeItems:'center', color:'#fff', fontSize:20, fontWeight:700
+              }}
+            >
+              Focus Mode — watch the teacher ✋
+            </div>
+          )}
+        </>
       )}
     </div>
   )
