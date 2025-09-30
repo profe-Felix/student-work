@@ -1,4 +1,4 @@
-// src/lib/queries.ts
+//src/lib/queries.ts
 import { supabase } from './supabaseClient';
 
 export async function listAssignments() {
