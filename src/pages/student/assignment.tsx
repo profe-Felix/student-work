@@ -861,7 +861,7 @@ export default function StudentAssignment(){
   onStart={(_ts: number) => {
     // Use one clock for everything (perf.now) to avoid mismatches.
     // Bias the timing zero forward so audio effectively starts earlier.
-    const RECORDING_ZERO_BIAS_MS = 1450; // try 400–550 if audio is still behind
+    const RECORDING_ZERO_BIAS_MS = 1600; // try 400–550 if audio is still behind
     const now = performance.now();
     const t0 = now + RECORDING_ZERO_BIAS_MS;
 
