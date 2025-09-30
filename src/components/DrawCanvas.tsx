@@ -132,14 +132,24 @@ function distToSegmentSq(p:{x:number;y:number}, v:{x:number;y:number}, w:{x:numb
   const proj = { x: v.x + t * (w.x - v.x), y: v.y + t * (w.y - v.y) }
   return dist2(p, proj)
 }
-function strokeHit(stroke: Stroke, p:{x:number;y:number}) {
-  const thr = Math.max(stroke.size ?? 10, 12)
+function strokeIntersectsSegment(stroke: Stroke, a:{x:number;y:number}, b:{x:number;y:number}, radius:number) {
+  const thr = Math.max(stroke.size ?? 10, radius)
   const thr2 = thr * thr
   const pts = stroke.pts
   if (!pts || pts.length === 0) return false
-  if (pts.length === 1) return dist2(pts[0], p) <= thr2
+  if (pts.length === 1) {
+    // closest distance from segment AB to single point
+    return distToSegmentSq(pts[0], a, b) <= thr2
+  }
   for (let i = 1; i < pts.length; i++) {
-    if (distToSegmentSq(p, pts[i-1], pts[i]) <= thr2) return true
+    // If segment AB is within 'thr' of any stroke segment, we consider it intersecting
+    const v = pts[i-1], w = pts[i]
+    // Check min distance between two segments by sampling (cheap but effective)
+    // First, quick checks to avoid doing extra math:
+    // (1) endpoint near test
+    if (distToSegmentSq(v, a, b) <= thr2 || distToSegmentSq(w, a, b) <= thr2) return true
+    // (2) drag endpoints near stroke segment
+    if (distToSegmentSq(a, v, w) <= thr2 || distToSegmentSq(b, v, w) <= thr2) return true
   }
   return false
 }
@@ -169,6 +179,10 @@ export default forwardRef(function DrawCanvas(
   // pointers
   const activePointers = useRef<Set<number>>(new Set())
   const drawingPointerId = useRef<number|null>(null)
+
+  // object-eraser drag state
+  const eraserObjectPointerId = useRef<number|null>(null)
+  const lastErasePos = useRef<{x:number;y:number} | null>(null)
 
   const redraw = ()=>{
     const ctx = ctxRef.current
@@ -271,28 +285,40 @@ export default forwardRef(function DrawCanvas(
       return activePointers.current.size <= 1
     }
 
+    const eraseAtSegment = (a:{x:number;y:number}, b:{x:number;y:number})=>{
+      // Use size as the eraser radius, with a floor
+      const radius = Math.max(10, size)
+      let removed = false
+      // Remove from top-most down: iterate backwards for stable splices
+      for (let i = strokes.current.length - 1; i >= 0; i--) {
+        const s = strokes.current[i]
+        if (strokeIntersectsSegment(s, a, b, radius)) {
+          strokes.current.splice(i, 1)
+          removed = true
+        }
+      }
+      if (removed) redraw()
+    }
+
     const onPointerDown = (e: PointerEvent)=>{
       const toolNow = normalizeTool(tool)
 
       if (e.pointerType !== 'pen') activePointers.current.add(e.pointerId)
       if (!shouldDraw(e)) return
 
-      // Object eraser: hit-test & delete a stroke, no continuous drawing
+      // Drag-object-eraser: begin a drag pass that deletes any intersected strokes
       if (toolNow === 'eraserObject') {
         const p = getPos(e)
-        // Prefer top-most (last) stroke; search backwards
-        for (let i = strokes.current.length - 1; i >= 0; i--) {
-          const s = strokes.current[i]
-          if (strokeHit(s, p)) {
-            strokes.current.splice(i, 1)
-            redraw()
-            break
-          }
-        }
+        eraserObjectPointerId.current = e.pointerId
+        lastErasePos.current = p
+        // delete any stroke under the initial point
+        eraseAtSegment(p, p)
+        c.setPointerCapture(e.pointerId)
         e.preventDefault?.()
         return
       }
 
+      // Pixel / pen / highlighter drawing
       drawingPointerId.current = e.pointerId
       c.setPointerCapture(e.pointerId)
 
@@ -312,10 +338,20 @@ export default forwardRef(function DrawCanvas(
     }
 
     const onPointerMove = (e: PointerEvent)=>{
+      // Handle drag-object-eraser first
+      if (eraserObjectPointerId.current === e.pointerId) {
+        const p = getPos(e)
+        const prev = lastErasePos.current || p
+        eraseAtSegment(prev, p)
+        lastErasePos.current = p
+        e.preventDefault?.()
+        return
+      }
+
+      // Then normal drawing
       if (drawingPointerId.current !== e.pointerId) return
       if (!current.current) return
 
-      const toolNow = current.current.tool // already normalized in down
       // If a multi-touch gesture starts mid-stroke, end the stroke
       if (!shouldDraw(e)) {
         if (current.current.pts.length > 1) strokes.current.push(current.current)
@@ -342,14 +378,23 @@ export default forwardRef(function DrawCanvas(
       drawingPointerId.current = null
     }
 
+    const endObjectErase = (pid:number)=>{
+      if (eraserObjectPointerId.current === pid) {
+        eraserObjectPointerId.current = null
+        lastErasePos.current = null
+      }
+    }
+
     const onPointerUp = (e: PointerEvent)=>{
       if (e.pointerType !== 'pen') activePointers.current.delete(e.pointerId)
       if (drawingPointerId.current === e.pointerId) endStroke()
+      endObjectErase(e.pointerId)
       try { c.releasePointerCapture(e.pointerId) } catch {}
     }
     const onPointerCancel = (e: PointerEvent)=>{
       if (e.pointerType !== 'pen') activePointers.current.delete(e.pointerId)
       if (drawingPointerId.current === e.pointerId) endStroke()
+      endObjectErase(e.pointerId)
       try { c.releasePointerCapture(e.pointerId) } catch {}
     }
 
@@ -364,6 +409,8 @@ export default forwardRef(function DrawCanvas(
       c.removeEventListener('pointercancel', onPointerCancel as unknown as EventListener)
       activePointers.current.clear()
       drawingPointerId.current = null
+      eraserObjectPointerId.current = null
+      lastErasePos.current = null
     }
   }, [mode, color, size, tool])
 
