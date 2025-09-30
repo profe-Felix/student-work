@@ -840,33 +840,32 @@ export default function StudentAssignment(){
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
         <AudioRecorder
-          ref={audioRef}
-          maxSec={180}
-          onStart={(ts: number) => {
-  // Stable approach:
-  // - If recording first (no capture zero yet) OR replace-mode,
-  //   set the timing zero slightly in the future to account for device/startup latency.
-  // - If inking first, keep existing zero and just record the exact ts.
-  const REC_LATENCY_MS = 180 // adjust 150–220 if your hardware needs
-  const cap0 = (drawRef.current as any)?.getStrokes?.()?.timing?.capturePerf0Ms
+  ref={audioRef}
+  maxSec={180}
+  onStart={(ts: number) => {
+    // Prime the canvas timing zero at the exact audio start.
+    // This makes "record first" share the same time origin as ink.
+    const REC_LATENCY_MS = 0; // set to 80–150 if your device needs spin-up padding
+    const t0 = ts + REC_LATENCY_MS;
 
-  if (recordMode === 'replace' || cap0 == null) {
-    const t0 = ts + REC_LATENCY_MS
     try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
-    pendingTakeStart.current = t0
-    if (recordMode === 'replace') audioTakes.current = []
-  } else {
-    pendingTakeStart.current = ts
-  }
-}}
 
-          onBlob={(b: Blob) => {
-            const ts = pendingTakeStart.current ?? performance.now()
-            audioTakes.current.push({ blob: b, startPerfMs: ts })
-            audioBlob.current = b
-            pendingTakeStart.current = null
-          }}
-        />
+    // start this take at the same origin
+    pendingTakeStart.current = t0;
+
+    // if replacing, clear prior takes but KEEP the timing zero we just set
+    if (recordMode === 'replace') {
+      audioTakes.current = [];
+    }
+  }}
+  onBlob={(b: Blob) => {
+    const ts = pendingTakeStart.current ?? performance.now();
+    audioTakes.current.push({ blob: b, startPerfMs: ts });
+    audioBlob.current = b;
+    pendingTakeStart.current = null;
+  }}
+/>
+
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
