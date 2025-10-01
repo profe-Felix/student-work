@@ -106,6 +106,28 @@ async function hashStrokes(strokes:any): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
 
+/** Find the most recent submission (for this student/page) that already has a 'strokes' artifact */
+async function fetchLatestSubmissionIdWithStrokes(
+  assignmentId: string,
+  pageId: string,
+  studentId: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('submissions')
+    .select('id, created_at, artifacts:artifacts(kind, created_at)')
+    .eq('assignment_id', assignmentId)
+    .eq('page_id', pageId)
+    .eq('student_id', studentId)
+    .order('created_at', { ascending: false })
+    .limit(15)
+
+  if (error) throw error
+
+  const rows = (data ?? []) as Array<{ id: string; artifacts?: Array<{ kind: string }> }>
+  const hit = rows.find(r => Array.isArray(r.artifacts) && r.artifacts.some(a => a.kind === 'strokes'))
+  return hit?.id ?? null
+}
+
 function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   return (
     <div style={{
@@ -612,29 +634,32 @@ export default function StudentAssignment(){
       if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
       // --- choose submission id strategy ---
-let submission_id: string
-if (hasAudioTakes && !hasInk) {
-  // Audio-only update: append audio to the latest submission (so strokes remain available for scrubbing)
-  const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-  if (latest?.submission?.id) {
-    submission_id = latest.submission.id
-  } else {
-    // No prior submission — create one, and (optionally) save current canvas strokes if any
-    submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-    const dataNow: StrokesPayloadRT =
-      (drawRef.current?.getStrokes() as StrokesPayloadRT) || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
-    if (Array.isArray(dataNow.strokes) && dataNow.strokes.length > 0) {
-      dataNow.timing = dataNow.timing ?? {}
-      if (dataNow.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
-        dataNow.timing.capturePerf0Ms = timingZeroRef.current
+      let submission_id: string
+      if (hasAudioTakes && !hasInk) {
+        // Audio-only update:
+        // attach audio to the most recent submission that already has strokes
+        const priorWithStrokesId = await fetchLatestSubmissionIdWithStrokes(rtAssignmentId, curr.id, studentId)
+
+        if (priorWithStrokesId) {
+          submission_id = priorWithStrokesId
+        } else {
+          // No prior strokes submission exists:
+          // create a new submission and include current canvas strokes (if any)
+          submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+          const dataNow: StrokesPayloadRT =
+            (drawRef.current?.getStrokes() as StrokesPayloadRT) || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+          if (Array.isArray(dataNow.strokes) && dataNow.strokes.length > 0) {
+            dataNow.timing = dataNow.timing ?? {}
+            if (dataNow.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+              dataNow.timing.capturePerf0Ms = timingZeroRef.current
+            }
+            await saveStrokes(submission_id, dataNow)
+          }
+        }
+      } else {
+        // Normal submit (ink and/or audio): create a fresh submission
+        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
       }
-      await saveStrokes(submission_id, dataNow)
-    }
-  }
-} else {
-  // Normal submit (ink and/or audio): create a fresh submission
-  submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-}
 
       if (hasAudioTakes) {
         const captureZero = payload.timing?.capturePerf0Ms
@@ -973,7 +998,7 @@ if (hasAudioTakes && !hasInk) {
             style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
               touchAction: handMode ? 'auto' : 'none',
               display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-              background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
+              background:'#fff', border:'1px solid '#eee', borderRadius:12, position:'relative' }}
           >
             <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
               <div style={{ position:'absolute', inset:0, zIndex:0 }}>
