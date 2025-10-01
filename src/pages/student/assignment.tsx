@@ -670,7 +670,7 @@ export default function StudentAssignment(){
     }
   }, [pageIndex, studentId, rtAssignmentId])
 
-  /* ---------- Submit (append-only + insert latest strokes) ---------- */
+  /* ---------- Submit (create a NEW submission every time) ---------- */
   const submit = async () => {
     if (submitInFlight.current) return
     if (!rtAssignmentId) return
@@ -693,26 +693,25 @@ export default function StudentAssignment(){
       const hasAudioTakes = audioTakes.current.length > 0
       if (!hasInkNow && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
+      // Resolve page
       const pages = await listPages(rtAssignmentId)
       const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
       if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
-      const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-      let submission_id = latest?.submission?.id as string | undefined
-      if (!submission_id) {
-        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-      }
+      // Load prior (to merge timeline), BUT always create a NEW submission row
+      const prior = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+      const priorStrokesPayload = normalizeStrokes(prior && latestArtifact(prior, 'strokes')?.strokes_json)
 
-      const priorStrokesPayload = normalizeStrokes(
-        latest && latestArtifact(latest, 'strokes')?.strokes_json
-      )
+      const submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
 
+      // Compute merged strokes to keep full timeline
       let toSaveStrokes: StrokesPayloadRT | null = null
       const hadPriorInk = Array.isArray(priorStrokesPayload.strokes) && priorStrokesPayload.strokes.length > 0
 
       if (hadPriorInk && hasInkNow) {
         toSaveStrokes = mergeStrokeTimelines(priorStrokesPayload, currentPayload)
       } else if (hadPriorInk && !hasInkNow) {
+        // audio-only resubmit → keep previous strokes
         toSaveStrokes = priorStrokesPayload
       } else if (!hadPriorInk && hasInkNow) {
         toSaveStrokes = currentPayload
@@ -720,7 +719,7 @@ export default function StudentAssignment(){
         toSaveStrokes = null
       }
 
-      // ---- STROKES: ALWAYS insert a new strokes artifact so dashboards that read "latest" see it
+      // Insert strokes artifact into the NEW submission
       if (toSaveStrokes) {
         await saveStrokes(submission_id!, toSaveStrokes)
         try { drawRef.current?.loadStrokes(toSaveStrokes) } catch {}
@@ -736,7 +735,7 @@ export default function StudentAssignment(){
         localDirty.current = false
       }
 
-      // ---- Audio: append/merge takes and save a new audio artifact
+      // Merge audio (prior+new) into single WAV and attach to NEW submission
       if (hasAudioTakes) {
         const captureZero =
           (toSaveStrokes?.timing?.capturePerf0Ms ??
@@ -1090,11 +1089,11 @@ export default function StudentAssignment(){
             style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
               touchAction: handMode ? 'auto' : 'none',
               display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-              background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
+              background:'#fff', border:'1px solid '#eee', borderRadius:12, position:'relative' }}
           >
             <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
               <div style={{ position:'absolute', inset:0, zIndex:0 }}>
-                {/* If pdfUrl is empty (e.g., latest assignment but page not found), PdfCanvas will render nothing */}
+                {/* If pdfUrl is empty, PdfCanvas renders nothing */}
                 <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
               </div>
               <div style={{
