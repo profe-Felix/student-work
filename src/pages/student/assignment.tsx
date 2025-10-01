@@ -119,6 +119,24 @@ async function hashStrokes(strokes:any): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
 
+/* ---------- Artifact helpers ---------- */
+function latestArtifact(submissionWithArtifacts: any, kind: string) {
+  const arts = Array.isArray(submissionWithArtifacts?.artifacts) ? submissionWithArtifacts.artifacts : []
+  for (let i = arts.length - 1; i >= 0; i--) {
+    if (arts[i]?.kind === kind) return arts[i]
+  }
+  return undefined
+}
+
+/** NEW: earliest artifact (index 0) — teacher dashboard appears to read this one */
+function earliestArtifact(submissionWithArtifacts: any, kind: string) {
+  const arts = Array.isArray(submissionWithArtifacts?.artifacts) ? submissionWithArtifacts.artifacts : []
+  for (let i = 0; i < arts.length; i++) {
+    if (arts[i]?.kind === kind) return arts[i]
+  }
+  return undefined
+}
+
 /* ---------- Storage + prior audio helpers ---------- */
 function parseStoragePath(p: string){
   let s = (p || '').replace(/^\/+/, '').replace(/^public\//, '')
@@ -148,10 +166,10 @@ async function getPrevAudioInfo(
     const latest = await loadLatestSubmission(assignmentId, pageId, studentId)
     if (!latest) return { blob: null, durationMs: 0 }
 
-    const strokesPayload = latest.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+    const strokesPayload = latestArtifact(latest, 'strokes')?.strokes_json
     const capturePerf0Ms = strokesPayload?.timing?.capturePerf0Ms
 
-    const audioArt = latest.artifacts?.find((a:any)=>a.kind==='audio')
+    const audioArt = latestArtifact(latest, 'audio')
     if (!audioArt?.storage_path) return { blob: null, durationMs: 0, capturePerf0Ms }
 
     const blob = await downloadBlobFromStoragePath(audioArt.storage_path)
@@ -228,8 +246,8 @@ async function mergeAudioTakesToWav(
   const MAX_TRIM_SEC = 0.3
   const trimmed = resampled.map(({ buf, offsetSec }) => {
     const data = buf.getChannelData(0)
-    const maxTrim = Math.min(data.length, Math.floor(MAX_TRIM_SEC * buf.sampleRate))
     let lead = 0
+    const maxTrim = Math.min(data.length, Math.floor(MAX_TRIM_SEC * buf.sampleRate))
     while (lead < maxTrim && Math.abs(data[lead]) < TRIM_THRESH) lead++
     const view = data.subarray(lead)
     return { data: view, offsetSec }
@@ -293,6 +311,45 @@ function encodeWavMono16(samples: Float32Array, sampleRate: number): Blob {
   new Uint8Array(buffer, 44).set(new Uint8Array(pcm.buffer))
   return new Blob([buffer], { type: 'audio/wav' })
 }
+/** Append-only stroke merge */
+function strokesEqual(a: any, b: any) {
+  try { return JSON.stringify(a) === JSON.stringify(b) } catch { return false }
+}
+
+function mergeStrokeTimelines(prior: StrokesPayloadRT, current: StrokesPayloadRT): StrokesPayloadRT {
+  const p = Array.isArray(prior?.strokes) ? prior.strokes : []
+  const c = Array.isArray(current?.strokes) ? current.strokes : []
+
+  // Find longest common prefix
+  let i = 0
+  while (i < p.length && i < c.length && strokesEqual(p[i], c[i])) i++
+
+  if (i === p.length) {
+    return {
+      ...current,
+      timing: {
+        ...(prior?.timing || {}),
+        ...(current?.timing || {}),
+        capturePerf0Ms: prior?.timing?.capturePerf0Ms ?? current?.timing?.capturePerf0Ms,
+      },
+      strokes: p.concat(c.slice(i)),
+    }
+  }
+
+  const appended:any[] = []
+  for (let k = 0; k < c.length; k++) {
+    if (!p[k] || !strokesEqual(p[k], c[k])) { appended.push(c[k]) }
+  }
+  return {
+    ...prior,
+    timing: {
+      ...(prior?.timing || {}),
+      ...(current?.timing || {}),
+      capturePerf0Ms: prior?.timing?.capturePerf0Ms ?? current?.timing?.capturePerf0Ms,
+    },
+    strokes: p.concat(appended),
+  }
+}
 
 export default function StudentAssignment(){
   const location = useLocation()
@@ -349,8 +406,8 @@ export default function StudentAssignment(){
   // --- Multi-take audio (per page) ---
   const audioTakes = useRef<AudioTake[]>([]) // all takes for this page
   const [recordMode, setRecordMode] = useState<'append'|'replace'>('append')
-  const audioBlob = useRef<Blob|null>(null)  // optional: last blob (for previews, etc.)
-  const pendingTakeStart = useRef<number|null>(null) // start ts from onStart(ts)
+  const audioBlob = useRef<Blob|null>(null)
+  const pendingTakeStart = useRef<number|null>(null)
 
   // IMPORTANT: timing origin for this page (same clock as startPerfMs)
   const timingZeroRef = useRef<number | null>(null)
@@ -399,7 +456,6 @@ export default function StudentAssignment(){
 
   // --------- Boot: pick the latest assignment + first page (or nothing) ---------
   useEffect(() => {
-    // If we already know the assignment (e.g., from teacher broadcast cache), don't overwrite with "latest".
     if (rtAssignmentId) return;
 
     let alive = true
@@ -472,7 +528,7 @@ export default function StudentAssignment(){
     return off
   }, [])
 
-  // On assignment known, hydrate presence/page from cache on refresh (keeps "sync to me" after reload)
+  // On assignment known, hydrate presence/page from cache on refresh
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
@@ -527,7 +583,7 @@ export default function StudentAssignment(){
         try {
           const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
           if (!cancelled && latest) {
-            const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+            const strokes = latest && latestArtifact(latest, 'strokes')?.strokes_json
             const norm = normalizeStrokes(strokes)
             if (Array.isArray(norm.strokes) && norm.strokes.length > 0) {
               const h = await hashStrokes(norm)
@@ -614,7 +670,7 @@ export default function StudentAssignment(){
     }
   }, [pageIndex, studentId, rtAssignmentId])
 
-  /* ---------- Submit (append-only into a single canonical submission) ---------- */
+  /* ---------- Submit (append-only + update earliest artifact so teacher sees latest) ---------- */
   const submit = async () => {
     if (submitInFlight.current) return
     if (!rtAssignmentId) return
@@ -623,70 +679,107 @@ export default function StudentAssignment(){
     try {
       setSaving(true)
 
-      // Build payload and normalize timing BEFORE hashing
-      const payload: StrokesPayloadRT =
+      // Build current payload BEFORE hashing
+      const currentPayload: StrokesPayloadRT =
         (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
         { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
 
-      payload.timing = payload.timing ? { ...payload.timing } : {}
+      currentPayload.timing = currentPayload.timing ? { ...currentPayload.timing } : {}
 
-      if (payload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
-        payload.timing.capturePerf0Ms = timingZeroRef.current
+      // Prefer existing capture zero; never unset it.
+      if (currentPayload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+        currentPayload.timing.capturePerf0Ms = timingZeroRef.current
       }
-      if (payload.timing.audioOffsetMs == null) payload.timing.audioOffsetMs = 0
+      if (currentPayload.timing.audioOffsetMs == null) currentPayload.timing.audioOffsetMs = 0
 
-      const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
+      const hasInkNow = Array.isArray(currentPayload?.strokes) && currentPayload.strokes.length > 0
       const hasAudioTakes = audioTakes.current.length > 0
-      if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+      if (!hasInkNow && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
-      // Hash AFTER timing fields are finalized (for local dedupe)
-      const encHash = await hashStrokes(payload)
-      const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
-      const last = localStorage.getItem(lastKey)
-      if (last && last === encHash && !hasAudioTakes) {
-        setSaving(false); submitInFlight.current = false; return
-      }
-
-      // Resolve current page row
+      // Resolve page
       const pages = await listPages(rtAssignmentId)
       const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
       if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
-      // Single canonical submission: latest or create new
+      // Canonical submission: use latest or create
       const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
       let submission_id = latest?.submission?.id as string | undefined
       if (!submission_id) {
         submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
       }
 
-      // Strokes: always write full current timeline (append semantics)
-      if (hasInk) {
-        await saveStrokes(submission_id, payload)
+      // Load prior strokes (if any) to preserve the whole timeline
+      const priorStrokesPayload = normalizeStrokes(
+        latest && latestArtifact(latest, 'strokes')?.strokes_json
+      )
+
+      // Effective strokes to save = append-only merge(prior, current)
+      let toSaveStrokes: StrokesPayloadRT | null = null
+      const hadPriorInk = Array.isArray(priorStrokesPayload.strokes) && priorStrokesPayload.strokes.length > 0
+
+      if (hadPriorInk && hasInkNow) {
+        toSaveStrokes = mergeStrokeTimelines(priorStrokesPayload, currentPayload)
+      } else if (hadPriorInk && !hasInkNow) {
+        // audio-only resubmit → DO NOT wipe strokes; keep prior exactly
+        toSaveStrokes = priorStrokesPayload
+      } else if (!hadPriorInk && hasInkNow) {
+        // first time ink
+        toSaveStrokes = currentPayload
+      } else {
+        toSaveStrokes = null
+      }
+
+      // ---- STROKES: update earliest artifact if it exists (so teacher sees latest), else insert
+      if (toSaveStrokes) {
+        const earliestStrokesArtId: string | undefined = earliestArtifact(latest, 'strokes')?.id
+        if (earliestStrokesArtId) {
+          const { error } = await supabase
+            .from('artifacts')
+            .update({ strokes_json: toSaveStrokes })
+            .eq('id', earliestStrokesArtId)
+          if (error) throw error
+        } else {
+          await saveStrokes(submission_id!, toSaveStrokes)
+        }
+
+        // Immediately reflect merged strokes in the canvas preview
+        try { drawRef.current?.loadStrokes(toSaveStrokes) } catch {}
+
+        // Lock our timing zero to the merged payload (helps appended audio line up)
+        if (toSaveStrokes?.timing?.capturePerf0Ms != null) {
+          timingZeroRef.current = toSaveStrokes.timing.capturePerf0Ms
+        }
+
+        const encHash = await hashStrokes(toSaveStrokes)
+        const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
         localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
+        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, toSaveStrokes)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
         localDirty.current = false
       }
 
-      // Audio: merge any prior audio + all new takes, then save back to same submission
+      // ---- Audio: we still append/merge takes and save. (Dashboard may show the first audio; we aren’t changing that here.)
       if (hasAudioTakes) {
-        // Use a stable capture zero (prefer strokes origin)
         const captureZero =
-          payload.timing?.capturePerf0Ms ??
-          timingZeroRef.current ??
-          performance.now()
+          (toSaveStrokes?.timing?.capturePerf0Ms ??
+           priorStrokesPayload?.timing?.capturePerf0Ms ??
+           currentPayload?.timing?.capturePerf0Ms ??
+           timingZeroRef.current ??
+           performance.now())
 
-        // Pull prior audio and include as first take at offset 0
-        const prior = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
+        const priorAudio = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
         const allTakes: AudioTake[] = []
-        if (prior.blob) {
-          allTakes.push({ blob: prior.blob, startPerfMs: captureZero }) // offset 0
+        if (priorAudio.blob) {
+          allTakes.push({ blob: priorAudio.blob, startPerfMs: captureZero }) // keep prior at t=0
         }
         for (const t of audioTakes.current) allTakes.push(t)
 
-        const merged = await mergeAudioTakesToWav(allTakes, captureZero)
-        await saveAudio(submission_id!, merged)
+        if (allTakes.length > 0) {
+          const merged = await mergeAudioTakesToWav(allTakes, captureZero)
+          await saveAudio(submission_id!, merged)
+          audioTakes.current = []
+        }
       }
 
       clearDraft(studentId, assignmentKeyForCache, pageIndex)
@@ -755,37 +848,35 @@ export default function StudentAssignment(){
   /* ---------- Realtime + polling (defensive) ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
-    const ch = subscribeToAssignment(rtAssignmentId, {
-      onSetPage: ({ pageIndex }: SetPagePayload) => {
-        teacherPageIndexRef.current = pageIndex
-        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
-      },
-      onFocus: ({ on, lockNav }: FocusPayload) => {
-        setFocusOn(!!on)
-        setNavLocked(!!on && !!lockNav)
-      },
-      onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
-        setAutoFollow(!!on)
-        setAllowedPages(allowedPages ?? null)
-        if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        if (on && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(teacherPageIndexRef.current)
-        }
-      },
-      onPresence: (p: TeacherPresenceState) => {
-        try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
-        setAutoFollow(!!p.autoFollow)
-        setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)
-        setNavLocked(!!p.focusOn && !!p.lockNav)
-        if (typeof p.teacherPageIndex === 'number') {
-          teacherPageIndexRef.current = p.teacherPageIndex
-          if (p.autoFollow) setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
-        }
+    let unsub: (()=>void)|null = null
+
+    ;(async () => {
+      try {
+        // We subscribe to strokes changes for the *submission*, not by page_id (which doesn't exist on artifacts)
+        const pages = await listPages(rtAssignmentId)
+        const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+        if (!curr) return
+        const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+        const submissionId = latest?.submission?.id
+        const filter = submissionId
+          ? `submission_id=eq.${submissionId},kind=eq.strokes`
+          : `kind=eq.strokes`
+
+        const ch = supabase
+          .channel(`art-strokes-${studentId}-${submissionId || 'na'}`)
+          .on('postgres_changes', {
+            event: '*', schema: 'public', table: 'artifacts', filter
+          }, ()=> reloadFromServer())
+          .subscribe()
+
+        unsub = () => { try { ch.unsubscribe() } catch {} }
+      } catch (e) {
+        console.error('realtime subscribe failed', e)
       }
-    })
-    return () => { try { ch?.unsubscribe?.() } catch {} }
-  }, [rtAssignmentId, autoFollow])
+    })()
+
+    return () => { if (unsub) unsub() }
+  }, [studentId, pageIndex, rtAssignmentId])
 
   const reloadFromServer = async ()=>{
     if (!rtAssignmentId) return
@@ -799,7 +890,7 @@ export default function StudentAssignment(){
       currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
 
       const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-      const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+      const strokesPayload = latest && latestArtifact(latest, 'strokes')?.strokes_json
       const normalized = normalizeStrokes(strokesPayload)
 
       const hasServerInk = Array.isArray(normalized?.strokes) && normalized.strokes.length > 0
@@ -819,35 +910,13 @@ export default function StudentAssignment(){
 
   useEffect(()=>{
     if (!rtAssignmentId) return
-    let cleanup: (()=>void)|null = null
     let pollId: number | null = null
     let mounted = true
 
-    ;(async ()=>{
-      try{
-        const pages = await listPages(rtAssignmentId)
-        const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
-        if (!curr) return
-        currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
-
-        const ch = supabase.channel(`art-strokes-${studentId}-${curr.id}`)
-          .on('postgres_changes', {
-            event: '*', schema: 'public', table: 'artifacts',
-            filter: `page_id=eq.${curr.id},kind=eq.strokes`
-          }, ()=> reloadFromServer())
-          .subscribe()
-
-        cleanup = ()=> { try { ch.unsubscribe() } catch {} }
-      }catch(e){
-        console.error('realtime subscribe failed', e)
-      }
-
-      pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
-    })()
+    pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
 
     return ()=> {
       mounted = false
-      if (cleanup) cleanup()
       if (pollId!=null) window.clearInterval(pollId)
     }
   }, [studentId, pageIndex, rtAssignmentId])
@@ -940,12 +1009,9 @@ export default function StudentAssignment(){
           ref={audioRef}
           maxSec={180}
           onStart={(_ts: number) => {
-            // small lead-in so audio is not clipped
             const RECORDING_ZERO_BIAS_MS = 1600
             const now = performance.now()
 
-            // If strokes already have a timing origin, reuse it to align audio.
-            // Otherwise, create one and rebase the canvas so future ink uses the same origin.
             let t0 = (() => {
               try {
                 const s = (drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms
