@@ -991,7 +991,7 @@ export default function StudentAssignment(){
           ref={audioRef}
           maxSec={180}
           onStart={async (_ts: number) => {
-            const RECORDING_ZERO_BIAS_MS = 1600
+            const RECORDING_ZERO_BIAS_MS = 3600
             const now = performance.now()
 
             // Default timing zero
