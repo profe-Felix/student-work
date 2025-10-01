@@ -119,6 +119,15 @@ async function hashStrokes(strokes:any): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
 
+/* ---------- NEW: always pick the latest artifact of a kind ---------- */
+function latestArtifact(submissionWithArtifacts: any, kind: string) {
+  const arts = Array.isArray(submissionWithArtifacts?.artifacts) ? submissionWithArtifacts.artifacts : []
+  for (let i = arts.length - 1; i >= 0; i--) {
+    if (arts[i]?.kind === kind) return arts[i]
+  }
+  return undefined
+}
+
 /* ---------- Storage + prior audio helpers ---------- */
 function parseStoragePath(p: string){
   let s = (p || '').replace(/^\/+/, '').replace(/^public\//, '')
@@ -148,10 +157,10 @@ async function getPrevAudioInfo(
     const latest = await loadLatestSubmission(assignmentId, pageId, studentId)
     if (!latest) return { blob: null, durationMs: 0 }
 
-    const strokesPayload = latest.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+    const strokesPayload = latestArtifact(latest, 'strokes')?.strokes_json
     const capturePerf0Ms = strokesPayload?.timing?.capturePerf0Ms
 
-    const audioArt = latest.artifacts?.find((a:any)=>a.kind==='audio')
+    const audioArt = latestArtifact(latest, 'audio')
     if (!audioArt?.storage_path) return { blob: null, durationMs: 0, capturePerf0Ms }
 
     const blob = await downloadBlobFromStoragePath(audioArt.storage_path)
@@ -228,8 +237,8 @@ async function mergeAudioTakesToWav(
   const MAX_TRIM_SEC = 0.3
   const trimmed = resampled.map(({ buf, offsetSec }) => {
     const data = buf.getChannelData(0)
-    const maxTrim = Math.min(data.length, Math.floor(MAX_TRIM_SEC * buf.sampleRate))
     let lead = 0
+    const maxTrim = Math.min(data.length, Math.floor(MAX_TRIM_SEC * buf.sampleRate))
     while (lead < maxTrim && Math.abs(data[lead]) < TRIM_THRESH) lead++
     const view = data.subarray(lead)
     return { data: view, offsetSec }
@@ -571,7 +580,7 @@ export default function StudentAssignment(){
         try {
           const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
           if (!cancelled && latest) {
-            const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+            const strokes = latest && latestArtifact(latest, 'strokes')?.strokes_json
             const norm = normalizeStrokes(strokes)
             if (Array.isArray(norm.strokes) && norm.strokes.length > 0) {
               const h = await hashStrokes(norm)
@@ -698,7 +707,7 @@ export default function StudentAssignment(){
 
       // Load prior strokes (if any) to preserve the whole timeline
       const priorStrokesPayload = normalizeStrokes(
-        latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+        latest && latestArtifact(latest, 'strokes')?.strokes_json
       )
 
       // Effective strokes to save = append-only merge(prior, current)
@@ -874,7 +883,7 @@ export default function StudentAssignment(){
       currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
 
       const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-      const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+      const strokesPayload = latest && latestArtifact(latest, 'strokes')?.strokes_json
       const normalized = normalizeStrokes(strokesPayload)
 
       const hasServerInk = Array.isArray(normalized?.strokes) && normalized.strokes.length > 0
