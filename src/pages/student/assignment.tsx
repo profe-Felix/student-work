@@ -729,18 +729,10 @@ export default function StudentAssignment(){
         toSaveStrokes = null
       }
 
-      // ---- STROKES: update earliest artifact if it exists (so teacher sees latest), else insert
+            // ---- STROKES: ALWAYS insert a new strokes artifact so dashboards that read "latest" see it
       if (toSaveStrokes) {
-        const earliestStrokesArtId: string | undefined = earliestArtifact(latest, 'strokes')?.id
-        if (earliestStrokesArtId) {
-          const { error } = await supabase
-            .from('artifacts')
-            .update({ strokes_json: toSaveStrokes })
-            .eq('id', earliestStrokesArtId)
-          if (error) throw error
-        } else {
-          await saveStrokes(submission_id!, toSaveStrokes)
-        }
+        // insert a brand-new strokes artifact for this submission
+        await saveStrokes(submission_id!, toSaveStrokes)
 
         // Immediately reflect merged strokes in the canvas preview
         try { drawRef.current?.loadStrokes(toSaveStrokes) } catch {}
@@ -758,6 +750,7 @@ export default function StudentAssignment(){
         lastLocalHash.current = encHash
         localDirty.current = false
       }
+
 
       // ---- Audio: we still append/merge takes and save. (Dashboard may show the first audio; we aren’t changing that here.)
       if (hasAudioTakes) {
