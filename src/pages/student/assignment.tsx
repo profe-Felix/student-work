@@ -299,7 +299,6 @@ function encodeWavMono16(samples: Float32Array, sampleRate: number): Blob {
  * - if we can't find a clean prefix match, we fall back to prior (never delete)
  */
 function strokesEqual(a: any, b: any) {
-  // cheap deep compare per-stroke (structure + points). Adjust if your stroke schema has transient fields.
   try { return JSON.stringify(a) === JSON.stringify(b) } catch { return false }
 }
 
@@ -316,7 +315,6 @@ function mergeStrokeTimelines(prior: StrokesPayloadRT, current: StrokesPayloadRT
     return {
       ...current,
       timing: {
-        // keep the original capture zero if it exists
         ...(prior?.timing || {}),
         ...(current?.timing || {}),
         capturePerf0Ms: prior?.timing?.capturePerf0Ms ?? current?.timing?.capturePerf0Ms,
@@ -325,9 +323,8 @@ function mergeStrokeTimelines(prior: StrokesPayloadRT, current: StrokesPayloadRT
     }
   }
 
-  // If current looks shorter or diverges (user erased/reordered), **append-only** means we KEEP prior.
-  // Optionally still append any "new" strokes that aren't in prior (best-effort).
-  const appended = []
+  // Diverged or shorter current: keep prior, best-effort append "new" items
+  const appended:any[] = []
   for (let k = 0; k < c.length; k++) {
     if (!p[k] || !strokesEqual(p[k], c[k])) { appended.push(c[k]) }
   }
@@ -447,7 +444,6 @@ export default function StudentAssignment(){
 
   // --------- Boot: pick the latest assignment + first page (or nothing) ---------
   useEffect(() => {
-    // If we already know the assignment (e.g., from teacher broadcast cache), don't overwrite with "latest".
     if (rtAssignmentId) return;
 
     let alive = true
@@ -663,116 +659,122 @@ export default function StudentAssignment(){
   }, [pageIndex, studentId, rtAssignmentId])
 
   /* ---------- Submit (append-only into a single canonical submission) ---------- */
-/* ---------- Submit (append-only into a single canonical submission) ---------- */
-const submit = async () => {
-  if (submitInFlight.current) return
-  if (!rtAssignmentId) return
-  submitInFlight.current = true
+  const submit = async () => {
+    if (submitInFlight.current) return
+    if (!rtAssignmentId) return
+    submitInFlight.current = true
 
-  try {
-    setSaving(true)
+    try {
+      setSaving(true)
 
-    // Build current payload BEFORE hashing
-    const currentPayload: StrokesPayloadRT =
-      (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
-      { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+      // Build current payload BEFORE hashing
+      const currentPayload: StrokesPayloadRT =
+        (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
+        { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
 
-    currentPayload.timing = currentPayload.timing ? { ...currentPayload.timing } : {}
+      currentPayload.timing = currentPayload.timing ? { ...currentPayload.timing } : {}
 
-    // Prefer existing capture zero; never unset it.
-    if (currentPayload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
-      currentPayload.timing.capturePerf0Ms = timingZeroRef.current
-    }
-    if (currentPayload.timing.audioOffsetMs == null) currentPayload.timing.audioOffsetMs = 0
+      // Prefer existing capture zero; never unset it.
+      if (currentPayload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+        currentPayload.timing.capturePerf0Ms = timingZeroRef.current
+      }
+      if (currentPayload.timing.audioOffsetMs == null) currentPayload.timing.audioOffsetMs = 0
 
-    const hasInkNow = Array.isArray(currentPayload?.strokes) && currentPayload.strokes.length > 0
-    const hasAudioTakes = audioTakes.current.length > 0
-    if (!hasInkNow && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+      const hasInkNow = Array.isArray(currentPayload?.strokes) && currentPayload.strokes.length > 0
+      const hasAudioTakes = audioTakes.current.length > 0
+      if (!hasInkNow && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
-    // Resolve page
-    const pages = await listPages(rtAssignmentId)
-    const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
-    if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
+      // Resolve page
+      const pages = await listPages(rtAssignmentId)
+      const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+      if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
-    // Canonical submission: use latest or create
-    const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-    let submission_id = latest?.submission?.id as string | undefined
-    if (!submission_id) {
-      submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-    }
+      // Canonical submission: use latest or create
+      const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+      let submission_id = latest?.submission?.id as string | undefined
+      if (!submission_id) {
+        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+      }
 
-    // Load prior strokes (if any) to preserve the whole timeline
-    const priorStrokesPayload = normalizeStrokes(
-      latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-    )
+      // Load prior strokes (if any) to preserve the whole timeline
+      const priorStrokesPayload = normalizeStrokes(
+        latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+      )
 
-    // Effective strokes to save = append-only merge(prior, current)
-    let toSaveStrokes: StrokesPayloadRT | null = null
-    const hadPriorInk = Array.isArray(priorStrokesPayload.strokes) && priorStrokesPayload.strokes.length > 0
+      // Effective strokes to save = append-only merge(prior, current)
+      let toSaveStrokes: StrokesPayloadRT | null = null
+      const hadPriorInk = Array.isArray(priorStrokesPayload.strokes) && priorStrokesPayload.strokes.length > 0
 
-    if (hadPriorInk && hasInkNow) {
-      toSaveStrokes = mergeStrokeTimelines(priorStrokesPayload, currentPayload)
-    } else if (hadPriorInk && !hasInkNow) {
-      // audio-only resubmit → DO NOT wipe strokes; keep prior exactly
-      toSaveStrokes = priorStrokesPayload
-    } else if (!hadPriorInk && hasInkNow) {
-      // first time ink
-      toSaveStrokes = currentPayload
-    } else {
-      toSaveStrokes = null
-    }
+      if (hadPriorInk && hasInkNow) {
+        toSaveStrokes = mergeStrokeTimelines(priorStrokesPayload, currentPayload)
+      } else if (hadPriorInk && !hasInkNow) {
+        // audio-only resubmit → DO NOT wipe strokes; keep prior exactly
+        toSaveStrokes = priorStrokesPayload
+      } else if (!hadPriorInk && hasInkNow) {
+        // first time ink
+        toSaveStrokes = currentPayload
+      } else {
+        toSaveStrokes = null
+      }
 
-    // Hash for local dedupe only if we actually intend to write ink
-    if (toSaveStrokes) {
-      const encHash = await hashStrokes(toSaveStrokes)
-      const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
-      const last = localStorage.getItem(lastKey)
-      if (last !== encHash) {
+      // Save strokes if needed, then update local preview & caches with the MERGED timeline
+      if (toSaveStrokes) {
         await saveStrokes(submission_id!, toSaveStrokes)
+
+        // Immediately reflect merged strokes in the canvas preview
+        try { drawRef.current?.loadStrokes(toSaveStrokes) } catch {}
+
+        // Lock our timing zero to the merged payload (helps appended audio line up)
+        if (toSaveStrokes?.timing?.capturePerf0Ms != null) {
+          timingZeroRef.current = toSaveStrokes.timing.capturePerf0Ms
+        }
+
+        const encHash = await hashStrokes(toSaveStrokes)
+        const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
         localStorage.setItem(lastKey, encHash)
         saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, toSaveStrokes)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
         localDirty.current = false
       }
-    }
 
-    // ---- Audio: merge prior audio (if any) + NEW takes, then save to SAME submission (append semantics) ----
-    if (hasAudioTakes) {
-      // Use a stable capture zero: prefer the (merged/prior) strokes' capture zero
-      const captureZero =
-        (toSaveStrokes?.timing?.capturePerf0Ms ??
-         priorStrokesPayload?.timing?.capturePerf0Ms ??
-         currentPayload?.timing?.capturePerf0Ms ??
-         timingZeroRef.current ??
-         performance.now())
+      // ---- Audio: merge prior audio (if any) + NEW takes, then save to SAME submission (append semantics) ----
+      if (hasAudioTakes) {
+        // Use a stable capture zero: prefer the (merged/prior) strokes' capture zero
+        const captureZero =
+          (toSaveStrokes?.timing?.capturePerf0Ms ??
+           priorStrokesPayload?.timing?.capturePerf0Ms ??
+           currentPayload?.timing?.capturePerf0Ms ??
+           timingZeroRef.current ??
+           performance.now())
 
-      // Pull prior audio and include as first take at offset 0
-      const priorAudio = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
-      const allTakes: AudioTake[] = []
-      if (priorAudio.blob) {
-        allTakes.push({ blob: priorAudio.blob, startPerfMs: captureZero }) // keep prior at t=0
+        // Pull prior audio and include as first take at offset 0
+        const priorAudio = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
+        const allTakes: AudioTake[] = []
+        if (priorAudio.blob) {
+          allTakes.push({ blob: priorAudio.blob, startPerfMs: captureZero }) // keep prior at t=0
+        }
+        for (const t of audioTakes.current) allTakes.push(t)
+
+        if (allTakes.length > 0) {
+          const merged = await mergeAudioTakesToWav(allTakes, captureZero)
+          await saveAudio(submission_id!, merged)
+          // clear recorded takes after successful save so we don't re-append on next submit
+          audioTakes.current = []
+        }
       }
-      for (const t of audioTakes.current) allTakes.push(t)
 
-      if (allTakes.length > 0) {
-        const merged = await mergeAudioTakesToWav(allTakes, captureZero)
-        await saveAudio(submission_id!, merged)
-      }
+      clearDraft(studentId, assignmentKeyForCache, pageIndex)
+      showToast('Saved!', 'ok', 1200)
+      justSavedAt.current = Date.now()
+    } catch (e:any) {
+      console.error(e)
+      showToast('Save failed', 'err', 1800)
+    } finally {
+      setSaving(false)
+      submitInFlight.current = false
     }
-
-    clearDraft(studentId, assignmentKeyForCache, pageIndex)
-    showToast('Saved!', 'ok', 1200)
-    justSavedAt.current = Date.now()
-  } catch (e:any) {
-    console.error(e)
-    showToast('Save failed', 'err', 1800)
-  } finally {
-    setSaving(false)
-    submitInFlight.current = false
   }
-}
-
 
   const blockedBySync = (idx: number) => {
     if (!autoFollow) return false
