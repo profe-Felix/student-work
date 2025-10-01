@@ -119,19 +119,6 @@ async function hashStrokes(strokes:any): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
 
-/* ---------- Touch submission so teacher dashboard sees latest ---------- */
-async function touchSubmission(submissionId: string) {
-  try {
-    await supabase
-      .from('submissions')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('id', submissionId)
-  } catch (e) {
-    // non-fatal
-    console.warn('touchSubmission failed', e)
-  }
-}
-
 /* ---------- NEW: always pick the latest artifact of a kind ---------- */
 function latestArtifact(submissionWithArtifacts: any, kind: string) {
   const arts = Array.isArray(submissionWithArtifacts?.artifacts) ? submissionWithArtifacts.artifacts : []
@@ -202,7 +189,7 @@ async function mergeAudioTakesToWav(
   if (!takes.length) throw new Error('No takes to merge')
 
   const TARGET_RATE = 44100
-  const MAX_OUT_SEC = 180 // cap final duration to protect storage/UI
+  const MAX_OUT_SEC = 180 // cap final duration to avoid huge artifacts
 
   // 1) Decode using a short-lived AudioContext
   const AC = (window as any).AudioContext || (window as any).webkitAudioContext
@@ -746,7 +733,6 @@ export default function StudentAssignment(){
       // Save strokes if needed, then update local preview & caches with the MERGED timeline
       if (toSaveStrokes) {
         await saveStrokes(submission_id!, toSaveStrokes)
-        await touchSubmission(submission_id!) // ensure dashboard reflects stroke changes
 
         // Immediately reflect merged strokes in the canvas preview
         try { drawRef.current?.loadStrokes(toSaveStrokes) } catch {}
@@ -786,7 +772,6 @@ export default function StudentAssignment(){
         if (allTakes.length > 0) {
           const merged = await mergeAudioTakesToWav(allTakes, captureZero)
           await saveAudio(submission_id!, merged)
-          await touchSubmission(submission_id!) // ensure dashboard reflects audio changes
           // clear recorded takes after successful save so we don't re-append on next submit
           audioTakes.current = []
         }
@@ -1043,19 +1028,17 @@ export default function StudentAssignment(){
           ref={audioRef}
           maxSec={180}
           onStart={(_ts: number) => {
-            // Keep one shared origin for ink+audio. If none yet, bias slightly in the past
-            const SMALL_LEAD_MS = 180
+            // Use ONE timing origin for both ink & audio (no bias)
             const now = performance.now()
-
-            let t0 = (() => {
+            const existingT0 = ((): number | null => {
               try {
                 const s = (drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms
-                if (Number.isFinite(s as any)) return s as number
-              } catch {}
-              return now - SMALL_LEAD_MS
+                return Number.isFinite(s as any) ? (s as number) : null
+              } catch { return null }
             })()
 
-            if (!(drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms) {
+            const t0 = existingT0 ?? now
+            if (!existingT0) {
               try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
             }
 
@@ -1114,7 +1097,7 @@ export default function StudentAssignment(){
             style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
               touchAction: handMode ? 'auto' : 'none',
               display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-              background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
+              background:'#fff', border:'1px solid '#eee', borderRadius:12, position:'relative' }}
           >
             <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
               <div style={{ position:'absolute', inset:0, zIndex:0 }}>
