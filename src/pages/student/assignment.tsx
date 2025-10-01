@@ -754,8 +754,7 @@ export default function StudentAssignment(){
         const mergedHash = await hashStrokes(toSaveStrokes)
         if (mergedHash !== priorHash) {
           // 👇 UPDATE existing strokes artifact if present, else insert once.
-          await saveStrokesCanonical(submission_id!, curr.id, toSaveStrokes, priorStrokesArtifactId)
-
+          await saveStrokesCanonical(submission_id!, toSaveStrokes, priorStrokesArtifactId)
           // Immediately reflect merged strokes in the canvas preview
           try { drawRef.current?.loadStrokes(toSaveStrokes) } catch {}
 
