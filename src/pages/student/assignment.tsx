@@ -610,42 +610,62 @@ export default function StudentAssignment(){
     return ()=>{ if (id!=null) window.clearInterval(id) }
   }, [pageIndex, studentId, rtAssignmentId])
 
-  /* ---------- Draft autosave (coarse) ---------- */
-  useEffect(()=>{
-    let lastSerialized = ''
-    let running = !document.hidden
-    let intervalId: number | null = null
-    const tick = ()=>{
-      try {
-        if (!running || !rtAssignmentId) return
-        const data = drawRef.current?.getStrokes()
-        if (!data) return
-        const s = JSON.stringify(data)
-        if (s !== lastSerialized) {
-          saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
-          lastSerialized = s
-        }
-      } catch {}
-    }
-    const start = ()=>{ if (intervalId==null){ intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) } }
-    const stop  = ()=>{ if (intervalId!=null){ window.clearInterval(intervalId); intervalId=null } }
-    const onVis = ()=>{ running = !document.hidden; if (running) start(); else stop() }
-    document.addEventListener('visibilitychange', onVis)
-    start()
-    const onBefore = ()=>{
-      try {
-        if (!rtAssignmentId) return
-        const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
-      } catch {}
-    }
-    window.addEventListener('beforeunload', onBefore)
-    return ()=>{
-      stop()
-      document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBefore as any)
-    }
+ /* ---------- Draft autosave (coarse) ---------- */
+useEffect(() => {
+  let lastSerialized = '';
+  let running = !document.hidden;
+  let intervalId: number | null = null;
 
-  }, [pageIndex, studentId, rtAssignmentId]) // eslint-disable-line
+  const tick = () => {
+    try {
+      if (!running || !rtAssignmentId) return;
+      const data = drawRef.current?.getStrokes();
+      if (!data) return;
+      const s = JSON.stringify(data);
+      if (s !== lastSerialized) {
+        saveDraft(studentId, assignmentKeyForCache, pageIndex, data);
+        lastSerialized = s;
+      }
+    } catch {}
+  };
+
+  const start = () => {
+    if (intervalId == null) {
+      intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) as unknown as number;
+    }
+  };
+  const stop = () => {
+    if (intervalId != null) {
+      window.clearInterval(intervalId);
+      intervalId = null;
+    }
+  };
+
+  const onVis = () => {
+    running = !document.hidden;
+    if (running) start();
+    else stop();
+  };
+
+  const onBefore = () => {
+    try {
+      if (!rtAssignmentId) return;
+      const data = drawRef.current?.getStrokes();
+      if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data);
+    } catch {}
+  };
+
+  document.addEventListener('visibilitychange', onVis);
+  window.addEventListener('beforeunload', onBefore);
+  start();
+
+  return () => {
+    stop();
+    document.removeEventListener('visibilitychange', onVis);
+    window.removeEventListener('beforeunload', onBefore);
+  };
+}, [pageIndex, studentId, rtAssignmentId]);
+
 
  /* ---------- Submit (append-only into a single canonical submission) ---------- */
 const submit = async () => {
@@ -1008,33 +1028,32 @@ const submit = async () => {
         <AudioRecorder
           ref={audioRef}
           maxSec={180}
-          onStart={async (_ts: number) => {
-            const RECORDING_ZERO_BIAS_MS = 7000
-            const now = performance.now()
+          onStart={(_ts: number) => {
+  const RECORDING_ZERO_BIAS_MS = 1600; // small lead-in so audio isn’t clipped
+  const now = performance.now();
 
-            // Default timing zero
-            let t0 = now + RECORDING_ZERO_BIAS_MS
+  // If strokes already have a timing origin, reuse it so audio aligns to them.
+  // Otherwise, create one and rebase the canvas so future ink uses the same origin.
+  const existingCapture = (() => {
+    try {
+      const s = (drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms;
+      return Number.isFinite(s as any) ? (s as number) : null;
+    } catch { return null; }
+  })();
 
-            // If we have a prior audio, append new takes *after* it
-            try {
-              const pages = await listPages(rtAssignmentId || '')
-              const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
-              if (rtAssignmentId && curr?.id) {
-                const prev = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
-                const baseZero =
-                  prev.capturePerf0Ms ??
-                  timingZeroRef.current ??
-                  now
-                t0 = baseZero + (prev.durationMs || 0) + RECORDING_ZERO_BIAS_MS
-              }
-            } catch { /* fallback to default t0 */ }
+  const t0 = existingCapture ?? (now + RECORDING_ZERO_BIAS_MS);
+  if (existingCapture == null) {
+    try { (drawRef.current as any)?.markTimingZero?.(t0); } catch {}
+  }
 
-            timingZeroRef.current = t0
-            try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
+  timingZeroRef.current = t0;
 
-            pendingTakeStart.current = now
-            if (recordMode === 'replace') audioTakes.current = []
-          }}
+  // perf timestamp for this take’s start (used when merging)
+  pendingTakeStart.current = now;
+
+  if (recordMode === 'replace') audioTakes.current = [];
+}}
+
           onBlob={(b: Blob) => {
             const ts = pendingTakeStart.current ?? performance.now()
             audioTakes.current.push({ blob: b, startPerfMs: ts })
