@@ -1093,26 +1093,41 @@ export default function StudentAssignment(){
       ) : (
         <>
           <div
-            ref={scrollHostRef}
-            style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-              touchAction: handMode ? 'auto' : 'none',
-              display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-              background:'#fff', border:'1px solid '#eee', borderRadius:12, position:'relative' }}
-          >
-            <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
-              <div style={{ position:'absolute', inset:0, zIndex:0 }}>
-                {/* If pdfUrl is empty (e.g., latest assignment but page not found), PdfCanvas will render nothing */}
-                <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
-              </div>
-              <div style={{
-                  position:'absolute', inset:0, zIndex:10,
-                  pointerEvents: handMode ? 'none' : 'auto'
-                }}>
-                <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
-                  color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
-              </div>
-            </div>
-          </div>
+  ref={scrollHostRef}
+  style={{
+    height:'calc(100vh - 160px)',
+    overflow:'auto',
+    WebkitOverflowScrolling:'touch',
+    touchAction: handMode ? 'auto' : 'none',
+    display:'flex',
+    alignItems:'flex-start',
+    justifyContent:'center',
+    padding:12,
+    background:'#fff',
+    border:'1px solid #eee',   // ← fixed string here
+    borderRadius:12,
+    position:'relative'
+  }}
+>
+  <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
+    <div style={{ position:'absolute', inset:0, zIndex:0 }}>
+      {/* If pdfUrl is empty (e.g., latest assignment but page not found), PdfCanvas will render nothing */}
+      <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
+    </div>
+    <div style={{ position:'absolute', inset:0, zIndex:10, pointerEvents: handMode ? 'none' : 'auto' }}>
+      <DrawCanvas
+        ref={drawRef}
+        width={canvasSize.w}
+        height={canvasSize.h}
+        color={color}
+        size={size}
+        mode={handMode ? 'scroll' : 'draw'}
+        tool={tool}
+      />
+    </div>
+  </div>
+</div>
+
 
           {/* Floating pager */}
           <div
