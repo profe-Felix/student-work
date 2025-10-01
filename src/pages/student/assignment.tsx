@@ -670,7 +670,7 @@ export default function StudentAssignment(){
     }
   }, [pageIndex, studentId, rtAssignmentId])
 
-  /* ---------- Submit (append-only + update earliest artifact so teacher sees latest) ---------- */
+  /* ---------- Submit (append-only + insert latest strokes) ---------- */
   const submit = async () => {
     if (submitInFlight.current) return
     if (!rtAssignmentId) return
@@ -679,14 +679,11 @@ export default function StudentAssignment(){
     try {
       setSaving(true)
 
-      // Build current payload BEFORE hashing
       const currentPayload: StrokesPayloadRT =
         (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
         { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
 
       currentPayload.timing = currentPayload.timing ? { ...currentPayload.timing } : {}
-
-      // Prefer existing capture zero; never unset it.
       if (currentPayload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
         currentPayload.timing.capturePerf0Ms = timingZeroRef.current
       }
@@ -696,52 +693,40 @@ export default function StudentAssignment(){
       const hasAudioTakes = audioTakes.current.length > 0
       if (!hasInkNow && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
-      // Resolve page
       const pages = await listPages(rtAssignmentId)
       const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
       if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
-      // Canonical submission: use latest or create
       const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
       let submission_id = latest?.submission?.id as string | undefined
       if (!submission_id) {
         submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
       }
 
-      // Load prior strokes (if any) to preserve the whole timeline
       const priorStrokesPayload = normalizeStrokes(
         latest && latestArtifact(latest, 'strokes')?.strokes_json
       )
 
-      // Effective strokes to save = append-only merge(prior, current)
       let toSaveStrokes: StrokesPayloadRT | null = null
       const hadPriorInk = Array.isArray(priorStrokesPayload.strokes) && priorStrokesPayload.strokes.length > 0
 
       if (hadPriorInk && hasInkNow) {
         toSaveStrokes = mergeStrokeTimelines(priorStrokesPayload, currentPayload)
       } else if (hadPriorInk && !hasInkNow) {
-        // audio-only resubmit → DO NOT wipe strokes; keep prior exactly
         toSaveStrokes = priorStrokesPayload
       } else if (!hadPriorInk && hasInkNow) {
-        // first time ink
         toSaveStrokes = currentPayload
       } else {
         toSaveStrokes = null
       }
 
-            // ---- STROKES: ALWAYS insert a new strokes artifact so dashboards that read "latest" see it
+      // ---- STROKES: ALWAYS insert a new strokes artifact so dashboards that read "latest" see it
       if (toSaveStrokes) {
-        // insert a brand-new strokes artifact for this submission
         await saveStrokes(submission_id!, toSaveStrokes)
-
-        // Immediately reflect merged strokes in the canvas preview
         try { drawRef.current?.loadStrokes(toSaveStrokes) } catch {}
-
-        // Lock our timing zero to the merged payload (helps appended audio line up)
         if (toSaveStrokes?.timing?.capturePerf0Ms != null) {
           timingZeroRef.current = toSaveStrokes.timing.capturePerf0Ms
         }
-
         const encHash = await hashStrokes(toSaveStrokes)
         const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
         localStorage.setItem(lastKey, encHash)
@@ -751,8 +736,7 @@ export default function StudentAssignment(){
         localDirty.current = false
       }
 
-
-      // ---- Audio: we still append/merge takes and save. (Dashboard may show the first audio; we aren’t changing that here.)
+      // ---- Audio: append/merge takes and save a new audio artifact
       if (hasAudioTakes) {
         const captureZero =
           (toSaveStrokes?.timing?.capturePerf0Ms ??
@@ -838,14 +822,49 @@ export default function StudentAssignment(){
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  /* ---------- Realtime + polling (defensive) ---------- */
+  /* ---------- Reattach the assignment realtime (fixes “Sync to me”) ---------- */
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    const ch = subscribeToAssignment(rtAssignmentId, {
+      onSetPage: ({ pageIndex }: SetPagePayload) => {
+        teacherPageIndexRef.current = pageIndex
+        // Force-follow page changes; manual nav still respects blockedBySync()
+        setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+      },
+      onFocus: ({ on, lockNav }: FocusPayload) => {
+        setFocusOn(!!on)
+        setNavLocked(!!on && !!lockNav)
+      },
+      onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
+        setAutoFollow(!!on)
+        setAllowedPages(allowedPages ?? null)
+        if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
+        if (on && typeof teacherPageIndexRef.current === 'number') {
+          setPageIndex(teacherPageIndexRef.current)
+        }
+      },
+      onPresence: (p: TeacherPresenceState) => {
+        try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+        setAutoFollow(!!p.autoFollow)
+        setAllowedPages(p.allowedPages ?? null)
+        setFocusOn(!!p.focusOn)
+        setNavLocked(!!p.focusOn && !!p.lockNav)
+        if (typeof p.teacherPageIndex === 'number') {
+          teacherPageIndexRef.current = p.teacherPageIndex
+          if (p.autoFollow) setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
+        }
+      }
+    })
+    return () => { try { ch?.unsubscribe?.() } catch {} }
+  }, [rtAssignmentId])
+
+  /* ---------- Artifact realtime + polling (defensive) ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
     let unsub: (()=>void)|null = null
 
     ;(async () => {
       try {
-        // We subscribe to strokes changes for the *submission*, not by page_id (which doesn't exist on artifacts)
         const pages = await listPages(rtAssignmentId)
         const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
         if (!curr) return
