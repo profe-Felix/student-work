@@ -350,6 +350,9 @@ export default function StudentAssignment(){
 
   // --------- Boot: pick the latest assignment + first page (or nothing) ---------
   useEffect(() => {
+    // ✅ If we already know the assignment (e.g., from teacher broadcast cache), don't overwrite with "latest".
+    if (rtAssignmentId) return;
+
     let alive = true
     ;(async () => {
       try {
@@ -386,7 +389,63 @@ export default function StudentAssignment(){
       }
     })()
     return () => { alive = false }
+  }, [rtAssignmentId])
+
+  // Teacher chooses a different assignment globally → follow it
+  useEffect(() => {
+    const off = subscribeToGlobal((nextAssignmentId) => {
+      try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
+      setRtAssignmentId(nextAssignmentId)
+
+      // Hydrate presence snapshot if we have one
+      try {
+        const raw = localStorage.getItem(presenceKey(nextAssignmentId))
+        if (raw) {
+          const p = JSON.parse(raw) as TeacherPresenceState
+          setAutoFollow(!!p.autoFollow)
+          setAllowedPages(p.allowedPages ?? null)
+          setFocusOn(!!p.focusOn)
+          setNavLocked(!!p.focusOn && !!p.lockNav)
+          if (typeof p.teacherPageIndex === 'number') {
+            teacherPageIndexRef.current = p.teacherPageIndex
+            setPageIndex(p.teacherPageIndex)
+          } else {
+            setPageIndex(0)
+          }
+        } else {
+          setPageIndex(0)
+        }
+      } catch {
+        setPageIndex(0)
+      }
+
+      // reset page-local audio/capture state
+      audioTakes.current = []
+      audioBlob.current = null
+      pendingTakeStart.current = null
+      timingZeroRef.current = null
+      currIds.current = {}
+    })
+    return off
   }, [])
+
+  // On assignment known, hydrate presence/page from cache on refresh (keeps "sync to me" after reload)
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    try {
+      const raw = localStorage.getItem(presenceKey(rtAssignmentId))
+      if (!raw) return
+      const p = JSON.parse(raw) as TeacherPresenceState
+      setAutoFollow(!!p.autoFollow)
+      setAllowedPages(p.allowedPages ?? null)
+      setFocusOn(!!p.focusOn)
+      setNavLocked(!!p.focusOn && !!p.lockNav)
+      if (p.autoFollow && typeof p.teacherPageIndex === 'number') {
+        teacherPageIndexRef.current = p.teacherPageIndex
+        setPageIndex(p.teacherPageIndex)
+      }
+    } catch {}
+  }, [rtAssignmentId])
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
@@ -503,17 +562,17 @@ export default function StudentAssignment(){
     document.addEventListener('visibilitychange', onVis)
     start()
     const onBefore = ()=>{
-  try {
-    if (!rtAssignmentId) return
-    const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
-  } catch {}
-}
-window.addEventListener('beforeunload', onBefore)
-return ()=>{
-  stop()
-  document.removeEventListener('visibilitychange', onVis)
-  window.removeEventListener('beforeunload', onBefore as any)
-}
+      try {
+        if (!rtAssignmentId) return
+        const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
+      } catch {}
+    }
+    window.addEventListener('beforeunload', onBefore)
+    return ()=>{
+      stop()
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('beforeunload', onBefore as any)
+    }
 
   }, [pageIndex, studentId, rtAssignmentId]) // eslint-disable-line
 
@@ -551,7 +610,31 @@ return ()=>{
       const pages = await listPages(rtAssignmentId)
       const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
       if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
-      const submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+
+      // --- choose submission id strategy ---
+      let submission_id: string
+      if (hasAudioTakes && !hasInk) {
+        // Audio-only update: append audio to the latest submission (so strokes remain available for scrubbing)
+        const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+        if (latest?.id) {
+          submission_id = latest.id
+        } else {
+          // No prior submission — create one, and (optionally) save current canvas strokes if any
+          submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+          const dataNow: StrokesPayloadRT =
+            (drawRef.current?.getStrokes() as StrokesPayloadRT) || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+          if (Array.isArray(dataNow.strokes) && dataNow.strokes.length > 0) {
+            dataNow.timing = dataNow.timing ?? {}
+            if (dataNow.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+              dataNow.timing.capturePerf0Ms = timingZeroRef.current
+            }
+            await saveStrokes(submission_id, dataNow)
+          }
+        }
+      } else {
+        // Normal submit (ink and/or audio): create a fresh submission
+        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+      }
 
       if (hasAudioTakes) {
         const captureZero = payload.timing?.capturePerf0Ms
