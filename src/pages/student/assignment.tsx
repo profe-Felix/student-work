@@ -610,179 +610,140 @@ export default function StudentAssignment(){
     return ()=>{ if (id!=null) window.clearInterval(id) }
   }, [pageIndex, studentId, rtAssignmentId])
 
- /* ---------- Draft autosave (coarse) ---------- */
-useEffect(() => {
-  let lastSerialized = '';
-  let running = !document.hidden;
-  let intervalId: number | null = null;
+  /* ---------- Draft autosave (coarse) ---------- */
+  useEffect(() => {
+    let lastSerialized = ''
+    let running = !document.hidden
+    let intervalId: number | null = null
 
-  const tick = () => {
-    try {
-      if (!running || !rtAssignmentId) return;
-      const data = drawRef.current?.getStrokes();
-      if (!data) return;
-      const s = JSON.stringify(data);
-      if (s !== lastSerialized) {
-        saveDraft(studentId, assignmentKeyForCache, pageIndex, data);
-        lastSerialized = s;
+    const tick = () => {
+      try {
+        if (!running || !rtAssignmentId) return
+        const data = drawRef.current?.getStrokes()
+        if (!data) return
+        const s = JSON.stringify(data)
+        if (s !== lastSerialized) {
+          saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
+          lastSerialized = s
+        }
+      } catch {}
+    }
+
+    const start = () => {
+      if (intervalId == null) {
+        intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) as unknown as number
       }
-    } catch {}
-  };
-
-  const start = () => {
-    if (intervalId == null) {
-      intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) as unknown as number;
     }
-  };
-  const stop = () => {
-    if (intervalId != null) {
-      window.clearInterval(intervalId);
-      intervalId = null;
-    }
-  };
-
-  const onVis = () => {
-    running = !document.hidden;
-    if (running) start();
-    else stop();
-  };
-
-  const onBefore = () => {
-    try {
-      if (!rtAssignmentId) return;
-      const data = drawRef.current?.getStrokes();
-      if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data);
-    } catch {}
-  };
-
-  document.addEventListener('visibilitychange', onVis);
-  window.addEventListener('beforeunload', onBefore);
-  start();
-
-  return () => {
-    stop();
-    document.removeEventListener('visibilitychange', onVis);
-    window.removeEventListener('beforeunload', onBefore);
-  };
-}, [pageIndex, studentId, rtAssignmentId]);
-
-
- /* ---------- Submit (append-only into a single canonical submission) ---------- */
-const submit = async () => {
-  if (submitInFlight.current) return
-  if (!rtAssignmentId) return
-  submitInFlight.current = true
-
-  try {
-    setSaving(true)
-
-    // Build payload and normalize timing BEFORE hashing
-    const payload: StrokesPayloadRT =
-      (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
-      { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
-
-    payload.timing = payload.timing ? { ...payload.timing } : {}
-
-    if (payload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
-      payload.timing.capturePerf0Ms = timingZeroRef.current
-    }
-    if (payload.timing.audioOffsetMs == null) payload.timing.audioOffsetMs = 0
-
-    const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
-    const hasAudioTakes = audioTakes.current.length > 0
-    if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
-
-    // Hash AFTER timing fields are finalized (for local dedupe)
-    const encHash = await hashStrokes(payload)
-    const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
-    const last = localStorage.getItem(lastKey)
-    if (last && last === encHash && !hasAudioTakes) {
-      setSaving(false); submitInFlight.current = false; return
-    }
-
-    // Resolve current page row
-    const pages = await listPages(rtAssignmentId)
-    const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
-    if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
-
-    // === Single canonical submission: latest or create ===
-    const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-    let submission_id = latest?.submission?.id as string | undefined
-    if (!submission_id) {
-      submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-    }
-
-    // ---- Strokes: always write the *current* full timeline to the same submission (append semantics) ----
-    if (hasInk) {
-      await saveStrokes(submission_id, payload)
-      localStorage.setItem(lastKey, encHash)
-      saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
-      lastAppliedServerHash.current = encHash
-      lastLocalHash.current = encHash
-      localDirty.current = false
-    }
-
-    // ---- Audio: merge any prior audio + all new takes, then save back to the SAME submission ----
-    if (hasAudioTakes) {
-      // Use a stable capture zero: prefer the strokes' capturePerf0Ms (so audio aligns with the drawing timeline)
-      const captureZero =
-        payload.timing?.capturePerf0Ms ??
-        timingZeroRef.current ??
-        performance.now()
-
-      // Pull prior audio (if any) and include as the first take at offset 0
-      const prior = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
-
-      const allTakes: AudioTake[] = []
-      if (prior.blob) {
-        // place prior audio at offset 0 relative to captureZero
-        allTakes.push({ blob: prior.blob, startPerfMs: captureZero })
+    const stop  = () => {
+      if (intervalId != null) {
+        window.clearInterval(intervalId)
+        intervalId = null
       }
-      // add new takes (they were recorded with pendingTakeStart and aligned using captureZero)
-      for (const t of audioTakes.current) allTakes.push(t)
-
-      const merged = await mergeAudioTakesToWav(allTakes, captureZero)
-      await saveAudio(submission_id, merged)
     }
+    const onVis = () => {
+      running = !document.hidden
+      if (running) start(); else stop()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    start()
+    const onBefore = () => {
+      try {
+        if (!rtAssignmentId) return
+        const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
+      } catch {}
+    }
+    window.addEventListener('beforeunload', onBefore)
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('beforeunload', onBefore as any)
+    }
+  }, [pageIndex, studentId, rtAssignmentId]) // eslint-disable-line
 
-    clearDraft(studentId, assignmentKeyForCache, pageIndex)
-    showToast('Saved!', 'ok', 1200)
-    justSavedAt.current = Date.now()
-  } catch (e:any) {
-    console.error(e)
-    showToast('Save failed', 'err', 1800)
-  } finally {
-    setSaving(false)
-    submitInFlight.current = false
-  }
-}
+  /* ---------- Submit (append-only into a single canonical submission) ---------- */
+  const submit = async () => {
+    if (submitInFlight.current) return
+    if (!rtAssignmentId) return
+    submitInFlight.current = true
 
+    try {
+      setSaving(true)
 
-      // ----- Audio handling -----
+      // Build payload and normalize timing BEFORE hashing
+      const payload: StrokesPayloadRT =
+        (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
+        { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+
+      payload.timing = payload.timing ? { ...payload.timing } : {}
+
+      if (payload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+        payload.timing.capturePerf0Ms = timingZeroRef.current
+      }
+      if (payload.timing.audioOffsetMs == null) payload.timing.audioOffsetMs = 0
+
+      const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
+      const hasAudioTakes = audioTakes.current.length > 0
+      if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+
+      // Hash AFTER timing fields are finalized (for local dedupe)
+      const encHash = await hashStrokes(payload)
+      const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
+      const last = localStorage.getItem(lastKey)
+      if (last && last === encHash && !hasAudioTakes) {
+        setSaving(false); submitInFlight.current = false; return
+      }
+
+      // Resolve current page row
+      const pages = await listPages(rtAssignmentId)
+      const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+      if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
+
+      // === Single canonical submission: latest or create ===
+      const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+      let submission_id = latest?.submission?.id as string | undefined
+      if (!submission_id) {
+        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+      }
+
+      // ---- Strokes: always write the *current* full timeline to the same submission (append semantics) ----
+      if (hasInk) {
+        await saveStrokes(submission_id, payload)
+        localStorage.setItem(lastKey, encHash)
+        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
+        lastAppliedServerHash.current = encHash
+        lastLocalHash.current = encHash
+        localDirty.current = false
+      }
+
+      // ---- Audio: merge any prior audio + all new takes, then save back to the SAME submission ----
       if (hasAudioTakes) {
-        // Merge: prior audio (if any) + new takes → single WAV, and save back to SAME submission
-        const captureZero = (payload.timing?.capturePerf0Ms ??
-                             timingZeroRef.current ??
-                             performance.now())
+        // Use a stable capture zero: prefer the strokes' capturePerf0Ms (so audio aligns with the drawing timeline)
+        const captureZero =
+          payload.timing?.capturePerf0Ms ??
+          timingZeroRef.current ??
+          performance.now()
 
-        // Pull prior audio and include as the first take @ offset 0
+        // Pull prior audio (if any) and include as the first take at offset 0
         const prior = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
+
         const allTakes: AudioTake[] = []
         if (prior.blob) {
-          allTakes.push({ blob: prior.blob, startPerfMs: captureZero }) // offset 0
+          // place prior audio at offset 0 relative to captureZero
+          allTakes.push({ blob: prior.blob, startPerfMs: captureZero })
         }
-        // add brand-new takes (already offset using onStart timing)
+        // add new takes (they were recorded with pendingTakeStart and aligned using captureZero)
         for (const t of audioTakes.current) allTakes.push(t)
 
         const merged = await mergeAudioTakesToWav(allTakes, captureZero)
-        await saveAudio(submission_id!, merged)
+        await saveAudio(submission_id, merged)
       }
 
       clearDraft(studentId, assignmentKeyForCache, pageIndex)
       showToast('Saved!', 'ok', 1200)
       justSavedAt.current = Date.now()
-    } catch (e: any) {
-      console.error(e); showToast('Save failed', 'err', 1800)
+    } catch (e:any) {
+      console.error(e)
+      showToast('Save failed', 'err', 1800)
     } finally {
       setSaving(false)
       submitInFlight.current = false
@@ -1029,31 +990,30 @@ const submit = async () => {
           ref={audioRef}
           maxSec={180}
           onStart={(_ts: number) => {
-  const RECORDING_ZERO_BIAS_MS = 1600; // small lead-in so audio isn’t clipped
-  const now = performance.now();
+            const RECORDING_ZERO_BIAS_MS = 1600; // small lead-in so audio isn’t clipped
+            const now = performance.now();
 
-  // If strokes already have a timing origin, reuse it so audio aligns to them.
-  // Otherwise, create one and rebase the canvas so future ink uses the same origin.
-  const existingCapture = (() => {
-    try {
-      const s = (drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms;
-      return Number.isFinite(s as any) ? (s as number) : null;
-    } catch { return null; }
-  })();
+            // If strokes already have a timing origin, reuse it so audio aligns to them.
+            // Otherwise, create one and rebase the canvas so future ink uses the same origin.
+            const existingCapture = (() => {
+              try {
+                const s = (drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms;
+                return Number.isFinite(s as any) ? (s as number) : null;
+              } catch { return null; }
+            })();
 
-  const t0 = existingCapture ?? (now + RECORDING_ZERO_BIAS_MS);
-  if (existingCapture == null) {
-    try { (drawRef.current as any)?.markTimingZero?.(t0); } catch {}
-  }
+            const t0 = existingCapture ?? (now + RECORDING_ZERO_BIAS_MS);
+            if (existingCapture == null) {
+              try { (drawRef.current as any)?.markTimingZero?.(t0); } catch {}
+            }
 
-  timingZeroRef.current = t0;
+            timingZeroRef.current = t0;
 
-  // perf timestamp for this take’s start (used when merging)
-  pendingTakeStart.current = now;
+            // perf timestamp for this take’s start (used when merging)
+            pendingTakeStart.current = now;
 
-  if (recordMode === 'replace') audioTakes.current = [];
-}}
-
+            if (recordMode === 'replace') audioTakes.current = [];
+          }}
           onBlob={(b: Blob) => {
             const ts = pendingTakeStart.current ?? performance.now()
             audioTakes.current.push({ blob: b, startPerfMs: ts })
@@ -1105,7 +1065,7 @@ const submit = async () => {
             style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
               touchAction: handMode ? 'auto' : 'none',
               display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-              background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
+              background:'#fff', border:'1px solid '#eee', borderRadius:12, position:'relative' }}
           >
             <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
               <div style={{ position:'absolute', inset:0, zIndex:0 }}>
