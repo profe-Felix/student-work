@@ -267,6 +267,55 @@ function encodeWavMono16(samples: Float32Array, sampleRate: number): Blob {
   return new Blob([buffer], { type: 'audio/wav' })
 }
 
+/* ---------- Response 1: helpers for prior audio + storage ---------- */
+function parseStoragePath(p: string){
+  let s = (p || '').replace(/^\/+/, '').replace(/^public\//, '')
+  const slash = s.indexOf('/')
+  if (slash < 0) return { bucket: s, key: '' }
+  return { bucket: s.slice(0, slash), key: s.slice(slash + 1) }
+}
+
+async function downloadBlobFromStoragePath(storage_path: string): Promise<Blob|null> {
+  if (!storage_path) return null
+  try {
+    const { bucket, key } = parseStoragePath(storage_path)
+    if (!bucket || !key) return null
+    const { data, error } = await supabase.storage.from(bucket).download(key)
+    if (error) return null
+    return data ?? null
+  } catch { return null }
+}
+
+async function getPrevAudioInfo(
+  assignmentId: string,
+  pageId: string,
+  studentId: string
+): Promise<{ blob: Blob|null; durationMs: number; capturePerf0Ms?: number }>{
+  try{
+    const latest = await loadLatestSubmission(assignmentId, pageId, studentId)
+    if (!latest) return { blob: null, durationMs: 0 }
+
+    const strokesPayload = latest.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+    const capturePerf0Ms = strokesPayload?.timing?.capturePerf0Ms
+
+    const audioArt = latest.artifacts?.find((a:any)=>a.kind==='audio')
+    if (!audioArt?.storage_path) return { blob: null, durationMs: 0, capturePerf0Ms }
+
+    const blob = await downloadBlobFromStoragePath(audioArt.storage_path)
+    if (!blob) return { blob: null, durationMs: 0, capturePerf0Ms }
+
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext
+    const ctx = new AC()
+    const ab = await blob.arrayBuffer()
+    const buf: AudioBuffer = await ctx.decodeAudioData(ab.slice(0))
+    ctx.close?.()
+
+    return { blob, durationMs: Math.round(buf.duration * 1000), capturePerf0Ms }
+  } catch {
+    return { blob: null, durationMs: 0 }
+  }
+}
+
 export default function StudentAssignment(){
   const location = useLocation()
   const nav = useNavigate()
@@ -633,76 +682,62 @@ export default function StudentAssignment(){
       const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
       if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
-      // --- choose submission id strategy (preserve stroke timeline + append audio) ---
-let submission_id: string
+      // -------- Response 1 strategy: keep a single canonical submission and append audio --------
+      // Choose submission id: prefer the latest (so strokes timeline remains the one teacher sees)
+      const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+      let submission_id = latest?.submission?.id as string | undefined
 
-if (hasAudioTakes && !hasInk) {
-  // Audio-only submit
-  const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-
-  const latestSubmissionId = latest?.submission?.id as string | undefined
-  const latestStrokesPayloadRaw =
-    latest?.artifacts?.find((a: any) => a.kind === 'strokes')?.strokes_json
-  const latestHasStrokes =
-    !!latestStrokesPayloadRaw &&
-    Array.isArray(latestStrokesPayloadRaw?.strokes) &&
-    latestStrokesPayloadRaw.strokes.length > 0
-
-  const latestHasAudio = !!latest?.artifacts?.some((a: any) => a.kind === 'audio')
-
-  if (latestSubmissionId && latestHasStrokes && !latestHasAudio) {
-    // ✅ Attach audio to the existing latest submission that only has strokes
-    submission_id = latestSubmissionId
-  } else if (latestHasStrokes) {
-    // ✅ Latest already has audio — create a new submission, re-save the ORIGINAL strokes timeline, then attach new audio
-    submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-    const originalStrokes = normalizeStrokes(latestStrokesPayloadRaw)
-    await saveStrokes(submission_id, originalStrokes)
-  } else {
-    // No prior strokes — create fresh submission, optionally save current canvas strokes, then attach audio
-    submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-
-    const dataNow: StrokesPayloadRT =
-      (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
-      { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
-
-    if (Array.isArray(dataNow.strokes) && dataNow.strokes.length > 0) {
-      dataNow.timing = dataNow.timing ?? {}
-      if (dataNow.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
-        dataNow.timing.capturePerf0Ms = timingZeroRef.current
+      if (!submission_id) {
+        // First time ever → create submission and (if ink exists) save strokes to set the timeline
+        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+        if (hasInk) {
+          await saveStrokes(submission_id, payload)
+          localStorage.setItem(lastKey, encHash)
+          saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
+          lastAppliedServerHash.current = encHash
+          lastLocalHash.current = encHash
+          localDirty.current = false
+        } else {
+          // even if no new ink, persist any existing on-canvas strokes to establish a scrub timeline
+          const dataNow: StrokesPayloadRT =
+            (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
+            { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+          if (Array.isArray(dataNow.strokes) && dataNow.strokes.length > 0) {
+            dataNow.timing = dataNow.timing ?? {}
+            if (dataNow.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+              dataNow.timing.capturePerf0Ms = timingZeroRef.current
+            }
+            await saveStrokes(submission_id, dataNow)
+          }
+        }
+      } else if (hasInk) {
+        // If they drew again now, update the strokes timeline on the same submission
+        await saveStrokes(submission_id, payload)
+        localStorage.setItem(lastKey, encHash)
+        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
+        lastAppliedServerHash.current = encHash
+        lastLocalHash.current = encHash
+        localDirty.current = false
       }
-      await saveStrokes(submission_id, dataNow)
-    }
-  }
-} else {
-  // Ink present (with or without audio) — normal: create a fresh submission
-  submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-}
 
-
+      // ----- Audio handling -----
       if (hasAudioTakes) {
-        const captureZero = payload.timing?.capturePerf0Ms
-        const merged = await mergeAudioTakesToWav(audioTakes.current, captureZero)
+        // Merge: prior audio (if any) + new takes → single WAV, and save back to SAME submission
+        const captureZero = (payload.timing?.capturePerf0Ms ??
+                             timingZeroRef.current ??
+                             performance.now())
 
-        if (hasInk) {
-          await saveStrokes(submission_id, payload)
-          localStorage.setItem(lastKey, encHash)
-          saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
-          lastAppliedServerHash.current = encHash
-          lastLocalHash.current = encHash
-          localDirty.current = false
+        // Pull prior audio and include as the first take @ offset 0
+        const prior = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
+        const allTakes: AudioTake[] = []
+        if (prior.blob) {
+          allTakes.push({ blob: prior.blob, startPerfMs: captureZero }) // offset 0
         }
+        // add brand-new takes (already offset using onStart timing)
+        for (const t of audioTakes.current) allTakes.push(t)
 
-        await saveAudio(submission_id, merged)
-      } else {
-        if (hasInk) {
-          await saveStrokes(submission_id, payload)
-          localStorage.setItem(lastKey, encHash)
-          saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
-          lastAppliedServerHash.current = encHash
-          lastLocalHash.current = encHash
-          localDirty.current = false
-        }
+        const merged = await mergeAudioTakesToWav(allTakes, captureZero)
+        await saveAudio(submission_id!, merged)
       }
 
       clearDraft(studentId, assignmentKeyForCache, pageIndex)
@@ -955,10 +990,26 @@ if (hasAudioTakes && !hasInk) {
         <AudioRecorder
           ref={audioRef}
           maxSec={180}
-          onStart={(_ts: number) => {
+          onStart={async (_ts: number) => {
             const RECORDING_ZERO_BIAS_MS = 1600
             const now = performance.now()
-            const t0 = now + RECORDING_ZERO_BIAS_MS
+
+            // Default timing zero
+            let t0 = now + RECORDING_ZERO_BIAS_MS
+
+            // If we have a prior audio, append new takes *after* it
+            try {
+              const pages = await listPages(rtAssignmentId || '')
+              const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+              if (rtAssignmentId && curr?.id) {
+                const prev = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
+                const baseZero =
+                  prev.capturePerf0Ms ??
+                  timingZeroRef.current ??
+                  now
+                t0 = baseZero + (prev.durationMs || 0) + RECORDING_ZERO_BIAS_MS
+              }
+            } catch { /* fallback to default t0 */ }
 
             timingZeroRef.current = t0
             try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
