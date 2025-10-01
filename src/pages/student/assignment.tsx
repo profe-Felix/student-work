@@ -672,122 +672,150 @@ export default function StudentAssignment(){
   }, [pageIndex, studentId, rtAssignmentId])
 
   /* ---------- Submit (append-only into a single canonical submission) ---------- */
-  const submit = async () => {
-    if (submitInFlight.current) return
-    if (!rtAssignmentId) return
-    submitInFlight.current = true
+const submit = async () => {
+  if (submitInFlight.current) return
+  if (!rtAssignmentId) return
+  submitInFlight.current = true
 
-    try {
-      setSaving(true)
+  try {
+    setSaving(true)
 
-      // Build current payload BEFORE hashing
-      const currentPayload: StrokesPayloadRT =
-        (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
-        { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+    // Build current payload BEFORE hashing
+    const currentPayload: StrokesPayloadRT =
+      (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
+      { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
 
-      currentPayload.timing = currentPayload.timing ? { ...currentPayload.timing } : {}
+    currentPayload.timing = currentPayload.timing ? { ...currentPayload.timing } : {}
 
-      // Prefer existing capture zero; never unset it.
-      if (currentPayload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
-        currentPayload.timing.capturePerf0Ms = timingZeroRef.current
-      }
-      if (currentPayload.timing.audioOffsetMs == null) currentPayload.timing.audioOffsetMs = 0
+    // Prefer existing capture zero; never unset it.
+    if (currentPayload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+      currentPayload.timing.capturePerf0Ms = timingZeroRef.current
+    }
+    if (currentPayload.timing.audioOffsetMs == null) currentPayload.timing.audioOffsetMs = 0
 
-      const hasInkNow = Array.isArray(currentPayload?.strokes) && currentPayload.strokes.length > 0
-      const hasAudioTakes = audioTakes.current.length > 0
-      if (!hasInkNow && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+    const hasInkNow = Array.isArray(currentPayload?.strokes) && currentPayload.strokes.length > 0
+    const hasAudioTakes = audioTakes.current.length > 0
+    if (!hasInkNow && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
 
-      // Resolve page
-      const pages = await listPages(rtAssignmentId)
-      const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
-      if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
+    // Resolve page
+    const pages = await listPages(rtAssignmentId)
+    const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+    if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
-      // Canonical submission: use latest or create
-      const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-      let submission_id = latest?.submission?.id as string | undefined
-      if (!submission_id) {
-        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-      }
+    // Canonical submission: use latest or create
+    const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+    let submission_id = latest?.submission?.id as string | undefined
+    if (!submission_id) {
+      submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+    }
 
-      // Load prior strokes (if any) to preserve the whole timeline
-      const priorStrokesPayload = normalizeStrokes(
-        latest && latestArtifact(latest, 'strokes')?.strokes_json
-      )
+    // Load prior strokes (if any) to preserve the whole timeline
+    const priorStrokesPayload = normalizeStrokes(
+      latest && latestArtifact(latest, 'strokes')?.strokes_json
+    )
 
-      // Effective strokes to save = append-only merge(prior, current)
-      let toSaveStrokes: StrokesPayloadRT | null = null
-      const hadPriorInk = Array.isArray(priorStrokesPayload.strokes) && priorStrokesPayload.strokes.length > 0
+    // Compute hashes for delta detection
+    const priorHash = await hashStrokes(priorStrokesPayload || { strokes: [] })
+    let mergedForSave: StrokesPayloadRT | null = null
 
-      if (hadPriorInk && hasInkNow) {
-        toSaveStrokes = mergeStrokeTimelines(priorStrokesPayload, currentPayload)
-      } else if (hadPriorInk && !hasInkNow) {
-        // audio-only resubmit → DO NOT wipe strokes; keep prior exactly
-        toSaveStrokes = priorStrokesPayload
-      } else if (!hadPriorInk && hasInkNow) {
-        // first time ink
-        toSaveStrokes = currentPayload
-      } else {
-        toSaveStrokes = null
-      }
+    const hadPriorInk = Array.isArray(priorStrokesPayload.strokes) && priorStrokesPayload.strokes.length > 0
+    if (hadPriorInk && hasInkNow) {
+      mergedForSave = mergeStrokeTimelines(priorStrokesPayload, currentPayload)
+    } else if (hadPriorInk && !hasInkNow) {
+      // audio-only resubmit → DO NOT wipe strokes; keep prior exactly
+      mergedForSave = priorStrokesPayload
+    } else if (!hadPriorInk && hasInkNow) {
+      // first time ink
+      mergedForSave = currentPayload
+    } else {
+      mergedForSave = null
+    }
 
-      // Save strokes if needed, then update local preview & caches with the MERGED timeline
-      if (toSaveStrokes) {
-        await saveStrokes(submission_id!, toSaveStrokes)
-
-        // Immediately reflect merged strokes in the canvas preview
-        try { drawRef.current?.loadStrokes(toSaveStrokes) } catch {}
-
-        // Lock our timing zero to the merged payload (helps appended audio line up)
-        if (toSaveStrokes?.timing?.capturePerf0Ms != null) {
-          timingZeroRef.current = toSaveStrokes.timing.capturePerf0Ms
+    // Only save strokes if they actually changed
+    let actuallySavedStrokes = false
+    if (mergedForSave) {
+      const mergedHash = await hashStrokes(mergedForSave)
+      if (mergedHash !== priorHash) {
+        try {
+          await saveStrokes(submission_id!, mergedForSave)
+          actuallySavedStrokes = true
+        } catch (e: any) {
+          // surface message from Supabase/PostgREST if available
+          console.error('saveStrokes failed', {
+            message: e?.message,
+            details: e?.cause?.error?.message || e?.error?.message || e
+          })
+          throw e
         }
 
-        const encHash = await hashStrokes(toSaveStrokes)
+        // Immediately reflect merged strokes in the canvas preview
+        try { drawRef.current?.loadStrokes(mergedForSave) } catch {}
+
+        // Lock our timing zero to the merged payload (helps appended audio line up)
+        if (mergedForSave?.timing?.capturePerf0Ms != null) {
+          timingZeroRef.current = mergedForSave.timing.capturePerf0Ms
+        }
+
+        const encHash = mergedHash
         const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
         localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, toSaveStrokes)
+        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, mergedForSave)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
         localDirty.current = false
+      } else {
+        // No ink change → keep local hash in sync with server
+        lastAppliedServerHash.current = priorHash
+        lastLocalHash.current = priorHash
       }
+    }
 
-      // ---- Audio: merge prior audio (if any) + NEW takes, then save to SAME submission (append semantics) ----
-      if (hasAudioTakes) {
-        // Use a stable capture zero: prefer the (merged/prior) strokes' capture zero
-        const captureZero =
-          (toSaveStrokes?.timing?.capturePerf0Ms ??
-           priorStrokesPayload?.timing?.capturePerf0Ms ??
-           currentPayload?.timing?.capturePerf0Ms ??
-           timingZeroRef.current ??
-           performance.now())
+    // ---- Audio: merge prior audio (if any) + NEW takes, then save to SAME submission (append semantics) ----
+    if (hasAudioTakes) {
+      // Use a stable capture zero: prefer the (merged/prior) strokes' capture zero
+      const captureZero =
+        (mergedForSave?.timing?.capturePerf0Ms ??
+         priorStrokesPayload?.timing?.capturePerf0Ms ??
+         currentPayload?.timing?.capturePerf0Ms ??
+         timingZeroRef.current ??
+         performance.now())
 
-        // Pull prior audio and include as first take at offset 0
-        const priorAudio = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
-        const allTakes: AudioTake[] = []
-        if (priorAudio.blob) {
-          allTakes.push({ blob: priorAudio.blob, startPerfMs: captureZero }) // keep prior at t=0
-        }
-        for (const t of audioTakes.current) allTakes.push(t)
+      // Pull prior audio and include as first take at offset 0
+      const priorAudio = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
+      const allTakes: AudioTake[] = []
+      if (priorAudio.blob) {
+        allTakes.push({ blob: priorAudio.blob, startPerfMs: captureZero }) // keep prior at t=0
+      }
+      for (const t of audioTakes.current) allTakes.push(t)
 
-        if (allTakes.length > 0) {
+      if (allTakes.length > 0) {
+        try {
           const merged = await mergeAudioTakesToWav(allTakes, captureZero)
           await saveAudio(submission_id!, merged)
           // clear recorded takes after successful save so we don't re-append on next submit
           audioTakes.current = []
+        } catch (e: any) {
+          console.error('saveAudio failed', {
+            message: e?.message,
+            details: e?.cause?.error?.message || e?.error?.message || e
+          })
+          throw e
         }
       }
-
-      clearDraft(studentId, assignmentKeyForCache, pageIndex)
-      showToast('Saved!', 'ok', 1200)
-      justSavedAt.current = Date.now()
-    } catch (e:any) {
-      console.error(e)
-      showToast('Save failed', 'err', 1800)
-    } finally {
-      setSaving(false)
-      submitInFlight.current = false
     }
+
+    clearDraft(studentId, assignmentKeyForCache, pageIndex)
+    showToast('Saved!', 'ok', 1200)
+    justSavedAt.current = Date.now()
+  } catch (e:any) {
+    console.error(e)
+    showToast('Save failed', 'err', 1800)
+  } finally {
+    setSaving(false)
+    submitInFlight.current = false
   }
+}
+
 
   const blockedBySync = (idx: number) => {
     if (!autoFollow) return false
