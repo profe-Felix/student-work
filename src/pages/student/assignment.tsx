@@ -612,29 +612,29 @@ export default function StudentAssignment(){
       if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
       // --- choose submission id strategy ---
-      let submission_id: string
-      if (hasAudioTakes && !hasInk) {
-        // Audio-only update: append audio to the latest submission (so strokes remain available for scrubbing)
-        const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-        if (latest?.id) {
-          submission_id = latest.id
-        } else {
-          // No prior submission — create one, and (optionally) save current canvas strokes if any
-          submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-          const dataNow: StrokesPayloadRT =
-            (drawRef.current?.getStrokes() as StrokesPayloadRT) || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
-          if (Array.isArray(dataNow.strokes) && dataNow.strokes.length > 0) {
-            dataNow.timing = dataNow.timing ?? {}
-            if (dataNow.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
-              dataNow.timing.capturePerf0Ms = timingZeroRef.current
-            }
-            await saveStrokes(submission_id, dataNow)
-          }
-        }
-      } else {
-        // Normal submit (ink and/or audio): create a fresh submission
-        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+let submission_id: string
+if (hasAudioTakes && !hasInk) {
+  // Audio-only update: append audio to the latest submission (so strokes remain available for scrubbing)
+  const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+  if (latest?.submission?.id) {
+    submission_id = latest.submission.id
+  } else {
+    // No prior submission — create one, and (optionally) save current canvas strokes if any
+    submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+    const dataNow: StrokesPayloadRT =
+      (drawRef.current?.getStrokes() as StrokesPayloadRT) || { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+    if (Array.isArray(dataNow.strokes) && dataNow.strokes.length > 0) {
+      dataNow.timing = dataNow.timing ?? {}
+      if (dataNow.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+        dataNow.timing.capturePerf0Ms = timingZeroRef.current
       }
+      await saveStrokes(submission_id, dataNow)
+    }
+  }
+} else {
+  // Normal submit (ink and/or audio): create a fresh submission
+  submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+}
 
       if (hasAudioTakes) {
         const captureZero = payload.timing?.capturePerf0Ms
