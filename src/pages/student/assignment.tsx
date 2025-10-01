@@ -99,6 +99,19 @@ function saveSubmittedCache(student:string, assignmentId:string, page:number, st
 function loadSubmittedCache(student:string, assignmentId:string, page:number){
   try { const raw = localStorage.getItem(submittedKey(student, assignmentId, page)); return raw ? JSON.parse(raw) : null } catch { return null }
 }
+function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
+  return (
+    <div style={{
+      position:'fixed', left:'50%', bottom:24, transform:'translateX(-50%)',
+      background: kind==='ok' ? '#047857' : '#b91c1c',
+      color:'#fff', padding:'10px 14px', borderRadius:12,
+      fontWeight:600, boxShadow:'0 6px 16px rgba(0,0,0,0.25)', zIndex: 20000,
+      maxWidth:'80vw', textAlign:'center'
+    }}>
+      {text}
+    </div>
+  )
+}
 
 async function hashStrokes(strokes:any): Promise<string> {
   const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
