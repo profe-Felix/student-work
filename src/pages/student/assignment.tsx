@@ -647,78 +647,96 @@ export default function StudentAssignment(){
 
   }, [pageIndex, studentId, rtAssignmentId]) // eslint-disable-line
 
-  /* ---------- Submit (dirty-check) + cache ---------- */
-  const submit = async () => {
-    if (submitInFlight.current) return
-    if (!rtAssignmentId) return
-    submitInFlight.current = true
-    try {
-      setSaving(true)
+ /* ---------- Submit (append-only into a single canonical submission) ---------- */
+const submit = async () => {
+  if (submitInFlight.current) return
+  if (!rtAssignmentId) return
+  submitInFlight.current = true
 
-      // Build payload and normalize timing BEFORE hashing
-      const payload: StrokesPayloadRT =
-        (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
-        { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+  try {
+    setSaving(true)
 
-      payload.timing = payload.timing ? { ...payload.timing } : {}
+    // Build payload and normalize timing BEFORE hashing
+    const payload: StrokesPayloadRT =
+      (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
+      { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
 
-      if (payload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
-        payload.timing.capturePerf0Ms = timingZeroRef.current
+    payload.timing = payload.timing ? { ...payload.timing } : {}
+
+    if (payload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+      payload.timing.capturePerf0Ms = timingZeroRef.current
+    }
+    if (payload.timing.audioOffsetMs == null) payload.timing.audioOffsetMs = 0
+
+    const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
+    const hasAudioTakes = audioTakes.current.length > 0
+    if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+
+    // Hash AFTER timing fields are finalized (for local dedupe)
+    const encHash = await hashStrokes(payload)
+    const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
+    const last = localStorage.getItem(lastKey)
+    if (last && last === encHash && !hasAudioTakes) {
+      setSaving(false); submitInFlight.current = false; return
+    }
+
+    // Resolve current page row
+    const pages = await listPages(rtAssignmentId)
+    const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+    if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
+
+    // === Single canonical submission: latest or create ===
+    const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+    let submission_id = latest?.submission?.id as string | undefined
+    if (!submission_id) {
+      submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+    }
+
+    // ---- Strokes: always write the *current* full timeline to the same submission (append semantics) ----
+    if (hasInk) {
+      await saveStrokes(submission_id, payload)
+      localStorage.setItem(lastKey, encHash)
+      saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
+      lastAppliedServerHash.current = encHash
+      lastLocalHash.current = encHash
+      localDirty.current = false
+    }
+
+    // ---- Audio: merge any prior audio + all new takes, then save back to the SAME submission ----
+    if (hasAudioTakes) {
+      // Use a stable capture zero: prefer the strokes' capturePerf0Ms (so audio aligns with the drawing timeline)
+      const captureZero =
+        payload.timing?.capturePerf0Ms ??
+        timingZeroRef.current ??
+        performance.now()
+
+      // Pull prior audio (if any) and include as the first take at offset 0
+      const prior = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
+
+      const allTakes: AudioTake[] = []
+      if (prior.blob) {
+        // place prior audio at offset 0 relative to captureZero
+        allTakes.push({ blob: prior.blob, startPerfMs: captureZero })
       }
-      if (payload.timing.audioOffsetMs == null) payload.timing.audioOffsetMs = 0
+      // add new takes (they were recorded with pendingTakeStart and aligned using captureZero)
+      for (const t of audioTakes.current) allTakes.push(t)
 
-      const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
-      const hasAudioTakes = audioTakes.current.length > 0
-      if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+      const merged = await mergeAudioTakesToWav(allTakes, captureZero)
+      await saveAudio(submission_id, merged)
+    }
 
-      // Hash AFTER timing fields are finalized
-      const encHash = await hashStrokes(payload)
-      const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
-      const last = localStorage.getItem(lastKey)
-      if (last && last === encHash && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+    clearDraft(studentId, assignmentKeyForCache, pageIndex)
+    showToast('Saved!', 'ok', 1200)
+    justSavedAt.current = Date.now()
+  } catch (e:any) {
+    console.error(e)
+    showToast('Save failed', 'err', 1800)
+  } finally {
+    setSaving(false)
+    submitInFlight.current = false
+  }
+}
 
-      // resolve current page row
-      const pages = await listPages(rtAssignmentId)
-      const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
-      if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
-
-      // -------- Response 1 strategy: keep a single canonical submission and append audio --------
-      // Choose submission id: prefer the latest (so strokes timeline remains the one teacher sees)
-      const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
-      let submission_id = latest?.submission?.id as string | undefined
-
-      if (!submission_id) {
-        // First time ever → create submission and (if ink exists) save strokes to set the timeline
-        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
-        if (hasInk) {
-          await saveStrokes(submission_id, payload)
-          localStorage.setItem(lastKey, encHash)
-          saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
-          lastAppliedServerHash.current = encHash
-          lastLocalHash.current = encHash
-          localDirty.current = false
-        } else {
-          // even if no new ink, persist any existing on-canvas strokes to establish a scrub timeline
-          const dataNow: StrokesPayloadRT =
-            (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
-            { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
-          if (Array.isArray(dataNow.strokes) && dataNow.strokes.length > 0) {
-            dataNow.timing = dataNow.timing ?? {}
-            if (dataNow.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
-              dataNow.timing.capturePerf0Ms = timingZeroRef.current
-            }
-            await saveStrokes(submission_id, dataNow)
-          }
-        }
-      } else if (hasInk) {
-        // If they drew again now, update the strokes timeline on the same submission
-        await saveStrokes(submission_id, payload)
-        localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
-        lastAppliedServerHash.current = encHash
-        lastLocalHash.current = encHash
-        localDirty.current = false
-      }
 
       // ----- Audio handling -----
       if (hasAudioTakes) {
