@@ -341,16 +341,16 @@ function mergeStrokeTimelines(prior: StrokesPayloadRT, current: StrokesPayloadRT
   }
 }
 
-/* ---------- NEW: canonical strokes saver (update existing artifact if present) ---------- */
+// ❌ OLD (uses page_id) — remove it
+// async function saveStrokesCanonical(submissionId: string, pageId: string, payload: StrokesPayloadRT, priorStrokesArtifactId?: string) { ... }
+
+// ✅ NEW (no page_id)
 async function saveStrokesCanonical(
   submissionId: string,
-  pageId: string,
   payload: StrokesPayloadRT,
   priorStrokesArtifactId?: string
 ) {
   if (priorStrokesArtifactId) {
-    // Update the existing strokes artifact so dashboards that read "the first strokes"
-    // always see the latest content.
     const { error } = await supabase
       .from('artifacts')
       .update({ strokes_json: payload })
@@ -361,13 +361,13 @@ async function saveStrokesCanonical(
       .from('artifacts')
       .insert({
         submission_id: submissionId,
-        page_id: pageId,
         kind: 'strokes',
-        strokes_json: payload
+        strokes_json: payload,
       })
     if (error) throw error
   }
 }
+
 
 export default function StudentAssignment(){
   const location = useLocation()
