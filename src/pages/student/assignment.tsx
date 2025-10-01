@@ -106,40 +106,54 @@ async function hashStrokes(strokes:any): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
 
-/** Find the most recent submission (for this student/page) that already has a 'strokes' artifact */
-async function fetchLatestSubmissionIdWithStrokes(
+/* ---------- Storage + prior audio helpers ---------- */
+function parseStoragePath(p: string){
+  let s = (p || '').replace(/^\/+/, '').replace(/^public\//, '')
+  const slash = s.indexOf('/')
+  if (slash < 0) return { bucket: s, key: '' }
+  return { bucket: s.slice(0, slash), key: s.slice(slash + 1) }
+}
+
+async function downloadBlobFromStoragePath(storage_path: string): Promise<Blob|null> {
+  if (!storage_path) return null
+  try {
+    const { bucket, key } = parseStoragePath(storage_path)
+    if (!bucket || !key) return null
+    const { data, error } = await supabase.storage.from(bucket).download(key)
+    if (error) return null
+    return data ?? null
+  } catch { return null }
+}
+
+type PrevAudioInfo = { blob: Blob|null; durationMs: number; capturePerf0Ms?: number }
+async function getPrevAudioInfo(
   assignmentId: string,
   pageId: string,
   studentId: string
-): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('submissions')
-    .select('id, created_at, artifacts:artifacts(kind, created_at)')
-    .eq('assignment_id', assignmentId)
-    .eq('page_id', pageId)
-    .eq('student_id', studentId)
-    .order('created_at', { ascending: false })
-    .limit(15)
+): Promise<PrevAudioInfo>{
+  try{
+    const latest = await loadLatestSubmission(assignmentId, pageId, studentId)
+    if (!latest) return { blob: null, durationMs: 0 }
 
-  if (error) throw error
+    const strokesPayload = latest.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+    const capturePerf0Ms = strokesPayload?.timing?.capturePerf0Ms
 
-  const rows = (data ?? []) as Array<{ id: string; artifacts?: Array<{ kind: string }> }>
-  const hit = rows.find(r => Array.isArray(r.artifacts) && r.artifacts.some(a => a.kind === 'strokes'))
-  return hit?.id ?? null
-}
+    const audioArt = latest.artifacts?.find((a:any)=>a.kind==='audio')
+    if (!audioArt?.storage_path) return { blob: null, durationMs: 0, capturePerf0Ms }
 
-function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
-  return (
-    <div style={{
-      position:'fixed', left:'50%', bottom:24, transform:'translateX(-50%)',
-      background: kind==='ok' ? '#047857' : '#b91c1c',
-      color:'#fff', padding:'10px 14px', borderRadius:12,
-      fontWeight:600, boxShadow:'0 6px 16px rgba(0,0,0,0.25)', zIndex: 20000,
-      maxWidth:'80vw', textAlign:'center'
-    }}>
-      {text}
-    </div>
-  )
+    const blob = await downloadBlobFromStoragePath(audioArt.storage_path)
+    if (!blob) return { blob: null, durationMs: 0, capturePerf0Ms }
+
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext
+    const ctx = new AC()
+    const ab = await blob.arrayBuffer()
+    const buf: AudioBuffer = await ctx.decodeAudioData(ab.slice(0))
+    ctx.close?.()
+
+    return { blob, durationMs: Math.round(buf.duration * 1000), capturePerf0Ms }
+  } catch {
+    return { blob: null, durationMs: 0 }
+  }
 }
 
 /* ---------- Audio merging helpers (takes -> one WAV aligned to ink) ---------- */
@@ -267,55 +281,6 @@ function encodeWavMono16(samples: Float32Array, sampleRate: number): Blob {
   return new Blob([buffer], { type: 'audio/wav' })
 }
 
-/* ---------- Response 1: helpers for prior audio + storage ---------- */
-function parseStoragePath(p: string){
-  let s = (p || '').replace(/^\/+/, '').replace(/^public\//, '')
-  const slash = s.indexOf('/')
-  if (slash < 0) return { bucket: s, key: '' }
-  return { bucket: s.slice(0, slash), key: s.slice(slash + 1) }
-}
-
-async function downloadBlobFromStoragePath(storage_path: string): Promise<Blob|null> {
-  if (!storage_path) return null
-  try {
-    const { bucket, key } = parseStoragePath(storage_path)
-    if (!bucket || !key) return null
-    const { data, error } = await supabase.storage.from(bucket).download(key)
-    if (error) return null
-    return data ?? null
-  } catch { return null }
-}
-
-async function getPrevAudioInfo(
-  assignmentId: string,
-  pageId: string,
-  studentId: string
-): Promise<{ blob: Blob|null; durationMs: number; capturePerf0Ms?: number }>{
-  try{
-    const latest = await loadLatestSubmission(assignmentId, pageId, studentId)
-    if (!latest) return { blob: null, durationMs: 0 }
-
-    const strokesPayload = latest.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-    const capturePerf0Ms = strokesPayload?.timing?.capturePerf0Ms
-
-    const audioArt = latest.artifacts?.find((a:any)=>a.kind==='audio')
-    if (!audioArt?.storage_path) return { blob: null, durationMs: 0, capturePerf0Ms }
-
-    const blob = await downloadBlobFromStoragePath(audioArt.storage_path)
-    if (!blob) return { blob: null, durationMs: 0, capturePerf0Ms }
-
-    const AC = (window as any).AudioContext || (window as any).webkitAudioContext
-    const ctx = new AC()
-    const ab = await blob.arrayBuffer()
-    const buf: AudioBuffer = await ctx.decodeAudioData(ab.slice(0))
-    ctx.close?.()
-
-    return { blob, durationMs: Math.round(buf.duration * 1000), capturePerf0Ms }
-  } catch {
-    return { blob: null, durationMs: 0 }
-  }
-}
-
 export default function StudentAssignment(){
   const location = useLocation()
   const nav = useNavigate()
@@ -421,7 +386,7 @@ export default function StudentAssignment(){
 
   // --------- Boot: pick the latest assignment + first page (or nothing) ---------
   useEffect(() => {
-    // ✅ If we already know the assignment (e.g., from teacher broadcast cache), don't overwrite with "latest".
+    // If we already know the assignment (e.g., from teacher broadcast cache), don't overwrite with "latest".
     if (rtAssignmentId) return;
 
     let alive = true
@@ -430,7 +395,6 @@ export default function StudentAssignment(){
         const { assignment, page } = await fetchLatestAssignmentWithFirstPage()
         if (!alive) return
         if (!assignment || !page) {
-          // No assignments: clear cached id and ensure empty state
           try { localStorage.removeItem(ASSIGNMENT_CACHE_KEY) } catch {}
           setRtAssignmentId('')
           setPdfStoragePath('')
@@ -438,20 +402,16 @@ export default function StudentAssignment(){
           currIds.current = {}
           return
         }
-        // Found latest assignment
         setRtAssignmentId(assignment.id)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignment.id) } catch {}
-        // Ensure first page index and storage path
         setPageIndex(page.page_index ?? 0)
 
-        // fetch the page row to get pdf_path
         const pages = await listPages(assignment.id)
         const first = (pages || []).find((p:any) => (p.page_index ?? 0) === (page.page_index ?? 0)) || (pages || [])[0]
         setPdfStoragePath(first?.pdf_path || '')
         currIds.current = { assignment_id: assignment.id, page_id: first?.id }
       } catch (e) {
         console.error('initial latest assignment load failed', e)
-        // fallback to empty state
         try { localStorage.removeItem(ASSIGNMENT_CACHE_KEY) } catch {}
         setRtAssignmentId('')
         setPdfStoragePath('')
@@ -468,7 +428,6 @@ export default function StudentAssignment(){
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
 
-      // Hydrate presence snapshot if we have one
       try {
         const raw = localStorage.getItem(presenceKey(nextAssignmentId))
         if (raw) {
@@ -530,7 +489,6 @@ export default function StudentAssignment(){
     ;(async ()=>{
       try{
         if (!rtAssignmentId) {
-          // no assignment → ensure clean canvas
           lastLocalHash.current = ''
           return
         }
@@ -543,11 +501,9 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        // ensure page ids for this assignment
         const pages = await listPages(rtAssignmentId)
         const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
         if (!curr) {
-          // no page for this index — leave blank
           currIds.current = { assignment_id: rtAssignmentId, page_id: undefined }
           setPdfStoragePath('')
           return
@@ -611,12 +567,11 @@ export default function StudentAssignment(){
   }, [pageIndex, studentId, rtAssignmentId])
 
   /* ---------- Draft autosave (coarse) ---------- */
-  useEffect(() => {
+  useEffect(()=>{
     let lastSerialized = ''
     let running = !document.hidden
     let intervalId: number | null = null
-
-    const tick = () => {
+    const tick = ()=>{
       try {
         if (!running || !rtAssignmentId) return
         const data = drawRef.current?.getStrokes()
@@ -628,37 +583,23 @@ export default function StudentAssignment(){
         }
       } catch {}
     }
-
-    const start = () => {
-      if (intervalId == null) {
-        intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) as unknown as number
-      }
-    }
-    const stop  = () => {
-      if (intervalId != null) {
-        window.clearInterval(intervalId)
-        intervalId = null
-      }
-    }
-    const onVis = () => {
-      running = !document.hidden
-      if (running) start(); else stop()
-    }
+    const start = ()=>{ if (intervalId==null){ intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) as unknown as number } }
+    const stop  = ()=>{ if (intervalId!=null){ window.clearInterval(intervalId); intervalId=null } }
+    const onVis = ()=>{ running = !document.hidden; if (running) start(); else stop() }
     document.addEventListener('visibilitychange', onVis)
-    start()
-    const onBefore = () => {
+    window.addEventListener('beforeunload', ()=>{
       try {
         if (!rtAssignmentId) return
         const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
       } catch {}
-    }
-    window.addEventListener('beforeunload', onBefore)
-    return () => {
+    })
+    start()
+    return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBefore as any)
+      window.removeEventListener('beforeunload', ()=>{})
     }
-  }, [pageIndex, studentId, rtAssignmentId]) // eslint-disable-line
+  }, [pageIndex, studentId, rtAssignmentId])
 
   /* ---------- Submit (append-only into a single canonical submission) ---------- */
   const submit = async () => {
@@ -698,14 +639,14 @@ export default function StudentAssignment(){
       const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
       if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
-      // === Single canonical submission: latest or create ===
+      // Single canonical submission: latest or create new
       const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
       let submission_id = latest?.submission?.id as string | undefined
       if (!submission_id) {
         submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
       }
 
-      // ---- Strokes: always write the *current* full timeline to the same submission (append semantics) ----
+      // Strokes: always write full current timeline (append semantics)
       if (hasInk) {
         await saveStrokes(submission_id, payload)
         localStorage.setItem(lastKey, encHash)
@@ -715,27 +656,24 @@ export default function StudentAssignment(){
         localDirty.current = false
       }
 
-      // ---- Audio: merge any prior audio + all new takes, then save back to the SAME submission ----
+      // Audio: merge any prior audio + all new takes, then save back to same submission
       if (hasAudioTakes) {
-        // Use a stable capture zero: prefer the strokes' capturePerf0Ms (so audio aligns with the drawing timeline)
+        // Use a stable capture zero (prefer strokes origin)
         const captureZero =
           payload.timing?.capturePerf0Ms ??
           timingZeroRef.current ??
           performance.now()
 
-        // Pull prior audio (if any) and include as the first take at offset 0
+        // Pull prior audio and include as first take at offset 0
         const prior = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
-
         const allTakes: AudioTake[] = []
         if (prior.blob) {
-          // place prior audio at offset 0 relative to captureZero
-          allTakes.push({ blob: prior.blob, startPerfMs: captureZero })
+          allTakes.push({ blob: prior.blob, startPerfMs: captureZero }) // offset 0
         }
-        // add new takes (they were recorded with pendingTakeStart and aligned using captureZero)
         for (const t of audioTakes.current) allTakes.push(t)
 
         const merged = await mergeAudioTakesToWav(allTakes, captureZero)
-        await saveAudio(submission_id, merged)
+        await saveAudio(submission_id!, merged)
       }
 
       clearDraft(studentId, assignmentKeyForCache, pageIndex)
@@ -821,7 +759,6 @@ export default function StudentAssignment(){
           setPageIndex(teacherPageIndexRef.current)
         }
       },
-      // listen for presence snapshots and cache/apply immediately
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
@@ -990,29 +927,26 @@ export default function StudentAssignment(){
           ref={audioRef}
           maxSec={180}
           onStart={(_ts: number) => {
-            const RECORDING_ZERO_BIAS_MS = 1600; // small lead-in so audio isn’t clipped
-            const now = performance.now();
+            // small lead-in so audio is not clipped
+            const RECORDING_ZERO_BIAS_MS = 1600
+            const now = performance.now()
 
-            // If strokes already have a timing origin, reuse it so audio aligns to them.
+            // If strokes already have a timing origin, reuse it to align audio.
             // Otherwise, create one and rebase the canvas so future ink uses the same origin.
-            const existingCapture = (() => {
+            let t0 = (() => {
               try {
-                const s = (drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms;
-                return Number.isFinite(s as any) ? (s as number) : null;
-              } catch { return null; }
-            })();
+                const s = (drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms
+                return Number.isFinite(s as any) ? (s as number) : (now + RECORDING_ZERO_BIAS_MS)
+              } catch { return now + RECORDING_ZERO_BIAS_MS }
+            })()
 
-            const t0 = existingCapture ?? (now + RECORDING_ZERO_BIAS_MS);
-            if (existingCapture == null) {
-              try { (drawRef.current as any)?.markTimingZero?.(t0); } catch {}
+            if (!(drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms) {
+              try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
             }
 
-            timingZeroRef.current = t0;
-
-            // perf timestamp for this take’s start (used when merging)
-            pendingTakeStart.current = now;
-
-            if (recordMode === 'replace') audioTakes.current = [];
+            timingZeroRef.current = t0
+            pendingTakeStart.current = now
+            if (recordMode === 'replace') audioTakes.current = []
           }}
           onBlob={(b: Blob) => {
             const ts = pendingTakeStart.current ?? performance.now()
@@ -1065,7 +999,7 @@ export default function StudentAssignment(){
             style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
               touchAction: handMode ? 'auto' : 'none',
               display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-              background:'#fff', border:'1px solid '#eee', borderRadius:12, position:'relative' }}
+              background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
           >
             <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
               <div style={{ position:'absolute', inset:0, zIndex:0 }}>
