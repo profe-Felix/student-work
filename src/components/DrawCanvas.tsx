@@ -73,11 +73,13 @@ export default forwardRef(function DrawCanvas(
     color, size,
     mode, // 'scroll' | 'draw'
     tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'
-  }:{
+    onStrokeCommit, // <<< NEW
+  }: {
     width:number; height:number
     color:string; size:number
     mode:'scroll'|'draw'
     tool:'pen'|'highlighter'|'eraser'|'eraserObject'
+    onStrokeCommit?: (s: Stroke) => void
   },
   ref
 ){
@@ -166,11 +168,19 @@ export default forwardRef(function DrawCanvas(
       redraw()
       if ((e as any).preventDefault) e.preventDefault()
     }
+
     const onPointerMove = (e: PointerEvent)=>{
       if (drawingPointerId.current !== e.pointerId) return
       if (!current.current) return
       if (!shouldDraw(e)) {
-        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        if (current.current.pts.length > 1) {
+          const finished = current.current
+          strokes.current.push(finished)
+          // notify parent on commit
+          if (onStrokeCommit && (finished.tool === 'pen' || finished.tool === 'highlighter')) {
+            onStrokeCommit(finished)
+          }
+        }
         current.current = null
         drawingPointerId.current = null
         redraw()
@@ -181,14 +191,23 @@ export default forwardRef(function DrawCanvas(
       redraw()
       if ((e as any).preventDefault) e.preventDefault()
     }
+
     const endStroke = ()=>{
       if (current.current) {
-        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        const finished = current.current
+        if (finished.pts.length > 1) {
+          strokes.current.push(finished)
+          // notify parent on commit
+          if (onStrokeCommit && (finished.tool === 'pen' || finished.tool === 'highlighter')) {
+            onStrokeCommit(finished)
+          }
+        }
         current.current = null
         redraw()
       }
       drawingPointerId.current = null
     }
+
     const onPointerUp = (e: PointerEvent)=>{
       if (e.pointerType !== 'pen') activePointers.current.delete(e.pointerId)
       if (drawingPointerId.current === e.pointerId) endStroke()
@@ -212,7 +231,7 @@ export default forwardRef(function DrawCanvas(
       activePointers.current.clear()
       drawingPointerId.current = null
     }
-  }, [mode, color, size, tool])
+  }, [mode, color, size, tool, onStrokeCommit])
 
   return (
     <canvas
