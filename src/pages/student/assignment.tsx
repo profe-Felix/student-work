@@ -147,6 +147,36 @@ function initialPageIndexFromPresence(): number {
   return 0
 }
 
+/* ---------- NEW: server fallback to get teacher presence snapshot ---------- */
+async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPresenceState | null> {
+  try {
+    // Adjust table/columns if your schema differs.
+    const { data, error } = await supabase
+      .from('teacher_presence')
+      .select('*')
+      .eq('assignment_id', assignmentId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error || !data) return null
+    // Normalize a bit to our expected shape
+    const p = data as any
+    const snapshot: TeacherPresenceState = {
+      autoFollow: !!p.auto_follow || !!p.autofollow || !!p.autoFollow,
+      allowedPages: Array.isArray(p.allowed_pages) ? p.allowed_pages : (p.allowedPages ?? null),
+      focusOn: !!p.focus_on || !!p.focusOn,
+      lockNav: !!p.lock_nav || !!p.lockNav,
+      teacherPageIndex: typeof p.teacher_page_index === 'number'
+        ? p.teacher_page_index
+        : (typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : undefined),
+    }
+    return snapshot
+  } catch {
+    return null
+  }
+}
+
 export default function StudentAssignment(){
   const location = useLocation()
   const nav = useNavigate()
@@ -267,7 +297,7 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  /* ---------- NEW: one function to apply a presence snapshot and (optionally) snap ---------- */
+  /* ---------- NEW: apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
     if (!p) return
     setAutoFollow(!!p.autoFollow)
@@ -294,12 +324,26 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
+  // --- NEW: ensure we also fetch presence from server if cache is missing/stale
+  const ensurePresenceFromServer = async (assignmentId: string) => {
+    const cached = localStorage.getItem(presenceKey(assignmentId))
+    if (!cached) {
+      const p = await fetchPresenceSnapshot(assignmentId)
+      if (p) {
+        try { localStorage.setItem(presenceKey(assignmentId), JSON.stringify(p)) } catch {}
+        applyPresenceSnapshot(p, { snap: true })
+      }
+    }
+  }
+
   // assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      snapToTeacherIfAvailable(nextAssignmentId) // immediate best-effort snap
+      // Best effort: use cache quickly, then fetch from server to be sure
+      snapToTeacherIfAvailable(nextAssignmentId)
+      ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
       // keep initialSnappedRef as-is
     })
@@ -310,6 +354,7 @@ export default function StudentAssignment(){
   useEffect(() => {
     if (rtAssignmentId) {
       snapToTeacherIfAvailable(rtAssignmentId)
+      ensurePresenceFromServer(rtAssignmentId)
       return
     }
     ;(async () => {
@@ -318,6 +363,7 @@ export default function StudentAssignment(){
         setRtAssignmentId(latest)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
         snapToTeacherIfAvailable(latest)
+        ensurePresenceFromServer(latest)
       }
     })()
   }, [rtAssignmentId])
@@ -327,9 +373,19 @@ export default function StudentAssignment(){
     if (!rtAssignmentId) return
     try {
       const raw = localStorage.getItem(presenceKey(rtAssignmentId))
-      if (!raw) return
-      const p = JSON.parse(raw) as TeacherPresenceState
-      applyPresenceSnapshot(p, { snap: true })
+      if (raw) {
+        const p = JSON.parse(raw) as TeacherPresenceState
+        applyPresenceSnapshot(p, { snap: true })
+      } else {
+        // No cache? Pull from server now.
+        ;(async () => {
+          const p = await fetchPresenceSnapshot(rtAssignmentId)
+          if (p) {
+            try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+            applyPresenceSnapshot(p, { snap: true })
+          }
+        })()
+      }
     } catch {}
   }, [rtAssignmentId])
 
@@ -342,6 +398,7 @@ export default function StudentAssignment(){
         setRtAssignmentId(assignmentId)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignmentId) } catch {}
         snapToTeacherIfAvailable(assignmentId)
+        await ensurePresenceFromServer(assignmentId)
       }
     }
     if (!assignmentId) {
@@ -351,8 +408,16 @@ export default function StudentAssignment(){
       return null
     }
 
-    // One more pre-fetch snap attempt (covers races)
+    // One more pre-fetch snap attempt (covers races), then fetch from server if still not snapped.
     snapToTeacherIfAvailable(assignmentId)
+    if (!initialSnappedRef.current) {
+      await ensurePresenceFromServer(assignmentId)
+      if (initialSnappedRef.current) {
+        // we just snapped; wait a render pass before continuing
+        return null
+      }
+    }
+
     const tpi = teacherPageIndexRef.current
     if (!initialSnappedRef.current && typeof tpi === 'number' && autoFollow && pageIndex !== tpi) {
       setPageIndex(tpi)
@@ -369,6 +434,7 @@ export default function StudentAssignment(){
         setRtAssignmentId(latest)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
         snapToTeacherIfAvailable(latest)
+        await ensurePresenceFromServer(latest)
         pages = await listPages(latest).catch(() => [] as any[])
       }
     }
