@@ -107,6 +107,12 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   )
 }
 
+/** NEW: station inference — prefers ?station=, else tries to grab a prefix like A_02 from studentId */
+function inferStation(id: string): string {
+  const m = id.match(/^([A-Za-z]_\d{2})/)
+  return (m?.[1] ?? id).toUpperCase()
+}
+
 export default function StudentAssignment(){
   const location = useLocation()
   const nav = useNavigate()
@@ -116,6 +122,13 @@ export default function StudentAssignment(){
     localStorage.setItem('currentStudent', id)
     return id
   }, [location.search])
+
+  /** NEW: stationId used for live-sync grouping */
+  const stationId = useMemo(()=>{
+    const qs = new URLSearchParams(location.search)
+    const s = qs.get('station')
+    return (s ? s.toUpperCase() : inferStation(studentId))
+  }, [location.search, studentId])
 
   // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
@@ -223,7 +236,7 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // LIVE: per-page channel for instant peer updates (scoped by station/studentId)
+  // LIVE: per-page channel for instant peer updates (scoped by station)
   const clientIdRef = useRef<string>('c_' + Math.random().toString(36).slice(2))
   const liveChRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
@@ -516,7 +529,7 @@ export default function StudentAssignment(){
     host.addEventListener('touchmove', onTM,{passive:false,capture:true})
     host.addEventListener('touchend',  end,{passive:true,capture:true})
     host.addEventListener('touchcancel',end,{passive:true,capture:true})
-    return ()=>{ host.removeEventListener('touchstart',onTS as any,true); host.removeEventListener('touchmove',onTM as any,true); host.removeEventListener('touchend',end as any,true); host.removeEventListener('touchcancel',end as any,true) }
+    return ()=>{ host.removeEventListener('touchstart',onTS as any,true); host.removeEventListener('touchmove',onTM as any,true); host.removeEventListener('touchend',end as any,true); host.removeEventListener('touchcancel',end',{capture:true} as any) }
   }, [handMode])
 
   const flipToolbarSide = ()=> {
@@ -626,14 +639,15 @@ export default function StudentAssignment(){
 
       // swap previous
       try { liveChRef.current?.unsubscribe() } catch {}
-      // scope by assignment page AND station/studentId
-      const ch = supabase.channel(`page-live-${ids.page_id}:${studentId}`, { config: { broadcast: { self: false } } })
+
+      // SCOPE: by assignment page AND stationId
+      const ch = supabase.channel(`page-live-${ids.page_id}:${stationId}`, { config: { broadcast: { self: false } } })
 
       // Peer finishes a stroke -> append it immediately (only same station)
       ch.on('broadcast', { event: 'stroke-commit' }, (msg) => {
         const { clientId, stroke, station } = (msg as any)?.payload || {}
         if (!stroke) return
-        if (station && station !== studentId) return
+        if (station && station.toUpperCase() !== stationId) return
         if (clientId === clientIdRef.current) return
         const cur = drawRef.current?.getStrokes() || { strokes: [] }
         drawRef.current?.loadStrokes({ strokes: [...(cur.strokes || []), stroke] })
@@ -643,7 +657,7 @@ export default function StudentAssignment(){
       ch.on('broadcast', { event: 'erase-commit' }, (msg) => {
         const { clientId, path, radius, mode, station } = (msg as any)?.payload || {}
         if (!Array.isArray(path)) return
-        if (station && station !== studentId) return
+        if (station && station.toUpperCase() !== stationId) return
         if (clientId === clientIdRef.current) return
         const cur = drawRef.current?.getStrokes() || { strokes: [] }
         const base = normalizeStrokes(cur)
@@ -658,7 +672,7 @@ export default function StudentAssignment(){
       cleanup = ()=>{ try { ch.unsubscribe() } catch {} }
     })()
     return ()=>{ if (cleanup) cleanup() }
-  }, [pageIndex, rtAssignmentId, studentId])
+  }, [pageIndex, rtAssignmentId, stationId])
 
   /* ---------- LIVE eraser overlay (broadcast on commit) ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
@@ -736,7 +750,7 @@ export default function StudentAssignment(){
         event: 'erase-commit',
         payload: {
           clientId: clientIdRef.current,
-          station: studentId,                   // scope by station
+          station: stationId,            // <— scope by station
           path,
           radius: dynamicRadius,
           mode: (tool === 'eraserObject') ? 'object' : 'soft'
@@ -835,7 +849,7 @@ export default function StudentAssignment(){
         <h2>Student Assignment</h2>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
-            Student: <strong>{studentId}</strong>
+            Student: <strong>{studentId}</strong> — Station: <strong>{stationId}</strong>
           </div>
           <button onClick={()=> nav('/start')} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}>
             Switch
@@ -885,7 +899,7 @@ export default function StudentAssignment(){
                 ch.send({
                   type: 'broadcast',
                   event: 'stroke-commit',
-                  payload: { clientId: clientIdRef.current, station: studentId, stroke }
+                  payload: { clientId: clientIdRef.current, station: stationId, stroke }
                 })
               }}
             />
