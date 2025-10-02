@@ -1,4 +1,4 @@
-// src/lib/erase.ts
+//src/lib/erase.ts
 // Object-eraser & soft eraser utilities for your Stroke shape (uses `pts`)
 import type { Pt } from "./geometry";
 
