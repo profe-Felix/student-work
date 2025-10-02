@@ -298,6 +298,8 @@ export default function StudentAssignment(){
 
   // === NEW: ink channel reference for live pre-submission strokes ===
   const inkChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  const inkReadyRef = useRef(false)                     // <-- NEW
+  const inkQueueRef = useRef<any[]>([])                 // <-- NEW
 
   /* ---------- NEW: apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
@@ -343,11 +345,9 @@ export default function StudentAssignment(){
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      // Best effort: use cache quickly, then fetch from server to be sure
       snapToTeacherIfAvailable(nextAssignmentId)
       ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
-      // keep initialSnappedRef as-is
     })
     return off
   }, [])
@@ -379,7 +379,6 @@ export default function StudentAssignment(){
         const p = JSON.parse(raw) as TeacherPresenceState
         applyPresenceSnapshot(p, { snap: true })
       } else {
-        // No cache? Pull from server now.
         ;(async () => {
           const p = await fetchPresenceSnapshot(rtAssignmentId)
           if (p) {
@@ -410,14 +409,10 @@ export default function StudentAssignment(){
       return null
     }
 
-    // One more pre-fetch snap attempt (covers races), then fetch from server if still not snapped.
     snapToTeacherIfAvailable(assignmentId)
     if (!initialSnappedRef.current) {
       await ensurePresenceFromServer(assignmentId)
-      if (initialSnappedRef.current) {
-        // we just snapped; wait a render pass before continuing
-        return null
-      }
+      if (initialSnappedRef.current) return null
     }
 
     const tpi = teacherPageIndexRef.current
@@ -429,7 +424,6 @@ export default function StudentAssignment(){
 
     let pages = await listPages(assignmentId).catch(() => [] as any[])
     if (!pages || pages.length === 0) {
-      // Fallback: maybe cached id is stale—try newest from DB
       const latest = await fetchLatestAssignmentIdWithPages()
       if (latest && latest !== assignmentId) {
         assignmentId = latest
@@ -453,7 +447,6 @@ export default function StudentAssignment(){
              ?? pages.find(p => p.page_index === pageIndex)
              ?? pages[0]
 
-    // If this differs from our current state, set and wait a pass
     if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
       setPageIndex(curr.page_index)
       return null
@@ -473,7 +466,6 @@ export default function StudentAssignment(){
       const ids = await resolveIds()
 
       if (!ids) {
-        // No task: clear any cache for this "slot"
         const { assignmentUid, pageUid } = getCacheIds()
         try {
           drawRef.current?.clearStrokes()
@@ -714,11 +706,10 @@ export default function StudentAssignment(){
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        // Snap once on join if not already snapped
         applyPresenceSnapshot({
           autoFollow: !!on,
           allowedPages: allowedPages ?? null,
-          focusOn, // leave focus state as-is here; focus events come via onFocus / onPresence
+          focusOn,
           lockNav: navLocked,
           teacherPageIndex: teacherPageIndexRef.current ?? undefined
         } as TeacherPresenceState, { snap: true })
@@ -761,14 +752,19 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // === UPDATED: subscribe to artifacts, live ink, and handshake for presence snapshot
+  // === UPDATED: subscribe to artifacts, live ink, and presence-snapshot handshake
   useEffect(()=>{
     let cleanupArtifacts: (()=>void)|null = null
     let pollId: number | null = null
     let mounted = true
 
-    // local cleanups
-    const cleanupInk = () => { try { inkChannelRef.current?.unsubscribe() } catch {} ; inkChannelRef.current = null }
+    const cleanupInk = () => {
+      inkReadyRef.current = false
+      try { inkChannelRef.current?.unsubscribe() } catch {}
+      inkChannelRef.current = null
+      inkQueueRef.current = []
+    }
+
     let assignCh: ReturnType<typeof supabase.channel> | null = null
     const cleanupAssign = () => { try { assignCh?.unsubscribe() } catch {} ; assignCh = null }
 
@@ -776,7 +772,6 @@ export default function StudentAssignment(){
       const ids = await resolveIds()
       if (!ids) return
 
-      // (1) keep your existing submissions polling
       try{
         const ch = supabase.channel(`art-strokes-${ids.page_id}`)
           .on('postgres_changes', {
@@ -790,7 +785,7 @@ export default function StudentAssignment(){
       }
       pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
 
-      // (2) NEW: handshake—ask teacher for live presence snapshot so we snap on join
+      // (2) presence snapshot handshake
       cleanupAssign()
       assignCh = supabase.channel(`assignment:${ids.assignment_id}`, { config: { broadcast: { ack: true } } })
         .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
@@ -804,7 +799,7 @@ export default function StudentAssignment(){
         await assignCh.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } })
       } catch {}
 
-      // (3) NEW: realtime ink (pre-submission co-editing)
+      // (3) live ink
       cleanupInk()
       const inkCh = supabase.channel(`ink:${ids.assignment_id}:${ids.page_id}`)
       inkCh.on('broadcast', { event: 'ink' }, (evt: any) => {
@@ -824,7 +819,18 @@ export default function StudentAssignment(){
           })
         } catch {}
       })
-      await inkCh.subscribe()
+
+      inkCh.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          inkReadyRef.current = true
+          // flush any queued deltas
+          const q = inkQueueRef.current
+          inkQueueRef.current = []
+          for (const payload of q) {
+            try { inkCh.send({ type: 'broadcast', event: 'ink', payload }) } catch {}
+          }
+        }
+      })
       inkChannelRef.current = inkCh
     })()
 
@@ -1036,8 +1042,12 @@ export default function StudentAssignment(){
               tool={tool}
               onStrokeUpdate={(u) => {
                 const ch = inkChannelRef.current
-                if (!ch) return
                 const payload = { ...u, from: studentId }
+                if (!ch || !inkReadyRef.current) {
+                  // queue until channel is subscribed
+                  inkQueueRef.current.push(payload)
+                  return
+                }
                 ch.send({ type: 'broadcast', event: 'ink', payload })
               }}
             />
