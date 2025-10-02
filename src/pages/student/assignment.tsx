@@ -20,7 +20,7 @@ import {
   type TeacherPresenceState, // (type only; helps with cache shape)
 } from '../../lib/realtime'
 
-// >>> NEW: eraser utilities
+// Eraser utilities
 import type { Pt } from '../../lib/geometry'
 import { objectErase, softErase } from '../../lib/erase'
 
@@ -31,8 +31,8 @@ const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
 
-// >>> NEW: tune this for mouse vs finger
-const ERASE_RADIUS = 18
+// Smaller default eraser radius; also see dynamicRadius below
+const ERASE_RADIUS_BASE = 10
 
 /* ---------- Colors ---------- */
 const CRAYOLA_24 = [
@@ -65,7 +65,7 @@ const draftKey      = (student:string, assignment:string, page:number)=> `draft:
 const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
 const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
 
-// >>> NEW: cache keys (assignment handoff + presence snapshot)
+// cache keys (assignment handoff + presence snapshot)
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
 const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
 
@@ -184,7 +184,7 @@ export default function StudentAssignment(){
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
-  // >>> Persist assignment id so refresh stays on the teacher’s assignment
+  // Persist assignment id so refresh stays on the teacher’s assignment
   const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
@@ -234,7 +234,7 @@ export default function StudentAssignment(){
     return off
   }, [])
 
-  // >>> When we know which assignment to use (including on refresh), hydrate presence from cache
+  // Hydrate presence from cache on refresh
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
@@ -493,7 +493,7 @@ export default function StudentAssignment(){
           setPageIndex(teacherPageIndexRef.current)
         }
       },
-      // >>> NEW: listen for presence snapshots and cache/apply immediately
+      // listen for presence snapshots and cache/apply immediately
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
@@ -574,73 +574,91 @@ export default function StudentAssignment(){
     }
   }, [studentId, pageIndex, rtAssignmentId])
 
-  /* ---------- NEW: Eraser overlay logic ---------- */
+  /* ---------- LIVE Eraser overlay logic ---------- */
 
   // Only active when not in hand-mode and tool is an eraser
   const eraserActive = !handMode && (tool === 'eraser' || tool === 'eraserObject')
   const erasingRef = useRef(false)
   const erasePathRef = useRef<Pt[]>([])
+  const eraseBaseRef = useRef<StrokesPayload>({ strokes: [] }) // snapshot at pointer down
+  const rafScheduled = useRef(false)
+
+  // Slightly dynamic radius (feels natural: scale a bit with drawn size, but keep smaller)
+  const dynamicRadius = Math.max(ERASE_RADIUS_BASE, Math.round(size * 0.9))
 
   const addPoint = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
-    erasePathRef.current.push({ x, y, t: Date.now() })
+    const now = Date.now()
+
+    // de-noise: only add if moved at least 2px from last point
+    const last = erasePathRef.current[erasePathRef.current.length - 1]
+    if (!last || (Math.hypot(x - last.x, y - last.y) >= 2)) {
+      erasePathRef.current.push({ x, y, t: now })
+    }
+  }
+
+  const computePreview = () => {
+    const base = eraseBaseRef.current
+    const path = erasePathRef.current
+    if (!base?.strokes || path.length < 2) return base
+
+    if (tool === 'eraserObject') {
+      const { kept } = objectErase(base.strokes as any, path, dynamicRadius)
+      return { strokes: kept as any }
+    } else {
+      const trimmed = softErase(base.strokes as any, path, dynamicRadius)
+      return { strokes: trimmed as any }
+    }
+  }
+
+  const schedulePreview = () => {
+    if (rafScheduled.current) return
+    rafScheduled.current = true
+    requestAnimationFrame(() => {
+      rafScheduled.current = false
+      const next = computePreview()
+      if (next) {
+        // Live visual update only
+        drawRef.current?.loadStrokes(next)
+      }
+    })
   }
 
   const onErasePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!eraserActive) return
     erasingRef.current = true
     erasePathRef.current = []
+    // snapshot current strokes once at start for stable recompute
+    const current = drawRef.current?.getStrokes() || { strokes: [] }
+    eraseBaseRef.current = normalizeStrokes(current)
     try { (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId) } catch {}
     addPoint(e)
+    schedulePreview()
   }
 
   const onErasePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!eraserActive || !erasingRef.current) return
     addPoint(e)
+    schedulePreview()
   }
 
   const onErasePointerUp = async (e: React.PointerEvent<HTMLDivElement>) => {
     if (!erasingRef.current) return
     erasingRef.current = false
     addPoint(e)
-    const path = erasePathRef.current
+
+    const final = computePreview()
     erasePathRef.current = []
 
-    // Ignore taps or single-point paths
-    if (path.length < 2) return
+    if (!final) return
 
-    const current = drawRef.current?.getStrokes() as StrokesPayload | undefined
-    if (!current || !Array.isArray(current.strokes)) return
-
-    // Helper to compare point counts for change detection (your strokes use `pts`)
-    const getLen = (s: any) => Array.isArray(s?.pts) ? s.pts.length : 0
-
-    if (tool === 'eraserObject') {
-      const { kept, removedCount } = objectErase(current.strokes as any, path, ERASE_RADIUS)
-      if (removedCount > 0) {
-        const next: StrokesPayload = { strokes: kept as any }
-        drawRef.current?.loadStrokes(next)
-        localDirty.current = true
-        try { lastLocalHash.current = await hashStrokes(next) } catch {}
-        saveDraft(studentId, assignmentTitle, pageIndex, next)
-      }
-    } else { // 'eraser' soft trim
-      const trimmed = softErase(current.strokes as any, path, ERASE_RADIUS)
-      // Only update if something actually changed
-      const changed =
-        trimmed.length !== current.strokes.length ||
-        trimmed.some((s, i) => getLen(s) !== getLen((current.strokes as any)[i]))
-
-      if (changed) {
-        const next: StrokesPayload = { strokes: trimmed as any }
-        drawRef.current?.loadStrokes(next)
-        localDirty.current = true
-        try { lastLocalHash.current = await hashStrokes(next) } catch {}
-        saveDraft(studentId, assignmentTitle, pageIndex, next)
-      }
-    }
+    // Commit the edit: load, set dirty, and save to draft/hash
+    drawRef.current?.loadStrokes(final)
+    localDirty.current = true
+    try { lastLocalHash.current = await hashStrokes(final) } catch {}
+    saveDraft(studentId, assignmentTitle, pageIndex, final)
   }
 
   /* ---------- UI ---------- */
@@ -756,14 +774,11 @@ export default function StudentAssignment(){
               color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
           </div>
 
-          {/* >>> NEW: Transparent eraser overlay above DrawCanvas.
-                 Captures pointer when tool is eraser/object eraser, then rewrites strokes. */}
+          {/* LIVE eraser overlay above draw layer */}
           <div
             style={{
               position:'absolute', inset:0, zIndex:20,
-              // Only receive events while erasing; otherwise be transparent to pointer
               pointerEvents: eraserActive ? 'auto' : 'none',
-              // Nice cursor hint
               cursor: eraserActive ? (tool === 'eraserObject' ? 'not-allowed' : 'crosshair') : 'default'
             }}
             onPointerDown={onErasePointerDown}
