@@ -277,10 +277,11 @@ export default function StudentAssignment(){
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
       }
-      const shouldSnap = !!p.autoFollow && !initialSnappedRef.current && typeof p.teacherPageIndex === 'number'
-      if (shouldSnap && pageIndex !== p.teacherPageIndex) {
-        setAutoFollow(true)
-        setPageIndex(p.teacherPageIndex)
+      const tpi = p.teacherPageIndex
+      const shouldSnap = !!p.autoFollow && !initialSnappedRef.current && typeof tpi === 'number'
+      if (shouldSnap && pageIndex !== tpi) {
+        setAutoFollow(true) // reflect UI immediately
+        setPageIndex(tpi)   // <-- now strictly a number
         initialSnappedRef.current = true
       }
     } catch {/* ignore */}
@@ -642,11 +643,10 @@ export default function StudentAssignment(){
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
         // Snap once on join if not already snapped
         const tpiSnap = teacherPageIndexRef.current
-if (on && !initialSnappedRef.current && typeof tpiSnap === 'number') {
-  setPageIndex(tpiSnap)
-  initialSnappedRef.current = true
-}
-
+        if (on && !initialSnappedRef.current && typeof tpiSnap === 'number') {
+          setPageIndex(tpiSnap)
+          initialSnappedRef.current = true
+        }
       },
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
@@ -655,14 +655,13 @@ if (on && !initialSnappedRef.current && typeof tpiSnap === 'number') {
         setFocusOn(!!p.focusOn)
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
-  teacherPageIndexRef.current = p.teacherPageIndex
-  const tpiSnap = p.teacherPageIndex
-  if (p.autoFollow && !initialSnappedRef.current) {
-    setPageIndex(tpiSnap)
-    initialSnappedRef.current = true
-  }
-}
-
+          teacherPageIndexRef.current = p.teacherPageIndex
+          const tpiSnap = p.teacherPageIndex
+          if (p.autoFollow && !initialSnappedRef.current) {
+            setPageIndex(tpiSnap)
+            initialSnappedRef.current = true
+          }
+        }
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
