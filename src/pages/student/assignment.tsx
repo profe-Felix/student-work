@@ -641,10 +641,12 @@ export default function StudentAssignment(){
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
         // Snap once on join if not already snapped
-        if (on && typeof teacherPageIndexRef.current === 'number' && !initialSnappedRef.current) {
-          setPageIndex(teacherPageIndexRef.current)
-          initialSnappedRef.current = true
-        }
+        const tpiSnap = teacherPageIndexRef.current
+if (on && !initialSnappedRef.current && typeof tpiSnap === 'number') {
+  setPageIndex(tpiSnap)
+  initialSnappedRef.current = true
+}
+
       },
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
@@ -653,12 +655,14 @@ export default function StudentAssignment(){
         setFocusOn(!!p.focusOn)
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
-          teacherPageIndexRef.current = p.teacherPageIndex
-          if (p.autoFollow && !initialSnappedRef.current) {
-            setPageIndex(p.teacherPageIndex)
-            initialSnappedRef.current = true
-          }
-        }
+  teacherPageIndexRef.current = p.teacherPageIndex
+  const tpiSnap = p.teacherPageIndex
+  if (p.autoFollow && !initialSnappedRef.current) {
+    setPageIndex(tpiSnap)
+    initialSnappedRef.current = true
+  }
+}
+
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
