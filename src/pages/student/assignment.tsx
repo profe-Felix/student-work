@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
+import type { RemoteStrokeUpdate } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
@@ -296,6 +297,9 @@ export default function StudentAssignment(){
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
+
+  // === NEW: ink channel reference for live pre-submission strokes ===
+  const inkChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
   /* ---------- NEW: apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
@@ -760,6 +764,7 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
+  // === UPDATED: subscribe to artifacts AND the live ink channel ===
   useEffect(()=>{
     let cleanup: (()=>void)|null = null
     let pollId: number | null = null
@@ -769,6 +774,7 @@ export default function StudentAssignment(){
       const ids = await resolveIds()
       if (!ids) return
 
+      // live submissions polling (unchanged)
       try{
         const ch = supabase.channel(`art-strokes-${ids.page_id}`)
           .on('postgres_changes', {
@@ -780,14 +786,38 @@ export default function StudentAssignment(){
       }catch(e){
         console.error('realtime subscribe failed', e)
       }
-
       pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
+
+      // NEW: realtime ink (pre-submission co-editing)
+      try { inkChannelRef.current?.unsubscribe() } catch {}
+      const inkCh = supabase.channel(`ink:${ids.assignment_id}:${ids.page_id}`)
+      inkCh.on('broadcast', { event: 'ink' }, (evt: any) => {
+        try {
+          const u = evt?.payload as RemoteStrokeUpdate & { from?: string }
+          if (!u) return
+          if (u.from && u.from === studentId) return // ignore our own echoes
+          // basic validation
+          if (!u.id || !u.tool) return
+          if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+          drawRef.current?.applyRemote({
+            id: u.id,
+            color: u.color,
+            size: u.size,
+            tool: u.tool,
+            pts: u.pts,
+            done: !!u.done
+          })
+        } catch {}
+      })
+      await inkCh.subscribe()
+      inkChannelRef.current = inkCh
     })()
 
     return ()=> {
       mounted = false
       if (cleanup) cleanup()
       if (pollId!=null) window.clearInterval(pollId)
+      try { inkChannelRef.current?.unsubscribe() } catch {}
     }
   }, [studentId, pageIndex, rtAssignmentId])
 
@@ -980,8 +1010,21 @@ export default function StudentAssignment(){
               position:'absolute', inset:0, zIndex:10,
               pointerEvents: (hasTask && !handMode) ? 'auto' : 'none'
             }}>
-            <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
-              color={color} size={size} mode={handMode || !hasTask ? 'scroll' : 'draw'} tool={tool} />
+            <DrawCanvas
+              ref={drawRef}
+              width={canvasSize.w}
+              height={canvasSize.h}
+              color={color}
+              size={size}
+              mode={handMode || !hasTask ? 'scroll' : 'draw'}
+              tool={tool}
+              onStrokeUpdate={(u) => {
+                const ch = inkChannelRef.current
+                if (!ch) return
+                const payload = { ...u, from: studentId }
+                ch.send({ type: 'broadcast', event: 'ink', payload })
+              }}
+            />
           </div>
 
           {/* LIVE eraser overlay */}
