@@ -362,3 +362,33 @@ export function teacherPresenceResponder(
   return () => { void ch.unsubscribe(); };
 }
 
+// --- Ink (live stroke) helpers ------------------------------------------------
+export function inkChannelKey(assignmentId: string, pageId: string) {
+  return `ink:${assignmentId}:${pageId}`;
+}
+export function openInkChannel(assignmentId: string, pageId: string) {
+  return supabase.channel(inkChannelKey(assignmentId, pageId), { config: { broadcast: { ack: true } } });
+}
+
+// --- Student "hello" -> Teacher presence snapshot handshake -------------------
+export function subscribePresenceSnapshot(
+  assignmentId: string,
+  onSnapshot: (p: TeacherPresenceState) => void
+) {
+  const ch = assignmentChannel(assignmentId)
+    .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
+      const p = msg?.payload as TeacherPresenceState;
+      if (p) onSnapshot(p);
+    })
+    .subscribe();
+  return () => { void ch.unsubscribe(); };
+}
+
+export async function studentHello(assignmentId: string) {
+  const ch = assignmentChannel(assignmentId);
+  await ch.subscribe();
+  await ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } });
+  void ch.unsubscribe();
+}
+
+
