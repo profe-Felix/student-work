@@ -6,7 +6,6 @@ import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
-  // upsertAssignmentWithPage, // NO default assignment anymore
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   listPages,
   supabase
@@ -133,7 +132,7 @@ async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
   }
 }
 
-/* ---------- NEW: compute initial page index from cached presence ---------- */
+/* ---------- NEW: initial page index from cached presence (best effort) ---------- */
 function initialPageIndexFromPresence(): number {
   try {
     const cachedAssignmentId = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || ''
@@ -185,7 +184,7 @@ export default function StudentAssignment(){
     return () => { cancelled = true }
   }, [pdfStoragePath])
 
-  /* ---------- NEW: start page using cached teacher presence if any ---------- */
+  /* ---------- start page using cached teacher presence if any ---------- */
   const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence())
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
@@ -253,16 +252,13 @@ export default function StudentAssignment(){
 
   // Realtime teacher controls
   const [focusOn, setFocusOn] = useState(false)
-  // DEFAULT-LOCK: new students are locked until we see presence
-  const [navLocked, setNavLocked] = useState(true)
-  // DEFAULT-FOLLOW: new students follow until we see presence
-  const [autoFollow, setAutoFollow] = useState(true)
+  const [navLocked, setNavLocked] = useState(false)
+  const [autoFollow, setAutoFollow] = useState(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
 
-  // NEW: snap-once & awaiting presence flags
+  // snap-once flag
   const initialSnappedRef = useRef(false)
-  const [awaitingPresence, setAwaitingPresence] = useState(true)
 
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')
@@ -271,22 +267,30 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // --- NEW helper: snap to teacher using local presence if available
+  /* ---------- NEW: one function to apply a presence snapshot and (optionally) snap ---------- */
+  const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
+    if (!p) return
+    setAutoFollow(!!p.autoFollow)
+    setAllowedPages(p.allowedPages ?? null)
+    setFocusOn(!!p.focusOn)
+    setNavLocked(!!p.focusOn && !!p.lockNav)
+    if (typeof p.teacherPageIndex === 'number') {
+      teacherPageIndexRef.current = p.teacherPageIndex
+      const shouldSnap = (opts?.snap ?? true) && !!p.autoFollow && !initialSnappedRef.current
+      if (shouldSnap) {
+        setPageIndex(p.teacherPageIndex)
+        initialSnappedRef.current = true
+      }
+    }
+  }
+
+  // --- helper: snap to teacher using local presence if available
   const snapToTeacherIfAvailable = (assignmentId: string) => {
     try {
       const raw = localStorage.getItem(presenceKey(assignmentId))
       if (!raw) return
       const p = JSON.parse(raw) as TeacherPresenceState
-      if (typeof p.teacherPageIndex === 'number') {
-        teacherPageIndexRef.current = p.teacherPageIndex
-      }
-      const tpi = p.teacherPageIndex
-      const shouldSnap = !!p.autoFollow && !initialSnappedRef.current && typeof tpi === 'number'
-      if (shouldSnap && pageIndex !== tpi) {
-        setAutoFollow(true) // reflect UI immediately
-        setPageIndex(tpi)
-        initialSnappedRef.current = true
-      }
+      applyPresenceSnapshot(p, { snap: true })
     } catch {/* ignore */}
   }
 
@@ -295,16 +299,14 @@ export default function StudentAssignment(){
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      // joining a new assignment => wait for presence again
-      setAwaitingPresence(true)
-      snapToTeacherIfAvailable(nextAssignmentId)
+      snapToTeacherIfAvailable(nextAssignmentId) // immediate best-effort snap
       currIds.current = {}
-      initialSnappedRef.current = initialSnappedRef.current && true
+      // keep initialSnappedRef as-is
     })
     return off
   }, [])
 
-  // NEW: On first mount, if we don't have an assignment id, fetch the latest with pages.
+  // On first mount, if we don't have an assignment id, fetch the latest with pages.
   useEffect(() => {
     if (rtAssignmentId) {
       snapToTeacherIfAvailable(rtAssignmentId)
@@ -314,7 +316,6 @@ export default function StudentAssignment(){
       const latest = await fetchLatestAssignmentIdWithPages()
       if (latest) {
         setRtAssignmentId(latest)
-        setAwaitingPresence(true)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
         snapToTeacherIfAvailable(latest)
       }
@@ -328,13 +329,7 @@ export default function StudentAssignment(){
       const raw = localStorage.getItem(presenceKey(rtAssignmentId))
       if (!raw) return
       const p = JSON.parse(raw) as TeacherPresenceState
-      setAutoFollow(!!p.autoFollow)
-      setAllowedPages(p.allowedPages ?? null)
-      setFocusOn(!!p.focusOn)
-      setNavLocked(!!p.focusOn && !!p.lockNav)
-      if (typeof p.teacherPageIndex === 'number') {
-        teacherPageIndexRef.current = p.teacherPageIndex
-      }
+      applyPresenceSnapshot(p, { snap: true })
     } catch {}
   }, [rtAssignmentId])
 
@@ -345,7 +340,6 @@ export default function StudentAssignment(){
       assignmentId = await fetchLatestAssignmentIdWithPages() || ''
       if (assignmentId) {
         setRtAssignmentId(assignmentId)
-        setAwaitingPresence(true)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignmentId) } catch {}
         snapToTeacherIfAvailable(assignmentId)
       }
@@ -357,6 +351,7 @@ export default function StudentAssignment(){
       return null
     }
 
+    // One more pre-fetch snap attempt (covers races)
     snapToTeacherIfAvailable(assignmentId)
     const tpi = teacherPageIndexRef.current
     if (!initialSnappedRef.current && typeof tpi === 'number' && autoFollow && pageIndex !== tpi) {
@@ -367,11 +362,11 @@ export default function StudentAssignment(){
 
     let pages = await listPages(assignmentId).catch(() => [] as any[])
     if (!pages || pages.length === 0) {
+      // Fallback: maybe cached id is stale—try newest from DB
       const latest = await fetchLatestAssignmentIdWithPages()
       if (latest && latest !== assignmentId) {
         assignmentId = latest
         setRtAssignmentId(latest)
-        setAwaitingPresence(true)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
         snapToTeacherIfAvailable(latest)
         pages = await listPages(latest).catch(() => [] as any[])
@@ -390,6 +385,7 @@ export default function StudentAssignment(){
              ?? pages.find(p => p.page_index === pageIndex)
              ?? pages[0]
 
+    // If this differs from our current state, set and wait a pass
     if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
       setPageIndex(curr.page_index)
       return null
@@ -409,6 +405,7 @@ export default function StudentAssignment(){
       const ids = await resolveIds()
 
       if (!ids) {
+        // No task: clear any cache for this "slot"
         const { assignmentUid, pageUid } = getCacheIds()
         try {
           drawRef.current?.clearStrokes()
@@ -580,8 +577,6 @@ export default function StudentAssignment(){
   }
 
   const blockedBySync = (idx: number) => {
-    // While awaiting first presence, block nav if we're supposed to be following
-    if (awaitingPresence && autoFollow) return true
     if (!autoFollow) return false
     if (allowedPages && allowedPages.length > 0) return !allowedPages.includes(idx)
     const tpi = teacherPageIndexRef.current
@@ -636,53 +631,39 @@ export default function StudentAssignment(){
   // subscribe to teacher broadcast once we know the assignment id
   useEffect(() => {
     if (!rtAssignmentId) return
-    // We're waiting for first presence for this assignment
-    setAwaitingPresence(true)
-
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex: tpi }: SetPagePayload) => {
         teacherPageIndexRef.current = tpi
-        setAwaitingPresence(false)
         if (autoFollow && typeof tpi === 'number') {
           setPageIndex(prev => (prev !== tpi ? tpi : prev))
         }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
-        setAwaitingPresence(false)
         setFocusOn(!!on)
         setNavLocked(!!on && !!lockNav)
       },
       onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
-        setAwaitingPresence(false)
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
         // Snap once on join if not already snapped
-        const tpiSnap = teacherPageIndexRef.current
-        if (on && !initialSnappedRef.current && typeof tpiSnap === 'number') {
-          setPageIndex(tpiSnap)
-          initialSnappedRef.current = true
-        }
+        applyPresenceSnapshot({
+          autoFollow: !!on,
+          allowedPages: allowedPages ?? null,
+          focusOn, // leave focus state as-is here; focus events come via onFocus / onPresence
+          lockNav: navLocked,
+          teacherPageIndex: teacherPageIndexRef.current ?? undefined
+        } as TeacherPresenceState, { snap: true })
       },
       onPresence: (p: TeacherPresenceState) => {
-        setAwaitingPresence(false)
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
-        setAutoFollow(!!p.autoFollow)
-        setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)
-        setNavLocked(!!p.focusOn && !!p.lockNav)
-        if (typeof p.teacherPageIndex === 'number') {
-          teacherPageIndexRef.current = p.teacherPageIndex
-          const tpiSnap = p.teacherPageIndex
-          if (p.autoFollow && !initialSnappedRef.current) {
-            setPageIndex(tpiSnap)
-            initialSnappedRef.current = true
-          }
-        }
+        applyPresenceSnapshot(p, { snap: true })
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
-  }, [rtAssignmentId, autoFollow])
+    // include 'focusOn' and 'navLocked' so we can reuse current values in the synthetic snapshot above
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rtAssignmentId, autoFollow, focusOn, navLocked])
 
   const reloadFromServer = async ()=>{
     if (!hasTask) return
@@ -973,14 +954,13 @@ export default function StudentAssignment(){
         <span style={{ minWidth:90, textAlign:'center', fontWeight:600 }}>
           Page {pageIndex+1}
         </span>
-                <button
+        <button
           onClick={()=>goToPage(pageIndex+1)}
           disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           Next ▶
         </button>
-
       </div>
 
       {/* Toolbar & toasts */}
