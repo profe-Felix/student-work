@@ -113,7 +113,6 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
 /* ---------- NEW: find newest assignment with at least one page ---------- */
 async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
   try {
-    // Get a few newest assignments; we’ll pick the first that actually has pages.
     const { data, error } = await supabase
       .from('assignments')
       .select('id, created_at')
@@ -126,7 +125,7 @@ async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
       try {
         const pages = await listPages(row.id)
         if (pages && pages.length > 0) return row.id
-      } catch {/* skip if pages lookup fails */}
+      } catch {/* skip */}
     }
     return null
   } catch {
@@ -243,6 +242,9 @@ export default function StudentAssignment(){
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
 
+  // NEW: snap-once flag so we don't fight later changes
+  const initialSnappedRef = useRef(false)
+
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')
   const lastLocalHash = useRef<string>('')
@@ -274,6 +276,7 @@ export default function StudentAssignment(){
         }
       } catch { setPageIndex(0) }
       currIds.current = {}
+      initialSnappedRef.current = false
     })
     return off
   }, [])
@@ -303,12 +306,12 @@ export default function StudentAssignment(){
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        setPageIndex(p.teacherPageIndex)
+        // don't force a snap here; we snap in resolveIds()/handlers below
       }
     } catch {}
   }, [rtAssignmentId])
 
-  // Resolve assignment/page if the teacher assignment exists; otherwise try latest from DB
+  // Resolve assignment/page with early “snap to teacher” if autoFollow is ON
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
     let assignmentId = rtAssignmentId
     if (!assignmentId) {
@@ -322,6 +325,14 @@ export default function StudentAssignment(){
       currIds.current = {}
       setPdfStoragePath('')
       setHasTask(false)
+      return null
+    }
+
+    // EARLY SNAP: if we know teacher page and autoFollow is on, move there once before fetching pages
+    const tpi = teacherPageIndexRef.current
+    if (autoFollow && typeof tpi === 'number' && !initialSnappedRef.current && pageIndex !== tpi) {
+      setPageIndex(tpi)
+      initialSnappedRef.current = true
       return null
     }
 
@@ -344,7 +355,17 @@ export default function StudentAssignment(){
       return null
     }
 
-    const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
+    const preferredIndex = (autoFollow && typeof tpi === 'number') ? tpi : pageIndex
+    const curr = pages.find(p => p.page_index === preferredIndex)
+             ?? pages.find(p => p.page_index === pageIndex)
+             ?? pages[0]
+
+    // If this differs from our current state, set and wait a pass
+    if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
+      setPageIndex(curr.page_index)
+      return null
+    }
+
     currIds.current = { assignment_id: assignmentId, page_id: curr.id }
     setPdfStoragePath(curr.pdf_path || '')
     return { assignment_id: assignmentId, page_id: curr.id }
@@ -359,7 +380,7 @@ export default function StudentAssignment(){
       const ids = await resolveIds()
 
       if (!ids) {
-        // No task: clear any cache for this "slot"
+        // No task (yet): clear any cache for this "slot"
         const { assignmentUid, pageUid } = getCacheIds()
         try {
           drawRef.current?.clearStrokes()
@@ -418,7 +439,7 @@ export default function StudentAssignment(){
     })()
 
     return ()=>{ cancelled=true }
-  }, [pageIndex, studentId, rtAssignmentId])
+  }, [pageIndex, studentId, rtAssignmentId, autoFollow]) // NOTE: +autoFollow
 
   /* ---------- Local dirty watcher ---------- */
   useEffect(()=>{
@@ -588,6 +609,7 @@ export default function StudentAssignment(){
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
         teacherPageIndexRef.current = pageIndex
+        // If autoFollow is on, follow immediate page changes
         if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
@@ -598,8 +620,11 @@ export default function StudentAssignment(){
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        if (on && typeof teacherPageIndexRef.current === 'number') {
+
+        // Snap once on join if autoFollow is ON and we haven't snapped yet
+        if (on && typeof teacherPageIndexRef.current === 'number' && !initialSnappedRef.current) {
           setPageIndex(teacherPageIndexRef.current)
+          initialSnappedRef.current = true
         }
       },
       onPresence: (p: TeacherPresenceState) => {
@@ -610,7 +635,10 @@ export default function StudentAssignment(){
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
-          if (p.autoFollow) setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
+          if (p.autoFollow && !initialSnappedRef.current) {
+            setPageIndex(p.teacherPageIndex)
+            initialSnappedRef.current = true
+          }
         }
       }
     })
@@ -656,7 +684,7 @@ export default function StudentAssignment(){
       if (!ids) return
 
       try{
-        const ch = supabase.channel(`art-strokes-${ids.page_id}`) // channel name not important; filter below is what matters
+        const ch = supabase.channel(`art-strokes-${ids.page_id}`)
           .on('postgres_changes', {
             event: '*', schema: 'public', table: 'artifacts',
             filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
