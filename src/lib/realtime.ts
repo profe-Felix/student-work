@@ -321,3 +321,44 @@ export function subscribeToInk(
     .subscribe()
   return ch
 }
+
+// --- Presence responder: teacher answers "hello" with a presence snapshot ---
+// Students broadcast {type:'broadcast', event:'hello'} on assignment:<id>.
+// Teacher listens here and replies with {event:'presence-snapshot', payload:<snapshot>}.
+export type PresenceSnapshot = {
+  autoFollow: boolean;
+  focusOn?: boolean;
+  lockNav?: boolean;
+  allowedPages?: number[] | null;
+  teacherPageIndex?: number;
+};
+
+export function teacherPresenceResponder(
+  assignmentId: string,
+  getSnapshot: () => PresenceSnapshot
+) {
+  const ch = assignmentChannel(assignmentId);
+
+  ch.on('broadcast', { event: 'hello' }, async () => {
+    try {
+      const snap = getSnapshot?.() ?? {
+        autoFollow: false,
+        focusOn: false,
+        lockNav: false,
+        allowedPages: null,
+        teacherPageIndex: 0,
+      };
+      await ch.send({
+        type: 'broadcast',
+        event: 'presence-snapshot',
+        payload: { ...snap, ts: Date.now() },
+      });
+    } catch {
+      // ignore errors; channel may be closing or snapshot unavailable
+    }
+  });
+
+  ch.subscribe();
+  return () => { void ch.unsubscribe(); };
+}
+
