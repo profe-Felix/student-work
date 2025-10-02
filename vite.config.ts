@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// Hardcode base for GitHub Pages repo: /student-work/
 export default defineConfig({
   plugins: [react()],
-  // This is the public base path for GitHub Pages at /student-work/
-  base: process.env.BASE || '/student-work/',
+  base: '/student-work/',
 })
