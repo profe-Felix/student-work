@@ -125,7 +125,7 @@ async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
       try {
         const pages = await listPages(row.id)
         if (pages && pages.length > 0) return row.id
-      } catch {/* skip */}
+      } catch {/* skip if pages lookup fails */}
     }
     return null
   } catch {
@@ -242,7 +242,7 @@ export default function StudentAssignment(){
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
 
-  // NEW: snap-once flag so we don't fight later changes
+  // NEW: snap-once flag
   const initialSnappedRef = useRef(false)
 
   // hashes/dirty tracking
@@ -252,43 +252,52 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
+  // --- NEW helper: snap to teacher using local presence if available
+  const snapToTeacherIfAvailable = (assignmentId: string) => {
+    try {
+      const raw = localStorage.getItem(presenceKey(assignmentId))
+      if (!raw) return
+      const p = JSON.parse(raw) as TeacherPresenceState
+      if (typeof p.teacherPageIndex === 'number') {
+        teacherPageIndexRef.current = p.teacherPageIndex
+      }
+      // If teacher has autoFollow on and we haven't snapped yet, do it now.
+      const shouldSnap = !!p.autoFollow && !initialSnappedRef.current && typeof p.teacherPageIndex === 'number'
+      if (shouldSnap && pageIndex !== p.teacherPageIndex) {
+        setAutoFollow(true) // reflect UI immediately
+        setPageIndex(p.teacherPageIndex)
+        initialSnappedRef.current = true
+      }
+    } catch {/* ignore */}
+  }
+
   // assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      try {
-        const raw = localStorage.getItem(presenceKey(nextAssignmentId))
-        if (raw) {
-          const p = JSON.parse(raw) as TeacherPresenceState
-          if (typeof p.teacherPageIndex === 'number') {
-            teacherPageIndexRef.current = p.teacherPageIndex
-            setPageIndex(p.teacherPageIndex)
-          } else {
-            setPageIndex(0)
-          }
-          setAutoFollow(!!p.autoFollow)
-          setAllowedPages(p.allowedPages ?? null)
-          setFocusOn(!!p.focusOn)
-          setNavLocked(!!p.focusOn && !!p.lockNav)
-        } else {
-          setPageIndex(0)
-        }
-      } catch { setPageIndex(0) }
+      // snap immediately from cached presence (no network)
+      snapToTeacherIfAvailable(nextAssignmentId)
       currIds.current = {}
-      initialSnappedRef.current = false
+      initialSnappedRef.current = initialSnappedRef.current && true // keep flag
     })
     return off
   }, [])
 
   // NEW: On first mount, if we don't have an assignment id, fetch the latest with pages.
   useEffect(() => {
-    if (rtAssignmentId) return
+    if (rtAssignmentId) {
+      // if we already have it (from cache/teacher), try snapping immediately
+      snapToTeacherIfAvailable(rtAssignmentId)
+      return
+    }
     ;(async () => {
       const latest = await fetchLatestAssignmentIdWithPages()
       if (latest) {
         setRtAssignmentId(latest)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
+        // snap immediately if presence exists
+        snapToTeacherIfAvailable(latest)
       }
     })()
   }, [rtAssignmentId])
@@ -306,12 +315,11 @@ export default function StudentAssignment(){
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        // don't force a snap here; we snap in resolveIds()/handlers below
       }
     } catch {}
   }, [rtAssignmentId])
 
-  // Resolve assignment/page with early “snap to teacher” if autoFollow is ON
+  // Resolve assignment/page with early “snap to teacher” if autoFollow is ON or presence says so
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
     let assignmentId = rtAssignmentId
     if (!assignmentId) {
@@ -319,6 +327,8 @@ export default function StudentAssignment(){
       if (assignmentId) {
         setRtAssignmentId(assignmentId)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignmentId) } catch {}
+        // try to snap immediately based on any cached presence
+        snapToTeacherIfAvailable(assignmentId)
       }
     }
     if (!assignmentId) {
@@ -328,9 +338,10 @@ export default function StudentAssignment(){
       return null
     }
 
-    // EARLY SNAP: if we know teacher page and autoFollow is on, move there once before fetching pages
+    // One more pre-fetch snap attempt (covers races)
+    snapToTeacherIfAvailable(assignmentId)
     const tpi = teacherPageIndexRef.current
-    if (autoFollow && typeof tpi === 'number' && !initialSnappedRef.current && pageIndex !== tpi) {
+    if (!initialSnappedRef.current && typeof tpi === 'number' && autoFollow && pageIndex !== tpi) {
       setPageIndex(tpi)
       initialSnappedRef.current = true
       return null
@@ -344,6 +355,8 @@ export default function StudentAssignment(){
         assignmentId = latest
         setRtAssignmentId(latest)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
+        // snap again
+        snapToTeacherIfAvailable(latest)
         pages = await listPages(latest).catch(() => [] as any[])
       }
     }
@@ -380,7 +393,7 @@ export default function StudentAssignment(){
       const ids = await resolveIds()
 
       if (!ids) {
-        // No task (yet): clear any cache for this "slot"
+        // No task: clear any cache for this "slot"
         const { assignmentUid, pageUid } = getCacheIds()
         try {
           drawRef.current?.clearStrokes()
@@ -439,7 +452,7 @@ export default function StudentAssignment(){
     })()
 
     return ()=>{ cancelled=true }
-  }, [pageIndex, studentId, rtAssignmentId, autoFollow]) // NOTE: +autoFollow
+  }, [pageIndex, studentId, rtAssignmentId, autoFollow])
 
   /* ---------- Local dirty watcher ---------- */
   useEffect(()=>{
@@ -609,7 +622,6 @@ export default function StudentAssignment(){
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
         teacherPageIndexRef.current = pageIndex
-        // If autoFollow is on, follow immediate page changes
         if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
@@ -620,8 +632,7 @@ export default function StudentAssignment(){
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-
-        // Snap once on join if autoFollow is ON and we haven't snapped yet
+        // Snap once on join if not already snapped
         if (on && typeof teacherPageIndexRef.current === 'number' && !initialSnappedRef.current) {
           setPageIndex(teacherPageIndexRef.current)
           initialSnappedRef.current = true
@@ -684,7 +695,7 @@ export default function StudentAssignment(){
       if (!ids) return
 
       try{
-        const ch = supabase.channel(`art-strokes-${ids.page_id}`)
+        const ch = supabase.channel(`art-strokes-${ids.page_id}`) // channel name not important; filter below is what matters
           .on('postgres_changes', {
             event: '*', schema: 'public', table: 'artifacts',
             filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
