@@ -1,4 +1,4 @@
-// src/lib/geometry.ts
+//src/lib/geometry.ts
 // Lightweight geometry helpers for stroke hit-testing and trimming
 
 export type Pt = { x: number; y: number; t?: number };
