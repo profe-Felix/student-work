@@ -151,7 +151,6 @@ function initialPageIndexFromPresence(): number {
 /* ---------- NEW: server fallback to get teacher presence snapshot ---------- */
 async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPresenceState | null> {
   try {
-    // Adjust table/columns if your schema differs.
     const { data, error } = await supabase
       .from('teacher_presence')
       .select('*')
@@ -161,7 +160,6 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
       .maybeSingle()
 
     if (error || !data) return null
-    // Normalize a bit to our expected shape
     const p = data as any
     const snapshot: TeacherPresenceState = {
       autoFollow: !!p.auto_follow || !!p.autofollow || !!p.autoFollow,
@@ -731,7 +729,6 @@ export default function StudentAssignment(){
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
-    // include 'focusOn' and 'navLocked' so we can reuse current values in the synthetic snapshot above
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rtAssignmentId, autoFollow, focusOn, navLocked])
 
@@ -764,17 +761,22 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // === UPDATED: subscribe to artifacts AND the live ink channel ===
+  // === UPDATED: subscribe to artifacts, live ink, and handshake for presence snapshot
   useEffect(()=>{
-    let cleanup: (()=>void)|null = null
+    let cleanupArtifacts: (()=>void)|null = null
     let pollId: number | null = null
     let mounted = true
+
+    // local cleanups
+    const cleanupInk = () => { try { inkChannelRef.current?.unsubscribe() } catch {} ; inkChannelRef.current = null }
+    let assignCh: ReturnType<typeof supabase.channel> | null = null
+    const cleanupAssign = () => { try { assignCh?.unsubscribe() } catch {} ; assignCh = null }
 
     ;(async ()=>{
       const ids = await resolveIds()
       if (!ids) return
 
-      // live submissions polling (unchanged)
+      // (1) keep your existing submissions polling
       try{
         const ch = supabase.channel(`art-strokes-${ids.page_id}`)
           .on('postgres_changes', {
@@ -782,21 +784,34 @@ export default function StudentAssignment(){
             filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
           }, ()=> reloadFromServer())
           .subscribe()
-        cleanup = ()=> { try { ch.unsubscribe() } catch {} }
+        cleanupArtifacts = ()=> { try { ch.unsubscribe() } catch {} }
       }catch(e){
         console.error('realtime subscribe failed', e)
       }
       pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
 
-      // NEW: realtime ink (pre-submission co-editing)
-      try { inkChannelRef.current?.unsubscribe() } catch {}
+      // (2) NEW: handshake—ask teacher for live presence snapshot so we snap on join
+      cleanupAssign()
+      assignCh = supabase.channel(`assignment:${ids.assignment_id}`, { config: { broadcast: { ack: true } } })
+        .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
+          const p = msg?.payload as TeacherPresenceState | undefined
+          if (!p) return
+          try { localStorage.setItem(presenceKey(ids.assignment_id), JSON.stringify(p)) } catch {}
+          applyPresenceSnapshot(p, { snap: true })
+        })
+      await assignCh.subscribe()
+      try {
+        await assignCh.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } })
+      } catch {}
+
+      // (3) NEW: realtime ink (pre-submission co-editing)
+      cleanupInk()
       const inkCh = supabase.channel(`ink:${ids.assignment_id}:${ids.page_id}`)
       inkCh.on('broadcast', { event: 'ink' }, (evt: any) => {
         try {
           const u = evt?.payload as RemoteStrokeUpdate & { from?: string }
           if (!u) return
-          if (u.from && u.from === studentId) return // ignore our own echoes
-          // basic validation
+          if (u.from && u.from === studentId) return
           if (!u.id || !u.tool) return
           if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
           drawRef.current?.applyRemote({
@@ -815,9 +830,10 @@ export default function StudentAssignment(){
 
     return ()=> {
       mounted = false
-      if (cleanup) cleanup()
+      if (cleanupArtifacts) cleanupArtifacts()
       if (pollId!=null) window.clearInterval(pollId)
-      try { inkChannelRef.current?.unsubscribe() } catch {}
+      cleanupInk()
+      cleanupAssign()
     }
   }, [studentId, pageIndex, rtAssignmentId])
 
