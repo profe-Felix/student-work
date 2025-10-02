@@ -37,10 +37,9 @@ export default function PdfDropZone({
 
       const title = file.name.replace(/\.pdf$/i, '')
 
-      // UPDATED: upsert by title (avoid duplicate-key on reupload)
       const { data: assignment, error: aErr } = await supabase
         .from('assignments')
-        .upsert({ title }, { onConflict: 'title' })
+        .insert([{ title }])
         .select('id')
         .single()
       if (aErr) throw aErr
@@ -52,11 +51,7 @@ export default function PdfDropZone({
         page_index: i,
         pdf_path: dbPath,
       }))
-
-      // UPDATED: upsert pages on (assignment_id, page_index)
-      const { error: pErr } = await supabase
-        .from('pages')
-        .upsert(rows, { onConflict: 'assignment_id,page_index' })
+      const { error: pErr } = await supabase.from('pages').insert(rows)
       if (pErr) throw pErr
 
       // flash “Uploaded”
