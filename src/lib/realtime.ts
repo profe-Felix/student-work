@@ -35,6 +35,19 @@ export type TeacherPresenceState = {
   [k: string]: any;                 // tolerate unknown legacy fields
 };
 
+/** ---------- NEW: Live ink updates (pre-submission co-editing) ---------- */
+// Keep this type here to avoid importing from components/
+export type InkUpdate = {
+  id: string
+  color?: string
+  size?: number
+  tool: 'pen' | 'highlighter' | 'eraser' | 'eraserObject'
+  pts?: Array<{ x: number; y: number; t?: number }>
+  done?: boolean
+  // optional echo-guard field
+  from?: string
+}
+
 /** -------------------------------------------------------------------------------------------
  *  Global “class” channel (assignment-agnostic) used to hand students off to another assignment
  *  ----------------------------------------------------------------------------------------- */
@@ -71,6 +84,11 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
  *  ----------------------------------------------------------------------------------------- */
 export function assignmentChannel(assignmentId: string) {
   return supabase.channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: true } } })
+}
+
+/** ---------- NEW: Per-(assignment,page) ink channel ---------- */
+export function inkChannel(assignmentId: string, pageId: string) {
+  return supabase.channel(`ink:${assignmentId}:${pageId}`, { config: { broadcast: { ack: true } } })
 }
 
 /** Helper: allow functions to accept either an assignmentId string OR a RealtimeChannel */
@@ -249,5 +267,46 @@ export function subscribeToAssignment(assignmentId: string, handlers: Assignment
     .on('broadcast', { event: 'presence' }, (msg: any) => handlers.onPresence?.(msg?.payload))
     .subscribe()
 
+  return ch
+}
+
+/** ---------- NEW: Ink publish/subscribe helpers ---------- */
+// Publish using either a live ink channel or ids (assignmentId,pageId).
+// If you pass ids, this function will open, send, and close for you.
+export async function publishInk(
+  inkChOrIds: RealtimeChannel | { assignmentId: string; pageId: string },
+  update: InkUpdate
+) {
+  if (!update || !update.id || !update.tool) return
+  let ch: RealtimeChannel | null = null
+  let temporary = false
+
+  if ('subscribe' in inkChOrIds && typeof inkChOrIds.subscribe === 'function') {
+    ch = inkChOrIds as RealtimeChannel
+  } else {
+    ch = inkChannel(inkChOrIds.assignmentId, inkChOrIds.pageId)
+    temporary = true
+    await ch.subscribe()
+  }
+
+  await ch.send({ type: 'broadcast', event: 'ink', payload: { ...update } })
+  if (temporary) { void ch.unsubscribe() }
+}
+
+// Subscribe to an ink stream for a page. Caller should unsubscribe the channel returned.
+export function subscribeToInk(
+  assignmentId: string,
+  pageId: string,
+  onUpdate: (u: InkUpdate) => void
+) {
+  const ch = inkChannel(assignmentId, pageId)
+    .on('broadcast', { event: 'ink' }, (msg: any) => {
+      const u = msg?.payload as InkUpdate
+      if (!u || !u.id || !u.tool) return
+      // allow empty pts if this is a terminal "done" update
+      if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+      onUpdate(u)
+    })
+    .subscribe()
   return ch
 }
