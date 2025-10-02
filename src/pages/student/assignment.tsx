@@ -226,6 +226,10 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
+  // NEW: live page channel (per tab id + handle)
+  const clientIdRef = useRef<string>('c_' + Math.random().toString(36).slice(2))
+  const liveChRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+
   // assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
@@ -589,6 +593,7 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
+  // Existing: artifacts table watch (per-student) + poll
   useEffect(()=>{
     let cleanup: (()=>void)|null = null
     let pollId: number | null = null
@@ -619,6 +624,44 @@ export default function StudentAssignment(){
       if (pollId!=null) window.clearInterval(pollId)
     }
   }, [studentId, pageIndex, rtAssignmentId])
+
+  /* ---------- NEW: page-live channel (broadcast, instant co-edit) ---------- */
+  useEffect(()=>{
+    let cleanup: (()=>void)|null = null
+    ;(async ()=>{
+      const ids = await resolveIds()
+      if (!ids) return
+
+      // close previous
+      try { liveChRef.current?.unsubscribe() } catch {}
+      const ch = supabase.channel(`page-live-${ids.page_id}`, { config: { broadcast: { self: false } } })
+
+      // when another student finishes a stroke
+      ch.on('broadcast', { event: 'stroke-commit' }, (msg) => {
+        const { clientId, stroke } = (msg as any)?.payload || {}
+        if (!stroke || clientId === clientIdRef.current) return
+        const cur = drawRef.current?.getStrokes() || { strokes: [] }
+        drawRef.current?.loadStrokes({ strokes: [...(cur.strokes || []), stroke] })
+      })
+
+      // when another student completes an erase gesture
+      ch.on('broadcast', { event: 'erase-commit' }, (msg) => {
+        const { clientId, path, radius, mode } = (msg as any)?.payload || {}
+        if (!Array.isArray(path) || clientId === clientIdRef.current) return
+        const cur = drawRef.current?.getStrokes() || { strokes: [] }
+        const base = normalizeStrokes(cur)
+        const trimmed = mode === 'object'
+          ? (objectErase(base.strokes as any, path, radius).kept as any)
+          : (softErase(base.strokes as any, path, radius) as any)
+        drawRef.current?.loadStrokes({ strokes: trimmed })
+      })
+
+      await ch.subscribe()
+      liveChRef.current = ch
+      cleanup = ()=>{ try { ch.unsubscribe() } catch {} }
+    })()
+    return ()=>{ if (cleanup) cleanup() }
+  }, [pageIndex, rtAssignmentId])
 
   /* ---------- LIVE eraser overlay ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
@@ -681,9 +724,29 @@ export default function StudentAssignment(){
     erasingRef.current = false
     addPoint(e)
     const final = computePreview()
+    const path = erasePathRef.current
     erasePathRef.current = []
     if (!final) return
+
+    // apply locally
     drawRef.current?.loadStrokes(final)
+
+    // broadcast the erase gesture so others update instantly
+    const ch = liveChRef.current
+    if (ch && path.length >= 2) {
+      ch.send({
+        type: 'broadcast',
+        event: 'erase-commit',
+        payload: {
+          clientId: clientIdRef.current,
+          path,
+          radius: dynamicRadius,
+          mode: (tool === 'eraserObject') ? 'object' : 'soft'
+        }
+      })
+    }
+
+    // mark dirty + draft
     localDirty.current = true
     try { lastLocalHash.current = await hashStrokes(final) } catch {}
     const { assignmentUid, pageUid } = getCacheIds()
@@ -809,8 +872,25 @@ export default function StudentAssignment(){
               position:'absolute', inset:0, zIndex:10,
               pointerEvents: (hasTask && !handMode) ? 'auto' : 'none'
             }}>
-            <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
-              color={color} size={size} mode={handMode || !hasTask ? 'scroll' : 'draw'} tool={tool} />
+            <DrawCanvas
+              ref={drawRef}
+              width={canvasSize.w}
+              height={canvasSize.h}
+              color={color}
+              size={size}
+              mode={handMode || !hasTask ? 'scroll' : 'draw'}
+              tool={tool}
+              // NEW: broadcast stroke commits so peers see them immediately
+              onStrokeCommit={(stroke:any)=>{
+                const ch = liveChRef.current
+                if (!ch || !stroke) return
+                ch.send({
+                  type: 'broadcast',
+                  event: 'stroke-commit',
+                  payload: { clientId: clientIdRef.current, stroke }
+                })
+              }}
+            />
           </div>
 
           {/* LIVE eraser overlay */}
