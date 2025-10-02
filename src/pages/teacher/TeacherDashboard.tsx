@@ -1,10 +1,10 @@
-//src/pages/teacher/TeacherDashboard.tsx
+// src/pages/teacher/TeacherDashboard.tsx
 import { useEffect, useState } from 'react';
 import { listAssignments, listPages, listLatestSubmissionsByPage, getThumbnailForSubmission } from '../../lib/queries';
 import { publicUrl } from '../../lib/supabaseHelpers';
 import TeacherSyncBar from '../../components/TeacherSyncBar';
 import PdfDropZone from '../../components/PdfDropZone';
-import { teacherPresenceResponder } from '../../lib/realtime';
+import { supabase } from '../../lib/db'; // <-- add this
 
 export default function TeacherDashboard() {
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -36,37 +36,34 @@ export default function TeacherDashboard() {
     load();
   }, [pageId]);
 
-  // === NEW: Answer student "hello" pings with the current teacher presence snapshot ===
+  // ---------------- NEW: reply to student "hello" with a presence snapshot ----------------
   useEffect(() => {
     if (!assignmentId) return;
 
-    // We read the freshest presence directly from localStorage (TeacherSyncBar updates it).
-    const stop = teacherPresenceResponder(assignmentId, () => {
-      try {
-        const raw = localStorage.getItem(`presence:${assignmentId}`);
-        const p = raw ? JSON.parse(raw) : {};
-        return {
-          autoFollow: !!p.autoFollow,
-          focusOn: !!p.focusOn,
-          lockNav: !!p.lockNav,
-          allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : null,
-          // fall back to our current pageIndex if presence doesn't have it yet
-          teacherPageIndex: typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : pageIndex,
-        };
-      } catch {
-        return {
-          autoFollow: false,
-          focusOn: false,
-          lockNav: false,
-          allowedPages: null,
-          teacherPageIndex: pageIndex,
-        };
-      }
-    });
+    const ch = supabase
+      .channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: true } } })
+      .on('broadcast', { event: 'hello' }, async () => {
+        // Minimal snapshot that forces snap-to-teacher-page on join.
+        // If you want this to respect a Sync toggle, wire that boolean here.
+        await ch.send({
+          type: 'broadcast',
+          event: 'presence-snapshot',
+          payload: {
+            autoFollow: true,              // forces snap on join
+            teacherPageIndex: pageIndex,   // current teacher page
+            allowedPages: null,
+            focusOn: false,
+            lockNav: false,
+            ts: Date.now()
+          }
+        });
+      });
 
-    return stop;
-    // Include deps so the responder uses up-to-date values if presence is missing teacherPageIndex
+    ch.subscribe();
+
+    return () => { try { ch.unsubscribe(); } catch {} };
   }, [assignmentId, pageIndex]);
+  // ----------------------------------------------------------------------------------------
 
   return (
     <div className="p-4 space-y-4">
