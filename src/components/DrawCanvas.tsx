@@ -1,4 +1,4 @@
-// src/components/DrawCanvas.tsx
+//src/components/DrawCanvas.tsx
 import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 
 export type StrokePoint = { x: number; y: number }
