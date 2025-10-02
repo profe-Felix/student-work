@@ -6,7 +6,7 @@ import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
-  // upsertAssignmentWithPage,  // ❌ removed: no default assignment anymore
+  // upsertAssignmentWithPage, // NO default assignment anymore
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   listPages,
   supabase
@@ -20,18 +20,15 @@ import {
   type TeacherPresenceState,
 } from '../../lib/realtime'
 
-// Eraser utilities (kept from previous step)
+// Eraser utils
 import type { Pt } from '../../lib/geometry'
 import { objectErase, softErase } from '../../lib/erase'
 
 /** Constants */
-const assignmentTitle = 'Handwriting - Daily'
-// const DEFAULT_PDF_STORAGE_PATH = 'pdfs/aprende-m2.pdf'   // ❌ removed
+const assignmentTitle = 'Handwriting - Daily' // only used for legacy purge text
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
-
-// Eraser tuning
 const ERASE_RADIUS_BASE = 10
 
 /* ---------- Colors ---------- */
@@ -60,13 +57,13 @@ const SKIN_TONES = [
 
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
-/* ---------- Keys & helpers ---------- */
-const draftKey      = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
-const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
-const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
-
+/* ---------- Keys & helpers (now namespaced by assignmentId + pageId) ---------- */
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
 const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
+
+const draftKey      = (student:string, assignmentUid:string, pageUid:string)=> `draft:${student}:${assignmentUid}:${pageUid}`
+const lastHashKey   = (student:string, assignmentUid:string, pageUid:string)=> `lastHash:${student}:${assignmentUid}:${pageUid}`
+const submittedKey  = (student:string, assignmentUid:string, pageUid:string)=> `submitted:${student}:${assignmentUid}:${pageUid}`
 
 function normalizeStrokes(data: unknown): StrokesPayload {
   if (!data || typeof data !== 'object') return { strokes: [] }
@@ -74,23 +71,23 @@ function normalizeStrokes(data: unknown): StrokesPayload {
   return { strokes: arr }
 }
 
-function saveDraft(student:string, assignment:string, page:number, strokes:any){
-  try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function saveDraft(student:string, assignmentUid:string, pageUid:string, strokes:any){
+  try { localStorage.setItem(draftKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
-function loadDraft(student:string, assignment:string, page:number){
-  try { const raw = localStorage.getItem(draftKey(student, assignment, page)); return raw ? JSON.parse(raw) : null } catch { return null }
+function loadDraft(student:string, assignmentUid:string, pageUid:string){
+  try { const raw = localStorage.getItem(draftKey(student, assignmentUid, pageUid)); return raw ? JSON.parse(raw) : null } catch { return null }
 }
-function clearDraft(student:string, assignment:string, page:number){
-  try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
+function clearDraft(student:string, assignmentUid:string, pageUid:string){
+  try { localStorage.removeItem(draftKey(student, assignmentUid, pageUid)) } catch {}
 }
-function clearSubmittedCache(student:string, assignment:string, page:number){
-  try { localStorage.removeItem(submittedKey(student, assignment, page)) } catch {}
+function saveSubmittedCache(student:string, assignmentUid:string, pageUid:string, strokes:any){
+  try { localStorage.setItem(submittedKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
-function saveSubmittedCache(student:string, assignment:string, page:number, strokes:any){
-  try { localStorage.setItem(submittedKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function loadSubmittedCache(student:string, assignmentUid:string, pageUid:string){
+  try { const raw = localStorage.getItem(submittedKey(student, assignmentUid, pageUid)); return raw ? JSON.parse(raw) : null } catch { return null }
 }
-function loadSubmittedCache(student:string, assignment:string, page:number){
-  try { const raw = localStorage.getItem(submittedKey(student, assignment, page)); return raw ? JSON.parse(raw) : null } catch { return null }
+function clearSubmittedCache(student:string, assignmentUid:string, pageUid:string){
+  try { localStorage.removeItem(submittedKey(student, assignmentUid, pageUid)) } catch {}
 }
 
 async function hashStrokes(strokes:any): Promise<string> {
@@ -123,12 +120,12 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
-  // storage path comes from DB page row
+  // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
 
-  // Resolved URL used by PdfCanvas (bucket is really "pdfs")
+  // PDF URL for PdfCanvas
   const [pdfUrl, setPdfUrl] = useState<string>('')
-  const [hasTask, setHasTask] = useState<boolean>(false) // <<< NEW
+  const [hasTask, setHasTask] = useState<boolean>(false)
   const STORAGE_BUCKET = 'pdfs'
   function keyForBucket(path: string) {
     if (!path) return ''
@@ -140,24 +137,12 @@ export default function StudentAssignment(){
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      // No path => no task
-      if (!pdfStoragePath) {
-        if (!cancelled) { setPdfUrl(''); setHasTask(false) }
-        return
-      }
+      if (!pdfStoragePath) { if (!cancelled){ setPdfUrl(''); setHasTask(false) } return }
       const key = keyForBucket(pdfStoragePath)
       const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
-      if (!cancelled && sData?.signedUrl) {
-        setPdfUrl(sData.signedUrl)
-        setHasTask(true)
-        return
-      }
+      if (!cancelled && sData?.signedUrl) { setPdfUrl(sData.signedUrl); setHasTask(true); return }
       const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
-      if (!cancelled) {
-        const ok = !!pData?.publicUrl
-        setPdfUrl(pData?.publicUrl ?? '')
-        setHasTask(ok)
-      }
+      if (!cancelled) { const ok=!!pData?.publicUrl; setPdfUrl(pData?.publicUrl ?? ''); setHasTask(ok) }
     })()
     return () => { cancelled = true }
   }, [pdfStoragePath])
@@ -196,13 +181,36 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // assignment/page cache for realtime filter
+  // assignment/page ids for realtime
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
-  // Persist assignment id so refresh stays on the teacher’s assignment
+  // Persist assignment id from teacher
   const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
+
+  // >>> One-time purge of legacy local caches that used the static title
+  useEffect(() => {
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i)!
+        if (!k) continue
+        if (
+          (k.startsWith('draft:') || k.startsWith('submitted:') || k.startsWith('lastHash:')) &&
+          k.split(':')[2] === assignmentTitle
+        ) {
+          localStorage.removeItem(k)
+        }
+      }
+    } catch {}
+  }, [])
+
+  // Helper: stable cache ids (assignmentUid + pageUid)
+  const getCacheIds = (pageId?: string) => {
+    const assignmentUid = rtAssignmentId || currIds.current.assignment_id || 'no-assignment'
+    const pageUid = pageId || currIds.current.page_id || `page-${pageIndex}`
+    return { assignmentUid, pageUid }
+  }
 
   // Realtime teacher controls
   const [focusOn, setFocusOn] = useState(false)
@@ -223,8 +231,6 @@ export default function StudentAssignment(){
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-
-      // hydrate from cached presence if any
       try {
         const raw = localStorage.getItem(presenceKey(nextAssignmentId))
         if (raw) {
@@ -242,15 +248,13 @@ export default function StudentAssignment(){
         } else {
           setPageIndex(0)
         }
-      } catch {
-        setPageIndex(0)
-      }
+      } catch { setPageIndex(0) }
       currIds.current = {}
     })
     return off
   }, [])
 
-  // Hydrate presence from cache on refresh
+  // hydrate presence on refresh
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
@@ -268,7 +272,7 @@ export default function StudentAssignment(){
     } catch {}
   }, [rtAssignmentId])
 
-  // Resolve assignment/page if a teacher assignment exists; otherwise mark no task
+  // Resolve assignment/page if the teacher assignment exists; otherwise nothing to do
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
     if (!rtAssignmentId) {
       currIds.current = {}
@@ -286,7 +290,6 @@ export default function StudentAssignment(){
     const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
     currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
     setPdfStoragePath(curr.pdf_path || '')
-    // hasTask will be finalized by the PDF URL resolver effect above
     return { assignment_id: rtAssignmentId, page_id: curr.id }
   }
 
@@ -296,15 +299,15 @@ export default function StudentAssignment(){
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
 
     ;(async ()=>{
-      // First resolve assignment/page (if any)
       const ids = await resolveIds()
 
-      // If there is no task, ensure we clear any lingering local caches and ink
       if (!ids) {
+        // No task: clear any cache for this "slot"
+        const { assignmentUid, pageUid } = getCacheIds()
         try {
           drawRef.current?.clearStrokes()
-          clearDraft(studentId, assignmentTitle, pageIndex)
-          clearSubmittedCache(studentId, assignmentTitle, pageIndex)
+          clearDraft(studentId, assignmentUid, pageUid)
+          clearSubmittedCache(studentId, assignmentUid, pageUid)
           lastLocalHash.current = ''
           lastAppliedServerHash.current = ''
           localDirty.current = false
@@ -312,9 +315,10 @@ export default function StudentAssignment(){
         return
       }
 
-      // Load local draft if present
+      const { assignmentUid, pageUid } = getCacheIds(ids.page_id)
+
       try{
-        const draft = loadDraft(studentId, assignmentTitle, pageIndex)
+        const draft = loadDraft(studentId, assignmentUid, pageUid)
         if (draft?.strokes) {
           const norm = normalizeStrokes(draft.strokes)
           try { drawRef.current?.loadStrokes(norm) } catch {}
@@ -323,7 +327,6 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        // Pull latest server submission
         try {
           const latest = await loadLatestSubmission(ids.assignment_id, ids.page_id, studentId)
           if (!cancelled && latest) {
@@ -337,7 +340,7 @@ export default function StudentAssignment(){
                 lastLocalHash.current = h
               }
             } else if (!draft?.strokes) {
-              const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+              const cached = loadSubmittedCache(studentId, assignmentUid, pageUid)
               if (cached?.strokes) {
                 const normC = normalizeStrokes(cached.strokes)
                 drawRef.current?.loadStrokes(normC)
@@ -348,7 +351,8 @@ export default function StudentAssignment(){
         } catch {/* ignore */}
       }catch(e){
         console.error('init load failed', e)
-        const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+        const { assignmentUid, pageUid } = getCacheIds(ids?.page_id)
+        const cached = loadSubmittedCache(studentId, assignmentUid, pageUid)
         if (cached?.strokes) {
           const norm = normalizeStrokes(cached.strokes)
           try { drawRef.current?.loadStrokes(norm); lastLocalHash.current = await hashStrokes(norm) } catch {}
@@ -371,7 +375,8 @@ export default function StudentAssignment(){
           localDirty.current = true
           dirtySince.current = Date.now()
           lastLocalHash.current = h
-          saveDraft(studentId, assignmentTitle, pageIndex, data)
+          const { assignmentUid, pageUid } = getCacheIds()
+          saveDraft(studentId, assignmentUid, pageUid, data)
         }
       } catch {}
     }
@@ -391,7 +396,8 @@ export default function StudentAssignment(){
         if (!data) return
         const s = JSON.stringify(data)
         if (s !== lastSerialized) {
-          saveDraft(studentId, assignmentTitle, pageIndex, data)
+          const { assignmentUid, pageUid } = getCacheIds()
+          saveDraft(studentId, assignmentUid, pageUid, data)
           lastSerialized = s
         }
       } catch {}
@@ -402,7 +408,13 @@ export default function StudentAssignment(){
     document.addEventListener('visibilitychange', onVis)
     start()
     const onBeforeUnload = ()=>{
-      try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
+      try {
+        const data = drawRef.current?.getStrokes()
+        if (data) {
+          const { assignmentUid, pageUid } = getCacheIds()
+          saveDraft(studentId, assignmentUid, pageUid, data)
+        }
+      } catch {}
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     return ()=>{
@@ -414,7 +426,7 @@ export default function StudentAssignment(){
 
   /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async ()=>{
-    if (!hasTask) return // nothing to submit
+    if (!hasTask) return
     if (submitInFlight.current) return
     submitInFlight.current = true
     try{
@@ -425,19 +437,20 @@ export default function StudentAssignment(){
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       const encHash = await hashStrokes(strokes)
-      const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
-      const last = localStorage.getItem(lastKey)
-      if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
-
       const ids = currIds.current
       if (!ids.assignment_id || !ids.page_id) { setSaving(false); submitInFlight.current=false; return }
+
+      const { assignmentUid, pageUid } = getCacheIds(ids.page_id)
+      const lastKey = lastHashKey(studentId, assignmentUid, pageUid)
+      const last = localStorage.getItem(lastKey)
+      if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       if (hasInk) {
         await saveStrokes(submission_id, strokes)
         localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, strokes)
+        saveSubmittedCache(studentId, assignmentUid, pageUid, strokes)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
         localDirty.current = false
@@ -447,7 +460,9 @@ export default function StudentAssignment(){
         audioBlob.current = null
       }
 
-      clearDraft(studentId, assignmentTitle, pageIndex)
+      const ids2 = currIds.current
+      const uid2 = getCacheIds(ids2.page_id)
+      clearDraft(studentId, uid2.assignmentUid, uid2.pageUid)
       showToast('Saved!', 'ok', 1200)
       justSavedAt.current = Date.now()
     } catch (e:any){
@@ -477,9 +492,13 @@ export default function StudentAssignment(){
     const hasAudio = !!audioBlob.current
 
     if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasAudio)) {
-      try { await submit() } catch { try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {} }
+      try { await submit() } catch {
+        const { assignmentUid, pageUid } = getCacheIds()
+        try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
+      }
     } else {
-      try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
+      const { assignmentUid, pageUid } = getCacheIds()
+      try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
     }
 
     setPageIndex(nextIndex)
@@ -526,7 +545,6 @@ export default function StudentAssignment(){
           setPageIndex(teacherPageIndexRef.current)
         }
       },
-      // listen for presence snapshots and cache/apply immediately
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
@@ -563,7 +581,8 @@ export default function StudentAssignment(){
 
       if (!localDirty.current) {
         drawRef.current?.loadStrokes(normalized)
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, normalized)
+        const { assignmentUid, pageUid } = getCacheIds(ids.page_id)
+        saveSubmittedCache(studentId, assignmentUid, pageUid, normalized)
         lastAppliedServerHash.current = serverHash
         lastLocalHash.current = serverHash
       }
@@ -577,7 +596,7 @@ export default function StudentAssignment(){
 
     ;(async ()=>{
       const ids = await resolveIds()
-      if (!ids) return // nothing to subscribe/poll
+      if (!ids) return
 
       try{
         const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
@@ -601,7 +620,7 @@ export default function StudentAssignment(){
     }
   }, [studentId, pageIndex, rtAssignmentId])
 
-  /* ---------- LIVE Eraser overlay logic (same as previous step) ---------- */
+  /* ---------- LIVE eraser overlay ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
   const erasingRef = useRef(false)
   const erasePathRef = useRef<Pt[]>([])
@@ -667,7 +686,8 @@ export default function StudentAssignment(){
     drawRef.current?.loadStrokes(final)
     localDirty.current = true
     try { lastLocalHash.current = await hashStrokes(final) } catch {}
-    saveDraft(studentId, assignmentTitle, pageIndex, final)
+    const { assignmentUid, pageUid } = getCacheIds()
+    saveDraft(studentId, assignmentUid, pageUid, final)
   }
 
   /* ---------- UI ---------- */
@@ -776,7 +796,6 @@ export default function StudentAssignment(){
               <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
             </div>
           ) : (
-            // Empty state
             <div style={{
               position:'absolute', inset:0, zIndex:0, display:'grid', placeItems:'center',
               color:'#6b7280', fontWeight:700, fontSize:22
@@ -785,7 +804,7 @@ export default function StudentAssignment(){
             </div>
           )}
 
-          {/* Draw layer (disabled when no task) */}
+          {/* Draw layer */}
           <div style={{
               position:'absolute', inset:0, zIndex:10,
               pointerEvents: (hasTask && !handMode) ? 'auto' : 'none'
@@ -794,12 +813,14 @@ export default function StudentAssignment(){
               color={color} size={size} mode={handMode || !hasTask ? 'scroll' : 'draw'} tool={tool} />
           </div>
 
-          {/* LIVE eraser overlay (only when there is a task) */}
+          {/* LIVE eraser overlay */}
           <div
             style={{
               position:'absolute', inset:0, zIndex:20,
-              pointerEvents: eraserActive ? 'auto' : 'none',
-              cursor: eraserActive ? (tool === 'eraserObject' ? 'not-allowed' : 'crosshair') : 'default'
+              pointerEvents: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')) ? 'auto' : 'none',
+              cursor: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject'))
+                ? (tool === 'eraserObject' ? 'not-allowed' : 'crosshair')
+                : 'default'
             }}
             onPointerDown={onErasePointerDown}
             onPointerMove={onErasePointerMove}
@@ -809,7 +830,7 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      {/* Floating pager */}
+      {/* Pager */}
       <div
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
@@ -837,7 +858,7 @@ export default function StudentAssignment(){
         </button>
       </div>
 
-      {/* Floating toolbar */}
+      {/* Toolbar & toasts */}
       {Toolbar}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
 
