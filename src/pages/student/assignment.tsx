@@ -420,7 +420,7 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload as any)
+      window.removeEventListener('beforeunload', onBeforeunload as any)
     }
   }, [pageIndex, studentId])
 
@@ -617,7 +617,7 @@ export default function StudentAssignment(){
     }
   }, [studentId, pageIndex, rtAssignmentId])
 
-  /* ---------- LIVE: page channel for instant co-editing ---------- */
+  /* ---------- LIVE: page channel for instant co-editing (scoped by station) ---------- */
   useEffect(()=>{
     let cleanup: (()=>void)|null = null
     ;(async ()=>{
@@ -626,20 +626,25 @@ export default function StudentAssignment(){
 
       // swap previous
       try { liveChRef.current?.unsubscribe() } catch {}
-      const ch = supabase.channel(`page-live-${ids.page_id}`, { config: { broadcast: { self: false } } })
+      // NOTE: scope by assignment page *and* station/studentId
+      const ch = supabase.channel(`page-live-${ids.page_id}:${studentId}`, { config: { broadcast: { self: false } } })
 
-      // Peer finishes a stroke -> append it immediately
+      // Peer finishes a stroke -> append it immediately (only same station)
       ch.on('broadcast', { event: 'stroke-commit' }, (msg) => {
-        const { clientId, stroke } = (msg as any)?.payload || {}
-        if (!stroke || clientId === clientIdRef.current) return
+        const { clientId, stroke, station } = (msg as any)?.payload || {}
+        if (!stroke) return
+        if (station && station !== studentId) return
+        if (clientId === clientIdRef.current) return
         const cur = drawRef.current?.getStrokes() || { strokes: [] }
         drawRef.current?.loadStrokes({ strokes: [...(cur.strokes || []), stroke] })
       })
 
-      // Peer completes an erase gesture -> apply same transform
+      // Peer completes an erase gesture -> apply same transform (only same station)
       ch.on('broadcast', { event: 'erase-commit' }, (msg) => {
-        const { clientId, path, radius, mode } = (msg as any)?.payload || {}
-        if (!Array.isArray(path) || clientId === clientIdRef.current) return
+        const { clientId, path, radius, mode, station } = (msg as any)?.payload || {}
+        if (!Array.isArray(path)) return
+        if (station && station !== studentId) return
+        if (clientId === clientIdRef.current) return
         const cur = drawRef.current?.getStrokes() || { strokes: [] }
         const base = normalizeStrokes(cur)
         const trimmed = mode === 'object'
@@ -653,7 +658,7 @@ export default function StudentAssignment(){
       cleanup = ()=>{ try { ch.unsubscribe() } catch {} }
     })()
     return ()=>{ if (cleanup) cleanup() }
-  }, [pageIndex, rtAssignmentId])
+  }, [pageIndex, rtAssignmentId, studentId])
 
   /* ---------- LIVE eraser overlay (broadcast on commit) ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
@@ -723,7 +728,7 @@ export default function StudentAssignment(){
     // apply locally
     drawRef.current?.loadStrokes(final)
 
-    // broadcast the erase gesture so others update instantly
+    // broadcast the erase gesture so others update instantly (same station only)
     const ch = liveChRef.current
     if (ch && path.length >= 2) {
       ch.send({
@@ -731,6 +736,7 @@ export default function StudentAssignment(){
         event: 'erase-commit',
         payload: {
           clientId: clientIdRef.current,
+          station: studentId,                   // <— scope by station
           path,
           radius: dynamicRadius,
           mode: (tool === 'eraserObject') ? 'object' : 'soft'
@@ -872,14 +878,14 @@ export default function StudentAssignment(){
               size={size}
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
-              // broadcast stroke commits so peers see them immediately
+              // broadcast stroke commits so peers in SAME station see them immediately
               onStrokeCommit={(stroke)=>{
                 const ch = liveChRef.current
                 if (!ch || !stroke) return
                 ch.send({
                   type: 'broadcast',
                   event: 'stroke-commit',
-                  payload: { clientId: clientIdRef.current, stroke }
+                  payload: { clientId: clientIdRef.current, station: studentId, stroke }
                 })
               }}
             />
