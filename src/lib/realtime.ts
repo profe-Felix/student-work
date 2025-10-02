@@ -90,6 +90,13 @@ export function assignmentChannel(assignmentId: string) {
 export function inkChannel(assignmentId: string, pageId: string) {
   return supabase.channel(`ink:${assignmentId}:${pageId}`, { config: { broadcast: { ack: true } } })
 }
+// Add this helper (e.g., after inkChannel)
+function isRealtimeChannel(x: any): x is RealtimeChannel {
+  return !!x && typeof x === 'object'
+    && typeof x.subscribe === 'function'
+    && typeof x.send === 'function'
+    && typeof x.unsubscribe === 'function'
+}
 
 /** Helper: allow functions to accept either an assignmentId string OR a RealtimeChannel */
 type ChannelOrId = string | RealtimeChannel
@@ -273,18 +280,21 @@ export function subscribeToAssignment(assignmentId: string, handlers: Assignment
 /** ---------- NEW: Ink publish/subscribe helpers ---------- */
 // Publish using either a live ink channel or ids (assignmentId,pageId).
 // If you pass ids, this function will open, send, and close for you.
+// Replace your existing publishInk with this version
 export async function publishInk(
   inkChOrIds: RealtimeChannel | { assignmentId: string; pageId: string },
   update: InkUpdate
 ) {
   if (!update || !update.id || !update.tool) return
-  let ch: RealtimeChannel | null = null
+
+  let ch: RealtimeChannel | null
   let temporary = false
 
-  if ('subscribe' in inkChOrIds && typeof inkChOrIds.subscribe === 'function') {
-    ch = inkChOrIds as RealtimeChannel
+  if (isRealtimeChannel(inkChOrIds)) {
+    ch = inkChOrIds
   } else {
-    ch = inkChannel(inkChOrIds.assignmentId, inkChOrIds.pageId)
+    const { assignmentId, pageId } = inkChOrIds
+    ch = inkChannel(assignmentId, pageId)
     temporary = true
     await ch.subscribe()
   }
@@ -292,6 +302,7 @@ export async function publishInk(
   await ch.send({ type: 'broadcast', event: 'ink', payload: { ...update } })
   if (temporary) { void ch.unsubscribe() }
 }
+
 
 // Subscribe to an ink stream for a page. Caller should unsubscribe the channel returned.
 export function subscribeToInk(
