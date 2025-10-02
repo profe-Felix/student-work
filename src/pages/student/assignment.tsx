@@ -220,7 +220,7 @@ export default function StudentAssignment(){
           }
           setAutoFollow(!!p.autoFollow)
           setAllowedPages(p.allowedPages ?? null)
-          setFocusOn(!!p.focusOn)            // <<< NEW
+          setFocusOn(!!p.focusOn)
           setNavLocked(!!p.focusOn && !!p.lockNav)
         } else {
           setPageIndex(0)
@@ -242,7 +242,7 @@ export default function StudentAssignment(){
       const p = JSON.parse(raw) as TeacherPresenceState
       setAutoFollow(!!p.autoFollow)
       setAllowedPages(p.allowedPages ?? null)
-      setFocusOn(!!p.focusOn)                // <<< NEW
+      setFocusOn(!!p.focusOn)
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
@@ -497,7 +497,7 @@ export default function StudentAssignment(){
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
         setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)              // <<< NEW
+        setFocusOn(!!p.focusOn)
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
@@ -613,6 +613,11 @@ export default function StudentAssignment(){
     const current = drawRef.current?.getStrokes() as StrokesPayload | undefined
     if (!current || !Array.isArray(current.strokes)) return
 
+    // Helper to read a stroke's point count across different shapes (points | path)
+    const getLen = (s: any) =>
+      Array.isArray(s?.points) ? s.points.length :
+      Array.isArray(s?.path) ? s.path.length : 0
+
     if (tool === 'eraserObject') {
       const { kept, removedIds } = objectErase(current.strokes as any, path, ERASE_RADIUS)
       if (removedIds.length > 0) {
@@ -624,9 +629,12 @@ export default function StudentAssignment(){
       }
     } else { // 'eraser' soft trim
       const trimmed = softErase(current.strokes as any, path, ERASE_RADIUS)
-      // Only update if something changed
-      if (trimmed.length !== current.strokes.length ||
-          JSON.stringify(trimmed.map(s=>s.points.length)) !== JSON.stringify(current.strokes.map(s=>s.points.length))) {
+      // Only update if something actually changed
+      const changed =
+        trimmed.length !== current.strokes.length ||
+        trimmed.some((s, i) => getLen(s) !== getLen((current.strokes as any)[i]))
+
+      if (changed) {
         const next: StrokesPayload = { strokes: trimmed as any }
         drawRef.current?.loadStrokes(next)
         localDirty.current = true
