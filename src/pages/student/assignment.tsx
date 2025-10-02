@@ -2,13 +2,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
+import SaveStatus from '../../components/SaveStatus'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
-  createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
+  createSubmission, saveStrokes, saveAudio, loadLatestSubmission, ensureSubmissionId, saveDraftStrokes, getLatestDraftStrokes,
   listPages,
   supabase
 } from '../../lib/db'
+import { enqueue, drain } from '../../lib/outbox'
 import {
   subscribeToAssignment,
   type SetPagePayload,
@@ -32,6 +34,24 @@ const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
 
+
+/* ---------- Outbox: drain on start/online ---------- */
+useEffect(()=>{
+  const run = async (j:any)=>{
+    if (j.kind === 'save-strokes') {
+      const { submission_id, strokes_json } = j.payload || {}
+      if (submission_id && strokes_json) await saveStrokes(submission_id, strokes_json)
+    } else if (j.kind === 'save-audio') {
+      const { submission_id, blob } = j.payload || {}
+      if (submission_id && blob) await saveAudio(submission_id, blob)
+    }
+  }
+  const go = ()=>{ drain(run) }
+  go()
+  window.addEventListener('online', go)
+  const id = window.setInterval(go, 8000)
+  return ()=>{ window.removeEventListener('online', go); window.clearInterval(id) }
+}, [])
 /* ---------- Colors ---------- */
 const CRAYOLA_24 = [
   { name:'Red',hex:'#EE204D' },{ name:'Yellow',hex:'#FCE883' },
@@ -591,6 +611,15 @@ export default function StudentAssignment(){
         if (!data) return
         const s = JSON.stringify(data)
         if (s !== lastSerialized) {
+        // server draft upsert (best-effort)
+        (async()=>{
+          try {
+            if (rtAssignmentId && currIds.current?.page_id) {
+              const subId = await ensureSubmissionId(studentId, rtAssignmentId, currIds.current.page_id)
+              await saveDraftStrokes(subId, data)
+            }
+          } catch {}
+        })();
           saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
           lastSerialized = s
         }
@@ -661,7 +690,7 @@ export default function StudentAssignment(){
 
       // Strokes: always write full current timeline (append semantics)
       if (hasInk) {
-        await saveStrokes(submission_id, payload)
+        try { await saveStrokes(submission_id, payload) } catch (e) { await enqueue({ id: `strokes:${submission_id}:${Date.now()}`, kind: 'save-strokes', payload: { submission_id, strokes_json: payload } }); }
         localStorage.setItem(lastKey, encHash)
         saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
         lastAppliedServerHash.current = encHash
@@ -686,7 +715,7 @@ export default function StudentAssignment(){
         for (const t of audioTakes.current) allTakes.push(t)
 
         const merged = await mergeAudioTakesToWav(allTakes, captureZero)
-        await saveAudio(submission_id!, merged)
+        try { await saveAudio(submission_id!, merged) } catch (e) { await enqueue({ id: `audio:${submission_id}:${Date.now()}`, kind: 'save-audio', payload: { submission_id, blob: merged } }); }
       }
 
       clearDraft(studentId, assignmentKeyForCache, pageIndex)
@@ -752,7 +781,25 @@ export default function StudentAssignment(){
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  /* ---------- Realtime + polling (defensive) ---------- */
+  
+/* ---------- Attempt server draft restore if local missing ---------- */
+useEffect(()=>{
+  (async()=>{
+    try {
+      if (!rtAssignmentId || !studentId) return
+      const local = loadDraft(studentId, assignmentKeyForCache, pageIndex)
+      if (local && local.strokes) return
+      const pages = await listPages(rtAssignmentId)
+      const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+      if (!curr?.id) return
+      const serverDraft = await getLatestDraftStrokes(rtAssignmentId, curr.id, studentId)
+      if (serverDraft && drawRef.current && typeof drawRef.current.setStrokes === 'function') {
+        try { drawRef.current.setStrokes(serverDraft) } catch {}
+      }
+    } catch {}
+  })();
+}, [rtAssignmentId, pageIndex, studentId])
+/* ---------- Realtime + polling (defensive) ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
@@ -1059,15 +1106,18 @@ export default function StudentAssignment(){
 
           {/* Floating toolbar */}
           {Toolbar}
+          <div style={{position:'fixed', right:16, bottom:16, zIndex:20060, background:'#fff', padding:'6px 10px', borderRadius:10, boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+            <SaveStatus />
+          </div>
           {toast && <Toast text={toast.msg} kind={toast.kind} />}
 
           {/* Focus overlay */}
           {focusOn && (
             <div
               style={{
-                position:'fixed', inset:0, background:'rgba(0,0,0,0.6)',
-                backdropFilter:'blur(2px)', zIndex: 20050,
-                display:'grid', placeItems:'center', color:'#fff', fontSize:20, fontWeight:700
+                position:'fixed', left:0, top:0, right:0, height:44, zIndex:20050,
+                background:'#0a7', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center',
+                fontWeight:700, letterSpacing:0.2, boxShadow:'0 2px 10px rgba(0,0,0,0.2)'
               }}
             >
               Focus Mode — watch the teacher ✋
