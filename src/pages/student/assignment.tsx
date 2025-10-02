@@ -518,19 +518,54 @@ export default function StudentAssignment(){
   }
 
   // two-finger pan host
-  const scrollHostRef = useRef<HTMLDivElement|null>(null)
-  useEffect(()=>{
-    const host=scrollHostRef.current; if(!host) return
-    let pan=false, startY=0, startX=0, startT=0, startL=0
-    const onTS=(e:TouchEvent)=>{ if(e.touches.length>=2 && !handMode){ pan=true; const [t1,t2]=[e.touches[0],e.touches[1]]; startY=(t1.clientY+t2.clientY)/2; startX=(t1.clientX+t2.clientX)/2; startT=host.scrollTop; startL=host.scrollLeft } }
-    const onTM=(e:TouchEvent)=>{ if(pan && e.touches.length>=2){ e.preventDefault(); const [t1,t2]=[e.touches[0],e.touches[1]]; const y=(t1.clientY+t2.clientY)/2, x=(t1.clientX+t2.clientX)/2; host.scrollTop=startT-(y-startY); host.scrollLeft=startL-(x-startX) } }
-    const end=()=>{ pan=false }
-    host.addEventListener('touchstart',onTS,{passive:true,capture:true})
-    host.addEventListener('touchmove', onTM,{passive:false,capture:true})
-    host.addEventListener('touchend',  end,{passive:true,capture:true})
-    host.addEventListener('touchcancel',end,{passive:true,capture:true})
-    return ()=>{ host.removeEventListener('touchstart',onTS as any,true); host.removeEventListener('touchmove',onTM as any,true); host.removeEventListener('touchend',end as any,true); host.removeEventListener('touchcancel',end',{capture:true} as any) }
-  }, [handMode])
+const scrollHostRef = useRef<HTMLDivElement | null>(null)
+useEffect(() => {
+  const host = scrollHostRef.current
+  if (!host) return
+
+  let pan = false, startY = 0, startX = 0, startT = 0, startL = 0
+
+  const onTS = (e: TouchEvent) => {
+    if (e.touches.length >= 2 && !handMode) {
+      pan = true
+      const [t1, t2] = [e.touches[0], e.touches[1]]
+      startY = (t1.clientY + t2.clientY) / 2
+      startX = (t1.clientX + t2.clientX) / 2
+      startT = host.scrollTop
+      startL = host.scrollLeft
+    }
+  }
+
+  const onTM = (e: TouchEvent) => {
+    if (pan && e.touches.length >= 2) {
+      e.preventDefault()
+      const [t1, t2] = [e.touches[0], e.touches[1]]
+      const y = (t1.clientY + t2.clientY) / 2
+      const x = (t1.clientX + t2.clientX) / 2
+      host.scrollTop = startT - (y - startY)
+      host.scrollLeft = startL - (x - startX)
+    }
+  }
+
+  const end = () => { pan = false }
+
+  const addOpts = { passive: true, capture: true } as AddEventListenerOptions
+  const moveOpts = { passive: false, capture: true } as AddEventListenerOptions
+  const rmOpts = { capture: true } as EventListenerOptions
+
+  host.addEventListener('touchstart', onTS, addOpts)
+  host.addEventListener('touchmove', onTM, moveOpts)
+  host.addEventListener('touchend', end, addOpts)
+  host.addEventListener('touchcancel', end, addOpts)
+
+  return () => {
+    host.removeEventListener('touchstart', onTS, rmOpts)
+    host.removeEventListener('touchmove', onTM, rmOpts)
+    host.removeEventListener('touchend', end, rmOpts)
+    host.removeEventListener('touchcancel', end, rmOpts)
+  }
+}, [handMode])
+
 
   const flipToolbarSide = ()=> {
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
