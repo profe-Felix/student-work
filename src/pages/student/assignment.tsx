@@ -6,8 +6,9 @@ import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
-  // upsertAssignmentWithPage, // NO default assignment anymore
-  createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
+  // upsertAssignmentWithPage, // no default assignment
+  createSubmission, saveStrokes, saveAudio,
+  loadLatestSubmission, // kept for safety but we now merge all artifacts for realtime view
   listPages,
   supabase
 } from '../../lib/db'
@@ -25,11 +26,11 @@ import type { Pt } from '../../lib/geometry'
 import { objectErase, softErase } from '../../lib/erase'
 
 /** Constants */
-const assignmentTitle = 'Handwriting - Daily' // only used for legacy purge text
+const assignmentTitle = 'Handwriting - Daily' // only used by legacy cache purge
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
-const POLL_MS = 5000
-const ERASE_RADIUS_BASE = 10
+const POLL_MS = 4000   // keep a light defensive poll; realtime handles most updates
+const ERASE_RADIUS_BASE = 8
 
 /* ---------- Colors ---------- */
 const CRAYOLA_24 = [
@@ -57,7 +58,7 @@ const SKIN_TONES = [
 
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
-/* ---------- Keys & helpers (now namespaced by assignmentId + pageId) ---------- */
+/* ---------- Keys & helpers (namespaced by assignmentId + pageId) ---------- */
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
 const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
 
@@ -120,7 +121,7 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
-  // pdf path resolved from DB page row
+  // pdf path from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
 
   // PDF URL for PdfCanvas
@@ -189,7 +190,7 @@ export default function StudentAssignment(){
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
-  // >>> One-time purge of legacy local caches that used the static title
+  // One-time purge of legacy caches (static title)
   useEffect(() => {
     try {
       for (let i = localStorage.length - 1; i >= 0; i--) {
@@ -272,7 +273,7 @@ export default function StudentAssignment(){
     } catch {}
   }, [rtAssignmentId])
 
-  // Resolve assignment/page if the teacher assignment exists; otherwise nothing to do
+  // Resolve assignment/page if teacher assignment exists
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
     if (!rtAssignmentId) {
       currIds.current = {}
@@ -291,6 +292,55 @@ export default function StudentAssignment(){
     currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
     setPdfStoragePath(curr.pdf_path || '')
     return { assignment_id: rtAssignmentId, page_id: curr.id }
+  }
+
+  /* ---------- Helpers: merged, live page ink ---------- */
+
+  // Merge all artifacts(strokes) for page into one payload (union append)
+  const fetchMergedPageInk = async (page_id: string): Promise<StrokesPayload> => {
+    // Pull all strokes artifacts for this page
+    const { data, error } = await supabase
+      .from('artifacts')
+      .select('strokes_json, updated_at, kind')
+      .eq('page_id', page_id)
+      .eq('kind', 'strokes')
+      .order('updated_at', { ascending: true })
+      .limit(250)
+    if (error || !data) return { strokes: [] }
+
+    const merged: any[] = []
+    for (const row of data as any[]) {
+      const norm = normalizeStrokes(row?.strokes_json)
+      if (Array.isArray(norm.strokes)) merged.push(...norm.strokes)
+    }
+    return { strokes: merged }
+  }
+
+  const reloadFromServer = async ()=>{
+    if (!hasTask) return
+    if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 500)) return
+
+    try{
+      const ids = currIds.current
+      if (!ids.assignment_id || !ids.page_id) return
+
+      // New: merge all students’ artifacts so the page is shared
+      const merged = await fetchMergedPageInk(ids.page_id)
+      const hasInk = Array.isArray(merged?.strokes) && merged.strokes.length > 0
+      if (!hasInk && lastAppliedServerHash.current === '') return
+
+      const serverHash = await hashStrokes(merged)
+      if (serverHash === lastAppliedServerHash.current) return
+
+      // Only overwrite the canvas when the user isn't sketching right now
+      if (!localDirty.current) {
+        drawRef.current?.loadStrokes(merged)
+        const { assignmentUid, pageUid } = getCacheIds(ids.page_id)
+        saveSubmittedCache(studentId, assignmentUid, pageUid, merged)
+        lastAppliedServerHash.current = serverHash
+        lastLocalHash.current = serverHash
+      }
+    } catch {/* ignore */}
   }
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
@@ -327,36 +377,20 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
+        // Start by showing server merged ink so all see same board
         try {
-          const latest = await loadLatestSubmission(ids.assignment_id, ids.page_id, studentId)
-          if (!cancelled && latest) {
-            const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-            const norm = normalizeStrokes(strokes)
-            if (Array.isArray(norm.strokes) && norm.strokes.length > 0) {
-              const h = await hashStrokes(norm)
-              if (!localDirty.current) {
-                drawRef.current?.loadStrokes(norm)
-                lastAppliedServerHash.current = h
-                lastLocalHash.current = h
-              }
-            } else if (!draft?.strokes) {
-              const cached = loadSubmittedCache(studentId, assignmentUid, pageUid)
-              if (cached?.strokes) {
-                const normC = normalizeStrokes(cached.strokes)
-                drawRef.current?.loadStrokes(normC)
-                lastLocalHash.current = await hashStrokes(normC)
-              }
+          const merged = await fetchMergedPageInk(ids.page_id)
+          if (!cancelled && Array.isArray(merged.strokes)) {
+            const h = await hashStrokes(merged)
+            if (!localDirty.current) {
+              drawRef.current?.loadStrokes(merged)
+              lastAppliedServerHash.current = h
+              lastLocalHash.current = h
             }
           }
         } catch {/* ignore */}
       }catch(e){
         console.error('init load failed', e)
-        const { assignmentUid, pageUid } = getCacheIds(ids?.page_id)
-        const cached = loadSubmittedCache(studentId, assignmentUid, pageUid)
-        if (cached?.strokes) {
-          const norm = normalizeStrokes(cached.strokes)
-          try { drawRef.current?.loadStrokes(norm); lastLocalHash.current = await hashStrokes(norm) } catch {}
-        }
       }
     })()
 
@@ -380,7 +414,7 @@ export default function StudentAssignment(){
         }
       } catch {}
     }
-    id = window.setInterval(tick, 800)
+    id = window.setInterval(tick, 400)
     return ()=>{ if (id!=null) window.clearInterval(id) }
   }, [pageIndex, studentId])
 
@@ -460,9 +494,9 @@ export default function StudentAssignment(){
         audioBlob.current = null
       }
 
-      const ids2 = currIds.current
-      const uid2 = getCacheIds(ids2.page_id)
-      clearDraft(studentId, uid2.assignmentUid, uid2.pageUid)
+      // After saving, pull merged board so you immediately see everyone’s latest
+      try { await reloadFromServer() } catch {}
+      clearDraft(studentId, assignmentUid, pageUid)
       showToast('Saved!', 'ok', 1200)
       justSavedAt.current = Date.now()
     } catch (e:any){
@@ -523,73 +557,8 @@ export default function StudentAssignment(){
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  /* ---------- Realtime + polling (defensive) ---------- */
-
-  // subscribe to teacher broadcast once we know the assignment id
+  /* ---------- Realtime subscription + defensive polling ---------- */
   useEffect(() => {
-    if (!rtAssignmentId) return
-    const ch = subscribeToAssignment(rtAssignmentId, {
-      onSetPage: ({ pageIndex }: SetPagePayload) => {
-        teacherPageIndexRef.current = pageIndex
-        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
-      },
-      onFocus: ({ on, lockNav }: FocusPayload) => {
-        setFocusOn(!!on)
-        setNavLocked(!!on && !!lockNav)
-      },
-      onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
-        setAutoFollow(!!on)
-        setAllowedPages(allowedPages ?? null)
-        if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        if (on && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(teacherPageIndexRef.current)
-        }
-      },
-      onPresence: (p: TeacherPresenceState) => {
-        try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
-        setAutoFollow(!!p.autoFollow)
-        setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)
-        setNavLocked(!!p.focusOn && !!p.lockNav)
-        if (typeof p.teacherPageIndex === 'number') {
-          teacherPageIndexRef.current = p.teacherPageIndex
-          if (p.autoFollow) setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
-        }
-      }
-    })
-    return () => { try { ch?.unsubscribe?.() } catch {} }
-  }, [rtAssignmentId, autoFollow])
-
-  const reloadFromServer = async ()=>{
-    if (!hasTask) return
-    if (Date.now() - (justSavedAt.current || 0) < 1200) return
-    if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
-
-    try{
-      const ids = currIds.current
-      if (!ids.assignment_id || !ids.page_id) return
-
-      const latest = await loadLatestSubmission(ids.assignment_id!, ids.page_id!, studentId)
-      const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-      const normalized = normalizeStrokes(strokesPayload)
-
-      const hasServerInk = Array.isArray(normalized?.strokes) && normalized.strokes.length > 0
-      if (!hasServerInk) return
-
-      const serverHash = await hashStrokes(normalized)
-      if (serverHash === lastAppliedServerHash.current) return
-
-      if (!localDirty.current) {
-        drawRef.current?.loadStrokes(normalized)
-        const { assignmentUid, pageUid } = getCacheIds(ids.page_id)
-        saveSubmittedCache(studentId, assignmentUid, pageUid, normalized)
-        lastAppliedServerHash.current = serverHash
-        lastLocalHash.current = serverHash
-      }
-    } catch {/* ignore */}
-  }
-
-  useEffect(()=>{
     let cleanup: (()=>void)|null = null
     let pollId: number | null = null
     let mounted = true
@@ -599,11 +568,17 @@ export default function StudentAssignment(){
       if (!ids) return
 
       try{
-        const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
+        const ch = supabase.channel(`page-strokes-${ids.page_id}`)
           .on('postgres_changes', {
-            event: '*', schema: 'public', table: 'artifacts',
+            event: '*',
+            schema: 'public',
+            table: 'artifacts',
             filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
-          }, ()=> reloadFromServer())
+          }, async (_payload:any) => {
+            // Debounce if we just saved locally
+            if (Date.now() - (justSavedAt.current || 0) < 400) return
+            await reloadFromServer()
+          })
           .subscribe()
         cleanup = ()=> { try { ch.unsubscribe() } catch {} }
       }catch(e){
@@ -620,13 +595,13 @@ export default function StudentAssignment(){
     }
   }, [studentId, pageIndex, rtAssignmentId])
 
-  /* ---------- LIVE eraser overlay ---------- */
+  /* ---------- LIVE eraser overlay (real-time preview) ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
   const erasingRef = useRef(false)
   const erasePathRef = useRef<Pt[]>([])
   const eraseBaseRef = useRef<StrokesPayload>({ strokes: [] })
   const rafScheduled = useRef(false)
-  const dynamicRadius = Math.max(ERASE_RADIUS_BASE, Math.round(size * 0.9))
+  const dynamicRadius = Math.max(ERASE_RADIUS_BASE, Math.round(size * 0.8))
 
   const addPoint = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
