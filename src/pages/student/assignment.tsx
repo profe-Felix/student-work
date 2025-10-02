@@ -19,12 +19,19 @@ import {
   type TeacherPresenceState, // (type only; helps with cache shape)
 } from '../../lib/realtime'
 
+// >>> NEW: eraser utilities
+import type { Pt } from '../../lib/geometry'
+import { objectErase, softErase } from '../../lib/erase'
+
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily'
 const DEFAULT_PDF_STORAGE_PATH = 'pdfs/aprende-m2.pdf'
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
+
+// >>> NEW: tune this for mouse vs finger
+const ERASE_RADIUS = 18
 
 /* ---------- Colors ---------- */
 const CRAYOLA_24 = [
@@ -566,6 +573,69 @@ export default function StudentAssignment(){
     }
   }, [studentId, pageIndex, rtAssignmentId])
 
+  /* ---------- NEW: Eraser overlay logic ---------- */
+
+  // Only active when not in hand-mode and tool is an eraser
+  const eraserActive = !handMode && (tool === 'eraser' || tool === 'eraserObject')
+  const erasingRef = useRef(false)
+  const erasePathRef = useRef<Pt[]>([])
+
+  const addPoint = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    erasePathRef.current.push({ x, y, t: Date.now() })
+  }
+
+  const onErasePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!eraserActive) return
+    erasingRef.current = true
+    erasePathRef.current = []
+    try { (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId) } catch {}
+    addPoint(e)
+  }
+
+  const onErasePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!eraserActive || !erasingRef.current) return
+    addPoint(e)
+  }
+
+  const onErasePointerUp = async (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!erasingRef.current) return
+    erasingRef.current = false
+    addPoint(e)
+    const path = erasePathRef.current
+    erasePathRef.current = []
+
+    // Ignore taps or single-point paths
+    if (path.length < 2) return
+
+    const current = drawRef.current?.getStrokes() as StrokesPayload | undefined
+    if (!current || !Array.isArray(current.strokes)) return
+
+    if (tool === 'eraserObject') {
+      const { kept, removedIds } = objectErase(current.strokes as any, path, ERASE_RADIUS)
+      if (removedIds.length > 0) {
+        const next: StrokesPayload = { strokes: kept as any }
+        drawRef.current?.loadStrokes(next)
+        localDirty.current = true
+        try { lastLocalHash.current = await hashStrokes(next) } catch {}
+        saveDraft(studentId, assignmentTitle, pageIndex, next)
+      }
+    } else { // 'eraser' soft trim
+      const trimmed = softErase(current.strokes as any, path, ERASE_RADIUS)
+      // Only update if something changed
+      if (trimmed.length !== current.strokes.length ||
+          JSON.stringify(trimmed.map(s=>s.points.length)) !== JSON.stringify(current.strokes.map(s=>s.points.length))) {
+        const next: StrokesPayload = { strokes: trimmed as any }
+        drawRef.current?.loadStrokes(next)
+        localDirty.current = true
+        try { lastLocalHash.current = await hashStrokes(next) } catch {}
+        saveDraft(studentId, assignmentTitle, pageIndex, next)
+      }
+    }
+  }
+
   /* ---------- UI ---------- */
   const Toolbar = (
     <div
@@ -661,7 +731,7 @@ export default function StudentAssignment(){
       <div
         ref={scrollHostRef}
         style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-          touchAction: handMode ? 'auto' : 'none', /* NEW: allow native scroll when hand mode */
+          touchAction: handMode ? 'auto' : 'none', /* allow native scroll in hand mode */
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
@@ -669,13 +739,31 @@ export default function StudentAssignment(){
           <div style={{ position:'absolute', inset:0, zIndex:0 }}>
             <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
           </div>
+
+          {/* Draw layer */}
           <div style={{
               position:'absolute', inset:0, zIndex:10,
-              pointerEvents: handMode ? 'none' : 'auto' /* NEW: let touches pass through in hand mode */
+              pointerEvents: handMode ? 'none' : 'auto'
             }}>
             <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
               color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
           </div>
+
+          {/* >>> NEW: Transparent eraser overlay above DrawCanvas.
+                 Captures pointer when tool is eraser/object eraser, then rewrites strokes. */}
+          <div
+            style={{
+              position:'absolute', inset:0, zIndex:20,
+              // Only receive events while erasing; otherwise be transparent to pointer
+              pointerEvents: eraserActive ? 'auto' : 'none',
+              // Nice cursor hint
+              cursor: eraserActive ? (tool === 'eraserObject' ? 'not-allowed' : 'crosshair') : 'default'
+            }}
+            onPointerDown={onErasePointerDown}
+            onPointerMove={onErasePointerMove}
+            onPointerUp={onErasePointerUp}
+            onPointerCancel={onErasePointerUp}
+          />
         </div>
       </div>
 
