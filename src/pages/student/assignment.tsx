@@ -1,4 +1,5 @@
 //src/pages/student/assignment.tsx
+import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -613,14 +614,12 @@ export default function StudentAssignment(){
     const current = drawRef.current?.getStrokes() as StrokesPayload | undefined
     if (!current || !Array.isArray(current.strokes)) return
 
-    // Helper to read a stroke's point count across different shapes (points | path)
-    const getLen = (s: any) =>
-      Array.isArray(s?.points) ? s.points.length :
-      Array.isArray(s?.path) ? s.path.length : 0
+    // Helper to compare point counts for change detection (your strokes use `pts`)
+    const getLen = (s: any) => Array.isArray(s?.pts) ? s.pts.length : 0
 
     if (tool === 'eraserObject') {
-      const { kept, removedIds } = objectErase(current.strokes as any, path, ERASE_RADIUS)
-      if (removedIds.length > 0) {
+      const { kept, removedCount } = objectErase(current.strokes as any, path, ERASE_RADIUS)
+      if (removedCount > 0) {
         const next: StrokesPayload = { strokes: kept as any }
         drawRef.current?.loadStrokes(next)
         localDirty.current = true
