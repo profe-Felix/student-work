@@ -223,7 +223,7 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // LIVE: per-page channel for instant peer updates
+  // LIVE: per-page channel for instant peer updates (scoped by station/studentId)
   const clientIdRef = useRef<string>('c_' + Math.random().toString(36).slice(2))
   const liveChRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
@@ -420,7 +420,7 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeunload as any)
+      window.removeEventListener('beforeunload', onBeforeUnload as any)
     }
   }, [pageIndex, studentId])
 
@@ -626,7 +626,7 @@ export default function StudentAssignment(){
 
       // swap previous
       try { liveChRef.current?.unsubscribe() } catch {}
-      // NOTE: scope by assignment page *and* station/studentId
+      // scope by assignment page AND station/studentId
       const ch = supabase.channel(`page-live-${ids.page_id}:${studentId}`, { config: { broadcast: { self: false } } })
 
       // Peer finishes a stroke -> append it immediately (only same station)
@@ -736,7 +736,7 @@ export default function StudentAssignment(){
         event: 'erase-commit',
         payload: {
           clientId: clientIdRef.current,
-          station: studentId,                   // <— scope by station
+          station: studentId,                   // scope by station
           path,
           radius: dynamicRadius,
           mode: (tool === 'eraserObject') ? 'object' : 'soft'
