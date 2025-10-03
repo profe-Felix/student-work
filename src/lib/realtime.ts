@@ -35,19 +35,6 @@ export type TeacherPresenceState = {
   [k: string]: any;                 // tolerate unknown legacy fields
 };
 
-/** ---------- NEW: Live ink updates (pre-submission co-editing) ---------- */
-// Keep this type here to avoid importing from components/
-export type InkUpdate = {
-  id: string
-  color?: string
-  size?: number
-  tool: 'pen' | 'highlighter' | 'eraser' | 'eraserObject'
-  pts?: Array<{ x: number; y: number; t?: number }>
-  done?: boolean
-  // optional echo-guard field
-  from?: string
-}
-
 /** -------------------------------------------------------------------------------------------
  *  Global “class” channel (assignment-agnostic) used to hand students off to another assignment
  *  ----------------------------------------------------------------------------------------- */
@@ -84,18 +71,6 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
  *  ----------------------------------------------------------------------------------------- */
 export function assignmentChannel(assignmentId: string) {
   return supabase.channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: true } } })
-}
-
-/** ---------- NEW: Per-(assignment,page) ink channel ---------- */
-export function inkChannel(assignmentId: string, pageId: string) {
-  return supabase.channel(`ink:${assignmentId}:${pageId}`, { config: { broadcast: { ack: true } } })
-}
-// Add this helper (e.g., after inkChannel)
-function isRealtimeChannel(x: any): x is RealtimeChannel {
-  return !!x && typeof x === 'object'
-    && typeof x.subscribe === 'function'
-    && typeof x.send === 'function'
-    && typeof x.unsubscribe === 'function'
 }
 
 /** Helper: allow functions to accept either an assignmentId string OR a RealtimeChannel */
@@ -276,89 +251,3 @@ export function subscribeToAssignment(assignmentId: string, handlers: Assignment
 
   return ch
 }
-
-/** ---------- NEW: Ink publish/subscribe helpers ---------- */
-// Publish using either a live ink channel or ids (assignmentId,pageId).
-// If you pass ids, this function will open, send, and close for you.
-// Replace your existing publishInk with this version
-export async function publishInk(
-  inkChOrIds: RealtimeChannel | { assignmentId: string; pageId: string },
-  update: InkUpdate
-) {
-  if (!update || !update.id || !update.tool) return
-
-  let ch: RealtimeChannel | null
-  let temporary = false
-
-  if (isRealtimeChannel(inkChOrIds)) {
-    ch = inkChOrIds
-  } else {
-    const { assignmentId, pageId } = inkChOrIds
-    ch = inkChannel(assignmentId, pageId)
-    temporary = true
-    await ch.subscribe()
-  }
-
-  await ch.send({ type: 'broadcast', event: 'ink', payload: { ...update } })
-  if (temporary) { void ch.unsubscribe() }
-}
-
-
-// Subscribe to an ink stream for a page. Caller should unsubscribe the channel returned.
-export function subscribeToInk(
-  assignmentId: string,
-  pageId: string,
-  onUpdate: (u: InkUpdate) => void
-) {
-  const ch = inkChannel(assignmentId, pageId)
-    .on('broadcast', { event: 'ink' }, (msg: any) => {
-      const u = msg?.payload as InkUpdate
-      if (!u || !u.id || !u.tool) return
-      // allow empty pts if this is a terminal "done" update
-      if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
-      onUpdate(u)
-    })
-    .subscribe()
-  return ch
-}
-
-// --- Presence responder: teacher answers "hello" with a presence snapshot ---
-// Students broadcast {type:'broadcast', event:'hello'} on assignment:<id>.
-// Teacher listens here and replies with {event:'presence-snapshot', payload:<snapshot>}.
-export type PresenceSnapshot = {
-  autoFollow: boolean;
-  focusOn?: boolean;
-  lockNav?: boolean;
-  allowedPages?: number[] | null;
-  teacherPageIndex?: number;
-};
-
-export function teacherPresenceResponder(
-  assignmentId: string,
-  getSnapshot: () => PresenceSnapshot
-) {
-  const ch = assignmentChannel(assignmentId);
-
-  ch.on('broadcast', { event: 'hello' }, async () => {
-    try {
-      const snap = getSnapshot?.() ?? {
-        autoFollow: false,
-        focusOn: false,
-        lockNav: false,
-        allowedPages: null,
-        teacherPageIndex: 0,
-      };
-      await ch.send({
-        type: 'broadcast',
-        event: 'presence-snapshot',
-        payload: { ...snap, ts: Date.now() },
-      });
-    } catch {
-      // ignore errors; channel may be closing or snapshot unavailable
-    }
-  });
-
-  ch.subscribe();
-  return () => { void ch.unsubscribe(); };
-}
-

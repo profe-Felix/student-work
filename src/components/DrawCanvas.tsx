@@ -1,17 +1,14 @@
 import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 
-export type StrokePoint = { x: number; y: number }
+export type StrokePoint = { x: number; y: number; t?: number }
 export type Stroke = { color: string; size: number; tool: 'pen'|'highlighter'; pts: StrokePoint[] }
-export type StrokesPayload = { strokes: Stroke[] }
-
-/** Realtime delta payload */
-export type RemoteStrokeUpdate = {
-  id: string                 // stable id per in-progress stroke from a peer
-  color: string
-  size: number
-  tool: 'pen'|'highlighter'
-  pts: StrokePoint[]         // new points since last update (can be length 1+)
-  done?: boolean             // true when the peer lifted the pencil
+export type StrokesPayload = {
+  strokes: Stroke[]
+  canvasWidth?: number
+  canvasHeight?: number
+  timing?: {
+    capturePerf0Ms?: number  // perf time (ms) when first stroke on this page started
+  }
 }
 
 export type DrawCanvasHandle = {
@@ -19,31 +16,26 @@ export type DrawCanvasHandle = {
   loadStrokes: (data: StrokesPayload | null | undefined) => void
   clearStrokes: () => void
   undo: () => void
-  /** NEW: apply remote stroke deltas (from other students) */
-  applyRemote: (u: RemoteStrokeUpdate) => void
+  /** Rebase timing so future audio aligns to this exact perf timestamp (ms) */
+  markTimingZero: (ts?: number) => void
 }
 
-type Props = {
-  width:number; height:number
-  color:string; size:number
-  mode:'scroll'|'draw'
-  tool:'pen'|'highlighter'|'eraser'|'eraserObject'
-  /** NEW: broadcast local stroke deltas as user draws */
-  onStrokeUpdate?: (u: RemoteStrokeUpdate) => void
-}
 
 /* ---------- Type guards ---------- */
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
 function isPoint(v: unknown): v is StrokePoint {
-  return isRecord(v) && Number.isFinite((v as any).x) && Number.isFinite((v as any).y)
+  return isRecord(v)
+    && Number.isFinite((v as any).x)
+    && Number.isFinite((v as any).y)
+    && ((v as any).t == null || Number.isFinite((v as any).t))
 }
 function isStroke(v: unknown): v is Stroke {
   if (!isRecord(v)) return false
   const color = typeof v.color === 'string'
   const size  = Number.isFinite((v as any).size)
-  const tool  = v.tool === 'pen' || v.tool === 'highlighter'
+  const tool  = (v as any).tool === 'pen' || (v as any).tool === 'highlighter'
   const pts   = Array.isArray((v as any).pts) && (v as any).pts.every(isPoint)
   return color && size && tool && pts
 }
@@ -52,20 +44,30 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
     return { strokes: [] }
   }
   const raw = (input as any).strokes as unknown[]
-  const safe: Stroke[] = raw
-    .map((s) => {
-      if (isStroke(s)) return s
-      if (isRecord(s)) {
-        const color = typeof s.color === 'string' ? s.color as string : '#000000'
-        const size  = Number.isFinite((s as any).size) ? (s as any).size as number : 4
-        const tool  = (s as any).tool === 'highlighter' ? 'highlighter' : 'pen'
-        const pts   = Array.isArray((s as any).pts) ? (s as any).pts.filter(isPoint) : []
-        return { color, size, tool, pts }
-      }
-      return null
-    })
-    .filter((x): x is Stroke => !!x)
-  return { strokes: safe }
+
+  const mapped: Array<Stroke | null> = raw.map((s) => {
+    if (isStroke(s)) return s
+    if (isRecord(s)) {
+      const color = typeof s.color === 'string' ? (s.color as string) : '#000000'
+      const size  = Number.isFinite((s as any).size) ? (s as any).size as number : 4
+      const tool  = (s as any).tool === 'highlighter' ? 'highlighter' : 'pen'
+      const pts   = Array.isArray((s as any).pts) ? (s as any).pts.filter(isPoint) : []
+      return { color, size, tool, pts }
+    }
+    return null
+  })
+
+  const safe: Stroke[] = mapped.filter((s: Stroke | null): s is Stroke => s !== null)
+
+  const out: StrokesPayload = { strokes: safe }
+  if (Number.isFinite((input as any).canvasWidth))  out.canvasWidth  = (input as any).canvasWidth as number
+  if (Number.isFinite((input as any).canvasHeight)) out.canvasHeight = (input as any).canvasHeight as number
+  if (isRecord((input as any).timing)) {
+    const t = (input as any).timing as any
+    out.timing = {}
+    if (Number.isFinite(t.capturePerf0Ms)) out.timing.capturePerf0Ms = t.capturePerf0Ms
+  }
+  return out
 }
 
 /* ---------- Render helpers ---------- */
@@ -87,36 +89,37 @@ function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
   ctx.restore()
 }
 
-export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
-  { width, height, color, size, mode, tool, onStrokeUpdate },
+export default forwardRef(function DrawCanvas(
+  {
+    width, height,
+    color, size,
+    mode, // 'scroll' | 'draw'
+    tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'  (erasers not implemented here)
+  }:{
+    width:number; height:number
+    color:string; size:number
+    mode:'scroll'|'draw'
+    tool:'pen'|'highlighter'|'eraser'|'eraserObject'
+  },
   ref
 ){
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ctxRef    = useRef<CanvasRenderingContext2D|null>(null)
-
-  // Local finished strokes + in-progress local stroke
   const strokes   = useRef<Stroke[]>([])
   const current   = useRef<Stroke|null>(null)
 
-  // Realtime: in-progress strokes from peers (id -> stroke)
-  const remoteActive = useRef<Map<string, Stroke>>(new Map())
-  // Realtime: finished strokes from peers (kept lightweight)
-  const remoteFinished = useRef<Stroke[]>([])
+  // timing reference (first time we actually begin drawing on this page)
+  const capturePerf0Ms = useRef<number | null>(null)
 
-  // Pointer state for two-finger detection & pencil
+  // pointers
   const activePointers = useRef<Set<number>>(new Set())
   const drawingPointerId = useRef<number|null>(null)
-  const localStrokeId = useRef<string|null>(null) // id for broadcasting
 
   const redraw = ()=>{
     const ctx = ctxRef.current
     if (!ctx) return
     ctx.clearRect(0,0, ctx.canvas.width, ctx.canvas.height)
-
-    // Order: finished remote, finished local, active remote, active local
-    for (const s of remoteFinished.current) drawStroke(ctx, s)
     for (const s of strokes.current) drawStroke(ctx, s)
-    for (const s of remoteActive.current.values()) drawStroke(ctx, s)
     if (current.current) drawStroke(ctx, current.current)
   }
 
@@ -143,44 +146,58 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   }, [mode])
 
   useImperativeHandle(ref, () => ({
-    getStrokes: (): StrokesPayload => ({ strokes: strokes.current }),
+    getStrokes: (): StrokesPayload => ({
+      strokes: strokes.current,
+      canvasWidth: canvasRef.current?.width,
+      canvasHeight: canvasRef.current?.height,
+      timing: capturePerf0Ms.current != null ? { capturePerf0Ms: capturePerf0Ms.current } : undefined,
+    }),
     loadStrokes: (data: StrokesPayload | null | undefined): void => {
       const safe = normalize(data)
       strokes.current = safe.strokes
       current.current = null
-      // clear remote layers only when explicitly reloading base strokes
-      remoteActive.current.clear()
-      remoteFinished.current = []
+      if (safe.timing?.capturePerf0Ms != null) capturePerf0Ms.current = safe.timing.capturePerf0Ms
       redraw()
     },
     clearStrokes: (): void => {
       strokes.current = []
       current.current = null
-      remoteActive.current.clear()
-      remoteFinished.current = []
+      capturePerf0Ms.current = null
       redraw()
     },
     undo: (): void => {
       strokes.current.pop()
       redraw()
     },
-    applyRemote: (u) => {
-      // accumulate deltas into a single active stroke per remote id
-      let s = remoteActive.current.get(u.id)
-      if (!s) {
-        s = { color: u.color, size: u.size, tool: u.tool, pts: [] }
-        remoteActive.current.set(u.id, s)
+    /** Rebase all timestamps so a new audio recording can align to "now" */
+    markTimingZero: (ts?: number): void => {
+  const oldZero = capturePerf0Ms.current
+  const newZero = typeof ts === 'number' ? ts : performance.now()
+
+  // First time setting timing? just set and return
+  if (oldZero == null) {
+    capturePerf0Ms.current = newZero
+    redraw()
+    return
+  }
+
+  // Shift all existing points to preserve absolute time:
+  // oldAbs = oldZero + tOld  ⇒  keep oldAbs = newZero + tNew
+  // tNew = tOld + (oldZero - newZero)
+  const delta = oldZero - newZero
+  if (delta !== 0) {
+    for (const s of strokes.current) {
+      for (const p of s.pts) {
+        const tOld = typeof p.t === 'number' ? p.t : 0
+        const tNew = tOld + delta
+        p.t = Math.max(0, Math.round(tNew))
       }
-      if (Array.isArray(u.pts) && u.pts.length > 0) {
-        s.pts.push(...u.pts)
-      }
-      if (u.done) {
-        // move to finished list
-        remoteActive.current.delete(u.id)
-        if (s.pts.length > 1) remoteFinished.current.push(s)
-      }
-      redraw()
     }
+  }
+  capturePerf0Ms.current = newZero
+  redraw()
+}
+
   }))
 
   const getPos = (e: PointerEvent)=>{
@@ -195,66 +212,54 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
 
     const shouldDraw = (e: PointerEvent) => {
       if (mode !== 'draw') return false
-      if (e.pointerType === 'pen') return true // allow Apple Pencil even with palm
-      // fingers/mouse: draw only if a single non-pen pointer is down
+      if (e.pointerType === 'pen') return true
       return activePointers.current.size <= 1
     }
 
     const onPointerDown = (e: PointerEvent)=>{
       if (e.pointerType !== 'pen') activePointers.current.add(e.pointerId)
       if (!shouldDraw(e)) return
+
       drawingPointerId.current = e.pointerId
       c.setPointerCapture(e.pointerId)
+
+      if (capturePerf0Ms.current == null) capturePerf0Ms.current = performance.now()
+
+      const now = performance.now()
       const p = getPos(e)
-      const t: Stroke['tool'] = tool === 'highlighter' ? 'highlighter' : 'pen'
-      current.current = { color, size, tool: t, pts: [p] }
-      localStrokeId.current = `${Date.now()}-${Math.random().toString(36).slice(2)}-${e.pointerId}`
-      // broadcast initial point
-      onStrokeUpdate?.({
-        id: localStrokeId.current,
-        color, size, tool: t, pts: [p], done: false
-      })
+      const t = Math.max(0, Math.round(now - (capturePerf0Ms.current ?? now)))
+      current.current = {
+        color,
+        size,
+        tool: tool === 'highlighter' ? 'highlighter' : 'pen',
+        pts: [{ x: p.x, y: p.y, t }]
+      }
       redraw()
-      ;(e as any).preventDefault?.()
+      e.preventDefault?.()
     }
 
     const onPointerMove = (e: PointerEvent)=>{
       if (drawingPointerId.current !== e.pointerId) return
       if (!current.current) return
       if (!shouldDraw(e)) {
-        // stroke cancelled; finish what we have
         if (current.current.pts.length > 1) strokes.current.push(current.current)
-        onStrokeUpdate?.({
-          id: localStrokeId.current!, color, size,
-          tool: current.current.tool, pts: [], done: true
-        })
         current.current = null
-        localStrokeId.current = null
         drawingPointerId.current = null
         redraw()
         return
       }
+      const now = performance.now()
       const p = getPos(e)
-      current.current.pts.push(p)
-      // broadcast delta (single point)
-      onStrokeUpdate?.({
-        id: localStrokeId.current!, color, size,
-        tool: current.current.tool, pts: [p], done: false
-      })
+      const t = Math.max(0, Math.round(now - (capturePerf0Ms.current ?? now)))
+      current.current.pts.push({ x: p.x, y: p.y, t })
       redraw()
-      ;(e as any).preventDefault?.()
+      e.preventDefault?.()
     }
 
     const endStroke = ()=>{
       if (current.current) {
         if (current.current.pts.length > 1) strokes.current.push(current.current)
-        // notify completion
-        onStrokeUpdate?.({
-          id: localStrokeId.current!, color, size,
-          tool: current.current.tool, pts: [], done: true
-        })
         current.current = null
-        localStrokeId.current = null
         redraw()
       }
       drawingPointerId.current = null
@@ -271,20 +276,19 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       try { c.releasePointerCapture(e.pointerId) } catch {}
     }
 
-    c.addEventListener('pointerdown', onPointerDown as EventListener, { passive:false })
-    c.addEventListener('pointermove', onPointerMove as EventListener, { passive:false })
-    c.addEventListener('pointerup', onPointerUp as EventListener, { passive:true })
-    c.addEventListener('pointercancel', onPointerCancel as EventListener, { passive:true })
+    c.addEventListener('pointerdown', onPointerDown as unknown as EventListener, { passive:false })
+    c.addEventListener('pointermove', onPointerMove as unknown as EventListener, { passive:false })
+    c.addEventListener('pointerup', onPointerUp as unknown as EventListener, { passive:true })
+    c.addEventListener('pointercancel', onPointerCancel as unknown as EventListener, { passive:true })
     return ()=>{
-      c.removeEventListener('pointerdown', onPointerDown as EventListener)
-      c.removeEventListener('pointermove', onPointerMove as EventListener)
-      c.removeEventListener('pointerup', onPointerUp as EventListener)
-      c.removeEventListener('pointercancel', onPointerCancel as EventListener)
+      c.removeEventListener('pointerdown', onPointerDown as unknown as EventListener)
+      c.removeEventListener('pointermove', onPointerMove as unknown as EventListener)
+      c.removeEventListener('pointerup', onPointerUp as unknown as EventListener)
+      c.removeEventListener('pointercancel', onPointerCancel as unknown as EventListener)
       activePointers.current.clear()
       drawingPointerId.current = null
-      localStrokeId.current = null
     }
-  }, [mode, color, size, tool, onStrokeUpdate])
+  }, [mode, color, size, tool])
 
   return (
     <canvas
