@@ -7,7 +7,6 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import StudentAssignment from './pages/student/assignment'
 import Start from './pages/start'           // keep if you already have it
 import Teacher from './pages/teacher'       // NEW
-import SetupChecklist from './pages/SetupChecklist'
 
 // Base styles (optional)
 const appStyle: React.CSSProperties = {
@@ -24,7 +23,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/start" element={<Start />} />
           <Route path="/student/assignment" element={<StudentAssignment />} />
           <Route path="/teacher" element={<Teacher />} /> {/* NEW */}
-          <Route path="/setup" element={<SetupChecklist />} />
           <Route path="*" element={<Navigate to="/start" replace />} />
         </Routes>
       </HashRouter>
