@@ -86,19 +86,21 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
 }
 
 /* ---------- Render helpers ---------- */
+
 function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
   if (!s.pts || s.pts.length === 0) return
   ctx.save()
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
+  ctx.miterLimit = 2
   ctx.lineWidth = s.size
 
-  if (s.tool === 'eraser') {
+  if ((s as any).tool === 'eraser') {
     // Pixel eraser: punch holes
     ctx.globalCompositeOperation = 'destination-out'
     ctx.globalAlpha = 1
     ctx.strokeStyle = '#000' // color ignored in destination-out
-  } else if (s.tool === 'highlighter') {
+  } else if ((s as any).tool === 'highlighter') {
     ctx.globalCompositeOperation = 'source-over'
     ctx.globalAlpha = 0.35
     ctx.strokeStyle = s.color
@@ -108,15 +110,39 @@ function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
     ctx.strokeStyle = s.color
   }
 
-  ctx.beginPath()
-  for (let i = 0; i < s.pts.length; i++) {
-    const p = s.pts[i]
-    if (i === 0) ctx.moveTo(p.x, p.y)
-    else ctx.lineTo(p.x, p.y)
+  // Quadratic-curve smoothing: draw through midpoints
+  const pts = s.pts
+  if (pts.length === 1) {
+    // Render a dot for a single-point stroke
+    const p = pts[0]
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, Math.max(1, s.size * 0.5), 0, Math.PI * 2)
+    ctx.fillStyle = (ctx.globalCompositeOperation === 'destination-out') ? '#000' : s.color
+    if (ctx.globalCompositeOperation === 'destination-out') {
+      // For destination-out "dot", emulate by stroking a tiny circle
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, Math.max(1, s.size * 0.5), 0, Math.PI * 2)
+      ctx.stroke()
+    } else {
+      ctx.fill()
+    }
+    ctx.restore()
+    return
   }
+
+  ctx.beginPath()
+  ctx.moveTo(pts[0].x, pts[0].y)
+  for (let i = 1; i < pts.length - 1; i++) {
+    const midX = (pts[i].x + pts[i + 1].x) / 2
+    const midY = (pts[i].y + pts[i + 1].y) / 2
+    ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY)
+  }
+  // Last segment
+  ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y)
   ctx.stroke()
   ctx.restore()
 }
+
 
 /* ---------- Geometry for object-eraser hit test ---------- */
 function dist2(a: {x:number;y:number}, b: {x:number;y:number}) {
@@ -152,6 +178,18 @@ function strokeIntersectsSegment(stroke: Stroke, a:{x:number;y:number}, b:{x:num
     if (distToSegmentSq(a, v, w) <= thr2 || distToSegmentSq(b, v, w) <= thr2) return true
   }
   return false
+}
+
+
+function densify(a:{x:number;y:number}, b:{x:number;y:number}, maxStep:number, out:{x:number;y:number}[]) {
+  const dx = b.x - a.x, dy = b.y - a.y
+  const dist = Math.hypot(dx, dy)
+  if (dist <= maxStep) return
+  const steps = Math.floor(dist / maxStep)
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps
+    out.push({ x: a.x + dx * t, y: a.y + dy * t })
+  }
 }
 
 export default forwardRef(function DrawCanvas(
