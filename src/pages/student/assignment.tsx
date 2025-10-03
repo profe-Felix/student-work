@@ -793,8 +793,8 @@ useEffect(()=>{
       const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
       if (!curr?.id) return
       const serverDraft = await getLatestDraftStrokes(rtAssignmentId, curr.id, studentId)
-      if (serverDraft && drawRef.current && typeof drawRef.current.loadStrokes === 'function') {
-        try { drawRef.current.loadStrokes(serverDraft) } catch {}
+      if (serverDraft && drawRef.current && typeof drawRef.current.setStrokes === 'function') {
+        try { drawRef.current.setStrokes(serverDraft) } catch {}
       }
     } catch {}
   })();
