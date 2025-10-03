@@ -160,6 +160,7 @@ export default forwardRef(function DrawCanvas(
     color, size,
     mode, // 'scroll' | 'draw'
     tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'
+    onStrokeCommit,
     // LIVE STROKE ADD-ONLY (optional)
     onLiveStart,
     onLiveMove,
@@ -169,6 +170,7 @@ export default forwardRef(function DrawCanvas(
     color:string; size:number
     mode:'scroll'|'draw'
     tool:ToolKind
+    onStrokeCommit?: (s: Stroke) => void
     onLiveStart?: (meta: { color:string; size:number; tool:Stroke['tool']; first: StrokePoint }) => void
     onLiveMove?: (p: StrokePoint) => void
     onLiveEnd?: () => void
@@ -362,7 +364,7 @@ export default forwardRef(function DrawCanvas(
 
       // If a multi-touch gesture starts mid-stroke, end the stroke
       if (!shouldDraw(e)) {
-        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        if (current.current.pts.length > 1) { strokes.current.push(current.current); if (onStrokeCommit) onStrokeCommit(current.current); }
         if (onLiveEnd) onLiveEnd()
         current.current = null
         drawingPointerId.current = null
@@ -382,7 +384,7 @@ export default forwardRef(function DrawCanvas(
 
     const endStroke = ()=>{
       if (current.current) {
-        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        if (current.current.pts.length > 1) { strokes.current.push(current.current); if (onStrokeCommit) onStrokeCommit(current.current); }
         if (onLiveEnd) onLiveEnd()
         current.current = null
         redraw()

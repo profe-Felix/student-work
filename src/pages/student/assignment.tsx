@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
+import type { Stroke } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
@@ -928,7 +929,7 @@ useEffect(() => {
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
               // broadcast stroke commits so peers in SAME station see them immediately
-              onStrokeCommit={(stroke)=>{
+              onStrokeCommit={(stroke: Stroke) =>{
                 const ch = liveChRef.current
                 if (!ch || !stroke) return
                 ch.send({
@@ -946,7 +947,7 @@ useEffect(() => {
               position:'absolute', inset:0, zIndex:20,
               pointerEvents: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')) ? 'auto' : 'none',
               cursor: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject'))
-                ? (tool === 'eraserObject' ? 'not-allowed' : 'crosshair')
+                ? 'crosshair'
                 : 'default'
             }}
             onPointerDown={onErasePointerDown}
