@@ -160,13 +160,18 @@ export default forwardRef(function DrawCanvas(
     color, size,
     mode, // 'scroll' | 'draw'
     tool, // 'pen'|'highlighter'|'eraser'|'eraserObject'
-    onStrokeCommit,
+    // LIVE STROKE ADD-ONLY (optional)
+    onLiveStart,
+    onLiveMove,
+    onLiveEnd,
   }:{
     width:number; height:number
     color:string; size:number
     mode:'scroll'|'draw'
     tool:ToolKind
-    onStrokeCommit?: (s: Stroke) => void
+    onLiveStart?: (meta: { color:string; size:number; tool:Stroke['tool']; first: StrokePoint }) => void
+    onLiveMove?: (p: StrokePoint) => void
+    onLiveEnd?: () => void
   },
   ref
 ){
@@ -335,6 +340,7 @@ export default forwardRef(function DrawCanvas(
         tool: toolNow === 'highlighter' ? 'highlighter' : (toolNow === 'eraser' ? 'eraser' : 'pen'),
         pts: [{ x: p.x, y: p.y, t }]
       }
+      if (onLiveStart) onLiveStart({ color: current.current.color, size: current.current.size, tool: current.current.tool, first: current.current.pts[0] })
       redraw()
       e.preventDefault?.()
     }
@@ -356,7 +362,8 @@ export default forwardRef(function DrawCanvas(
 
       // If a multi-touch gesture starts mid-stroke, end the stroke
       if (!shouldDraw(e)) {
-        if (current.current.pts.length > 1) { strokes.current.push(current.current); if (onStrokeCommit) onStrokeCommit(current.current); }
+        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        if (onLiveEnd) onLiveEnd()
         current.current = null
         drawingPointerId.current = null
         redraw()
@@ -366,14 +373,17 @@ export default forwardRef(function DrawCanvas(
       const now = performance.now()
       const p = getPos(e)
       const t = Math.max(0, Math.round(now - (capturePerf0Ms.current ?? now)))
-      current.current.pts.push({ x: p.x, y: p.y, t })
+      const pt = { x: p.x, y: p.y, t }
+      current.current.pts.push(pt)
+      if (onLiveMove) onLiveMove(pt)
       redraw()
       e.preventDefault?.()
     }
 
     const endStroke = ()=>{
       if (current.current) {
-        if (current.current.pts.length > 1) { strokes.current.push(current.current); if (onStrokeCommit) onStrokeCommit(current.current); }
+        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        if (onLiveEnd) onLiveEnd()
         current.current = null
         redraw()
       }
@@ -414,7 +424,7 @@ export default forwardRef(function DrawCanvas(
       eraserObjectPointerId.current = null
       lastErasePos.current = null
     }
-  }, [mode, color, size, tool])
+  }, [mode, color, size, tool, onLiveStart, onLiveMove, onLiveEnd])
 
   return (
     <canvas
