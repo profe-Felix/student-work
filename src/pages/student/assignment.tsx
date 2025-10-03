@@ -1,11 +1,10 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
-  upsertAssignmentWithPage,
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   listPages,
   supabase
@@ -16,12 +15,19 @@ import {
   type FocusPayload,
   type AutoFollowPayload,
   subscribeToGlobal,
-  type TeacherPresenceState, // (type only; helps with cache shape)
+  type TeacherPresenceState,
 } from '../../lib/realtime'
+import { fetchLatestAssignmentWithFirstPage } from '../../lib/queries'
+
+// ---------- Extend DrawCanvas StrokesPayload just for runtime (allow audioOffsetMs) ----------
+type StrokesPayloadRT = StrokesPayload & {
+  timing?: {
+    capturePerf0Ms?: number
+    audioOffsetMs?: number
+  }
+}
 
 /** Constants */
-const assignmentTitle = 'Handwriting - Daily'
-const DEFAULT_PDF_STORAGE_PATH = 'pdfs/aprende-m2.pdf'
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
@@ -53,42 +59,46 @@ const SKIN_TONES = [
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
 /* ---------- Keys & helpers ---------- */
-const draftKey      = (student:string, assignment:string, page:number)=> `draft:${student}:${assignment}:${page}`
-const lastHashKey   = (student:string, assignment:string, page:number)=> `lastHash:${student}:${assignment}:${page}`
-const submittedKey  = (student:string, assignment:string, page:number)=> `submitted:${student}:${assignment}:${page}`
+const draftKey      = (student:string, assignmentId:string, page:number)=> `draft:${student}:${assignmentId}:${page}`
+const lastHashKey   = (student:string, assignmentId:string, page:number)=> `lastHash:${student}:${assignmentId}:${page}`
+const submittedKey  = (student:string, assignmentId:string, page:number)=> `submitted:${student}:${assignmentId}:${page}`
 
-// >>> NEW: cache keys (assignment handoff + presence snapshot)
+// cache keys (assignment handoff + presence snapshot)
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
 const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
 
-function normalizeStrokes(data: unknown): StrokesPayload {
+function normalizeStrokes(data: unknown): StrokesPayloadRT {
   if (!data || typeof data !== 'object') return { strokes: [] }
-  const arr = Array.isArray((data as any).strokes) ? (data as any).strokes : []
-  return { strokes: arr }
+  const obj = data as any
+  const arr = Array.isArray(obj.strokes) ? obj.strokes : []
+  const out: StrokesPayloadRT = { strokes: arr }
+
+  if (Number.isFinite(obj.canvasWidth))  out.canvasWidth  = obj.canvasWidth
+  if (Number.isFinite(obj.canvasHeight)) out.canvasHeight = obj.canvasHeight
+
+  if (obj.timing && typeof obj.timing === 'object') {
+    out.timing = {}
+    if (Number.isFinite(obj.timing.capturePerf0Ms)) out.timing.capturePerf0Ms = obj.timing.capturePerf0Ms
+    if (Number.isFinite(obj.timing.audioOffsetMs))  out.timing.audioOffsetMs  = obj.timing.audioOffsetMs
+  }
+  return out
 }
 
-function saveDraft(student:string, assignment:string, page:number, strokes:any){
-  try { localStorage.setItem(draftKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function saveDraft(student:string, assignmentId:string, page:number, strokes:any){
+  try { localStorage.setItem(draftKey(student, assignmentId, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
-function loadDraft(student:string, assignment:string, page:number){
-  try { const raw = localStorage.getItem(draftKey(student, assignment, page)); return raw ? JSON.parse(raw) : null } catch { return null }
+function loadDraft(student:string, assignmentId:string, page:number){
+  try { const raw = localStorage.getItem(draftKey(student, assignmentId, page)); return raw ? JSON.parse(raw) : null } catch { return null }
 }
-function clearDraft(student:string, assignment:string, page:number){
-  try { localStorage.removeItem(draftKey(student, assignment, page)) } catch {}
+function clearDraft(student:string, assignmentId:string, page:number){
+  try { localStorage.removeItem(draftKey(student, assignmentId, page)) } catch {}
 }
-function saveSubmittedCache(student:string, assignment:string, page:number, strokes:any){
-  try { localStorage.setItem(submittedKey(student, assignment, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function saveSubmittedCache(student:string, assignmentId:string, page:number, strokes:any){
+  try { localStorage.setItem(submittedKey(student, assignmentId, page), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
-function loadSubmittedCache(student:string, assignment:string, page:number){
-  try { const raw = localStorage.getItem(submittedKey(student, assignment, page)); return raw ? JSON.parse(raw) : null } catch { return null }
+function loadSubmittedCache(student:string, assignmentId:string, page:number){
+  try { const raw = localStorage.getItem(submittedKey(student, assignmentId, page)); return raw ? JSON.parse(raw) : null } catch { return null }
 }
-
-async function hashStrokes(strokes:any): Promise<string> {
-  const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
-  const buf = await crypto.subtle.digest('SHA-256', enc)
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
-}
-
 function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   return (
     <div style={{
@@ -101,6 +111,187 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
       {text}
     </div>
   )
+}
+
+async function hashStrokes(strokes:any): Promise<string> {
+  const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
+  const buf = await crypto.subtle.digest('SHA-256', enc)
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
+}
+
+/* ---------- Storage + prior audio helpers ---------- */
+function parseStoragePath(p: string){
+  let s = (p || '').replace(/^\/+/, '').replace(/^public\//, '')
+  const slash = s.indexOf('/')
+  if (slash < 0) return { bucket: s, key: '' }
+  return { bucket: s.slice(0, slash), key: s.slice(slash + 1) }
+}
+
+async function downloadBlobFromStoragePath(storage_path: string): Promise<Blob|null> {
+  if (!storage_path) return null
+  try {
+    const { bucket, key } = parseStoragePath(storage_path)
+    if (!bucket || !key) return null
+    const { data, error } = await supabase.storage.from(bucket).download(key)
+    if (error) return null
+    return data ?? null
+  } catch { return null }
+}
+
+type PrevAudioInfo = { blob: Blob|null; durationMs: number; capturePerf0Ms?: number }
+async function getPrevAudioInfo(
+  assignmentId: string,
+  pageId: string,
+  studentId: string
+): Promise<PrevAudioInfo>{
+  try{
+    const latest = await loadLatestSubmission(assignmentId, pageId, studentId)
+    if (!latest) return { blob: null, durationMs: 0 }
+
+    const strokesPayload = latest.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+    const capturePerf0Ms = strokesPayload?.timing?.capturePerf0Ms
+
+    const audioArt = latest.artifacts?.find((a:any)=>a.kind==='audio')
+    if (!audioArt?.storage_path) return { blob: null, durationMs: 0, capturePerf0Ms }
+
+    const blob = await downloadBlobFromStoragePath(audioArt.storage_path)
+    if (!blob) return { blob: null, durationMs: 0, capturePerf0Ms }
+
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext
+    const ctx = new AC()
+    const ab = await blob.arrayBuffer()
+    const buf: AudioBuffer = await ctx.decodeAudioData(ab.slice(0))
+    ctx.close?.()
+
+    return { blob, durationMs: Math.round(buf.duration * 1000), capturePerf0Ms }
+  } catch {
+    return { blob: null, durationMs: 0 }
+  }
+}
+
+/* ---------- Audio merging helpers (takes -> one WAV aligned to ink) ---------- */
+type AudioTake = { blob: Blob; startPerfMs: number }
+
+// Merge takes -> mono 44.1k WAV. Trim encoder padding but DO NOT change offsets.
+async function mergeAudioTakesToWav(
+  takes: AudioTake[],
+  capturePerf0Ms: number | undefined
+): Promise<Blob> {
+  if (!takes.length) throw new Error('No takes to merge')
+
+  const TARGET_RATE = 44100
+
+  // 1) Decode using a short-lived AudioContext
+  const AC = (window as any).AudioContext || (window as any).webkitAudioContext
+  const probeCtx = new AC()
+
+  const decoded = await Promise.all(
+    takes.map(async (t) => {
+      const ab = await t.blob.arrayBuffer()
+      const buf: AudioBuffer = await probeCtx.decodeAudioData(ab.slice(0))
+      let offsetSec = ((t.startPerfMs ?? 0) - (capturePerf0Ms ?? 0)) / 1000
+      if (!Number.isFinite(offsetSec)) offsetSec = 0
+      return { buf, offsetSec }
+    })
+  )
+  probeCtx.close?.()
+
+  // 2) Downmix to mono
+  const toMono = (buf: AudioBuffer) => {
+    if (buf.numberOfChannels === 1) return buf
+    const out = new AudioBuffer({ length: buf.length, numberOfChannels: 1, sampleRate: buf.sampleRate })
+    const l = buf.getChannelData(0)
+    const r = buf.getChannelData(1)
+    const d = out.getChannelData(0)
+    const n = Math.min(l.length, r.length)
+    for (let i = 0; i < n; i++) d[i] = (l[i] + r[i]) * 0.5
+    return out
+  }
+  const mono = decoded.map(d => ({ buf: toMono(d.buf), offsetSec: d.offsetSec }))
+
+  // 3) Resample to 44.1k if needed
+  const OAC = (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext
+  const resampled = await Promise.all(mono.map(async ({ buf, offsetSec }) => {
+    if (buf.sampleRate === TARGET_RATE) return { buf, offsetSec }
+    const length = Math.ceil(buf.duration * TARGET_RATE)
+    const oc = new OAC(1, length, TARGET_RATE)
+    const src = oc.createBufferSource()
+    src.buffer = buf
+    src.connect(oc.destination)
+    src.start(0)
+    const rendered: AudioBuffer = await oc.startRendering()
+    return { buf: rendered, offsetSec }
+  }))
+
+  // 4) Trim encoder padding BUT keep offset the same
+  const TRIM_THRESH = 0.01
+  const MAX_TRIM_SEC = 0.3
+  const trimmed = resampled.map(({ buf, offsetSec }) => {
+    const data = buf.getChannelData(0)
+    const maxTrim = Math.min(data.length, Math.floor(MAX_TRIM_SEC * buf.sampleRate))
+    let lead = 0
+    while (lead < maxTrim && Math.abs(data[lead]) < TRIM_THRESH) lead++
+    const view = data.subarray(lead)
+    return { data: view, offsetSec }
+  })
+
+  // 5) Determine output length
+  let totalSec = 0
+  for (const t of trimmed) {
+    const dur = t.data.length / TARGET_RATE
+    totalSec = Math.max(totalSec, t.offsetSec + dur)
+  }
+  const totalLen = Math.max(1, Math.ceil(totalSec * TARGET_RATE))
+  const mix = new Float32Array(totalLen)
+
+  // 6) Mix
+  const HEADROOM = 0.85
+  for (const t of trimmed) {
+    let start = Math.round(t.offsetSec * TARGET_RATE)
+    let src = t.data
+    if (start < 0) {
+      const drop = Math.min(src.length, -start)
+      src = src.subarray(drop)
+      start = 0
+    }
+    for (let i = 0; i < src.length; i++) {
+      const j = start + i
+      if (j < mix.length) mix[j] += src[i] * HEADROOM
+    }
+  }
+
+  // 7) Encode WAV
+  return encodeWavMono16(mix, TARGET_RATE)
+}
+
+// Minimal PCM WAV encoder (mono, 16-bit)
+function encodeWavMono16(samples: Float32Array, sampleRate: number): Blob {
+  const pcm = new Int16Array(samples.length)
+  for (let i = 0; i < samples.length; i++) {
+    let s = Math.max(-1, Math.min(1, samples[i]))
+    pcm[i] = (s * 0x7fff) | 0
+  }
+
+  const bytesPerSample = 2
+  const blockAlign = 1 * bytesPerSample
+  const byteRate = sampleRate * blockAlign
+  const dataSize = pcm.length * bytesPerSample
+  const buffer = new ArrayBuffer(44 + dataSize)
+  const view = new DataView(buffer)
+
+  let off = 0
+  const writeStr = (s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off++, s.charCodeAt(i)) }
+  const writeU32 = (v: number) => { view.setUint32(off, v, true); off += 4 }
+  const writeU16 = (v: number) => { view.setUint16(off, v, true); off += 2 }
+
+  writeStr('RIFF'); writeU32(36 + dataSize); writeStr('WAVE')
+  writeStr('fmt '); writeU32(16); writeU16(1)
+  writeU16(1)
+  writeU32(sampleRate); writeU32(byteRate)
+  writeU16(blockAlign); writeU16(16)
+  writeStr('data'); writeU32(dataSize)
+  new Uint8Array(buffer, 44).set(new Uint8Array(pcm.buffer))
+  return new Blob([buffer], { type: 'audio/wav' })
 }
 
 export default function StudentAssignment(){
@@ -154,7 +345,15 @@ export default function StudentAssignment(){
 
   const drawRef = useRef<DrawCanvasHandle>(null)
   const audioRef = useRef<AudioRecorderHandle>(null)
-  const audioBlob = useRef<Blob|null>(null)
+
+  // --- Multi-take audio (per page) ---
+  const audioTakes = useRef<AudioTake[]>([]) // all takes for this page
+  const [recordMode, setRecordMode] = useState<'append'|'replace'>('append')
+  const audioBlob = useRef<Blob|null>(null)  // optional: last blob (for previews, etc.)
+  const pendingTakeStart = useRef<number|null>(null) // start ts from onStart(ts)
+
+  // IMPORTANT: timing origin for this page (same clock as startPerfMs)
+  const timingZeroRef = useRef<number | null>(null)
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
@@ -176,10 +375,13 @@ export default function StudentAssignment(){
   // assignment/page cache for realtime filter
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
-  // >>> Persist assignment id so refresh stays on the teacher’s assignment
+  // Persist assignment id so refresh stays on the teacher’s assignment
   const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
+
+  // derive a key to scope local caches, even when not yet connected
+  const assignmentKeyForCache = rtAssignmentId || 'none'
 
   // Realtime teacher controls
   const [focusOn, setFocusOn] = useState(false)
@@ -195,38 +397,82 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // assignment handoff listener (teacher broadcast)
+  // --------- Boot: pick the latest assignment + first page (or nothing) ---------
+  useEffect(() => {
+    // If we already know the assignment (e.g., from teacher broadcast cache), don't overwrite with "latest".
+    if (rtAssignmentId) return;
+
+    let alive = true
+    ;(async () => {
+      try {
+        const { assignment, page } = await fetchLatestAssignmentWithFirstPage()
+        if (!alive) return
+        if (!assignment || !page) {
+          try { localStorage.removeItem(ASSIGNMENT_CACHE_KEY) } catch {}
+          setRtAssignmentId('')
+          setPdfStoragePath('')
+          setPageIndex(0)
+          currIds.current = {}
+          return
+        }
+        setRtAssignmentId(assignment.id)
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignment.id) } catch {}
+        setPageIndex(page.page_index ?? 0)
+
+        const pages = await listPages(assignment.id)
+        const first = (pages || []).find((p:any) => (p.page_index ?? 0) === (page.page_index ?? 0)) || (pages || [])[0]
+        setPdfStoragePath(first?.pdf_path || '')
+        currIds.current = { assignment_id: assignment.id, page_id: first?.id }
+      } catch (e) {
+        console.error('initial latest assignment load failed', e)
+        try { localStorage.removeItem(ASSIGNMENT_CACHE_KEY) } catch {}
+        setRtAssignmentId('')
+        setPdfStoragePath('')
+        setPageIndex(0)
+        currIds.current = {}
+      }
+    })()
+    return () => { alive = false }
+  }, [rtAssignmentId])
+
+  // Teacher chooses a different assignment globally → follow it
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      // On assignment switch, try to snap to teacher’s last page if we have presence cached
+
       try {
         const raw = localStorage.getItem(presenceKey(nextAssignmentId))
         if (raw) {
           const p = JSON.parse(raw) as TeacherPresenceState
+          setAutoFollow(!!p.autoFollow)
+          setAllowedPages(p.allowedPages ?? null)
+          setFocusOn(!!p.focusOn)
+          setNavLocked(!!p.focusOn && !!p.lockNav)
           if (typeof p.teacherPageIndex === 'number') {
             teacherPageIndexRef.current = p.teacherPageIndex
             setPageIndex(p.teacherPageIndex)
           } else {
             setPageIndex(0)
           }
-          setAutoFollow(!!p.autoFollow)
-          setAllowedPages(p.allowedPages ?? null)
-          setFocusOn(!!p.focusOn)            // <<< NEW
-          setNavLocked(!!p.focusOn && !!p.lockNav)
         } else {
           setPageIndex(0)
         }
       } catch {
         setPageIndex(0)
       }
+
+      // reset page-local audio/capture state
+      audioTakes.current = []
+      audioBlob.current = null
+      pendingTakeStart.current = null
+      timingZeroRef.current = null
       currIds.current = {}
     })
     return off
   }, [])
 
-  // >>> When we know which assignment to use (including on refresh), hydrate presence from cache
+  // On assignment known, hydrate presence/page from cache on refresh (keeps "sync to me" after reload)
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
@@ -235,45 +481,32 @@ export default function StudentAssignment(){
       const p = JSON.parse(raw) as TeacherPresenceState
       setAutoFollow(!!p.autoFollow)
       setAllowedPages(p.allowedPages ?? null)
-      setFocusOn(!!p.focusOn)                // <<< NEW
+      setFocusOn(!!p.focusOn)
       setNavLocked(!!p.focusOn && !!p.lockNav)
-      if (typeof p.teacherPageIndex === 'number') {
+      if (p.autoFollow && typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        setPageIndex(p.teacherPageIndex) // snap immediately on refresh
+        setPageIndex(p.teacherPageIndex)
       }
     } catch {}
   }, [rtAssignmentId])
-
-  // Resolve assignment/page depending on whether we have a teacher-provided assignment
-  async function ensureIds(): Promise<{ assignment_id: string, page_id: string }> {
-    if (rtAssignmentId) {
-      const pages = await listPages(rtAssignmentId)
-      const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
-      if (!curr) throw new Error('No pages available for assignment')
-      currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
-      setPdfStoragePath(curr.pdf_path || '')
-      return { assignment_id: rtAssignmentId, page_id: curr.id }
-    }
-    // Fallback boot path (your original upsert)
-    const ids = await upsertAssignmentWithPage(assignmentTitle, DEFAULT_PDF_STORAGE_PATH, pageIndex)
-    currIds.current = ids
-    if (!rtAssignmentId && ids.assignment_id) setRtAssignmentId(ids.assignment_id!)
-    try {
-      const pages = await listPages(ids.assignment_id!)
-      const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
-      setPdfStoragePath(curr?.pdf_path || DEFAULT_PDF_STORAGE_PATH)
-    } catch {}
-    return ids as { assignment_id: string, page_id: string }
-  }
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
     let cancelled=false
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
+    audioTakes.current = []
+    audioBlob.current = null
+    pendingTakeStart.current = null
+    timingZeroRef.current = null
 
     ;(async ()=>{
       try{
-        const draft = loadDraft(studentId, assignmentTitle, pageIndex)
+        if (!rtAssignmentId) {
+          lastLocalHash.current = ''
+          return
+        }
+
+        const draft = loadDraft(studentId, assignmentKeyForCache, pageIndex)
         if (draft?.strokes) {
           try { drawRef.current?.loadStrokes(normalizeStrokes(draft.strokes)) } catch {}
           try { lastLocalHash.current = await hashStrokes(normalizeStrokes(draft.strokes)) } catch {}
@@ -281,11 +514,18 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
         }
 
-        const { assignment_id, page_id } = await ensureIds()
-        if (!rtAssignmentId && assignment_id) setRtAssignmentId(assignment_id!)
+        const pages = await listPages(rtAssignmentId)
+        const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+        if (!curr) {
+          currIds.current = { assignment_id: rtAssignmentId, page_id: undefined }
+          setPdfStoragePath('')
+          return
+        }
+        currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
+        setPdfStoragePath(curr?.pdf_path || '')
 
         try {
-          const latest = await loadLatestSubmission(assignment_id, page_id, studentId)
+          const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
           if (!cancelled && latest) {
             const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
             const norm = normalizeStrokes(strokes)
@@ -297,7 +537,7 @@ export default function StudentAssignment(){
                 lastLocalHash.current = h
               }
             } else if (!draft?.strokes) {
-              const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+              const cached = loadSubmittedCache(studentId, assignmentKeyForCache, pageIndex)
               if (cached?.strokes) {
                 const normC = normalizeStrokes(cached.strokes)
                 drawRef.current?.loadStrokes(normC)
@@ -308,7 +548,7 @@ export default function StudentAssignment(){
         } catch {/* ignore */}
       }catch(e){
         console.error('init load failed', e)
-        const cached = loadSubmittedCache(studentId, assignmentTitle, pageIndex)
+        const cached = loadSubmittedCache(studentId, assignmentKeyForCache, pageIndex)
         if (cached?.strokes) {
           const norm = normalizeStrokes(cached.strokes)
           try { drawRef.current?.loadStrokes(norm); lastLocalHash.current = await hashStrokes(norm) } catch {}
@@ -331,13 +571,13 @@ export default function StudentAssignment(){
           localDirty.current = true
           dirtySince.current = Date.now()
           lastLocalHash.current = h
-          saveDraft(studentId, assignmentTitle, pageIndex, data)
+          if (rtAssignmentId) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
         }
       } catch {}
     }
     id = window.setInterval(tick, 800)
     return ()=>{ if (id!=null) window.clearInterval(id) }
-  }, [pageIndex, studentId])
+  }, [pageIndex, studentId, rtAssignmentId])
 
   /* ---------- Draft autosave (coarse) ---------- */
   useEffect(()=>{
@@ -346,72 +586,115 @@ export default function StudentAssignment(){
     let intervalId: number | null = null
     const tick = ()=>{
       try {
-        if (!running) return
+        if (!running || !rtAssignmentId) return
         const data = drawRef.current?.getStrokes()
         if (!data) return
         const s = JSON.stringify(data)
         if (s !== lastSerialized) {
-          saveDraft(studentId, assignmentTitle, pageIndex, data)
+          saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
           lastSerialized = s
         }
       } catch {}
     }
-    const start = ()=>{ if (intervalId==null){ intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) } }
+    const start = ()=>{ if (intervalId==null){ intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) as unknown as number } }
     const stop  = ()=>{ if (intervalId!=null){ window.clearInterval(intervalId); intervalId=null } }
     const onVis = ()=>{ running = !document.hidden; if (running) start(); else stop() }
     document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('beforeunload', ()=>{
+      try {
+        if (!rtAssignmentId) return
+        const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentKeyForCache, pageIndex, data)
+      } catch {}
+    })
     start()
-    const onBeforeUnload = ()=>{
-      try { const data = drawRef.current?.getStrokes(); if (data) saveDraft(studentId, assignmentTitle, pageIndex, data) } catch {}
-    }
-    window.addEventListener('beforeunload', onBeforeUnload)
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload)
+      window.removeEventListener('beforeunload', ()=>{})
     }
-  }, [pageIndex, studentId])
+  }, [pageIndex, studentId, rtAssignmentId])
 
-  /* ---------- Submit (dirty-check) + cache ---------- */
-  const submit = async ()=>{
+  /* ---------- Submit (append-only into a single canonical submission) ---------- */
+  const submit = async () => {
     if (submitInFlight.current) return
+    if (!rtAssignmentId) return
     submitInFlight.current = true
-    try{
+
+    try {
       setSaving(true)
-      const strokes = drawRef.current?.getStrokes() || { strokes: [] }
-      const hasInk   = Array.isArray(strokes?.strokes) && strokes.strokes.length > 0
-      const hasAudio = !!audioBlob.current
-      if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      const encHash = await hashStrokes(strokes)
-      const lastKey = lastHashKey(studentId, assignmentTitle, pageIndex)
+      // Build payload and normalize timing BEFORE hashing
+      const payload: StrokesPayloadRT =
+        (drawRef.current?.getStrokes() as StrokesPayloadRT) ||
+        { strokes: [], canvasWidth: canvasSize.w, canvasHeight: canvasSize.h }
+
+      payload.timing = payload.timing ? { ...payload.timing } : {}
+
+      if (payload.timing.capturePerf0Ms == null && timingZeroRef.current != null) {
+        payload.timing.capturePerf0Ms = timingZeroRef.current
+      }
+      if (payload.timing.audioOffsetMs == null) payload.timing.audioOffsetMs = 0
+
+      const hasInk = Array.isArray(payload?.strokes) && payload.strokes.length > 0
+      const hasAudioTakes = audioTakes.current.length > 0
+      if (!hasInk && !hasAudioTakes) { setSaving(false); submitInFlight.current = false; return }
+
+      // Hash AFTER timing fields are finalized (for local dedupe)
+      const encHash = await hashStrokes(payload)
+      const lastKey = lastHashKey(studentId, assignmentKeyForCache, pageIndex)
       const last = localStorage.getItem(lastKey)
-      if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
+      if (last && last === encHash && !hasAudioTakes) {
+        setSaving(false); submitInFlight.current = false; return
+      }
 
-      const ids = currIds.current.assignment_id ? (currIds.current as any) : await ensureIds()
-      currIds.current = ids
-      if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
+      // Resolve current page row
+      const pages = await listPages(rtAssignmentId)
+      const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+      if (!curr) throw new Error(`No page row for page_index=${pageIndex}`)
 
-      const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
+      // Single canonical submission: latest or create new
+      const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
+      let submission_id = latest?.submission?.id as string | undefined
+      if (!submission_id) {
+        submission_id = await createSubmission(studentId, rtAssignmentId, curr.id)
+      }
 
+      // Strokes: always write full current timeline (append semantics)
       if (hasInk) {
-        await saveStrokes(submission_id, strokes)
+        await saveStrokes(submission_id, payload)
         localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, strokes)
+        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, payload)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
         localDirty.current = false
       }
-      if (hasAudio) {
-        await saveAudio(submission_id, audioBlob.current!)
-        audioBlob.current = null
+
+      // Audio: merge any prior audio + all new takes, then save back to same submission
+      if (hasAudioTakes) {
+        // Use a stable capture zero (prefer strokes origin)
+        const captureZero =
+          payload.timing?.capturePerf0Ms ??
+          timingZeroRef.current ??
+          performance.now()
+
+        // Pull prior audio and include as first take at offset 0
+        const prior = await getPrevAudioInfo(rtAssignmentId, curr.id, studentId)
+        const allTakes: AudioTake[] = []
+        if (prior.blob) {
+          allTakes.push({ blob: prior.blob, startPerfMs: captureZero }) // offset 0
+        }
+        for (const t of audioTakes.current) allTakes.push(t)
+
+        const merged = await mergeAudioTakesToWav(allTakes, captureZero)
+        await saveAudio(submission_id!, merged)
       }
 
-      clearDraft(studentId, assignmentTitle, pageIndex)
+      clearDraft(studentId, assignmentKeyForCache, pageIndex)
       showToast('Saved!', 'ok', 1200)
       justSavedAt.current = Date.now()
-    } catch (e:any){
-      console.error(e); showToast('Save failed', 'err', 1800)
+    } catch (e:any) {
+      console.error(e)
+      showToast('Save failed', 'err', 1800)
     } finally {
       setSaving(false)
       submitInFlight.current = false
@@ -433,13 +716,19 @@ export default function StudentAssignment(){
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
     const hasInk   = Array.isArray(current.strokes) && current.strokes.length > 0
-    const hasAudio = !!audioBlob.current
+    const hasNewAudio = audioTakes.current.length > 0
 
-    if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasAudio)) {
-      try { await submit() } catch { try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {} }
+    if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasNewAudio)) {
+      try { await submit() } catch { try { if (rtAssignmentId) saveDraft(studentId, assignmentKeyForCache, pageIndex, current) } catch {} }
     } else {
-      try { saveDraft(studentId, assignmentTitle, pageIndex, current) } catch {}
+      try { if (rtAssignmentId) saveDraft(studentId, assignmentKeyForCache, pageIndex, current) } catch {}
     }
+
+    // reset page-local audio
+    audioTakes.current = []
+    audioBlob.current = null
+    pendingTakeStart.current = null
+    timingZeroRef.current = null
 
     setPageIndex(nextIndex)
   }
@@ -464,8 +753,6 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Realtime + polling (defensive) ---------- */
-
-  // subscribe to teacher broadcast once we know the assignment id
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
@@ -485,12 +772,11 @@ export default function StudentAssignment(){
           setPageIndex(teacherPageIndexRef.current)
         }
       },
-      // >>> NEW: listen for presence snapshots and cache/apply immediately
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         setAutoFollow(!!p.autoFollow)
         setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)              // <<< NEW
+        setFocusOn(!!p.focusOn)
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
@@ -502,17 +788,17 @@ export default function StudentAssignment(){
   }, [rtAssignmentId, autoFollow])
 
   const reloadFromServer = async ()=>{
+    if (!rtAssignmentId) return
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
     if (localDirty.current && (Date.now() - (dirtySince.current || 0) < 5000)) return
 
     try{
-      const { assignment_id, page_id } = currIds.current.assignment_id
-        ? currIds.current as any
-        : await ensureIds()
-      currIds.current = { assignment_id, page_id }
-      if (!rtAssignmentId) setRtAssignmentId(assignment_id!)
+      const pages = await listPages(rtAssignmentId)
+      const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+      if (!curr) return
+      currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
 
-      const latest = await loadLatestSubmission(assignment_id!, page_id!, studentId)
+      const latest = await loadLatestSubmission(rtAssignmentId, curr.id, studentId)
       const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
       const normalized = normalizeStrokes(strokesPayload)
 
@@ -524,7 +810,7 @@ export default function StudentAssignment(){
 
       if (!localDirty.current) {
         drawRef.current?.loadStrokes(normalized)
-        saveSubmittedCache(studentId, assignmentTitle, pageIndex, normalized)
+        saveSubmittedCache(studentId, assignmentKeyForCache, pageIndex, normalized)
         lastAppliedServerHash.current = serverHash
         lastLocalHash.current = serverHash
       }
@@ -532,22 +818,22 @@ export default function StudentAssignment(){
   }
 
   useEffect(()=>{
+    if (!rtAssignmentId) return
     let cleanup: (()=>void)|null = null
     let pollId: number | null = null
     let mounted = true
 
     ;(async ()=>{
       try{
-        const ids = currIds.current.assignment_id
-          ? currIds.current as any
-          : await ensureIds()
-        currIds.current = ids
-        if (!rtAssignmentId) setRtAssignmentId(ids.assignment_id!)
+        const pages = await listPages(rtAssignmentId)
+        const curr = (pages || []).find((p:any) => p.page_index === pageIndex)
+        if (!curr) return
+        currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
 
-        const ch = supabase.channel(`art-strokes-${studentId}-${ids.page_id}`)
+        const ch = supabase.channel(`art-strokes-${studentId}-${curr.id}`)
           .on('postgres_changes', {
             event: '*', schema: 'public', table: 'artifacts',
-            filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
+            filter: `page_id=eq.${curr.id},kind=eq.strokes`
           }, ()=> reloadFromServer())
           .subscribe()
 
@@ -571,7 +857,7 @@ export default function StudentAssignment(){
     <div
       style={{
         position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
-        zIndex:10010, width:120, maxHeight:'80vh',
+        zIndex:10010, width:150, maxHeight:'80vh',
         display:'flex', flexDirection:'column', gap:10,
         padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
         WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none', overflow:'hidden'
@@ -614,7 +900,25 @@ export default function StudentAssignment(){
           style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
       </div>
 
-      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
+      {/* Quick record mode + reset */}
+      <div style={{ display:'flex', gap:6 }}>
+        <button
+          onClick={() => setRecordMode(m => (m === 'append' ? 'replace' : 'append'))}
+          style={{ padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}
+          title="Toggle recording mode"
+        >
+          Mode: {recordMode === 'append' ? 'Append' : 'Replace'}
+        </button>
+        <button
+          onClick={() => { audioTakes.current = []; audioBlob.current = null; pendingTakeStart.current = null }}
+          style={{ padding:'6px 8px', border:'1px solid #ddd', borderRadius:8, background:'#fff' }}
+          title="Clear all audio for this page"
+        >
+          Reset Audio
+        </button>
+      </div>
+
+      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'34vh' }}>
         <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
           {CRAYOLA_24.map(c=>(
@@ -632,7 +936,39 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-        <AudioRecorder ref={audioRef} maxSec={180} onBlob={(b)=>{ audioBlob.current = b }} />
+        <AudioRecorder
+          ref={audioRef}
+          maxSec={180}
+          onStart={(_ts: number) => {
+            // small lead-in so audio is not clipped
+            const RECORDING_ZERO_BIAS_MS = 1600
+            const now = performance.now()
+
+            // If strokes already have a timing origin, reuse it to align audio.
+            // Otherwise, create one and rebase the canvas so future ink uses the same origin.
+            let t0 = (() => {
+              try {
+                const s = (drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms
+                return Number.isFinite(s as any) ? (s as number) : (now + RECORDING_ZERO_BIAS_MS)
+              } catch { return now + RECORDING_ZERO_BIAS_MS }
+            })()
+
+            if (!(drawRef.current?.getStrokes() as StrokesPayloadRT | undefined)?.timing?.capturePerf0Ms) {
+              try { (drawRef.current as any)?.markTimingZero?.(t0) } catch {}
+            }
+
+            timingZeroRef.current = t0
+            pendingTakeStart.current = now
+            if (recordMode === 'replace') audioTakes.current = []
+          }}
+          onBlob={(b: Blob) => {
+            const ts = pendingTakeStart.current ?? performance.now()
+            audioTakes.current.push({ blob: b, startPerfMs: ts })
+            audioBlob.current = b
+            pendingTakeStart.current = null
+          }}
+        />
+
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving}>
@@ -644,7 +980,7 @@ export default function StudentAssignment(){
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
-      ...(toolbarOnRight ? { paddingRight:130 } : { paddingLeft:130 }),
+      ...(toolbarOnRight ? { paddingRight:150 } : { paddingLeft:150 }),
       background:'#fafafa', WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none' }}>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
         <h2>Student Assignment</h2>
@@ -658,70 +994,86 @@ export default function StudentAssignment(){
         </div>
       </div>
 
-      <div
-        ref={scrollHostRef}
-        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-          touchAction: handMode ? 'auto' : 'none', /* NEW: allow native scroll when hand mode */
-          display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-          background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
-      >
-        <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
-          <div style={{ position:'absolute', inset:0, zIndex:0 }}>
-            <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
-          </div>
-          <div style={{
-              position:'absolute', inset:0, zIndex:10,
-              pointerEvents: handMode ? 'none' : 'auto' /* NEW: let touches pass through in hand mode */
-            }}>
-            <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
-              color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
+      {/* Empty state when there is no assignment yet */}
+      {!rtAssignmentId ? (
+        <div style={{
+          height:'calc(100vh - 160px)', display:'grid', placeItems:'center',
+          background:'#fff', border:'1px solid #eee', borderRadius:12, marginTop:12
+        }}>
+          <div style={{ textAlign:'center' }}>
+            <h3 style={{ margin:0 }}>No hay tareas todavía</h3>
+            <p style={{ marginTop:8, color:'#6b7280' }}>Cuando el maestro suba una tarea, aparecerá aquí automáticamente.</p>
           </div>
         </div>
-      </div>
+      ) : (
+        <>
+          <div
+            ref={scrollHostRef}
+            style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
+              touchAction: handMode ? 'auto' : 'none',
+              display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
+              background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
+          >
+            <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
+              <div style={{ position:'absolute', inset:0, zIndex:0 }}>
+                {/* If pdfUrl is empty (e.g., latest assignment but page not found), PdfCanvas will render nothing */}
+                <PdfCanvas url={pdfUrl ?? ''} pageIndex={pageIndex} onReady={onPdfReady} />
+              </div>
+              <div style={{
+                  position:'absolute', inset:0, zIndex:10,
+                  pointerEvents: handMode ? 'none' : 'auto'
+                }}>
+                <DrawCanvas ref={drawRef} width={canvasSize.w} height={canvasSize.h}
+                  color={color} size={size} mode={handMode ? 'scroll' : 'draw'} tool={tool} />
+              </div>
+            </div>
+          </div>
 
-      {/* Floating pager */}
-      <div
-        style={{
-          position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
-          zIndex: 10020, display:'flex', gap:10, alignItems:'center',
-          background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
-          boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
-        }}
-      >
-        <button
-          onClick={()=>goToPage(Math.max(0, pageIndex-1))}
-          disabled={saving || submitInFlight.current || navLocked || blockedBySync(Math.max(0, pageIndex-1))}
-          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
-        >
-          ◀ Prev
-        </button>
-        <span style={{ minWidth:90, textAlign:'center', fontWeight:600 }}>
-          Page {pageIndex+1}
-        </span>
-        <button
-          onClick={()=>goToPage(pageIndex+1)}
-          disabled={saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
-          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
-        >
-          Next ▶
-        </button>
-      </div>
+          {/* Floating pager */}
+          <div
+            style={{
+              position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
+              zIndex: 10020, display:'flex', gap:10, alignItems:'center',
+              background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
+              boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
+            }}
+          >
+            <button
+              onClick={()=>goToPage(Math.max(0, pageIndex-1))}
+              disabled={saving || submitInFlight.current || navLocked || blockedBySync(Math.max(0, pageIndex-1))}
+              style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+            >
+              ◀ Prev
+            </button>
+            <span style={{ minWidth:90, textAlign:'center', fontWeight:600 }}>
+              Page {pageIndex+1}
+            </span>
+            <button
+              onClick={()=>goToPage(pageIndex+1)}
+              disabled={saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
+              style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+            >
+              Next ▶
+            </button>
+          </div>
 
-      {/* Floating toolbar */}
-      {Toolbar}
-      {toast && <Toast text={toast.msg} kind={toast.kind} />}
+          {/* Floating toolbar */}
+          {Toolbar}
+          {toast && <Toast text={toast.msg} kind={toast.kind} />}
 
-      {/* Focus overlay */}
-      {focusOn && (
-        <div
-          style={{
-            position:'fixed', inset:0, background:'rgba(0,0,0,0.6)',
-            backdropFilter:'blur(2px)', zIndex: 20050,
-            display:'grid', placeItems:'center', color:'#fff', fontSize:20, fontWeight:700
-          }}
-        >
-          Focus Mode — watch the teacher ✋
-        </div>
+          {/* Focus overlay */}
+          {focusOn && (
+            <div
+              style={{
+                position:'fixed', inset:0, background:'rgba(0,0,0,0.6)',
+                backdropFilter:'blur(2px)', zIndex: 20050,
+                display:'grid', placeItems:'center', color:'#fff', fontSize:20, fontWeight:700
+              }}
+            >
+              Focus Mode — watch the teacher ✋
+            </div>
+          )}
+        </>
       )}
     </div>
   )
