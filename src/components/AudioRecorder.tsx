@@ -1,102 +1,69 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 
 export type AudioRecorderHandle = {
-  start: () => Promise<void>
-  stop: () => Promise<void>
-  getAudioMeta: () => { audioStartPerfMs?: number; durationMs?: number }
+  stop: () => void
+  reset: () => void
 }
 
-export default forwardRef(function AudioRecorder(
-  {
-    maxSec = 180,
-    onBlob,
-    onStart, // now passes the perf timestamp
-  }: {
-    maxSec?: number
-    onBlob: (blob: Blob) => void
-    onStart?: (ts: number) => void
-  },
-  ref
-) {
-  const mediaRecorder = useRef<MediaRecorder | null>(null)
-  const chunks = useRef<BlobPart[]>([])
+export default forwardRef<AudioRecorderHandle, {
+  maxSec: number
+  onBlob: (b:Blob)=>void
+}>(function AudioRecorder({ maxSec, onBlob }, ref){
+
+  const mediaRef = useRef<MediaRecorder|null>(null)
+  const chunksRef= useRef<BlobPart[]>([])
+  const timerRef = useRef<number|null>(null)
   const [recording, setRecording] = useState(false)
-  const timeoutId = useRef<number | null>(null)
+  const [sec, setSec] = useState(0)
 
-  // perf-clock start time & duration
-  const audioStartPerfMs = useRef<number | undefined>(undefined)
-  const audioDurationMs = useRef<number | undefined>(undefined)
-  const startedAt = useRef<number | undefined>(undefined)
+  useImperativeHandle(ref, ()=>({
+    stop(){ doStop() },
+    reset(){ setSec(0); setRecording(false); chunksRef.current=[] }
+  }), [])
 
-  async function start() {
+  useEffect(()=>()=>{ if(timerRef.current) window.clearInterval(timerRef.current) },[])
+
+  const doStart = async ()=>{
     if (recording) return
-
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    const rec = new MediaRecorder(stream)
-    mediaRecorder.current = rec
-    chunks.current = []
-
-    // capture perf timestamp we’ll use everywhere
-    const ts = performance.now()
-    startedAt.current = ts
-    audioStartPerfMs.current = ts
-
-    rec.ondataavailable = (e: any) => {
-      const data: Blob = (e as any).data
-      if (data && data.size > 0) chunks.current.push(data)
-    }
-
-    rec.onstop = () => {
-      try { stream.getTracks().forEach(t => t.stop()) } catch {}
-      const mime = rec.mimeType || 'audio/webm'
-      const blob = new Blob(chunks.current, { type: mime })
-      audioDurationMs.current = startedAt.current ? performance.now() - startedAt.current : undefined
+    const stream = await navigator.mediaDevices.getUserMedia({ audio:true })
+    const mr = new MediaRecorder(stream)
+    mediaRef.current = mr
+    chunksRef.current = []
+    mr.ondataavailable = (e)=>{ if(e.data && e.data.size) chunksRef.current.push(e.data) }
+    mr.onstop = ()=>{
+      const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
       onBlob(blob)
+      // stop tracks
+      stream.getTracks().forEach(t=>t.stop())
     }
-
-    rec.start()
-    setRecording(true)
-
-    // Notify caller with the exact perf timestamp we committed to
-    try { onStart?.(ts) } catch {}
-
-    if (timeoutId.current) clearTimeout(timeoutId.current)
-    timeoutId.current = window.setTimeout(() => { stop().catch(()=>{}) }, maxSec * 1000)
+    mr.start()
+    setRecording(true); setSec(0)
+    timerRef.current = window.setInterval(()=>{
+      setSec(s=>{
+        if (s+1 >= maxSec){ doStop() }
+        return s+1
+      })
+    }, 1000)
   }
 
-  async function stop() {
-    if (!recording) return
-    try { mediaRecorder.current?.stop() } catch {}
+  const doStop = ()=>{
+    if (timerRef.current){ window.clearInterval(timerRef.current); timerRef.current=null }
+    if (mediaRef.current && mediaRef.current.state !== 'inactive'){
+      mediaRef.current.stop()
+    }
     setRecording(false)
-    if (timeoutId.current) { clearTimeout(timeoutId.current); timeoutId.current = null }
   }
-
-  useImperativeHandle(ref, () => ({
-    start,
-    stop,
-    getAudioMeta: () => ({ audioStartPerfMs: audioStartPerfMs.current, durationMs: audioDurationMs.current })
-  }))
-
-  useEffect(() => {
-    return () => { if (timeoutId.current) clearTimeout(timeoutId.current) }
-  }, [])
 
   return (
-    <div style={{ display:'flex', gap:8 }}>
-      <button
-        onClick={() => start().catch(()=>{})}
-        disabled={recording}
-        style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}
-      >
-        {recording ? 'Recording…' : 'Record'}
+    <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+      <button onClick={recording? doStop : doStart}
+        style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #ddd',
+          background: recording ? '#ef4444' : '#f3f4f6', color: recording ? '#fff' : '#111' }}>
+        {recording ? 'Stop' : 'Record'}
       </button>
-      <button
-        onClick={() => stop().catch(()=>{})}
-        disabled={!recording}
-        style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}
-      >
-        Stop
-      </button>
+      <span style={{ fontVariantNumeric:'tabular-nums', minWidth:48, textAlign:'right' }}>
+        {Math.floor(sec/60)}:{String(sec%60).padStart(2,'0')}
+      </span>
     </div>
   )
 })
