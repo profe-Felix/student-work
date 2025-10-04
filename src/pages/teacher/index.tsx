@@ -365,7 +365,7 @@ const pageIndex = useMemo(
 
       {assignmentId && pageId && (
         <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
-          <TeacherSyncBar roomId={ROOM_ID} onSyncChange={(on)=>{ syncOnRef.current = !!on; }}
+          <TeacherSyncBar roomId={ROOM_ID} onSyncChange={(on: boolean) =>{ syncOnRef.current = !!on; }}
             assignmentId={assignmentId}
             pageId={pageId}
             pageIndex={pageIndex}
