@@ -1,3 +1,4 @@
+import React from 'react'
 //src/pages/student/assignment.tsx
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -11,15 +12,7 @@ import {
   listPages,
   supabase
 } from '../../lib/db'
-import {
-  subscribeToAssignment,
-  type SetPagePayload,
-  type FocusPayload,
-  type AutoFollowPayload,
-  subscribeToGlobal,
-  type TeacherPresenceState,
-  assignmentChannel,
-} from '../../lib/realtime'
+import { subscribeToAssignment, type SetPagePayload, type FocusPayload, type AutoFollowPayload, subscribeToGlobal, type TeacherPresenceState, assignmentChannel, globalChannel, studentGlobalHello } from '../../lib/realtime'
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
