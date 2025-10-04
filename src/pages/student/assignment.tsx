@@ -228,6 +228,7 @@ export default function StudentAssignment(){
   const [focusOn, setFocusOn] = useState(false)
   const [navLocked, setNavLocked] = useState(false)
   const [autoFollow, setAutoFollow] = useState(false)
+  const ROOM_ID = React.useMemo(() => { try { const hash = typeof window !== 'undefined' ? window.location.hash : ''; const qs = hash.includes('?') ? hash.split('?')[1] : (typeof window !== 'undefined' ? window.location.search.slice(1) : ''); const p = new URLSearchParams(qs || ''); const r = p.get('room') || sessionStorage.getItem('room') || 'default'; try { sessionStorage.setItem('room', r); } catch {} return r; } catch { return 'default'; } }, []);
   const autoFollowRef = useRef(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)

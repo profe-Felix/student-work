@@ -52,13 +52,13 @@ export type InkUpdate = {
 /** -------------------------------------------------------------------------------------------
  *  Global “class” channel (assignment-agnostic) used to hand students off to another assignment
  *  ----------------------------------------------------------------------------------------- */
-export function globalChannel() {
+export function globalChannel(roomId) {
   return supabase.channel('global-class', { config: { broadcast: { ack: true } } })
 }
 
 /** Teacher fires this when changing the assignment dropdown. */
 export async function publishSetAssignment(assignmentId: string) {
-  const ch = globalChannel()
+  const ch = globalChannel(roomId)
   await (ch as any)!.subscribe()
   await (ch as any)!.send({
     type: 'broadcast',
@@ -71,7 +71,7 @@ export async function publishSetAssignment(assignmentId: string) {
 
 /** Student bootstraps this once and will jump to any new assignmentId the teacher selects. */
 export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => void) {
-  const ch = globalChannel()
+  const ch = globalChannel(roomId)
     .on('broadcast', { event: 'set-assignment' }, (msg: any) => {
       const id = msg?.payload?.assignmentId
       if (typeof id === 'string' && id) onSetAssignment(id)
