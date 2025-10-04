@@ -380,6 +380,7 @@ const pageIndex = useMemo(
   }, [assignmentId]);
 
   
+
 // Answer assignment-level presence hellos with the latest presence (coerced)
 useEffect(() => {
   if (!assignmentId) return;
@@ -395,8 +396,8 @@ useEffect(() => {
     };
   };
 
-  const ch = teacherPresenceResponder(assignmentId, mkSnapshot);
-  return () => { try { ch.unsubscribe(); } catch {} };
+  const off = teacherPresenceResponder(assignmentId, mkSnapshot);
+  return () => { try { off(); } catch {} };
 }, [assignmentId]);
 
 
