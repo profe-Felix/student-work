@@ -80,11 +80,10 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
 }
 
 /** -------------------------------------------------------------------------------------------
+/** -------------------------------------------------------------------------------------------
  *  Per-assignment channels
  *  ----------------------------------------------------------------------------------------- */
 export const assignmentChannel = (assignmentId: string) => supabase.channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: true } } });
-`, { config: { broadcast: { ack: true } } })
-}
 
 /** ---------- NEW: Per-(assignment,page) ink channel ---------- */
 export function inkChannel(assignmentId: string, pageId: string) {
@@ -93,7 +92,7 @@ export function inkChannel(assignmentId: string, pageId: string) {
 // Add this helper (e.g., after inkChannel)
 function isRealtimeChannel(x: any): x is RealtimeChannel {
   return !!x && typeof x === 'object'
-    && typeof x.subscribe === 'function'
+}
     && typeof x.send === 'function'
     && typeof x.unsubscribe === 'function'
 }
