@@ -385,7 +385,7 @@ const pageIndex = useMemo(
 useEffect(() => {
   if (!assignmentId) return;
 
-  const mkSnapshot = (): PresenceSnapshot => {
+  const mkSnapshot = () => {
     const p: any = getLatestPresence() || {};
     return {
       autoFollow: !!p.autoFollow,
