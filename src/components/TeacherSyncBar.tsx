@@ -78,7 +78,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
   // When auto-follow is ON, rebroadcast current page on change (snappy)
   useEffect(() => {
     if (autoFollow && chRef.current && pageId) {
-      void publishSetPage(chRef.current, pageId, pageIndex);
+      void publishSetPage(chRef.current, pageId);
     }
   }, [autoFollow, pageId, pageIndex]);
 
@@ -102,7 +102,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     // broadcast for currently connected students
     await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
     if (next) {
-      await publishSetPage(chRef.current, pageId, pageIndex);
+      await publishSetPage(chRef.current, pageId);
     }
   }
 
@@ -117,7 +117,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
       focusOn: next,
       lockNav,
     });
-    await publishFocus(chRef.current, next, lockNav);
+    await publishFocus(chRef.current, { on: next, lockNav: lockNav });
   }
 
   return (
