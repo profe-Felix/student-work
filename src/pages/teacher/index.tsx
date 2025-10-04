@@ -380,7 +380,7 @@ export default function TeacherDashboard() {
       try {
         const p: any = getLatestPresence ? (getLatestPresence() || {}) : {};
         await setTeacherPresence(assignmentId, { autoFollow: true, allowedPages: null, teacherPageIndex: pageIndex, focusOn: false, lockNav: false });
-      } catch {}
+} catch {}
     })();
   }, [assignmentId, pageIndex]);
 return (
