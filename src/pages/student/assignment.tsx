@@ -21,6 +21,7 @@ import {
   subscribePresenceSnapshot,
   studentHello,
   type TeacherPresenceState,
+  assignmentChannel,
 } from '../../lib/realtime'
 function __getRoomId() {
   try {
