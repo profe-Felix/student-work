@@ -379,12 +379,26 @@ const pageIndex = useMemo(
     return () => { try { off?.(); } catch {} };
   }, [assignmentId]);
 
-  // Answer assignment-level presence hellos with the latest presence
-  useEffect(() => {
-    if (!assignmentId) return;
-    const ch = teacherPresenceResponder(assignmentId, () => getLatestPresence() || { autoFollow: false, teacherPageIndex: 0, allowedPages: null });
-    return () => { try { ch?.unsubscribe?.(); } catch {} };
-  }, [assignmentId]);
+  
+// Answer assignment-level presence hellos with the latest presence (coerced)
+useEffect(() => {
+  if (!assignmentId) return;
+
+  const mkSnapshot = (): PresenceSnapshot => {
+    const p: any = getLatestPresence() || {};
+    return {
+      autoFollow: !!p.autoFollow,
+      focusOn: !!p.focusOn,
+      lockNav: !!p.lockNav,
+      allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : (p.allowedPages ?? null),
+      teacherPageIndex: typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : 0,
+    };
+  };
+
+  const ch = teacherPresenceResponder(assignmentId, mkSnapshot);
+  return () => { try { ch.unsubscribe(); } catch {} };
+}, [assignmentId]);
+
 
   // Answer assignment-level presence hellos with the latest presence
   useEffect(() => {
