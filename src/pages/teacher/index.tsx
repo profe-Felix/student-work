@@ -1,3 +1,4 @@
+// src/pages/teacher/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   listAssignments,
@@ -13,11 +14,13 @@ import {
   publishSetAssignment,
   respondToAssignmentRequests,
   controlSetAssignment,
-  // presence + page broadcasting for late joiners
+  // NEW: presence + page broadcasting for late joiners
   publishSetPage,
   setTeacherPresence,
   teacherPresenceResponder,
   controlSetPage,
+  // 👇 NEW: import heartbeat sender
+  controlPresence,
 } from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
@@ -188,52 +191,98 @@ export default function TeacherDashboard() {
     refreshGrid.current('page change')
   }, [assignmentId, pageId])
 
-  // ===== Presence/page hydration for late joiners (PAGE-ONLY presence) =====
-  // 1) Answer "hello" with a snapshot that includes assignment/page/pdf (no focus/autoFollow flags)
+  // ===== NEW: advertise page + presence so late joiners snap correctly =====
+  // 1) Answer "hello" with a presence snapshot including the current pageIndex.
   useEffect(() => {
     if (!assignmentId) return
-    const off = teacherPresenceResponder(assignmentId, () => {
-      const curr = pages.find(p => p.id === pageId)
-      // Include required PresenceSnapshot fields + extra hydration fields.
-      return ({
-        autoFollow: false,
-        focusOn: false,
-        lockNav: false,
-        allowedPages: null,
-        teacherPageIndex: pageIndex,
-        // extra hydration fields for students:
-        assignmentId,
-        pageId,
-        pdfPath: curr?.pdf_path || undefined,
-      } as unknown) as import('../../lib/realtime').PresenceSnapshot
-    })
+    // Minimal snapshot: only teacherPageIndex; (autoFollow/focus/locks are handled in TeacherSyncBar)
+    const off = teacherPresenceResponder(assignmentId, () => ({
+      autoFollow: false,
+      focusOn: false,
+      lockNav: false,
+      allowedPages: null,
+      teacherPageIndex: pageIndex,
+    }))
     return off
-  }, [assignmentId, pageIndex, pageId, pages])
+  }, [assignmentId, pageIndex])
 
-  // 2) On page changes, broadcast set-page + control mirror + PAGE-ONLY presence
+  // 2) Whenever the page changes, broadcast set-page + control mirror + presence (page only) + immediate pulse
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
       try {
+        // Include pageId and pdfPath so students can render immediately.
         const curr = pages.find(p => p.id === pageId)
         const pdfPath = curr?.pdf_path || undefined
 
-        await publishSetPage(assignmentId, { pageIndex, pageId, pdfPath })
-        await controlSetPage({ pageIndex, pageId, pdfPath })
-
-        // PAGE-ONLY presence (no focus/autoFollow/lock flags to avoid flipping Focus)
-        await setTeacherPresence(assignmentId, {
-          assignmentId,
-          teacherPageIndex: pageIndex,
+        await publishSetPage(assignmentId, {
+          pageIndex,
           pageId,
           pdfPath,
+        })
+        await controlSetPage({
+          pageIndex,
+          pageId,
+          pdfPath,
+        })
+        await setTeacherPresence(assignmentId, {
+          teacherPageIndex: pageIndex,
+          autoFollow: false,
+          focusOn: false,
+          lockNav: false,
+          allowedPages: null,
+        })
+
+        // Immediate control presence pulse (helps late joiners hydrate instantly)
+        await controlPresence({
+          teacherAlive: true,
+          assignmentId,
+          pageId,
+          pageIndex,
+          pdfPath,
+          ts: Date.now(),
         })
       } catch (e) {
         console.warn('page/presence broadcast failed', e)
       }
     })()
   }, [assignmentId, pageIndex, pageId, pages])
-  // ===== END presence/page hydration =====
+  // ===== END NEW =====
+
+  // ===== NEW: heartbeat every 2.5s so students always see current state =====
+  const currentAssignment = useMemo(
+    () => assignments.find(a => a.id === assignmentId) || null,
+    [assignments, assignmentId]
+  )
+  const currentPage = useMemo(
+    () => pages.find(p => p.id === pageId) || null,
+    [pages, pageId]
+  )
+
+  useEffect(() => {
+    if (!assignmentId) return
+    let stopped = false
+
+    const tick = async () => {
+      try {
+        const pdfPath = currentPage?.pdf_path || undefined
+        await controlPresence({
+          teacherAlive: true,
+          assignmentId,
+          pageId,
+          pageIndex,
+          pdfPath,
+          ts: Date.now(),
+        })
+      } catch { /* ignore */ }
+    }
+
+    // first pulse quickly, then interval
+    tick()
+    const id = window.setInterval(() => { if (!stopped) tick() }, 2500)
+    return () => { stopped = true; window.clearInterval(id) }
+  }, [assignmentId, pageId, pageIndex, currentPage])
+  // ===== END heartbeat =====
 
   // realtime refreshers for teacher grid
   useEffect(() => {
@@ -326,15 +375,6 @@ export default function TeacherDashboard() {
       setPreviewLoadingSid(null)
     }
   }
-
-  const currentAssignment = useMemo(
-    () => assignments.find(a => a.id === assignmentId) || null,
-    [assignments, assignmentId]
-  )
-  const currentPage = useMemo(
-    () => pages.find(p => p.id === pageId) || null,
-    [pages, pageId]
-  )
 
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
