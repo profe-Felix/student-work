@@ -213,7 +213,7 @@ export default function StudentAssignment(){
   }, [])
 
   // ✅ Listen to global handoff (teacher dropdown)
-    useEffect(() => {
+  useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
@@ -243,7 +243,6 @@ export default function StudentAssignment(){
     })
     return off
   }, [])
-
 
   // ✅ EXTRA: mirror listener that behaves like live-strokes — plain channel
   // Teacher broadcasts (via their page) to 'control:all' → event 'set-assignment'
@@ -277,6 +276,17 @@ export default function StudentAssignment(){
       }
     })
     return () => { try { (off as any)?.() } catch {} }
+  }, [rtAssignmentId])
+
+  // ✅ Retry “hello” once shortly after assignment is known if no teacher page yet
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    const t = window.setTimeout(() => {
+      if (teacherPageIndexRef.current == null) {
+        try { void studentHello(rtAssignmentId) } catch {}
+      }
+    }, 1200)
+    return () => window.clearTimeout(t)
   }, [rtAssignmentId])
 
   // hydrate presence on refresh
@@ -640,6 +650,15 @@ export default function StudentAssignment(){
     return () => { try { ch?.unsubscribe?.() } catch {} }
   }, [rtAssignmentId, autoFollow])
 
+  // ✅ If auto-follow turns on later, snap immediately to teacher page
+  useEffect(() => {
+    if (!autoFollow) return
+    const tpi = teacherPageIndexRef.current
+    if (typeof tpi === 'number') {
+      setPageIndex(prev => (prev !== tpi ? tpi : prev))
+    }
+  }, [autoFollow])
+
   const reloadFromServer = async ()=>{
     if (!hasTask) return
     if (Date.now() - (justSavedAt.current || 0) < 1200) return
@@ -975,26 +994,21 @@ export default function StudentAssignment(){
           </div>
 
           {/* LIVE eraser overlay */}
-<div
-  style={{
-    position: 'absolute',
-    inset: 0,
-    zIndex: 20, // <-- was `z-index`
-    pointerEvents:
-      hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
-        ? 'auto'
-        : 'none',
-    cursor:
-      hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
-        ? 'crosshair'
-        : 'default',
-  }}
-  onPointerDown={onErasePointerDown}
-  onPointerMove={onErasePointerMove}
-  onPointerUp={onErasePointerUp}
-  onPointerCancel={onErasePointerUp}
-/>
-
+          <div
+            style={{
+              position:'absolute',
+              inset:0,
+              zIndex:20,
+              pointerEvents: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')) ? 'auto' : 'none',
+              cursor: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject'))
+                ? 'crosshair'
+                : 'default'
+            }}
+            onPointerDown={onErasePointerDown}
+            onPointerMove={onErasePointerMove}
+            onPointerUp={onErasePointerUp}
+            onPointerCancel={onErasePointerUp}
+          />
         </div>
       </div>
 
