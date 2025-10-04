@@ -18,7 +18,7 @@ import {
   type AutoFollowPayload,
   subscribeToGlobal,
   type TeacherPresenceState,
-  // ✅ NEW: autosync helpers
+  // ✅ autosync helpers
   subscribePresenceSnapshot,
   studentHello,
   requestAssignment,
@@ -204,7 +204,7 @@ export default function StudentAssignment(){
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
-  // ✅ NEW: if we don't yet know the assignment on mount, ask the teacher (global ping)
+  // ✅ Ask for current assignment shortly after mount (if unknown)
   useEffect(() => {
     if (rtAssignmentId) return
     const to = window.setTimeout(() => { try { void requestAssignment() } catch {} }, 400)
@@ -212,48 +212,7 @@ export default function StudentAssignment(){
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // purge legacy caches by title
-  useEffect(() => {
-    try {
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const k = localStorage.key(i)!
-        if (!k) continue
-        if (
-          (k.startsWith('draft:') || k.startsWith('submitted:') || k.startsWith('lastHash:')) &&
-          k.split(':')[2] === assignmentTitle
-        ) {
-          localStorage.removeItem(k)
-        }
-      }
-    } catch {}
-  }, [])
-
-  // stable cache ids
-  const getCacheIds = (pageId?: string) => {
-    const assignmentUid = rtAssignmentId || currIds.current.assignment_id || 'no-assignment'
-    const pageUid = pageId || currIds.current.page_id || `page-${pageIndex}`
-    return { assignmentUid, pageUid }
-  }
-
-  // Realtime teacher controls
-  const [focusOn, setFocusOn] = useState(false)
-  const [navLocked, setNavLocked] = useState(false)
-  const [autoFollow, setAutoFollow] = useState(false)
-  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
-  const teacherPageIndexRef = useRef<number | null>(null)
-
-  // hashes/dirty tracking
-  const lastAppliedServerHash = useRef<string>('')
-  const lastLocalHash = useRef<string>('')
-  const localDirty = useRef<boolean>(false)
-  const dirtySince = useRef<number>(0)
-  const justSavedAt = useRef<number>(0)
-
-  // LIVE: per-page channel for instant peer updates (scoped by station)
-  const clientIdRef = useRef<string>('c_' + Math.random().toString(36).slice(2))
-  const liveChRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
-
-  // assignment handoff listener (teacher broadcast)
+  // ✅ Listen to global handoff (teacher dropdown)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
@@ -281,7 +240,23 @@ export default function StudentAssignment(){
     return off
   }, [])
 
-  // ✅ NEW: once we know the assignment, say hello and subscribe for a presence snapshot
+  // ✅ EXTRA: mirror listener that behaves like live-strokes — plain channel
+  // Teacher broadcasts (via their page) to 'control:all' → event 'set-assignment'
+  useEffect(() => {
+    const ch = supabase
+      .channel('control:all', { config: { broadcast: { ack: true } } })
+      .on('broadcast', { event: 'set-assignment' }, (msg: any) => {
+        const id = msg?.payload?.assignmentId
+        if (typeof id === 'string' && id) {
+          try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, id) } catch {}
+          setRtAssignmentId(id)
+        }
+      })
+      .subscribe()
+    return () => { try { ch.unsubscribe() } catch {} }
+  }, [])
+
+  // ✅ After we know assignment: say hello and get a presence snapshot (page index, etc.)
   useEffect(() => {
     if (!rtAssignmentId) return
     try { void studentHello(rtAssignmentId) } catch {}
@@ -339,6 +314,22 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
+  const [focusOn, setFocusOn] = useState(false)
+  const [navLocked, setNavLocked] = useState(false)
+  const [autoFollow, setAutoFollow] = useState(false)
+  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
+  const teacherPageIndexRef = useRef<number | null>(null)
+
+  const lastAppliedServerHash = useRef<string>('')
+  const lastLocalHash = useRef<string>('')
+  const localDirty = useRef<boolean>(false)
+  const dirtySince = useRef<number>(0)
+  const justSavedAt = useRef<number>(0)
+
+  // LIVE: per-page channel for instant peer updates (scoped by station)
+  const clientIdRef = useRef<string>('c_' + Math.random().toString(36).slice(2))
+  const liveChRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+
   useEffect(()=>{
     let cancelled=false
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
@@ -485,15 +476,14 @@ export default function StudentAssignment(){
       if (!ids.assignment_id || !ids.page_id) { setSaving(false); submitInFlight.current=false; return }
 
       const { assignmentUid, pageUid } = getCacheIds(ids.page_id)
-      const lastKey = lastHashKey(studentId, assignmentUid, pageUid)
-      const last = localStorage.getItem(lastKey)
+      const last = localStorage.getItem(lastHashKey(studentId, assignmentUid, pageUid))
       if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       if (hasInk) {
         await saveStrokes(submission_id, strokes)
-        localStorage.setItem(lastKey, encHash)
+        localStorage.setItem(lastHashKey(studentId, assignmentUid, pageUid), encHash)
         saveSubmittedCache(studentId, assignmentUid, pageUid, strokes)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
