@@ -10,7 +10,7 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import { publishSetAssignment } from '../../lib/realtime' // NEW
+import { publishSetAssignment, respondToAssignmentRequests } from '../../lib/realtime' // ✅ updated import
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
 type LatestCell = {
@@ -166,6 +166,13 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
+  // ✅ NEW: respond to late-joining students who request the current assignment
+  useEffect(() => {
+    if (!assignmentId) return
+    const off = respondToAssignmentRequests(() => assignmentId)
+    return () => { try { (off as any)?.() } catch {} }
+  }, [assignmentId])
+
   useEffect(() => {
     if (!assignmentId || !pageId) return
     setGrid({})
@@ -238,7 +245,7 @@ export default function TeacherDashboard() {
         return
       }
       const strokesArt = latest.artifacts?.find(a => a.kind === 'strokes' && (a as any).strokes_json) as any | undefined
-      const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
+      const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path')
 
       let audioUrl: string | undefined = undefined
       if (audioArt?.storage_path) {
@@ -277,28 +284,28 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
-<div style={{ margin: '12px 0 16px' }}>
-  <PdfDropZone
-    onCreated={async (newId: string, title: string) => {
-      // Show it immediately in the dropdown
-      setAssignments((prev) => {
-        if (prev.some((a) => a.id === newId)) return prev
-        return [{ id: newId, title }, ...prev]
-      })
+      <div style={{ margin: '12px 0 16px' }}>
+        <PdfDropZone
+          onCreated={async (newId: string, title: string) => {
+            // Show it immediately in the dropdown
+            setAssignments((prev) => {
+              if (prev.some((a) => a.id === newId)) return prev
+              return [{ id: newId, title }, ...prev]
+            })
 
-      // Select it
-      setAssignmentId(newId)
+            // Select it
+            setAssignmentId(newId)
 
-      // Broadcast to students now and mark as announced to avoid double-fire
-      try {
-        await publishSetAssignment(newId)
-        lastAnnouncedAssignment.current = newId
-      } catch (err) {
-        console.error('broadcast onCreated failed', err)
-      }
-    }}
-  />
-</div>
+            // Broadcast to students now and mark as announced to avoid double-fire
+            try {
+              await publishSetAssignment(newId)
+              lastAnnouncedAssignment.current = newId
+            } catch (err) {
+              console.error('broadcast onCreated failed', err)
+            }
+          }}
+        />
+      </div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
