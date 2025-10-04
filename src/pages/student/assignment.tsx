@@ -244,11 +244,11 @@ export default function StudentAssignment(){
     return off
   }, [])
 
-  // ✅ EXTRA: mirror listener that behaves like live-strokes — plain channel
-  // Teacher broadcasts (via their page) to 'control:all' → event 'set-assignment'
+  // ✅ EXTRA: plain control channel listeners
   useEffect(() => {
     const ch = supabase
       .channel('control:all', { config: { broadcast: { ack: true } } })
+      // teacher set-assignment mirror
       .on('broadcast', { event: 'set-assignment' }, (msg: any) => {
         const id = msg?.payload?.assignmentId
         if (typeof id === 'string' && id) {
@@ -256,9 +256,20 @@ export default function StudentAssignment(){
           setRtAssignmentId(id)
         }
       })
+      // ⬅️ NEW: teacher set-page mirror (fast page follow for late joiners)
+      .on('broadcast', { event: 'set-page' }, (msg: any) => {
+        const idx = msg?.payload?.pageIndex
+        if (typeof idx === 'number') {
+          teacherPageIndexRef.current = idx
+          if (autoFollow) {
+            setPageIndex(prev => (prev !== idx ? idx : prev))
+          }
+        }
+      })
       .subscribe()
     return () => { try { ch.unsubscribe() } catch {} }
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFollow])
 
   // ✅ After we know assignment: say hello and get a presence snapshot (page index, etc.)
   useEffect(() => {
@@ -307,13 +318,13 @@ export default function StudentAssignment(){
     } catch {}
   }, [rtAssignmentId])
 
-  // --------- stable cache ids (RESTORED) ----------
+  // --------- stable cache ids ----------
   const getCacheIds = (pageId?: string) => {
     const assignmentUid = rtAssignmentId || currIds.current.assignment_id || 'no-assignment'
     const pageUid = pageId || currIds.current.page_id || `page-${pageIndex}`
     return { assignmentUid, pageUid }
   }
-  // -----------------------------------------------
+  // -------------------------------------
 
   // Resolve assignment/page
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
@@ -1017,7 +1028,7 @@ export default function StudentAssignment(){
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
           zIndex: 10020, display:'flex', gap:10, alignItems:'center',
-          background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
+          background:'#fff', border:'1px solid '#e5e7eb', borderRadius:999,
           boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
         }}
       >
