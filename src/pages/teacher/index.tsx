@@ -364,8 +364,7 @@ export default function TeacherDashboard() {
           <TeacherSyncBar
             assignmentId={assignmentId}
             pageId={pageId}
-            // FIX: TeacherSyncBar expects a SetPagePayload shape for pageIndex
-            pageIndex={{ pageIndex }}
+            pageIndex={pageIndex} {/* expects a number */}
           />
         </div>
       )}
