@@ -36,6 +36,7 @@ export default function TeacherDashboard() {
   )
 
   const [loading, setLoading] = useState(false)
+const [syncOn, setSyncOn] = useState(false);
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
   // PREVIEW STATE (NEW) — audioUrl is string | undefined to match PlaybackDrawer
