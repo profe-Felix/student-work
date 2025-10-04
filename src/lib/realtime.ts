@@ -59,11 +59,14 @@ export function globalChannel(roomId: string = 'default') {
 /** Teacher fires this when changing the assignment dropdown. */
 export async function publishSetAssignment(assignmentId: string, roomId: string = 'default') {
   const ch = globalChannel(roomId)
-  await ch.subscribe()
-  await ch.send({
-    type: 'broadcast',
-    event: 'set-assignment',
-    payload: { assignmentId, ts: Date.now() },
+  try {
+    await ch.subscribe()
+    await ch.send({ type: 'broadcast', event: 'set-assignment', payload: { assignmentId, ts: Date.now() } })
+  } finally {
+    try { await ch.unsubscribe() } catch {}
+  }
+}
+,
   })
   // Avoid returning a Promise from cleanup in React effects
   void ch.unsubscribe()
