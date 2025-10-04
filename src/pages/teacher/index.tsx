@@ -14,15 +14,13 @@ import {
   publishSetAssignment,
   respondToAssignmentRequests,
   controlSetAssignment,
-  // presence + page broadcasting for late joiners
   publishSetPage,
   setTeacherPresence,
   teacherPresenceResponder,
   controlSetPage,
-  // one-shot presence pulse (no interval)
   controlPresence,
 } from '../../lib/realtime'
-import PlaybackDrawer from '../../components/PlaybackDrawer' // preview drawer
+import PlaybackDrawer from '../../components/PlaybackDrawer'
 
 type LatestCell = {
   submission_id: string
@@ -48,7 +46,7 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
-  // PREVIEW STATE — audioUrl is string | undefined to match PlaybackDrawer
+  // PREVIEW STATE
   const [previewOpen, setPreviewOpen] = useState(false)
   const [preview, setPreview] = useState<{
     studentId: string
@@ -75,10 +73,8 @@ export default function TeacherDashboard() {
       const storagePath = pages.find(p => p.id === pageId)?.pdf_path || ''
       if (!storagePath) { setPreviewPdfUrl(''); return }
       const key = keyForBucket(storagePath)
-      // try a signed URL first (one hour)
       const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
       if (!cancelled && sData?.signedUrl) { setPreviewPdfUrl(sData.signedUrl); return }
-      // fallback to public URL
       const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
       if (!cancelled) setPreviewPdfUrl(pData?.publicUrl ?? '')
     })()
@@ -172,21 +168,12 @@ export default function TeacherDashboard() {
         await publishSetAssignment(assignmentId)
         await controlSetAssignment(assignmentId) // control channel mirror
         lastAnnouncedAssignment.current = assignmentId
-
-        // fire a one-shot presence pulse so late joiners hydrate even before page effect runs
-        await controlPresence({
-          teacherAlive: true,
-          assignmentId,
-          pageId,
-          pageIndex,
-          pdfPath: pages.find(p => p.id === pageId)?.pdf_path || undefined,
-          ts: Date.now(),
-        })
+        // NOTE: no pulse here; we might not have pageId/pdf yet
       } catch (err) {
         console.error('initial broadcast failed', err)
       }
     })()
-  }, [assignmentId, pageId, pageIndex, pages])
+  }, [assignmentId])
 
   // Respond to late-joining students who request the current assignment
   useEffect(() => {
@@ -202,40 +189,43 @@ export default function TeacherDashboard() {
   }, [assignmentId, pageId])
 
   // ===== Late joiner hydration =====
-  // 1) Answer "hello" with a presence snapshot including the current pageIndex + extras.
+  // 1) Answer "hello" with a presence snapshot including page + extras.
   useEffect(() => {
     if (!assignmentId) return
     const off = teacherPresenceResponder(assignmentId, () => {
       const curr = pages.find(p => p.id === pageId)
-      // Base presence required by type + extra fields students use to hydrate immediately.
+      const pdfPath = curr?.pdf_path || undefined
       const snapshot: any = {
+        // Required baseline presence flags
         autoFollow: false,
         focusOn: false,
         lockNav: false,
         allowedPages: null,
         teacherPageIndex: pageIndex,
-        // extras for hydration (students read these)
+        // Extras students expect for instant hydration
         assignmentId,
         pageId,
-        pdfPath: curr?.pdf_path || undefined,
+        pdfPath,
       }
       return snapshot
     })
     return off
   }, [assignmentId, pageIndex, pageId, pages])
 
-  // 2) Whenever the page changes, broadcast set-page + control mirror + presence (page-only) + single pulse
+  // 2) Whenever the page is known/changes, broadcast and send ONE pulse
   useEffect(() => {
     if (!assignmentId) return
+    const curr = pages.find(p => p.id === pageId)
+    const pdfPath = curr?.pdf_path || undefined
+    if (!pageId || !curr || !pdfPath) return // guard until fully known
+
     ;(async () => {
       try {
-        const curr = pages.find(p => p.id === pageId)
-        const pdfPath = curr?.pdf_path || undefined
-
-        // send typed payloads only
+        // Broadcast typed minimal payloads on the normal channels
         await publishSetPage(assignmentId, { pageIndex })
         await controlSetPage({ pageIndex })
 
+        // Presence (typed baseline)
         await setTeacherPresence(assignmentId, {
           teacherPageIndex: pageIndex,
           autoFollow: false,
@@ -244,7 +234,7 @@ export default function TeacherDashboard() {
           allowedPages: null,
         })
 
-        // one-shot control presence pulse (NO interval heartbeat)
+        // ONE control presence pulse that carries the rich hydration fields
         await controlPresence({
           teacherAlive: true,
           assignmentId,
@@ -382,16 +372,7 @@ export default function TeacherDashboard() {
               await publishSetAssignment(newId)
               await controlSetAssignment(newId) // control channel mirror
               lastAnnouncedAssignment.current = newId
-
-              // one-shot pulse
-              await controlPresence({
-                teacherAlive: true,
-                assignmentId: newId,
-                pageId,
-                pageIndex,
-                pdfPath: pages.find(p => p.id === pageId)?.pdf_path || undefined,
-                ts: Date.now(),
-              })
+              // no pulse here (page may not be loaded yet)
             } catch (err) {
               console.error('broadcast onCreated failed', err)
             }
@@ -410,17 +391,8 @@ export default function TeacherDashboard() {
               try {
                 await publishSetAssignment(next) // tell students to switch
                 await controlSetAssignment(next) // control channel mirror
-                lastAnnouncedAssignment.current = next // avoid double fire with the effect
-
-                // one-shot pulse
-                await controlPresence({
-                  teacherAlive: true,
-                  assignmentId: next,
-                  pageId,
-                  pageIndex,
-                  pdfPath: pages.find(p => p.id === pageId)?.pdf_path || undefined,
-                  ts: Date.now(),
-                })
+                lastAnnouncedAssignment.current = next // avoid double fire
+                // no pulse here (we wait for page guard)
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
               }
@@ -503,7 +475,6 @@ export default function TeacherDashboard() {
                     {cell!.audioUrl && (
                       <audio controls src={cell!.audioUrl} style={{ width: '100%' }} />
                     )}
-                    {/* Preview button */}
                     <button
                       type="button"
                       onClick={() => openPreviewForStudent(sid)}
@@ -525,7 +496,6 @@ export default function TeacherDashboard() {
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
 
-      {/* Drawer instance — render only when open */}
       {previewOpen && (
         <PlaybackDrawer
           onClose={() => setPreviewOpen(false)}
