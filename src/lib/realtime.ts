@@ -51,25 +51,26 @@ export type InkUpdate = {
 /** -------------------------------------------------------------------------------------------
  *  Global “class” channel (assignment-agnostic) used to hand students off to another assignment
  *  ----------------------------------------------------------------------------------------- */
-export function globalChannel(roomId: string = 'default') {
-  return supabase.channel(`global-class:${roomId}`,
-    { config: { broadcast: { ack: true } } })
+export function globalChannel() {
+  return supabase.channel('global-class', { config: { broadcast: { ack: true } } })
 }
 
 /** Teacher fires this when changing the assignment dropdown. */
-export async function publishSetAssignment(assignmentId: string, roomId: string = 'default') {
-  const ch = globalChannel(roomId)
-  try {
-    await ch.subscribe()
-    await ch.send({ type: 'broadcast', event: 'set-assignment', payload: { assignmentId, ts: Date.now() } })
-  } finally {
-    try { await ch.unsubscribe() } catch {}
-  }
+export async function publishSetAssignment(assignmentId: string) {
+  const ch = globalChannel()
+  await ch.subscribe()
+  await ch.send({
+    type: 'broadcast',
+    event: 'set-assignment',
+    payload: { assignmentId, ts: Date.now() },
+  })
+  // Avoid returning a Promise from cleanup in React effects
+  void ch.unsubscribe()
 }
 
 /** Student bootstraps this once and will jump to any new assignmentId the teacher selects. */
-export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => void, roomId: string = 'default') {
-  const ch = globalChannel(roomId)
+export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => void) {
+  const ch = globalChannel()
     .on('broadcast', { event: 'set-assignment' }, (msg: any) => {
       const id = msg?.payload?.assignmentId
       if (typeof id === 'string' && id) onSetAssignment(id)
@@ -78,37 +79,6 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
   return () => { void ch.unsubscribe() }
 }
 
-
-/** Student -> global hello (late join handshake) */
-export async function studentGlobalHello(roomId: string = 'default') {
-  const ch = supabase.channel(`global-hello:${roomId}`, { config: { broadcast: { ack: true } } });
-  await ch.subscribe();
-  await ch.send({ type: 'broadcast', event: 'hello-global', payload: { ts: Date.now() } });
-  // leave the hello channel to keep the main global-class channel intact
-  try { await ch.unsubscribe(); } catch {}
-}
-
-/** Teacher -> respond to hello-global with current assignmentId (only if Sync is ON) */
-export function teacherGlobalAssignmentResponder(
-  roomId: string,
-  getAssignmentId: () => string | null | undefined,
-  isSyncOn: () => boolean
-) {
-  const helloCh = supabase.channel(`global-hello:${roomId}`, { config: { broadcast: { ack: true } } })
-    .on('broadcast', { event: 'hello-global' }, async () => {
-      try {
-        if (!isSyncOn()) return;
-        const id = getAssignmentId?.() ?? null;
-        if (!id) return;
-        const classCh = globalChannel(roomId);
-        await classCh.subscribe();
-        await classCh.send({ type: 'broadcast', event: 'set-assignment', payload: { assignmentId: id, ts: Date.now() } });
-        try { await classCh.unsubscribe(); } catch {}
-      } catch {/* noop */}
-    })
-    .subscribe();
-  return () => { void helloCh.unsubscribe(); };
-}
 /** -------------------------------------------------------------------------------------------
  *  Per-assignment channels
  *  ----------------------------------------------------------------------------------------- */
@@ -252,9 +222,6 @@ export function subscribeToAutoFollow(
     .subscribe()
   return () => { void ch.unsubscribe() }
 }
-
-let latestPresence: TeacherPresenceState | null = null;
-export function getLatestPresence() { return latestPresence; }
 
 /** ---------- Presence (legacy-expected by TeacherSyncBar) ---------- */
 export async function setTeacherPresence(
@@ -424,3 +391,14 @@ export async function studentHello(assignmentId: string) {
   void ch.unsubscribe();
 }
 
+
+
+
+export const assignmentChannel = (id: string) => supabase.channel(`assignment:${id}`, { config: { broadcast: { ack: true } } });
+
+export async function studentGlobalHello(roomId: string) {
+  const ch = supabase.channel(`global-hello:${roomId}`, { config: { broadcast: { ack: true } } });
+  await ch.subscribe();
+  try { await ch.send({ type: 'broadcast', event: 'hello-global', payload: { ts: Date.now() } }); }
+  finally { try { await ch.unsubscribe(); } catch {} }
+}

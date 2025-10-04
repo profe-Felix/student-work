@@ -17,21 +17,8 @@ import {
   type FocusPayload,
   type AutoFollowPayload,
   subscribeToGlobal,
-  studentGlobalHello,
-  subscribePresenceSnapshot,
-  studentHello,
   type TeacherPresenceState,
-  assignmentChannel,
 } from '../../lib/realtime'
-function __getRoomId() {
-  try {
-    const h = typeof window !== 'undefined' ? window.location.hash : '';
-    const search = (h && h.includes('?')) ? ('?' + h.split('?')[1]) : (typeof window !== 'undefined' ? window.location.search : '');
-    const p = new URLSearchParams(search || '');
-    return p.get('room') || 'default';
-  } catch { return 'default'; }
-}
-const ROOM_ID = __getRoomId();
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
@@ -128,23 +115,6 @@ function inferStation(id: string): string {
 }
 
 export default function StudentAssignment(){
-  // Late join hello to teacher (10s throttle)
-  useEffect(() => {
-    let last = 0;
-    const tick = async () => {
-      const now = Date.now();
-      if (now - last < 10000) return;
-      last = now;
-      try { await studentGlobalHello(ROOM_ID); } catch {}
-    };
-    // on mount
-    tick();
-    // on visibility
-    const onVis = () => { if (document.visibilityState === 'visible') tick(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, [ROOM_ID]);
-
   const location = useLocation()
   const nav = useNavigate()
   const studentId = useMemo(()=>{
@@ -272,24 +242,7 @@ export default function StudentAssignment(){
   const clientIdRef = useRef<string>('c_' + Math.random().toString(36).slice(2))
   const liveChRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
-  
-  // Send a global hello on mount and on visibility (throttled 10s) to catch late joins / iPad background
-  useEffect(() => {
-    let lastHello = 0;
-    const sendHello = async () => {
-      const now = Date.now();
-      if (now - lastHello < 10000) return;
-      lastHello = now;
-      try { await studentGlobalHello(ROOM_ID); } catch {}
-    };
-    // initial
-    void sendHello();
-    // visibility retry
-    const onVis = () => { if (document.visibilityState === 'visible') void sendHello(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { document.removeEventListener('visibilitychange', onVis); };
-  }, []);
-// assignment handoff listener (teacher broadcast)
+  // assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
@@ -300,20 +253,20 @@ export default function StudentAssignment(){
           const p = JSON.parse(raw) as TeacherPresenceState
           if (typeof p.teacherPageIndex === 'number') {
             teacherPageIndexRef.current = p.teacherPageIndex
-            setPageIndex(p.teacherPageIndex)
+            guardedSetPage(p.teacherPageIndex)
           } else {
-            setPageIndex(0)
+            guardedSetPage(0)
           }
           setAutoFollow(!!p.autoFollow)
           setAllowedPages(p.allowedPages ?? null)
           setFocusOn(!!p.focusOn)
           setNavLocked(!!p.focusOn && !!p.lockNav)
         } else {
-          setPageIndex(0)
+          guardedSetPage(0)
         }
-      } catch { setPageIndex(0) }
+      } catch { guardedSetPage(0) }
       currIds.current = {}
-    }, ROOM_ID)
+    })
     return off
   }, [])
 
@@ -330,7 +283,7 @@ export default function StudentAssignment(){
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        setPageIndex(p.teacherPageIndex)
+        guardedSetPage(p.teacherPageIndex)
       }
     } catch {}
   }, [rtAssignmentId])
@@ -563,7 +516,7 @@ export default function StudentAssignment(){
       try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
     }
 
-    setPageIndex(nextIndex)
+    guardedSetPage(nextIndex)
   }
 
   // two-finger pan host
@@ -620,25 +573,7 @@ useEffect(() => {
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  
-  // When assignment changes, ask teacher for a presence snapshot (late-join snap to page/locks)
-  useEffect(() => {
-    if (!rtAssignmentId) return;
-    const off = subscribePresenceSnapshot(rtAssignmentId, (p: TeacherPresenceState) => {
-      try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
-      setAutoFollow(!!p.autoFollow);
-      autoFollowRef.current = !!p.autoFollow;
-      setAllowedPages(p.allowedPages ?? null);
-      setFocusOn(!!p.focusOn);
-      setNavLocked(!!p.focusOn && !!p.lockNav);
-      if (p.autoFollow && typeof p.teacherPageIndex === 'number') {
-        setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev);
-      }
-    });
-    void studentHello(rtAssignmentId);
-    return () => { try { off?.(); } catch {} };
-  }, [rtAssignmentId]);
-useEffect(() => { autoFollowRef.current = !!autoFollow }, [autoFollow]);
+  useEffect(() => { autoFollowRef.current = !!autoFollow }, [autoFollow]);
 
   
   // Listen for per-assignment 'set-page' broadcasts
@@ -650,7 +585,7 @@ useEffect(() => { autoFollowRef.current = !!autoFollow }, [autoFollow]);
           if (!autoFollowRef.current) return;
           const payload = e?.payload || {};
           const teacherIdx = typeof payload.pageIndex === 'number' ? payload.pageIndex : null;
-          if (teacherIdx !== null) setPageIndex(teacherIdx);
+          if (teacherIdx !== null) guardedSetPage(teacherIdx);
         } catch {}
       })
       .subscribe();
@@ -664,6 +599,7 @@ useEffect(() => { autoFollowRef.current = !!autoFollow }, [autoFollow]);
     if (!allowedPages || !Array.isArray(allowedPages)) return false;
     return allowedPages.includes(targetIndex);
   }
+  const guardedSetPage = (idx: number) => { if (canNavigateTo(idx)) guardedSetPage(idx); };
 
   /* ---------- Realtime teacher controls ---------- */
   useEffect(() => {
@@ -671,7 +607,7 @@ useEffect(() => { autoFollowRef.current = !!autoFollow }, [autoFollow]);
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
         teacherPageIndexRef.current = pageIndex
-        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+        if (autoFollow) guardedSetPage(prev => (prev !== pageIndex ? pageIndex : prev))
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
         setFocusOn(!!on)
@@ -682,7 +618,7 @@ useEffect(() => { autoFollowRef.current = !!autoFollow }, [autoFollow]);
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
         if (on && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(teacherPageIndexRef.current)
+          guardedSetPage(teacherPageIndexRef.current)
         }
       },
       onPresence: (p: TeacherPresenceState) => {
@@ -693,7 +629,7 @@ useEffect(() => { autoFollowRef.current = !!autoFollow }, [autoFollow]);
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
-          if (p.autoFollow) setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
+          if (p.autoFollow) guardedSetPage(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
         }
       }
     })

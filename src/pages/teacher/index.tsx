@@ -10,21 +10,9 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import { publishSetAssignment, teacherGlobalAssignmentResponder } from '../../lib/realtime'
-import { teacherPresenceResponder, getLatestPresence } from '../../lib/realtime'
-import { publishSetPage, setTeacherPresence, assignmentChannel } from '../../lib/realtime' // NEW
-import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW
-function __getRoomId() {
-  try {
-    const h = typeof window !== 'undefined' ? window.location.hash : '';
-    const search = (h && h.includes('?')) ? ('?' + h.split('?')[1]) : (typeof window !== 'undefined' ? window.location.search : '');
-    const p = new URLSearchParams(search || '');
-    const room = p.get('room') || sessionStorage.getItem('room') || 'default';
-    try { sessionStorage.setItem('room', room); } catch {}
-    return room;
-  } catch { return 'default'; }
-}
-const ROOM_ID = __getRoomId();
+import { publishSetAssignment } from '../../lib/realtime' // NEW
+import { publishSetPage, setTeacherPresence, getLatestPresence } from '../../lib/realtime'
+import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
 type LatestCell = {
   submission_id: string
@@ -40,10 +28,9 @@ export default function TeacherDashboard() {
 
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
-  const lastAnnouncedAssignment = useRef<string>('') // NEW
+  const lastAnnouncedAssignment = useRef<string>('') // NEW: prevent double-broadcasts
 
-    const syncOnRef = useRef(false)
-const pageIndex = useMemo(
+  const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
     [pages, pageId]
   )
@@ -166,13 +153,13 @@ const pageIndex = useMemo(
     })()
   }, [assignmentId])
 
-  // NEW
+  // NEW: after assignmentId is resolved (initial load), broadcast it once.
   useEffect(() => {
     if (!assignmentId) return
     if (lastAnnouncedAssignment.current === assignmentId) return
     ;(async () => {
       try {
-        await publishSetAssignment(assignmentId, ROOM_ID)
+        await publishSetAssignment(assignmentId)
         lastAnnouncedAssignment.current = assignmentId
       } catch (err) {
         console.error('initial broadcast failed', err)
@@ -305,7 +292,7 @@ const pageIndex = useMemo(
 
       // Broadcast to students now and mark as announced to avoid double-fire
       try {
-        await publishSetAssignment(newId, ROOM_ID)
+        await publishSetAssignment(newId)
         lastAnnouncedAssignment.current = newId
       } catch (err) {
         console.error('broadcast onCreated failed', err)
@@ -323,7 +310,7 @@ const pageIndex = useMemo(
               const next = e.target.value
               setAssignmentId(next)
               try {
-                await publishSetAssignment(next, ROOM_ID) // NEW
+                await publishSetAssignment(next) // NEW: tell students to switch
                 lastAnnouncedAssignment.current = next // avoid double fire with the effect
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
@@ -365,7 +352,7 @@ const pageIndex = useMemo(
 
       {assignmentId && pageId && (
         <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
-          <TeacherSyncBar roomId={ROOM_ID} onSyncChange={(on: boolean) =>{ syncOnRef.current = !!on; }}
+          <TeacherSyncBar
             assignmentId={assignmentId}
             pageId={pageId}
             pageIndex={pageIndex}
@@ -384,85 +371,6 @@ const pageIndex = useMemo(
           const cell = grid[sid] ?? null
           const has = !!cell
           
-  // Respond to global hellos only when Sync is ON
-  useEffect(() => {
-    const off = teacherGlobalAssignmentResponder(ROOM_ID, () => assignmentId, () => !!syncOnRef.current);
-    return () => { try { off?.(); } catch {} };
-  }, [assignmentId]);
-
-  
-
-// Answer assignment-level presence hellos with the latest presence (coerced)
-useEffect(() => {
-  if (!assignmentId) return;
-
-  const mkSnapshot = () => {
-    const p: any = getLatestPresence() || {};
-    return {
-      autoFollow: !!p.autoFollow,
-      focusOn: !!p.focusOn,
-      lockNav: !!p.lockNav,
-      allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : (p.allowedPages ?? null),
-      teacherPageIndex: typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : 0,
-    };
-  };
-
-  const off = teacherPresenceResponder(assignmentId, mkSnapshot);
-  return () => { try { off(); } catch {} };
-}, [assignmentId]);
-
-
-  // Answer assignment-level presence hellos with the latest presence
-  useEffect(() => {
-    if (!assignmentId) return;
-    // Coerce latest presence to the stricter PresenceSnapshot type
-    const mkSnapshot = () => {
-      const p: any = getLatestPresence() || {};
-      return {
-        autoFollow: !!p.autoFollow,
-        focusOn: !!p.focusOn,
-        lockNav: !!p.lockNav,
-        allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : (p.allowedPages ?? null),
-        teacherPageIndex: typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : 0,
-      };
-    };
-    const off = teacherPresenceResponder(assignmentId, mkSnapshot);
-    return () => {
-      try {
-        if (typeof off === 'function') { off(); }
-        else (off as any)?.unsubscribe?.();
-      } catch {}
-    };
-  }, [assignmentId]);
-
-  // Heartbeat: rebroadcast assignment & presence while Sync ON
-  useEffect(() => {
-    if (!assignmentId) return;
-    let stop = false;
-    let timer: any = null;
-    async function tick() {
-      try {
-        if (stop) return;
-        if (syncOnRef.current) {
-          try { await publishSetAssignment(assignmentId, ROOM_ID) } catch {}
-          try {
-            const p: any = getLatestPresence() || {};
-            await setTeacherPresence(assignmentId, {
-              autoFollow: true,
-              allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : (p.allowedPages ?? null),
-              teacherPageIndex: typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : pageIndex,
-              focusOn: !!p.focusOn,
-              lockNav: !!p.lockNav
-            });
-          } catch {}}
-      } finally {
-        if (!stop) timer = setTimeout(tick, 10000);
-      }
-    }
-    timer = setTimeout(tick, 10000);
-    return () => { stop = true; if (timer) clearTimeout(timer); };
-  }, [assignmentId, pageIndex]);
-
   // Push page + presence on teacher page changes while Sync is ON
   useEffect(() => {
     if (!assignmentId) return;
@@ -470,7 +378,7 @@ useEffect(() => {
     (async () => {
       try { await publishSetPage(assignmentId, pageIndex) } catch {}
       try {
-        const p: any = getLatestPresence() || {};
+        const p: any = getLatestPresence ? (getLatestPresence() || {}) : {};
         await setTeacherPresence(assignmentId, {
           autoFollow: true,
           allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : (p.allowedPages ?? null),

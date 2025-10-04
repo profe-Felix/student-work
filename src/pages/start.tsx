@@ -5,7 +5,6 @@ import { useNavigate } from 'react-router-dom'
 const makeRoster = (prefix: string, count: number) =>
   Array.from({ length: count }, (_, i) => `${prefix}_${String(i + 1).padStart(2, '0')}`)
 
-
 function __getRoomId() {
   try {
     const h = typeof window !== 'undefined' ? window.location.hash : '';
