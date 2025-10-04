@@ -58,8 +58,8 @@ export function globalChannel() {
 /** Teacher fires this when changing the assignment dropdown. */
 export async function publishSetAssignment(assignmentId: string) {
   const ch = globalChannel()
-  await ch.subscribe()
-  await ch.send({
+  await (ch as any)!.subscribe()
+  await (ch as any)!.send({
     type: 'broadcast',
     event: 'set-assignment',
     payload: { assignmentId, ts: Date.now() },
@@ -117,8 +117,8 @@ export async function publishSetPage(
   }
 
   const { ch, temporary } = resolveChannel(assignment)
-  if (temporary) { await ch.subscribe() }
-  await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } })
+  if (temporary) { await (ch as any)!.subscribe() }
+  await (ch as any)!.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } })
   if (temporary) { void ch.unsubscribe() }
 }
 
@@ -153,8 +153,8 @@ export async function publishFocus(
       : (payloadOrOn as FocusPayload)
 
   const { ch, temporary } = resolveChannel(assignment)
-  if (temporary) { await ch.subscribe() }
-  await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } })
+  if (temporary) { await (ch as any)!.subscribe() }
+  await (ch as any)!.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } })
   if (temporary) { void ch.unsubscribe() }
 }
 
@@ -190,8 +190,8 @@ export async function publishAutoFollow(
       : (payloadOrOn as AutoFollowPayload)
 
   const { ch, temporary } = resolveChannel(assignment)
-  if (temporary) { await ch.subscribe() }
-  await ch.send({ type: 'broadcast', event: 'auto-follow', payload: { ...payload, ts: Date.now() } })
+  if (temporary) { await (ch as any)!.subscribe() }
+  await (ch as any)!.send({ type: 'broadcast', event: 'auto-follow', payload: { ...payload, ts: Date.now() } })
   if (temporary) { void ch.unsubscribe() }
 }
 
@@ -215,13 +215,13 @@ export async function setTeacherPresence(
   state: TeacherPresenceState
 ) {
   const { ch, temporary } = resolveChannel(assignment)
-  if (temporary) { await ch.subscribe() }
+  if (temporary) { await (ch as any)!.subscribe() }
   const payload: TeacherPresenceState = {
     role: 'teacher',
     ...state,
     ts: Date.now(),
   }
-  await ch.send({ type: 'broadcast', event: 'presence', payload })
+  await (ch as any)!.send({ type: 'broadcast', event: 'presence', payload })
   if (temporary) { void ch.unsubscribe() }
 }
 
@@ -282,10 +282,10 @@ export async function publishInk(
     const { assignmentId, pageId } = inkChOrIds
     ch = inkChannel(assignmentId, pageId)
     temporary = true
-    await ch.subscribe()
+    await (ch as any)!.subscribe()
   }
 
-  await ch.send({ type: 'broadcast', event: 'ink', payload: { ...update } })
+  await (ch as any)!.send({ type: 'broadcast', event: 'ink', payload: { ...update } })
   if (temporary) { void ch.unsubscribe() }
 }
 
@@ -334,7 +334,7 @@ export function teacherPresenceResponder(
         allowedPages: null,
         teacherPageIndex: 0,
       };
-      await ch.send({
+      await (ch as any)!.send({
         type: 'broadcast',
         event: 'presence-snapshot',
         payload: { ...snap, ts: Date.now() },
@@ -344,7 +344,7 @@ export function teacherPresenceResponder(
     }
   });
 
-  ch.subscribe();
+  (ch as any)!.subscribe();
   return () => { void ch.unsubscribe(); };
 }
 
@@ -372,8 +372,8 @@ export function subscribePresenceSnapshot(
 
 export async function studentHello(assignmentId: string) {
   const ch = assignmentChannel(assignmentId);
-  await ch.subscribe();
-  await ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } });
+  await (ch as any)!.subscribe();
+  await (ch as any)!.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } });
   void ch.unsubscribe();
 }
 
@@ -383,7 +383,10 @@ export async function studentHello(assignmentId: string) {
 
 export async function studentGlobalHello(roomId: string) {
   const ch = supabase.channel(`global-hello:${roomId}`, { config: { broadcast: { ack: true } } });
-  await ch.subscribe();
-  try { await ch.send({ type: 'broadcast', event: 'hello-global', payload: { ts: Date.now() } }); }
+  await (ch as any)!.subscribe();
+  try { await (ch as any)!.send({ type: 'broadcast', event: 'hello-global', payload: { ts: Date.now() } }); }
   finally { try { await ch.unsubscribe(); } catch {} }
 }
+function isRealtimeChannel(x: any): x is RealtimeChannel { return !!x && typeof x === 'object' && 'send' in x; }
+
+export function inkChannel(assignmentId: string, pageId: string) { return supabase.channel(`ink:${assignmentId}:${pageId}`, { config: { broadcast: { ack: true } } }); }
