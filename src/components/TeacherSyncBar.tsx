@@ -1,202 +1,114 @@
-// src/components/TeacherSyncBar.tsx
-import { useEffect, useRef, useState } from 'react';
+// /src/components/TeacherSyncBar.tsx
+import { useEffect, useMemo, useState } from 'react'
 import {
-  assignmentChannel,
+  publishSetPage,
+  controlSetPage,
   publishAutoFollow,
   publishFocus,
-  publishSetPage,
   setTeacherPresence,
-  teacherPresenceResponder, // answers student "hello" with a snapshot
-} from '../lib/realtime';
+  controlPresence,
+  teacherPresenceResponder,
+  type TeacherPresenceState,
+} from '../lib/realtime'
 
 type Props = {
-  assignmentId: string;
-  pageId: string;
-  pageIndex: number;
-  className?: string;
-};
-
-// Accept "1-3,5,8-9" (1-based) -> [0,1,2,4,7,8] (0-based)
-function parseRanges(input: string): number[] {
-  const out = new Set<number>();
-  const parts = input.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
-  for (const p of parts) {
-    const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (m) {
-      let a = parseInt(m[1], 10), b = parseInt(m[2], 10);
-      if (isFinite(a) && isFinite(b)) {
-        if (a > b) [a, b] = [b, a];
-        for (let k = a; k <= b; k++) out.add(k - 1);
-      }
-    } else {
-      const n = parseInt(p, 10);
-      if (isFinite(n)) out.add(n - 1);
-    }
-  }
-  return Array.from(out.values()).sort((a, b) => a - b);
+  assignmentId: string
+  pageId: string
+  pageIndex: number
 }
 
-export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, className }: Props) {
-  const [autoFollow, setAutoFollow] = useState(false);
-  const [focus, setFocus] = useState(false);
-  const [lockNav, setLockNav] = useState(true);
-  const [rangeText, setRangeText] = useState('');
+export default function TeacherSyncBar({ assignmentId, pageId, pageIndex }: Props) {
+  const [autoFollow, setAutoFollow] = useState<boolean>(true)
+  const [focusOn, setFocusOn] = useState<boolean>(false)
+  const [lockNav, setLockNav] = useState<boolean>(true)
+  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
 
-  const allowedRef = useRef<number[] | null>(null);
-  const chRef = useRef<ReturnType<typeof assignmentChannel> | null>(null);
-
-  // Open teacher channel and publish initial presence AFTER subscribe
-  useEffect(() => {
-    if (!assignmentId) return;
-    const ch = assignmentChannel(assignmentId);
-    ch.subscribe(async (status: string) => {
-      if (status === 'SUBSCRIBED') {
-        await setTeacherPresence(ch, {
-          autoFollow,
-          allowedPages: allowedRef.current ?? null,
-          teacherPageIndex: pageIndex,
-          focusOn: focus,
-          lockNav,
-        });
-        // If Sync to Me is already ON, immediately tell students the page
-        if (autoFollow && pageId) {
-          await publishSetPage(ch, pageId, pageIndex);
-        }
-      }
-    });
-    chRef.current = ch;
-    return () => { ch.unsubscribe(); chRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignmentId]);
-
-  // Whenever these change, update presence
-  useEffect(() => {
-    if (!chRef.current) return;
-    void setTeacherPresence(chRef.current, {
+  const presence: TeacherPresenceState = useMemo(
+    () => ({
+      role: 'teacher',
+      teacherPageIndex: pageIndex ?? 0,
       autoFollow,
-      allowedPages: allowedRef.current ?? null,
-      teacherPageIndex: pageIndex,
-      focusOn: focus,
+      allowedPages,
+      focusOn,
       lockNav,
-    });
-  }, [autoFollow, focus, lockNav, pageIndex]);
+      ts: Date.now(),
+    }),
+    [pageIndex, autoFollow, allowedPages, focusOn, lockNav]
+  )
 
-  // When auto-follow is ON, rebroadcast current page on change (snappy)
+  // Tell students the page changed (assignment channel) and mirror to control:all
   useEffect(() => {
-    if (autoFollow && chRef.current && pageId) {
-      void publishSetPage(chRef.current, pageId, pageIndex);
-    }
-  }, [autoFollow, pageId, pageIndex]);
+    if (!assignmentId) return
+    publishSetPage(assignmentId, { pageIndex }).catch(() => {})
+    controlSetPage({ pageIndex }).catch(() => {})
+  }, [assignmentId, pageIndex])
 
-  // If "Allow pages" text changes while Sync is ON, push it live
+  // Broadcast presence + specific intents when flags/page change
   useEffect(() => {
-    if (!autoFollow || !chRef.current) return;
-    const allowed = parseRanges(rangeText);
-    allowedRef.current = allowed;
-    // refresh presence + auto-follow payload
-    (async () => {
-      await setTeacherPresence(chRef.current!, {
-        autoFollow: true,
-        allowedPages: allowed ?? null,
-        teacherPageIndex: pageIndex,
-        focusOn: focus,
-        lockNav,
-      });
-      await publishAutoFollow(chRef.current!, true, allowed ?? null, pageIndex);
-    })().catch(() => {});
-  }, [rangeText, autoFollow, focus, lockNav, pageIndex]);
+    if (!assignmentId) return
+    setTeacherPresence(assignmentId, presence).catch(() => {})
+    controlPresence(presence).catch(() => {}) // mirror globally for late joiners
 
-  // Respond to student "hello" with a presence snapshot (autosync-on-open)
+    publishAutoFollow(assignmentId, {
+      on: autoFollow,
+      allowedPages,
+      teacherPageIndex: pageIndex,
+    }).catch(() => {})
+
+    publishFocus(assignmentId, { on: focusOn, lockNav }).catch(() => {})
+  }, [assignmentId, presence, autoFollow, allowedPages, focusOn, lockNav, pageIndex])
+
+  // Answer student “hello” with a fresh snapshot
   useEffect(() => {
-    if (!assignmentId) return;
+    if (!assignmentId) return
     const off = teacherPresenceResponder(assignmentId, () => ({
       autoFollow,
-      focusOn: focus,
+      focusOn,
       lockNav,
-      allowedPages: allowedRef.current ?? null,
+      allowedPages,
       teacherPageIndex: pageIndex,
-    }));
-    return () => { try { (off as any)?.(); } catch {} };
-  }, [assignmentId, autoFollow, focus, lockNav, pageIndex]);
-
-  async function toggleAutoFollow() {
-    if (!chRef.current) return;
-    const next = !autoFollow;
-    setAutoFollow(next);
-
-    const allowed = next ? parseRanges(rangeText) : null;
-    allowedRef.current = allowed;
-
-    // presence first (so late joiners immediately see it)
-    await setTeacherPresence(chRef.current, {
-      autoFollow: next,
-      allowedPages: allowed ?? null,
-      teacherPageIndex: pageIndex,
-      focusOn: focus,
-      lockNav,
-    });
-
-    // broadcast for currently connected students
-    await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
-    if (next && pageId) {
-      await publishSetPage(chRef.current, pageId, pageIndex);
-    }
-  }
-
-  async function toggleFocus() {
-    if (!chRef.current) return;
-    const next = !focus;
-    setFocus(next);
-    await setTeacherPresence(chRef.current, {
-      autoFollow,
-      allowedPages: allowedRef.current ?? null,
-      teacherPageIndex: pageIndex,
-      focusOn: next,
-      lockNav,
-    });
-    await publishFocus(chRef.current, next, lockNav);
-  }
+    }))
+    return () => { try { off() } catch {} }
+  }, [assignmentId, autoFollow, focusOn, lockNav, allowedPages, pageIndex])
 
   return (
-    <div className={`flex flex-wrap items-center gap-2 p-2 bg-white/80 rounded-xl shadow border ${className ?? ''}`}>
-      <button
-        className={`px-3 py-1 rounded ${autoFollow ? 'bg-black text-white' : 'bg-gray-100'}`}
-        onClick={toggleAutoFollow}
-        title="While ON, students follow your page. Optionally allow a page range."
-      >
-        {autoFollow ? 'Sync to Me: ON' : 'Sync to Me: OFF'}
-      </button>
+    <div style={{
+      display: 'flex', gap: 8, alignItems: 'center',
+      background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: 8
+    }}>
+      <strong>Sync</strong>
 
-      <label className="flex items-center gap-1 text-sm">
-        <span className="text-gray-600">Allow pages</span>
+      <label style={{ display:'inline-flex', gap:6, alignItems:'center' }}>
         <input
-          className="border rounded px-2 py-1"
-          placeholder="e.g. 1-3,5"
-          value={rangeText}
-          onChange={e => setRangeText(e.target.value)}
-          disabled={autoFollow} // lock input while active
-          style={{ minWidth: 120 }}
+          type="checkbox"
+          checked={autoFollow}
+          onChange={(e) => setAutoFollow(e.target.checked)}
         />
+        Auto-follow
       </label>
 
-      <span className="mx-1 h-5 w-px bg-gray-300" />
+      <label style={{ display:'inline-flex', gap:6, alignItems:'center' }}>
+        <input
+          type="checkbox"
+          checked={focusOn}
+          onChange={(e) => setFocusOn(e.target.checked)}
+        />
+        Focus
+      </label>
 
-      <label className="flex items-center gap-1 text-sm">
+      <label style={{ display:'inline-flex', gap:6, alignItems:'center' }}>
         <input
           type="checkbox"
           checked={lockNav}
-          onChange={() => setLockNav(prev => !prev)}
-          disabled={!focus}
+          onChange={(e) => setLockNav(e.target.checked)}
+          disabled={!focusOn}
         />
-        Lock nav
+        Lock Nav
       </label>
 
-      <button
-        className={`px-3 py-1 rounded ${focus ? 'bg-red-600 text-white' : 'bg-gray-100'}`}
-        onClick={toggleFocus}
-      >
-        {focus ? 'End Focus' : 'Start Focus'}
-      </button>
+      <span style={{ marginLeft: 'auto', color:'#6b7280', fontSize:12 }}>
+        Page {pageIndex + 1}
+      </span>
     </div>
-  );
+  )
 }
