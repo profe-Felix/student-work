@@ -135,6 +135,14 @@ export default function StudentAssignment(){
     return (s ? s.toUpperCase() : inferStation(studentId))
   }, [location.search, studentId])
 
+  // ✅ SYNC STATE HOOKS — must appear before any effects use them
+  const [focusOn, setFocusOn] = useState(false)
+  const [navLocked, setNavLocked] = useState(false)
+  const [autoFollow, setAutoFollow] = useState(false)
+  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
+  const teacherPageIndexRef = useRef<number | null>(null)
+  // -------------------------------------------------------------
+
   // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
 
@@ -348,12 +356,6 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
-  const [focusOn, setFocusOn] = useState(false)
-  const [navLocked, setNavLocked] = useState(false)
-  const [autoFollow, setAutoFollow] = useState(false)
-  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
-  const teacherPageIndexRef = useRef<number | null>(null)
-
   const lastAppliedServerHash = useRef<string>('')
   const lastLocalHash = useRef<string>('')
   const localDirty = useRef<boolean>(false)
