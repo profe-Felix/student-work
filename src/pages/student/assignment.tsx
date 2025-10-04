@@ -602,6 +602,43 @@ useEffect(() => {
   }
   const guardedSetPage = (idx: number) => { if (canNavigateTo(idx)) guardedSetPage(idx); };
 
+  
+  /* Visibility hello throttled */
+  useEffect(() => {
+    const roomId = ROOM_ID;
+    let last = 0;
+    const onVis = () => {
+      const now = Date.now();
+      if (document.visibilityState === 'visible' && now - last > 10000) {
+        last = now;
+        try { studentGlobalHello(roomId); } catch {}
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    // fire once on mount
+    try { studentGlobalHello(roomId); } catch {}
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  
+  /* Listen for set-assignment on global class channel */
+  useEffect(() => {
+    const ch = subscribeToGlobal(ROOM_ID)
+      .on('broadcast', { event: 'set-assignment' }, (e: any) => {
+        const payload = e?.payload || {};
+        const aId = payload.assignmentId as string | undefined;
+        const tIdx = typeof payload.teacherPageIndex === 'number' ? payload.teacherPageIndex : 0;
+        if (aId) {
+          setRtAssignmentId(aId);
+          try { assignmentChannel(aId).subscribe(); } catch {}
+          setAutoFollow(true);
+          guardedSetPage(tIdx);
+        }
+      })
+      .subscribe();
+    return () => { try { ch.unsubscribe(); } catch {} };
+  }, [ROOM_ID]);
+
   /* ---------- Realtime teacher controls ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return

@@ -8,6 +8,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase } from './supabaseClient'
 
 /** ---------- Types (kept broad for compatibility) ---------- */
+export const globalChannel = (roomId: string) => supabase.channel(`global:${roomId}`, { config: { broadcast: { ack: true } } });
 export interface SetPagePayload {
   pageId?: string;         // optional for legacy calls
   pageIndex: number;
