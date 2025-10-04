@@ -66,11 +66,6 @@ export async function publishSetAssignment(assignmentId: string, roomId: string 
     try { await ch.unsubscribe() } catch {}
   }
 }
-,
-  })
-  // Avoid returning a Promise from cleanup in React effects
-  void ch.unsubscribe()
-}
 
 /** Student bootstraps this once and will jump to any new assignmentId the teacher selects. */
 export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => void, roomId: string = 'default') {
