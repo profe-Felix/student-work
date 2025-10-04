@@ -970,19 +970,26 @@ export default function StudentAssignment(){
           </div>
 
           {/* LIVE eraser overlay */}
-          <div
-            style={{
-              position:'absolute', inset:0, z-index:20,
-              pointerEvents: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')) ? 'auto' : 'none',
-              cursor: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject'))
-                ? 'crosshair'
-                : 'default'
-            }}
-            onPointerDown={onErasePointerDown}
-            onPointerMove={onErasePointerMove}
-            onPointerUp={onErasePointerUp}
-            onPointerCancel={onErasePointerUp}
-          />
+<div
+  style={{
+    position: 'absolute',
+    inset: 0,
+    zIndex: 20, // <-- was `z-index`
+    pointerEvents:
+      hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
+        ? 'auto'
+        : 'none',
+    cursor:
+      hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
+        ? 'crosshair'
+        : 'default',
+  }}
+  onPointerDown={onErasePointerDown}
+  onPointerMove={onErasePointerMove}
+  onPointerUp={onErasePointerUp}
+  onPointerCancel={onErasePointerUp}
+/>
+
         </div>
       </div>
 
