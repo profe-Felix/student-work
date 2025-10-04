@@ -1,4 +1,3 @@
-// src/pages/student/assignment.tsx
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -13,10 +12,11 @@ import {
 } from '../../lib/db'
 import {
   subscribeToAssignment,
+  subscribeToGlobal,
+  subscribeToControl,
   type SetPagePayload,
   type FocusPayload,
   type AutoFollowPayload,
-  subscribeToGlobal,
   type TeacherPresenceState,
   // autosync helpers
   subscribePresenceSnapshot,
@@ -172,6 +172,14 @@ export default function StudentAssignment(){
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
+  // ---------- Sync state (DECLARE BEFORE ANY EFFECTS THAT READ THEM) ----------
+  const [focusOn, setFocusOn] = useState(false)
+  const [navLocked, setNavLocked] = useState(false)
+  const [autoFollow, setAutoFollow] = useState(false)
+  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
+  const teacherPageIndexRef = useRef<number | null>(null)
+  // ---------------------------------------------------------------------------
+
   // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
 
@@ -204,14 +212,6 @@ export default function StudentAssignment(){
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
-  /* ---------- These must be declared before any effect that uses them ---------- */
-  const [focusOn, setFocusOn] = useState(false)
-  const [navLocked, setNavLocked] = useState(false)
-  const [autoFollow, setAutoFollow] = useState(false)
-  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
-  const teacherPageIndexRef = useRef<number | null>(null)
-  /* --------------------------------------------------------------------------- */
-
   // ✅ Ask for current assignment shortly after mount (if unknown)
   useEffect(() => {
     if (rtAssignmentId) return
@@ -220,30 +220,24 @@ export default function StudentAssignment(){
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ✅ Listen to global handoff (teacher dropdown)
+  // ✅ Global assignment handoff
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-
-      // Ask the teacher for the current presence/page right away
       try { void studentHello(nextAssignmentId) } catch {}
-
       try {
         const raw = localStorage.getItem(presenceKey(nextAssignmentId))
         if (raw) {
           const p = JSON.parse(raw) as TeacherPresenceState
-          if (typeof p.teacherPageIndex === 'number') {
-            teacherPageIndexRef.current = p.teacherPageIndex
-            // Only snap if teacher had autoFollow ON
-            if (p.autoFollow) setPageIndex(p.teacherPageIndex)
-          } else {
-            setPageIndex(0)
-          }
           setAutoFollow(!!p.autoFollow)
           setAllowedPages(p.allowedPages ?? null)
           setFocusOn(!!p.focusOn)
           setNavLocked(!!p.focusOn && !!p.lockNav)
+          if (p.autoFollow && typeof p.teacherPageIndex === 'number') {
+            teacherPageIndexRef.current = p.teacherPageIndex
+            setPageIndex(p.teacherPageIndex)
+          }
         } else {
           setPageIndex(0)
         }
@@ -253,29 +247,50 @@ export default function StudentAssignment(){
     return off
   }, [])
 
-  // ✅ EXTRA: plain control channel listeners (fast page mirror if autoFollow is ON)
+  // ✅ ALSO listen to control:all for set-page/focus/autofollow mirrors
   useEffect(() => {
-    const ch = supabase
-      .channel('control:all', { config: { broadcast: { ack: true } } })
-      // teacher set-assignment mirror
-      .on('broadcast', { event: 'set-assignment' }, (msg: any) => {
-        const id = msg?.payload?.assignmentId
-        if (typeof id === 'string' && id) {
-          try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, id) } catch {}
-          setRtAssignmentId(id)
+    const off = subscribeToControl({
+      onSetAssignment: (id) => {
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, id) } catch {}
+        setRtAssignmentId(id)
+        try { void studentHello(id) } catch {}
+      },
+      onSetPage: (p) => {
+        teacherPageIndexRef.current = p.pageIndex
+        // follow only if autoFollow is on OR focus is on+locked
+        if (autoFollow || (focusOn && navLocked)) {
+          setPageIndex(prev => prev !== p.pageIndex ? p.pageIndex : prev)
         }
-      })
-      // teacher set-page mirror — only follow when autoFollow is ON
-      .on('broadcast', { event: 'set-page' }, (msg: any) => {
-        const idx = msg?.payload?.pageIndex
-        if (typeof idx === 'number') {
-          teacherPageIndexRef.current = idx
-          if (autoFollow) setPageIndex(prev => (prev !== idx ? idx : prev))
+      },
+      onFocus: ({ on, lockNav }) => {
+        setFocusOn(!!on)
+        setNavLocked(!!on && !!lockNav)
+        if (on && lockNav && typeof teacherPageIndexRef.current === 'number') {
+          setPageIndex(teacherPageIndexRef.current)
         }
-      })
-      .subscribe()
-    return () => { try { ch.unsubscribe() } catch {} }
-  }, [autoFollow])
+      },
+      onAutoFollow: ({ on, allowedPages, teacherPageIndex }) => {
+        setAutoFollow(!!on)
+        setAllowedPages(allowedPages ?? null)
+        if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
+        if (on && typeof teacherPageIndexRef.current === 'number') {
+          setPageIndex(teacherPageIndexRef.current)
+        }
+      },
+      onPresence: (p) => {
+        try { localStorage.setItem(presenceKey(rtAssignmentId || 'latest'), JSON.stringify(p)) } catch {}
+        setAutoFollow(!!p.autoFollow)
+        setAllowedPages(p.allowedPages ?? null)
+        setFocusOn(!!p.focusOn)
+        setNavLocked(!!p.focusOn && !!p.lockNav)
+        if ((autoFollow || (p.focusOn && p.lockNav)) && typeof p.teacherPageIndex === 'number') {
+          teacherPageIndexRef.current = p.teacherPageIndex
+          setPageIndex(p.teacherPageIndex)
+        }
+      }
+    })
+    return off
+  }, [autoFollow, focusOn, navLocked, rtAssignmentId])
 
   // ✅ After we know assignment: say hello and get a presence snapshot (page index, etc.)
   useEffect(() => {
@@ -287,16 +302,15 @@ export default function StudentAssignment(){
       setAllowedPages(p.allowedPages ?? null)
       setFocusOn(!!p.focusOn)
       setNavLocked(!!p.focusOn && !!p.lockNav)
-      if (typeof p.teacherPageIndex === 'number') {
+      if ((p.autoFollow || (p.focusOn && p.lockNav)) && typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        // Only snap if autoFollow is ON
-        if (p.autoFollow) setPageIndex(p.teacherPageIndex)
+        setPageIndex(p.teacherPageIndex)
       }
     })
     return () => { try { (off as any)?.() } catch {} }
   }, [rtAssignmentId])
 
-  // ✅ Retry “hello” once shortly after assignment is known if no teacher page yet
+  // ✅ Retry “hello” once if no teacher page yet
   useEffect(() => {
     if (!rtAssignmentId) return
     const t = window.setTimeout(() => {
@@ -318,10 +332,9 @@ export default function StudentAssignment(){
       setAllowedPages(p.allowedPages ?? null)
       setFocusOn(!!p.focusOn)
       setNavLocked(!!p.focusOn && !!p.lockNav)
-      if (typeof p.teacherPageIndex === 'number') {
+      if ((p.autoFollow || (p.focusOn && p.lockNav)) && typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        // Only snap if autoFollow is ON
-        if (p.autoFollow) setPageIndex(p.teacherPageIndex)
+        setPageIndex(p.teacherPageIndex)
       }
     } catch {}
   }, [rtAssignmentId])
@@ -355,7 +368,6 @@ export default function StudentAssignment(){
     return { assignment_id: rtAssignmentId, page_id: curr.id }
   }
 
-  /* ---------- Page load: clear, then draft → server → cache ---------- */
   const lastAppliedServerHash = useRef<string>('')
   const lastLocalHash = useRef<string>('')
   const localDirty = useRef<boolean>(false)
@@ -543,18 +555,61 @@ export default function StudentAssignment(){
     }
   }
 
-  const blockedBySync = (idx: number) => {
-    if (!autoFollow) return false
-    if (allowedPages && allowedPages.length > 0) return !allowedPages.includes(idx)
-    const tpi = teacherPageIndexRef.current
-    if (typeof tpi === 'number') return idx !== tpi
-    return true
+  // ---------- Navigation policy ----------
+  const isAllowedByPageRange = (idx: number) => {
+    if (!allowedPages || allowedPages.length === 0) return true
+    return allowedPages.includes(idx)
   }
+
+  const blockedBySync = (idx: number) => {
+    // Focus+lockNav has highest priority: must be exactly teacher page
+    const tpi = teacherPageIndexRef.current
+    if (focusOn && navLocked) {
+      return typeof tpi === 'number' ? idx !== tpi : true
+    }
+    // Page range limits apply even when autoFollow is off
+    if (!isAllowedByPageRange(idx)) return true
+    // Auto-follow (when on) also restricts to teacher page
+    if (autoFollow) {
+      return typeof tpi === 'number' ? idx !== tpi : true
+    }
+    return false
+  }
+
+  // If allowedPages changes and current page is outside the range, snap into range
+  useEffect(() => {
+    if (!allowedPages || allowedPages.length === 0) return
+    if (!isAllowedByPageRange(pageIndex)) {
+      // prefer teacher page if allowed; else first allowed page
+      const tpi = teacherPageIndexRef.current
+      if (typeof tpi === 'number' && allowedPages.includes(tpi)) {
+        setPageIndex(tpi)
+      } else {
+        setPageIndex(allowedPages[0])
+      }
+    }
+  }, [allowedPages]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // If focus+lock is enabled later, snap immediately to teacher page
+  useEffect(() => {
+    if (focusOn && navLocked && typeof teacherPageIndexRef.current === 'number') {
+      setPageIndex(teacherPageIndexRef.current)
+    }
+  }, [focusOn, navLocked])
+
+  // If autoFollow turns on later, snap immediately to teacher page
+  useEffect(() => {
+    if (!autoFollow) return
+    const tpi = teacherPageIndexRef.current
+    if (typeof tpi === 'number') {
+      setPageIndex(prev => (prev !== tpi ? tpi : prev))
+    }
+  }, [autoFollow])
 
   const goToPage = async (nextIndex:number)=>{
     if (!hasTask) return
     if (nextIndex < 0) return
-    if (navLocked || blockedBySync(nextIndex)) return
+    if (blockedBySync(nextIndex)) return
     try { audioRef.current?.stop() } catch {}
 
     const current = drawRef.current?.getStrokes() || { strokes: [] }
@@ -628,17 +683,22 @@ export default function StudentAssignment(){
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  /* ---------- Realtime teacher controls ---------- */
+  /* ---------- Realtime teacher controls (per-assignment) ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
         teacherPageIndexRef.current = pageIndex
-        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+        if (autoFollow || (focusOn && navLocked)) {
+          setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+        }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
         setFocusOn(!!on)
         setNavLocked(!!on && !!lockNav)
+        if (on && lockNav && typeof teacherPageIndexRef.current === 'number') {
+          setPageIndex(teacherPageIndexRef.current)
+        }
       },
       onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
         setAutoFollow(!!on)
@@ -654,23 +714,14 @@ export default function StudentAssignment(){
         setAllowedPages(p.allowedPages ?? null)
         setFocusOn(!!p.focusOn)
         setNavLocked(!!p.focusOn && !!p.lockNav)
-        if (typeof p.teacherPageIndex === 'number') {
+        if ((p.autoFollow || (p.focusOn && p.lockNav)) && typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
-          if (p.autoFollow) setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
+          setPageIndex(p.teacherPageIndex)
         }
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
-  }, [rtAssignmentId, autoFollow])
-
-  // ✅ If auto-follow turns on later, snap immediately to teacher page
-  useEffect(() => {
-    if (!autoFollow) return
-    const tpi = teacherPageIndexRef.current
-    if (typeof tpi === 'number') {
-      setPageIndex(prev => (prev !== tpi ? tpi : prev))
-    }
-  }, [autoFollow])
+  }, [rtAssignmentId, autoFollow, focusOn, navLocked])
 
   const reloadFromServer = async ()=>{
     if (!hasTask) return
@@ -1036,7 +1087,7 @@ export default function StudentAssignment(){
       >
         <button
           onClick={()=>goToPage(Math.max(0, pageIndex-1))}
-          disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(Math.max(0, pageIndex-1))}
+          disabled={!hasTask || saving || submitInFlight.current}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           ◀ Prev
@@ -1046,7 +1097,7 @@ export default function StudentAssignment(){
         </span>
         <button
           onClick={()=>goToPage(pageIndex+1)}
-          disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
+          disabled={!hasTask || saving || submitInFlight.current}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           Next ▶
