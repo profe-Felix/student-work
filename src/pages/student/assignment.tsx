@@ -18,7 +18,7 @@ import {
   type AutoFollowPayload,
   subscribeToGlobal,
   type TeacherPresenceState,
-  // ✅ autosync helpers
+  // autosync helpers
   subscribePresenceSnapshot,
   studentHello,
   requestAssignment,
@@ -291,6 +291,14 @@ export default function StudentAssignment(){
       }
     } catch {}
   }, [rtAssignmentId])
+
+  // --------- stable cache ids (RESTORED) ----------
+  const getCacheIds = (pageId?: string) => {
+    const assignmentUid = rtAssignmentId || currIds.current.assignment_id || 'no-assignment'
+    const pageUid = pageId || currIds.current.page_id || `page-${pageIndex}`
+    return { assignmentUid, pageUid }
+  }
+  // -----------------------------------------------
 
   // Resolve assignment/page
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
@@ -964,7 +972,7 @@ export default function StudentAssignment(){
           {/* LIVE eraser overlay */}
           <div
             style={{
-              position:'absolute', inset:0, zIndex:20,
+              position:'absolute', inset:0, z-index:20,
               pointerEvents: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')) ? 'auto' : 'none',
               cursor: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject'))
                 ? 'crosshair'
