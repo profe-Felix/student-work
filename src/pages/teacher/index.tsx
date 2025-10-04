@@ -11,7 +11,7 @@ import {
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
 import { publishSetAssignment } from '../../lib/realtime' // NEW
-import { publishSetPage, setTeacherPresence, getLatestPresence } from '../../lib/realtime'
+import { publishSetPage, setTeacherPresence} from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
 type LatestCell = {
@@ -379,13 +379,7 @@ export default function TeacherDashboard() {
       try { await publishSetPage(assignmentId, pageIndex) } catch {}
       try {
         const p: any = getLatestPresence ? (getLatestPresence() || {}) : {};
-        await setTeacherPresence(assignmentId, {
-          autoFollow: true,
-          allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : (p.allowedPages ?? null),
-          teacherPageIndex: typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : pageIndex,
-          focusOn: !!p.focusOn,
-          lockNav: !!p.lockNav,
-        });
+        await setTeacherPresence(assignmentId, { autoFollow: true, allowedPages: null, teacherPageIndex: pageIndex, focusOn: false, lockNav: false });
       } catch {}
     })();
   }, [assignmentId, pageIndex]);
