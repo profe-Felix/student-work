@@ -10,11 +10,8 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import { publishSetAssignment, teacherGlobalAssignmentResponder, teacherPresenceResponder, getLatestPresence } from '../../lib/realtime' // NEW
-import { publishSetPage, setTeacherPresence } from '../../lib/realtime'
-import { assignmentChannel, setTeacherPresence } from '../../lib/realtime'
+import { publishSetAssignment, teacherGlobalAssignmentResponder, teacherPresenceResponder, getLatestPresence, publishSetPage, setTeacherPresence, assignmentChannel } from '../../lib/realtime' // NEW
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW
-import { publishSetPage, setTeacherPresence } from '../../lib/realtime': preview drawer
 function __getRoomId() {
   try {
     const h = typeof window !== 'undefined' ? window.location.hash : '';
@@ -42,7 +39,6 @@ export default function TeacherDashboard() {
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
   const lastAnnouncedAssignment = useRef<string>('') // NEW
-import { publishSetPage, setTeacherPresence } from '../../lib/realtime': prevent double-broadcasts
 
     const syncOnRef = useRef(false)
 const pageIndex = useMemo(
@@ -169,7 +165,6 @@ const pageIndex = useMemo(
   }, [assignmentId])
 
   // NEW
-import { publishSetPage, setTeacherPresence } from '../../lib/realtime': after assignmentId is resolved (initial load), broadcast it once.
   useEffect(() => {
     if (!assignmentId) return
     if (lastAnnouncedAssignment.current === assignmentId) return
@@ -327,7 +322,6 @@ import { publishSetPage, setTeacherPresence } from '../../lib/realtime': after a
               setAssignmentId(next)
               try {
                 await publishSetAssignment(next, ROOM_ID) // NEW
-import { publishSetPage, setTeacherPresence } from '../../lib/realtime': tell students to switch
                 lastAnnouncedAssignment.current = next // avoid double fire with the effect
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
