@@ -18,6 +18,10 @@ import {
   type AutoFollowPayload,
   subscribeToGlobal,
   type TeacherPresenceState,
+  // ✅ NEW: autosync helpers
+  subscribePresenceSnapshot,
+  studentHello,
+  requestAssignment,
 } from '../../lib/realtime'
 
 // Eraser utils
@@ -200,6 +204,14 @@ export default function StudentAssignment(){
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
+  // ✅ NEW: if we don't yet know the assignment on mount, ask the teacher (global ping)
+  useEffect(() => {
+    if (rtAssignmentId) return
+    const to = window.setTimeout(() => { try { void requestAssignment() } catch {} }, 400)
+    return () => { if (to) window.clearTimeout(to) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // purge legacy caches by title
   useEffect(() => {
     try {
@@ -268,6 +280,24 @@ export default function StudentAssignment(){
     })
     return off
   }, [])
+
+  // ✅ NEW: once we know the assignment, say hello and subscribe for a presence snapshot
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    try { void studentHello(rtAssignmentId) } catch {}
+    const off = subscribePresenceSnapshot(rtAssignmentId, (p) => {
+      try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+      setAutoFollow(!!p.autoFollow)
+      setAllowedPages(p.allowedPages ?? null)
+      setFocusOn(!!p.focusOn)
+      setNavLocked(!!p.focusOn && !!p.lockNav)
+      if (typeof p.teacherPageIndex === 'number') {
+        teacherPageIndexRef.current = p.teacherPageIndex
+        setPageIndex(p.teacherPageIndex)
+      }
+    })
+    return () => { try { (off as any)?.() } catch {} }
+  }, [rtAssignmentId])
 
   // hydrate presence on refresh
   useEffect(() => {
@@ -519,53 +549,53 @@ export default function StudentAssignment(){
   }
 
   // two-finger pan host
-const scrollHostRef = useRef<HTMLDivElement | null>(null)
-useEffect(() => {
-  const host = scrollHostRef.current
-  if (!host) return
+  const scrollHostRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const host = scrollHostRef.current
+    if (!host) return
 
-  let pan = false, startY = 0, startX = 0, startT = 0, startL = 0
+    let pan = false, startY = 0, startX = 0, startT = 0, startL = 0
 
-  const onTS = (e: TouchEvent) => {
-    if (e.touches.length >= 2 && !handMode) {
-      pan = true
-      const [t1, t2] = [e.touches[0], e.touches[1]]
-      startY = (t1.clientY + t2.clientY) / 2
-      startX = (t1.clientX + t2.clientX) / 2
-      startT = host.scrollTop
-      startL = host.scrollLeft
+    const onTS = (e: TouchEvent) => {
+      if (e.touches.length >= 2 && !handMode) {
+        pan = true
+        const [t1, t2] = [e.touches[0], e.touches[1]]
+        startY = (t1.clientY + t2.clientY) / 2
+        startX = (t1.clientX + t2.clientX) / 2
+        startT = host.scrollTop
+        startL = host.scrollLeft
+      }
     }
-  }
 
-  const onTM = (e: TouchEvent) => {
-    if (pan && e.touches.length >= 2) {
-      e.preventDefault()
-      const [t1, t2] = [e.touches[0], e.touches[1]]
-      const y = (t1.clientY + t2.clientY) / 2
-      const x = (t1.clientX + t2.clientX) / 2
-      host.scrollTop = startT - (y - startY)
-      host.scrollLeft = startL - (x - startX)
+    const onTM = (e: TouchEvent) => {
+      if (pan && e.touches.length >= 2) {
+        e.preventDefault()
+        const [t1, t2] = [e.touches[0], e.touches[1]]
+        const y = (t1.clientY + t2.clientY) / 2
+        const x = (t1.clientX + t2.clientX) / 2
+        host.scrollTop = startT - (y - startY)
+        host.scrollLeft = startL - (x - startX)
+      }
     }
-  }
 
-  const end = () => { pan = false }
+    const end = () => { pan = false }
 
-  const addOpts = { passive: true, capture: true } as AddEventListenerOptions
-  const moveOpts = { passive: false, capture: true } as AddEventListenerOptions
-  const rmOpts = { capture: true } as EventListenerOptions
+    const addOpts = { passive: true, capture: true } as AddEventListenerOptions
+    const moveOpts = { passive: false, capture: true } as AddEventListenerOptions
+    const rmOpts = { capture: true } as EventListenerOptions
 
-  host.addEventListener('touchstart', onTS, addOpts)
-  host.addEventListener('touchmove', onTM, moveOpts)
-  host.addEventListener('touchend', end, addOpts)
-  host.addEventListener('touchcancel', end, addOpts)
+    host.addEventListener('touchstart', onTS, addOpts)
+    host.addEventListener('touchmove', onTM, moveOpts)
+    host.addEventListener('touchend', end, addOpts)
+    host.addEventListener('touchcancel', end, addOpts)
 
-  return () => {
-    host.removeEventListener('touchstart', onTS, rmOpts)
-    host.removeEventListener('touchmove', onTM, rmOpts)
-    host.removeEventListener('touchend', end, rmOpts)
-    host.removeEventListener('touchcancel', end, rmOpts)
-  }
-}, [handMode])
+    return () => {
+      host.removeEventListener('touchstart', onTS, rmOpts)
+      host.removeEventListener('touchmove', onTM, rmOpts)
+      host.removeEventListener('touchend', end, rmOpts)
+      host.removeEventListener('touchcancel', end, rmOpts)
+    }
+  }, [handMode])
 
 
   const flipToolbarSide = ()=> {
