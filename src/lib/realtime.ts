@@ -81,9 +81,13 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
 
 /** Student -> global hello (late join handshake) */
 export async function studentGlobalHello(roomId: string = 'default') {
-  const ch = globalChannel(roomId);
+  const ch = supabase.channel(`global-hello:${roomId}`, { config: { broadcast: { ack: true } } });
   await ch.subscribe();
   await ch.send({ type: 'broadcast', event: 'hello-global', payload: { ts: Date.now() } });
+  // leave the hello channel to keep the main global-class channel intact
+  try { await ch.unsubscribe(); } catch {}
+}
+ });
   void ch.unsubscribe();
 }
 
@@ -93,8 +97,22 @@ export function teacherGlobalAssignmentResponder(
   getAssignmentId: () => string | null | undefined,
   isSyncOn: () => boolean
 ) {
-  const ch = globalChannel(roomId)
+  const helloCh = supabase.channel(`global-hello:${roomId}`, { config: { broadcast: { ack: true } } })
     .on('broadcast', { event: 'hello-global' }, async () => {
+      try {
+        if (!isSyncOn()) return;
+        const id = getAssignmentId?.() ?? null;
+        if (!id) return;
+        const classCh = globalChannel(roomId);
+        await classCh.subscribe();
+        await classCh.send({ type: 'broadcast', event: 'set-assignment', payload: { assignmentId: id, ts: Date.now() } });
+        try { await classCh.unsubscribe(); } catch {}
+      } catch {/* noop */}
+    })
+    .subscribe();
+  return () => { void helloCh.unsubscribe(); };
+}
+, async () => {
       try {
         if (!isSyncOn()) return;
         const id = getAssignmentId?.() ?? null;
