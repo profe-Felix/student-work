@@ -14,10 +14,12 @@ import {
   publishSetAssignment,
   respondToAssignmentRequests,
   controlSetAssignment,
+  // presence + page broadcasting for late joiners
   publishSetPage,
   setTeacherPresence,
   teacherPresenceResponder,
   controlSetPage,
+  // one-shot presence pulse (NOT a heartbeat)
   controlPresence,
 } from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer'
@@ -36,7 +38,9 @@ export default function TeacherDashboard() {
 
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
-  const lastAnnouncedAssignment = useRef<string>('') // prevent double-broadcasts
+
+  // prevent double-broadcasts of assignment
+  const lastAnnouncedAssignment = useRef<string>('')
 
   const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
@@ -122,7 +126,7 @@ export default function TeacherDashboard() {
     }
   }
 
-  // debounce
+  // debounce for grid refresh
   const debTimer = useRef<number | null>(null)
   const debouncedRefresh = (delay = 300) => {
     if (debTimer.current) window.clearTimeout(debTimer.current)
@@ -168,7 +172,6 @@ export default function TeacherDashboard() {
         await publishSetAssignment(assignmentId)
         await controlSetAssignment(assignmentId) // control channel mirror
         lastAnnouncedAssignment.current = assignmentId
-        // NOTE: no pulse here; we might not have pageId/pdf yet
       } catch (err) {
         console.error('initial broadcast failed', err)
       }
@@ -188,73 +191,81 @@ export default function TeacherDashboard() {
     refreshGrid.current('page change')
   }, [assignmentId, pageId])
 
-  // ===== Late joiner hydration =====
-  // 1) Answer "hello" with a presence snapshot including page + extras.
+  // ===== PRESENCE/SYNC (event-driven; no heartbeat) =====
+
+  // Helper to emit a one-shot presence/page pulse (the “presence kick”)
+  const presenceKickOnceRef = useRef<string>('') // cache of assignmentId|pageId we already kicked for
+  const presenceKick = useRef(async () => {})
+  presenceKick.current = async () => {
+    if (!assignmentId || !pageId) return
+    const key = `${assignmentId}|${pageId}`
+    if (presenceKickOnceRef.current === key) return
+    try {
+      const curr = pages.find(p => p.id === pageId)
+      const pdfPath = curr?.pdf_path || undefined
+
+      // Tell students our current page (assignment channel + control mirror)
+      await publishSetPage(assignmentId, { pageIndex, pageId, pdfPath })
+      await controlSetPage({ pageIndex, pageId, pdfPath })
+
+      // Set teacher presence flags (kept false/neutral here)
+      await setTeacherPresence(assignmentId, {
+        teacherPageIndex: pageIndex,
+        autoFollow: false,
+        focusOn: false,
+        lockNav: false,
+        allowedPages: null,
+      })
+
+      // ONE immediate presence pulse on control channel so late joiners hydrate
+      await controlPresence({
+        teacherAlive: true,
+        assignmentId,
+        pageId,
+        pageIndex,
+        pdfPath,
+        ts: Date.now(),
+      })
+
+      presenceKickOnceRef.current = key
+    } catch (e) {
+      console.warn('presenceKick failed', e)
+    }
+  }
+
+  // 1) Answer “hello” with a full snapshot (this is the reliable path for late joiners)
   useEffect(() => {
     if (!assignmentId) return
     const off = teacherPresenceResponder(assignmentId, () => {
       const curr = pages.find(p => p.id === pageId)
       const pdfPath = curr?.pdf_path || undefined
-      const snapshot: any = {
-        // Required baseline presence flags
+      return {
+        // full snapshot so students can hydrate without touching DB:
+        assignmentId,
+        pageId,
+        pdfPath,
+        teacherPageIndex: pageIndex,
+        // keep flags neutral here; TeacherSyncBar still controls them
         autoFollow: false,
         focusOn: false,
         lockNav: false,
         allowedPages: null,
-        teacherPageIndex: pageIndex,
-        // Extras students expect for instant hydration
-        assignmentId,
-        pageId,
-        pdfPath,
       }
-      return snapshot
     })
     return off
   }, [assignmentId, pageIndex, pageId, pages])
 
-  // 2) Whenever the page is known/changes, broadcast and send ONE pulse
+  // 2) Fire a one-shot presence kick once assignment+page are ready (and if either changes)
   useEffect(() => {
-    if (!assignmentId) return
-    const curr = pages.find(p => p.id === pageId)
-    const pdfPath = curr?.pdf_path || undefined
-    if (!pageId || !curr || !pdfPath) return // guard until fully known
-
-    ;(async () => {
-      try {
-        // Broadcast typed minimal payloads on the normal channels
-        await publishSetPage(assignmentId, { pageIndex })
-        await controlSetPage({ pageIndex })
-
-        // Presence (typed baseline)
-        await setTeacherPresence(assignmentId, {
-          teacherPageIndex: pageIndex,
-          autoFollow: false,
-          focusOn: false,
-          lockNav: false,
-          allowedPages: null,
-        })
-
-        // ONE control presence pulse that carries the rich hydration fields
-        await controlPresence({
-          teacherAlive: true,
-          assignmentId,
-          pageId,
-          pageIndex,
-          pdfPath,
-          ts: Date.now(),
-        })
-      } catch (e) {
-        console.warn('page/presence broadcast failed', e)
-      }
-    })()
-  }, [assignmentId, pageIndex, pageId, pages])
-  // ===== END Late joiner hydration =====
+    if (!assignmentId || !pageId) return
+    presenceKick.current()
+  }, [assignmentId, pageId, pageIndex, pages])
+  // ===== END presence/sync =====
 
   // realtime refreshers for teacher grid
   useEffect(() => {
     if (!pageId) return
 
-    // submissions on this page
     const ch1 = supabase.channel(`tgrid-subs-${pageId}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'submissions',
@@ -262,7 +273,6 @@ export default function TeacherDashboard() {
       }, () => debouncedRefresh(200))
       .subscribe()
 
-    // artifacts anywhere (audio / strokes)
     const ch2 = supabase.channel(`tgrid-arts`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'artifacts'
@@ -358,21 +368,16 @@ export default function TeacherDashboard() {
       <div style={{ margin: '12px 0 16px' }}>
         <PdfDropZone
           onCreated={async (newId: string, title: string) => {
-            // Show it immediately in the dropdown
             setAssignments((prev) => {
               if (prev.some((a) => a.id === newId)) return prev
               return [{ id: newId, title }, ...prev]
             })
-
-            // Select it
             setAssignmentId(newId)
 
-            // Broadcast to students now and mark as announced to avoid double-fire
             try {
               await publishSetAssignment(newId)
-              await controlSetAssignment(newId) // control channel mirror
+              await controlSetAssignment(newId)
               lastAnnouncedAssignment.current = newId
-              // no pulse here (page may not be loaded yet)
             } catch (err) {
               console.error('broadcast onCreated failed', err)
             }
@@ -389,13 +394,14 @@ export default function TeacherDashboard() {
               const next = e.target.value
               setAssignmentId(next)
               try {
-                await publishSetAssignment(next) // tell students to switch
-                await controlSetAssignment(next) // control channel mirror
-                lastAnnouncedAssignment.current = next // avoid double fire
-                // no pulse here (we wait for page guard)
+                await publishSetAssignment(next)
+                await controlSetAssignment(next)
+                lastAnnouncedAssignment.current = next
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
               }
+              // Reset the one-shot kick cache so we kick again for the new assignment+page
+              presenceKickOnceRef.current = ''
             }}
             style={{ padding: '6px 8px', minWidth: 260 }}
           >
@@ -409,7 +415,11 @@ export default function TeacherDashboard() {
           <span style={{ marginBottom: 4, color: '#555' }}>Page</span>
           <select
             value={pageId}
-            onChange={(e) => setPageId(e.target.value)}
+            onChange={(e) => {
+              setPageId(e.target.value)
+              // Reset kick cache so we kick for this page too
+              presenceKickOnceRef.current = ''
+            }}
             style={{ padding: '6px 8px', minWidth: 120 }}
             disabled={!assignmentId}
           >
