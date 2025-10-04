@@ -79,6 +79,28 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
   return () => { void ch.unsubscribe() }
 }
 
+/** ---------- ADDED: Student asks; teacher answers (late join autosync) ---------- */
+/** Student: request the current assignment on the global channel */
+export async function requestAssignment() {
+  const ch = globalChannel()
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'request-assignment', payload: { ts: Date.now() } })
+  void ch.unsubscribe()
+}
+
+/** Teacher: respond to 'request-assignment' by re-broadcasting current assignmentId */
+export function respondToAssignmentRequests(getAssignmentId: () => string) {
+  const ch = globalChannel()
+    .on('broadcast', { event: 'request-assignment' }, async () => {
+      const id = getAssignmentId?.() || ''
+      if (typeof id === 'string' && id) {
+        try { await publishSetAssignment(id) } catch { /* ignore */ }
+      }
+    })
+    .subscribe()
+  return () => { void ch.unsubscribe() }
+}
+
 /** -------------------------------------------------------------------------------------------
  *  Per-assignment channels
  *  ----------------------------------------------------------------------------------------- */
@@ -390,5 +412,3 @@ export async function studentHello(assignmentId: string) {
   await ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } });
   void ch.unsubscribe();
 }
-
-
