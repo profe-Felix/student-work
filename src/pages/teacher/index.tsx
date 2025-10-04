@@ -278,7 +278,7 @@ export default function TeacherDashboard() {
   // Push page + presence on teacher page changes while Sync is ON
   useEffect(() => {
     if (!assignmentId) return;
-    if (!syncOnRef.current) return;
+    if (!(typeof syncOn !== 'undefined' && syncOn)) return;
     (async () => {
       try { await publishSetPage(assignmentId, pageIndex); } catch {}
       try {
