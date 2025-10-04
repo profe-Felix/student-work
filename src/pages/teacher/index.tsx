@@ -194,12 +194,18 @@ export default function TeacherDashboard() {
     if (!assignmentId) return
     const off = teacherPresenceResponder(assignmentId, () => {
       const curr = pages.find(p => p.id === pageId)
-      return {
-        assignmentId,
+      // Include required PresenceSnapshot fields + extra hydration fields.
+      return ({
+        autoFollow: false,
+        focusOn: false,
+        lockNav: false,
+        allowedPages: null,
         teacherPageIndex: pageIndex,
+        // extra hydration fields for students:
+        assignmentId,
         pageId,
         pdfPath: curr?.pdf_path || undefined,
-      }
+      } as unknown) as import('../../lib/realtime').PresenceSnapshot
     })
     return off
   }, [assignmentId, pageIndex, pageId, pages])
