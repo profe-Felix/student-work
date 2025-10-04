@@ -17,7 +17,9 @@ function __getRoomId() {
     const h = typeof window !== 'undefined' ? window.location.hash : '';
     const search = (h && h.includes('?')) ? ('?' + h.split('?')[1]) : (typeof window !== 'undefined' ? window.location.search : '');
     const p = new URLSearchParams(search || '');
-    return p.get('room') || 'default';
+    const room = p.get('room') || sessionStorage.getItem('room') || 'default';
+    try { sessionStorage.setItem('room', room); } catch {}
+    return room;
   } catch { return 'default'; }
 }
 const ROOM_ID = __getRoomId();

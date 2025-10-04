@@ -32,6 +32,19 @@ function __getRoomId() {
 }
 const ROOM_ID = __getRoomId();
 
+// Normalize room in URL (HashRouter safe)
+useEffect(() => {
+  const hash = window.location.hash || '';
+  const hasQuery = hash.includes('?');
+  const q = new URLSearchParams(hasQuery ? hash.split('?')[1] : '');
+  if (!q.get('room')) {
+    q.set('room', ROOM_ID);
+    const base = hasQuery ? hash.split('?')[0] : hash;
+    const next = `${base}?${q.toString()}`;
+    window.location.replace(next);
+  }
+}, [ROOM_ID]);
+
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'

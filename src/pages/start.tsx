@@ -5,6 +5,18 @@ import { useNavigate } from 'react-router-dom'
 const makeRoster = (prefix: string, count: number) =>
   Array.from({ length: count }, (_, i) => `${prefix}_${String(i + 1).padStart(2, '0')}`)
 
+
+function __getRoomId() {
+  try {
+    const h = typeof window !== 'undefined' ? window.location.hash : '';
+    const search = (h && h.includes('?')) ? ('?' + h.split('?')[1]) : (typeof window !== 'undefined' ? window.location.search : '');
+    const p = new URLSearchParams(search || '');
+    const room = p.get('room') || sessionStorage.getItem('room') || 'default';
+    try { sessionStorage.setItem('room', room); } catch {}
+    return room;
+  } catch { return 'default'; }
+}
+
 export default function Start() {
   const nav = useNavigate()
 
@@ -20,7 +32,7 @@ export default function Start() {
   const go = (studentId: string) => {
     try { localStorage.setItem('currentStudent', studentId) } catch {}
     try { localStorage.setItem('currentClass', klass) } catch {}
-    nav(`/student/assignment?student=${encodeURIComponent(studentId)}`)
+    nav(`/student/assignment?student=${encodeURIComponent(studentId)}&room=${encodeURIComponent(__getRoomId())}`)
   }
 
   return (
