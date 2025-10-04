@@ -50,7 +50,8 @@ export type InkUpdate = {
  *  Global “class” channel (assignment-agnostic) used to hand students off to another assignment
  *  ----------------------------------------------------------------------------------------- */
 export function globalChannel() {
-  return supabase.channel('global-class', { config: { broadcast: { ack: true } } })
+  // IMPORTANT: ack:false -> use WebSocket broadcast (no REST => no CORS)
+  return supabase.channel('global-class', { config: { broadcast: { ack: false, self: false } } })
 }
 
 /** Teacher fires this when changing the assignment dropdown. */
@@ -112,12 +113,12 @@ export function respondToAssignmentRequests(getAssignmentId: () => string) {
  *  Per-assignment channels
  *  ----------------------------------------------------------------------------------------- */
 export function assignmentChannel(assignmentId: string) {
-  return supabase.channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: true } } })
+  return supabase.channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: false, self: false } } })
 }
 
 /** ---------- NEW: Per-(assignment,page) ink channel ---------- */
 export function inkChannel(assignmentId: string, pageId: string) {
-  return supabase.channel(`ink:${assignmentId}:${pageId}`, { config: { broadcast: { ack: true } } })
+  return supabase.channel(`ink:${assignmentId}:${pageId}`, { config: { broadcast: { ack: false, self: false } } })
 }
 
 function isRealtimeChannel(x: any): x is RealtimeChannel {
@@ -365,7 +366,8 @@ export function inkChannelKey(assignmentId: string, pageId: string) {
   return `ink:${assignmentId}:${pageId}`
 }
 export function openInkChannel(assignmentId: string, pageId: string) {
-  return supabase.channel(inkChannelKey(assignmentId, pageId), { config: { broadcast: { ack: true } } })
+  // IMPORTANT: ack:false here too
+  return supabase.channel(inkChannelKey(assignmentId, pageId), { config: { broadcast: { ack: false, self: false } } })
 }
 
 // --- Student "hello" -> Teacher presence snapshot handshake -------------------
@@ -403,7 +405,7 @@ type ControlHandlers = {
 };
 
 export function controlAllChannel() {
-  return supabase.channel('control:all', { config: { broadcast: { ack: true } } })
+  return supabase.channel('control:all', { config: { broadcast: { ack: false, self: false } } })
 }
 
 /** Student: subscribe once, apply teacher commands immediately (no assignment needed). */
