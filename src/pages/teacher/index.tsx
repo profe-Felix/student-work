@@ -364,7 +364,7 @@ export default function TeacherDashboard() {
           <TeacherSyncBar
             assignmentId={assignmentId}
             pageId={pageId}
-            pageIndex={pageIndex} {/* expects a number */}
+            pageIndex={pageIndex}
           />
         </div>
       )}
