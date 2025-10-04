@@ -152,6 +152,13 @@ const [lockNav, setLockNav] = useState(true);
         focusOn: next,
         lockNav,
       });
+      await setTeacherPresence(chRef.current, {
+        autoFollow,
+        allowedPages: allowedRef.current ?? null,
+        teacherPageIndex: pageIndex,
+        focusOn: next,
+        lockNav,
+      });
   }
 
   return (

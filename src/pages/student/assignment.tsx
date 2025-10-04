@@ -256,6 +256,7 @@ export default function StudentAssignment(){
   const [focusOn, setFocusOn] = useState(false)
   const [navLocked, setNavLocked] = useState(false)
   const [autoFollow, setAutoFollow] = useState(false)
+  const autoFollowRef = useRef(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
 
@@ -625,6 +626,7 @@ useEffect(() => {
     const off = subscribePresenceSnapshot(rtAssignmentId, (p: TeacherPresenceState) => {
       try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
       setAutoFollow(!!p.autoFollow);
+      autoFollowRef.current = !!p.autoFollow;
       setAllowedPages(p.allowedPages ?? null);
       setFocusOn(!!p.focusOn);
       setNavLocked(!!p.focusOn && !!p.lockNav);
@@ -635,7 +637,34 @@ useEffect(() => {
     void studentHello(rtAssignmentId);
     return () => { try { off?.(); } catch {} };
   }, [rtAssignmentId]);
-/* ---------- Realtime teacher controls ---------- */
+useEffect(() => { autoFollowRef.current = !!autoFollow }, [autoFollow]);
+
+  
+  // Listen for per-assignment 'set-page' broadcasts
+  useEffect(() => {
+    if (!rtAssignmentId) return;
+    const ch = assignmentChannel(rtAssignmentId)
+      .on('broadcast', { event: 'set-page' }, (e: any) => {
+        try {
+          if (!autoFollowRef.current) return;
+          const payload = e?.payload || {};
+          const teacherIdx = typeof payload.pageIndex === 'number' ? payload.pageIndex : null;
+          if (teacherIdx !== null) setPageIndex(teacherIdx);
+        } catch {}
+      })
+      .subscribe();
+    return () => { try { ch.unsubscribe(); } catch {} };
+  }, [rtAssignmentId]);
+
+  
+  function canNavigateTo(targetIndex: number) {
+    if (!focusOn) return true;
+    if (!navLocked) return true;
+    if (!allowedPages || !Array.isArray(allowedPages)) return false;
+    return allowedPages.includes(targetIndex);
+  }
+
+  /* ---------- Realtime teacher controls ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
