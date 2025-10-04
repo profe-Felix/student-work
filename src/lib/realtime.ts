@@ -388,3 +388,81 @@ export async function studentHello(assignmentId: string) {
   await ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } })
   void ch.unsubscribe()
 }
+/** -------------------------------------------------------------------------------------------
+ *  CONTROL CHANNEL: simple, live-strokes-style broadcast for teacher → all students
+ *  Everyone subscribes to control:all. Teacher broadcasts here in addition to assignment channel.
+ *  Events: set-assignment, set-page, focus, auto-follow, presence
+ *  ----------------------------------------------------------------------------------------- */
+
+type ControlHandlers = {
+  onSetAssignment?: (assignmentId: string) => void;
+  onSetPage?: (p: SetPagePayload) => void;
+  onFocus?: (p: FocusPayload) => void;
+  onAutoFollow?: (p: AutoFollowPayload) => void;
+  onPresence?: (p: TeacherPresenceState) => void;
+};
+
+export function controlAllChannel() {
+  return supabase.channel('control:all', { config: { broadcast: { ack: true } } })
+}
+
+/** Student: subscribe once, apply teacher commands immediately (no assignment needed). */
+export function subscribeToControl(handlers: ControlHandlers) {
+  const ch = controlAllChannel()
+    .on('broadcast', { event: 'set-assignment' }, (msg: any) => {
+      const id = msg?.payload?.assignmentId
+      if (typeof id === 'string' && id) handlers.onSetAssignment?.(id)
+    })
+    .on('broadcast', { event: 'set-page' }, (msg: any) => {
+      const p = msg?.payload as SetPagePayload
+      if (p && typeof p.pageIndex === 'number') handlers.onSetPage?.(p)
+    })
+    .on('broadcast', { event: 'focus' }, (msg: any) => {
+      const p = msg?.payload as FocusPayload
+      if (p) handlers.onFocus?.(p)
+    })
+    .on('broadcast', { event: 'auto-follow' }, (msg: any) => {
+      const p = msg?.payload as AutoFollowPayload
+      if (p) handlers.onAutoFollow?.(p)
+    })
+    .on('broadcast', { event: 'presence' }, (msg: any) => {
+      const p = msg?.payload as TeacherPresenceState
+      if (p) handlers.onPresence?.(p)
+    })
+    .subscribe()
+
+  return () => { void ch.unsubscribe() }
+}
+
+/** Teacher: broadcast to control:all (mirrors the per-assignment messages you already send). */
+export async function controlSetAssignment(assignmentId: string) {
+  if (!assignmentId) return
+  const ch = controlAllChannel()
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'set-assignment', payload: { assignmentId, ts: Date.now() } })
+  void ch.unsubscribe()
+}
+export async function controlSetPage(payload: SetPagePayload) {
+  const ch = controlAllChannel()
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } })
+  void ch.unsubscribe()
+}
+export async function controlFocus(payload: FocusPayload) {
+  const ch = controlAllChannel()
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } })
+  void ch.unsubscribe()
+}
+export async function controlAutoFollow(payload: AutoFollowPayload) {
+  const ch = controlAllChannel()
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'auto-follow', payload: { ...payload, ts: Date.now() } })
+  void ch.unsubscribe()
+}
+export async function controlPresence(payload: TeacherPresenceState) {
+  const ch = controlAllChannel()
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'presence', payload: { ...payload, ts: Date.now() } })
+  void ch.unsubscribe()
+}
