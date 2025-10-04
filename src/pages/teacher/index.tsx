@@ -209,17 +209,34 @@ export default function TeacherDashboard() {
     if (!assignmentId) return
     ;(async () => {
       try {
-        await publishSetPage(assignmentId, { pageIndex })
-        await controlSetPage({ pageIndex })
+        // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        // Include pageId and pdfPath so students can render immediately.
+        const curr = pages.find(p => p.id === pageId)
+        const pdfPath = curr?.pdf_path || undefined
+
+        await publishSetPage(assignmentId, {
+          pageIndex,
+          pageId,
+          pdfPath,
+        })
+        await controlSetPage({
+          pageIndex,
+          pageId,
+          pdfPath,
+        })
         await setTeacherPresence(assignmentId, {
           teacherPageIndex: pageIndex,
-          autoFollow: false, focusOn: false, lockNav: false, allowedPages: null,
+          autoFollow: false,
+          focusOn: false,
+          lockNav: false,
+          allowedPages: null,
         })
+        // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
       } catch (e) {
         console.warn('page/presence broadcast failed', e)
       }
     })()
-  }, [assignmentId, pageIndex])
+  }, [assignmentId, pageIndex, pageId, pages])
   // ===== END NEW =====
 
   // realtime refreshers for teacher grid
