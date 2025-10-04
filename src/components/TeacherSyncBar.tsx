@@ -133,10 +133,12 @@ const [lockNav, setLockNav] = useState(true);
     }
   }
 
+  
   async function toggleFocus() {
     if (!chRef.current) return;
     const next = !focus;
     setFocus(next);
+    await publishFocus(chRef.current, next, lockNav);
     await setTeacherPresence(chRef.current, {
       autoFollow,
       allowedPages: allowedRef.current ?? null,
@@ -144,63 +146,5 @@ const [lockNav, setLockNav] = useState(true);
       focusOn: next,
       lockNav,
     });
-    await publishFocus(chRef.current, next, lockNav);
-      await setTeacherPresence(chRef.current, {
-        autoFollow,
-        allowedPages: allowedRef.current ?? null,
-        teacherPageIndex: pageIndex,
-        focusOn: next,
-        lockNav,
-      });
-      await setTeacherPresence(chRef.current, {
-        autoFollow,
-        allowedPages: allowedRef.current ?? null,
-        teacherPageIndex: pageIndex,
-        focusOn: next,
-        lockNav,
-      });
   }
 
-  return (
-    <div className={`flex flex-wrap items-center gap-2 p-2 bg-white/80 rounded-xl shadow border ${className ?? ''}`}>
-      <button
-        className={`px-3 py-1 rounded ${autoFollow ? 'bg-black text-white' : 'bg-gray-100'}`}
-        onClick={toggleAutoFollow}
-        title="While ON, students follow your page. Optionally allow a page range."
-      >
-        {autoFollow ? 'Sync to Me: ON' : 'Sync to Me: OFF'}
-      </button>
-
-      <label className="flex items-center gap-1 text-sm">
-        <span className="text-gray-600">Allow pages</span>
-        <input
-          className="border rounded px-2 py-1"
-          placeholder="e.g. 1-3,5"
-          value={rangeText}
-          onChange={e => setRangeText(e.target.value)}
-          disabled={autoFollow} // lock input while active
-          style={{ minWidth: 120 }}
-        />
-      </label>
-
-      <span className="mx-1 h-5 w-px bg-gray-300" />
-
-      <label className="flex items-center gap-1 text-sm">
-        <input
-          type="checkbox"
-          checked={lockNav}
-          onChange={() => setLockNav(v => !v)}
-          disabled={!focus}
-        />
-        Lock nav
-      </label>
-
-      <button
-        className={`px-3 py-1 rounded ${focus ? 'bg-red-600 text-white' : 'bg-gray-100'}`}
-        onClick={toggleFocus}
-      >
-        {focus ? 'End Focus' : 'Start Focus'}
-      </button>
-    </div>
-  );
-}

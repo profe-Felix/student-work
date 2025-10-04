@@ -10,7 +10,9 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import { publishSetAssignment, teacherGlobalAssignmentResponder, teacherPresenceResponder, getLatestPresence, publishSetPage, setTeacherPresence, assignmentChannel } from '../../lib/realtime' // NEW
+import { publishSetAssignment, teacherGlobalAssignmentResponder } from '../../lib/realtime'
+import { teacherPresenceResponder, getLatestPresence } from '../../lib/realtime'
+import { publishSetPage, setTeacherPresence, assignmentChannel } from '../../lib/realtime' // NEW
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW
 function __getRoomId() {
   try {
