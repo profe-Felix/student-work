@@ -22,8 +22,15 @@ import {
   studentHello,
   type TeacherPresenceState,
 } from '../../lib/realtime'
-const params = new URLSearchParams(window.location.search);
-const ROOM_ID = params.get('room') || 'default';
+function __getRoomId() {
+  try {
+    const h = typeof window !== 'undefined' ? window.location.hash : '';
+    const search = (h && h.includes('?')) ? ('?' + h.split('?')[1]) : (typeof window !== 'undefined' ? window.location.search : '');
+    const p = new URLSearchParams(search || '');
+    return p.get('room') || 'default';
+  } catch { return 'default'; }
+}
+const ROOM_ID = __getRoomId();
 
 
 // Eraser utils

@@ -12,8 +12,15 @@ import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
 import { publishSetAssignment, teacherGlobalAssignmentResponder, teacherPresenceResponder, getLatestPresence } from '../../lib/realtime' // NEW
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
-const params = new URLSearchParams(window.location.search);
-const ROOM_ID = params.get('room') || 'default';
+function __getRoomId() {
+  try {
+    const h = typeof window !== 'undefined' ? window.location.hash : '';
+    const search = (h && h.includes('?')) ? ('?' + h.split('?')[1]) : (typeof window !== 'undefined' ? window.location.search : '');
+    const p = new URLSearchParams(search || '');
+    return p.get('room') || 'default';
+  } catch { return 'default'; }
+}
+const ROOM_ID = __getRoomId();
 
 type LatestCell = {
   submission_id: string
