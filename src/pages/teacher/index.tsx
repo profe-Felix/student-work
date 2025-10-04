@@ -223,18 +223,10 @@ export default function TeacherDashboard() {
         const curr = pages.find(p => p.id === pageId)
         const pdfPath = curr?.pdf_path || undefined
 
-        await publishSetPage(assignmentId, {
-          pageIndex,
-          pageId,
-          // @ts-expect-error allow pdfPath passthrough for clients that read it
-          pdfPath,
-        })
-        await controlSetPage({
-          pageIndex,
-          // @ts-expect-error allow pdfPath passthrough for clients that read it
-          pageId,
-          pdfPath,
-        })
+        // send typed payloads only
+        await publishSetPage(assignmentId, { pageIndex })
+        await controlSetPage({ pageIndex })
+
         await setTeacherPresence(assignmentId, {
           teacherPageIndex: pageIndex,
           autoFollow: false,
