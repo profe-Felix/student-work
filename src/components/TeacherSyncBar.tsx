@@ -6,7 +6,7 @@ import {
   publishFocus,
   publishSetPage,
   setTeacherPresence,
-  teacherPresenceResponder, // ✅ added
+  teacherPresenceResponder, // answers student "hello" with a snapshot
 } from '../lib/realtime';
 
 type Props = {
@@ -41,6 +41,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
   const [focus, setFocus] = useState(false);
   const [lockNav, setLockNav] = useState(true);
   const [rangeText, setRangeText] = useState('');
+
   const allowedRef = useRef<number[] | null>(null);
   const chRef = useRef<ReturnType<typeof assignmentChannel> | null>(null);
 
@@ -57,6 +58,10 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
           focusOn: focus,
           lockNav,
         });
+        // If Sync to Me is already ON, immediately tell students the page
+        if (autoFollow && pageId) {
+          await publishSetPage(ch, pageId, pageIndex);
+        }
       }
     });
     chRef.current = ch;
@@ -83,7 +88,25 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     }
   }, [autoFollow, pageId, pageIndex]);
 
-  // ✅ NEW: respond to student "hello" with a presence snapshot (autosync-on-open)
+  // If "Allow pages" text changes while Sync is ON, push it live
+  useEffect(() => {
+    if (!autoFollow || !chRef.current) return;
+    const allowed = parseRanges(rangeText);
+    allowedRef.current = allowed;
+    // refresh presence + auto-follow payload
+    (async () => {
+      await setTeacherPresence(chRef.current!, {
+        autoFollow: true,
+        allowedPages: allowed ?? null,
+        teacherPageIndex: pageIndex,
+        focusOn: focus,
+        lockNav,
+      });
+      await publishAutoFollow(chRef.current!, true, allowed ?? null, pageIndex);
+    })().catch(() => {});
+  }, [rangeText, autoFollow, focus, lockNav, pageIndex]);
+
+  // Respond to student "hello" with a presence snapshot (autosync-on-open)
   useEffect(() => {
     if (!assignmentId) return;
     const off = teacherPresenceResponder(assignmentId, () => ({
@@ -115,7 +138,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
 
     // broadcast for currently connected students
     await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
-    if (next) {
+    if (next && pageId) {
       await publishSetPage(chRef.current, pageId, pageIndex);
     }
   }
@@ -162,7 +185,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
         <input
           type="checkbox"
           checked={lockNav}
-          onChange={() => setLockNav(v => !v)}
+          onChange={() => setLockNav(prev => !prev)}
           disabled={!focus}
         />
         Lock nav
