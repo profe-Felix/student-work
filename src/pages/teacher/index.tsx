@@ -372,7 +372,20 @@ const pageIndex = useMemo(
         {STUDENTS.map(sid => {
           const cell = grid[sid] ?? null
           const has = !!cell
-          return (
+          
+  // Respond to global hellos only when Sync is ON
+  useEffect(() => {
+    const off = teacherGlobalAssignmentResponder(ROOM_ID, () => assignmentId, () => !!syncOnRef.current);
+    return () => { try { off?.(); } catch {} };
+  }, [assignmentId]);
+
+  // Answer assignment-level presence hellos with the latest presence
+  useEffect(() => {
+    if (!assignmentId) return;
+    const ch = teacherPresenceResponder(assignmentId, () => getLatestPresence() || { autoFollow: false, teacherPageIndex: 0, allowedPages: null });
+    return () => { try { ch?.unsubscribe?.(); } catch {} };
+  }, [assignmentId]);
+return (
             <div key={sid} style={{
               border: '1px solid #e5e7eb',
               borderRadius: 10,
