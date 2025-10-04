@@ -378,7 +378,7 @@ export default function TeacherDashboard() {
     (async () => {
       try { await publishSetPage(assignmentId, pageIndex) } catch {}
       try {
-        const p: any = getLatestPresence ? (getLatestPresence() || {}) : {};
+        const p: any = __REMOVED__getLatestPresence ? (__REMOVED__getLatestPresence() || {}) : {};
         await setTeacherPresence(assignmentId, { autoFollow: true, allowedPages: null, teacherPageIndex: pageIndex, focusOn: false, lockNav: false });
 } catch {}
     })();
