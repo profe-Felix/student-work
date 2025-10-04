@@ -202,18 +202,27 @@ export default function TeacherDashboard() {
   }, [assignmentId, pageId])
 
   // ===== Late joiner hydration =====
-  // 1) Answer "hello" with a presence snapshot including the current pageIndex.
+  // 1) Answer "hello" with a presence snapshot including the current pageIndex + extras.
   useEffect(() => {
     if (!assignmentId) return
-    const off = teacherPresenceResponder(assignmentId, () => ({
-      autoFollow: false,
-      focusOn: false,
-      lockNav: false,
-      allowedPages: null,
-      teacherPageIndex: pageIndex,
-    }))
+    const off = teacherPresenceResponder(assignmentId, () => {
+      const curr = pages.find(p => p.id === pageId)
+      // Base presence required by type + extra fields students use to hydrate immediately.
+      const snapshot: any = {
+        autoFollow: false,
+        focusOn: false,
+        lockNav: false,
+        allowedPages: null,
+        teacherPageIndex: pageIndex,
+        // extras for hydration (students read these)
+        assignmentId,
+        pageId,
+        pdfPath: curr?.pdf_path || undefined,
+      }
+      return snapshot
+    })
     return off
-  }, [assignmentId, pageIndex])
+  }, [assignmentId, pageIndex, pageId, pages])
 
   // 2) Whenever the page changes, broadcast set-page + control mirror + presence (page-only) + single pulse
   useEffect(() => {
