@@ -245,7 +245,7 @@ export default function TeacherDashboard() {
         return
       }
       const strokesArt = latest.artifacts?.find(a => a.kind === 'strokes' && (a as any).strokes_json) as any | undefined
-      const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path')
+      const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path) // ✅ fixed stray quote
 
       let audioUrl: string | undefined = undefined
       if (audioArt?.storage_path) {
