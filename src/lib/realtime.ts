@@ -82,8 +82,8 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
 /** -------------------------------------------------------------------------------------------
  *  Per-assignment channels
  *  ----------------------------------------------------------------------------------------- */
-export function assignmentChannel(assignmentId: string) {
-  return supabase.channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: true } } })
+export const assignmentChannel = (assignmentId: string) => supabase.channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: true } } });
+`, { config: { broadcast: { ack: true } } })
 }
 
 /** ---------- NEW: Per-(assignment,page) ink channel ---------- */
@@ -394,7 +394,6 @@ export async function studentHello(assignmentId: string) {
 
 
 
-export const assignmentChannel = (id: string) => supabase.channel(`assignment:${id}`, { config: { broadcast: { ack: true } } });
 
 export async function studentGlobalHello(roomId: string) {
   const ch = supabase.channel(`global-hello:${roomId}`, { config: { broadcast: { ack: true } } });
