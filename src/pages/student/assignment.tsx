@@ -248,7 +248,7 @@ export default function StudentAssignment(){
   }, [])
 
   // ✅ ALSO listen to control:all for set-page/focus/autofollow/presence mirrors
-  // PAGE/PDF hydration only from presence; focus/autofollow only from their own events
+  //     First-join snap: if we're not hydrated yet, snap regardless of focus/autoFollow
   useEffect(() => {
     const off = subscribeToControl({
       onSetAssignment: (id) => {
@@ -270,13 +270,25 @@ export default function StudentAssignment(){
           currIds.current.page_id = p.pageId
         }
 
-        if (autoFollow || (focusOn && navLocked)) {
-          setPageIndex(prev => (prev !== p.pageIndex ? p.pageIndex : prev))
+        const firstJoin =
+          !rtAssignmentId ||
+          !currIds.current.assignment_id ||
+          !pdfStoragePath ||
+          !hasTask
+
+        if (typeof teacherPageIndexRef.current === 'number') {
+          if (firstJoin) {
+            setPageIndex(teacherPageIndexRef.current)
+          } else if (autoFollow || (focusOn && navLocked)) {
+            setPageIndex(prev =>
+              prev !== teacherPageIndexRef.current! ? teacherPageIndexRef.current! : prev
+            )
+          }
         }
       },
 
       // Focus ONLY via the dedicated event
-      onFocus: ({ on, lockNav }: FocusPayload) => {
+      onFocus: ({ on, lockNav }) => {
         setFocusOn(!!on)
         setNavLocked(!!on && !!lockNav)
         if (on && lockNav && typeof teacherPageIndexRef.current === 'number') {
@@ -285,7 +297,7 @@ export default function StudentAssignment(){
       },
 
       // AutoFollow ONLY via the dedicated event
-      onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
+      onAutoFollow: ({ on, allowedPages, teacherPageIndex }) => {
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
@@ -313,23 +325,34 @@ export default function StudentAssignment(){
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
 
-        const shouldSnap = autoFollow || (focusOn && navLocked)
-        if (shouldSnap && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(prev => (prev !== teacherPageIndexRef.current! ? teacherPageIndexRef.current! : prev))
+        const firstJoin =
+          !rtAssignmentId ||
+          !currIds.current.assignment_id ||
+          !pdfStoragePath ||
+          !hasTask
+
+        if (typeof teacherPageIndexRef.current === 'number') {
+          if (firstJoin) {
+            setPageIndex(teacherPageIndexRef.current)
+          } else if (autoFollow || (focusOn && navLocked)) {
+            setPageIndex(prev =>
+              prev !== teacherPageIndexRef.current! ? teacherPageIndexRef.current! : prev
+            )
+          }
         }
       }
     })
     return off
-  }, [autoFollow, focusOn, navLocked, rtAssignmentId])
+  }, [autoFollow, focusOn, navLocked, rtAssignmentId, pdfStoragePath, hasTask])
 
   // ✅ After we know assignment: say hello and get a presence snapshot (PAGE-ONLY)
+  //     First-join snap: if we're not hydrated yet, snap regardless of focus/autoFollow
   useEffect(() => {
     if (!rtAssignmentId) return
     try { void studentHello(rtAssignmentId) } catch {}
     const off = subscribePresenceSnapshot(rtAssignmentId, (p) => {
       try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
 
-      // do NOT setFocusOn / setNavLocked / setAutoFollow from presence
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
       }
@@ -342,13 +365,22 @@ export default function StudentAssignment(){
       const pid = (p as any)?.pageId as string | undefined
       if (pid) currIds.current.page_id = pid
 
-      // snap only if policy allows (based on current focus/autoFollow state)
-      if ((autoFollow || (focusOn && navLocked)) && typeof teacherPageIndexRef.current === 'number') {
-        setPageIndex(teacherPageIndexRef.current)
+      const firstJoin =
+        !rtAssignmentId ||
+        !currIds.current.assignment_id ||
+        !pdfStoragePath ||
+        !hasTask
+
+      if (typeof teacherPageIndexRef.current === 'number') {
+        if (firstJoin) {
+          setPageIndex(teacherPageIndexRef.current)
+        } else if ((autoFollow || (focusOn && navLocked))) {
+          setPageIndex(teacherPageIndexRef.current)
+        }
       }
     })
     return () => { try { (off as any)?.() } catch {} }
-  }, [rtAssignmentId, autoFollow, focusOn, navLocked])
+  }, [rtAssignmentId, autoFollow, focusOn, navLocked, pdfStoragePath, hasTask])
 
   // ✅ Retry “hello” once if no teacher page yet
   useEffect(() => {
@@ -361,7 +393,7 @@ export default function StudentAssignment(){
     return () => window.clearTimeout(t)
   }, [rtAssignmentId])
 
-  // hydrate presence on refresh (kept as-is)
+  // hydrate presence on refresh
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
