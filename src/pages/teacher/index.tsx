@@ -10,8 +10,7 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import { publishSetAssignment, publishSetPage, setTeacherPresence } from '../../lib/realtime'
-
+import { publishSetAssignment } from '../../lib/realtime' // NEW
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
 type LatestCell = {
@@ -36,7 +35,6 @@ export default function TeacherDashboard() {
   )
 
   const [loading, setLoading] = useState(false)
-const [syncOn, setSyncOn] = useState(false);
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
   // PREVIEW STATE (NEW) — audioUrl is string | undefined to match PlaybackDrawer
@@ -275,25 +273,6 @@ const [syncOn, setSyncOn] = useState(false);
     [pages, pageId]
   )
 
-
-  // Push page + presence on teacher page changes while Sync is ON
-  useEffect(() => {
-    if (!assignmentId) return;
-    if (!(typeof syncOn !== 'undefined' && syncOn)) return;
-    (async () => {
-      try { await publishSetPage(assignmentId, pageIndex); } catch {}
-      try {
-        await setTeacherPresence(assignmentId, {
-          autoFollow: true,
-          allowedPages: null,
-          teacherPageIndex: pageIndex,
-          focusOn: false,
-          lockNav: false,
-        });
-      } catch {}
-    })();
-  }, [assignmentId, pageIndex]);
-
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
@@ -390,7 +369,7 @@ const [syncOn, setSyncOn] = useState(false);
         {STUDENTS.map(sid => {
           const cell = grid[sid] ?? null
           const has = !!cell
-return (
+          return (
             <div key={sid} style={{
               border: '1px solid #e5e7eb',
               borderRadius: 10,

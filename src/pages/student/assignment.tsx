@@ -1,6 +1,5 @@
-import React from 'react'
 //src/pages/student/assignment.tsx
-
+import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
@@ -12,7 +11,14 @@ import {
   listPages,
   supabase
 } from '../../lib/db'
-import { subscribeToAssignment, type SetPagePayload, type FocusPayload, type AutoFollowPayload, subscribeToGlobal, type TeacherPresenceState, assignmentChannel, globalChannel, studentGlobalHello } from '../../lib/realtime'
+import {
+  subscribeToAssignment,
+  type SetPagePayload,
+  type FocusPayload,
+  type AutoFollowPayload,
+  subscribeToGlobal,
+  type TeacherPresenceState,
+} from '../../lib/realtime'
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
@@ -221,8 +227,6 @@ export default function StudentAssignment(){
   const [focusOn, setFocusOn] = useState(false)
   const [navLocked, setNavLocked] = useState(false)
   const [autoFollow, setAutoFollow] = useState(false)
-  const ROOM_ID = React.useMemo(() => { try { const hash = typeof window !== 'undefined' ? window.location.hash : ''; const qs = hash.includes('?') ? hash.split('?')[1] : (typeof window !== 'undefined' ? window.location.search.slice(1) : ''); const p = new URLSearchParams(qs || ''); const r = p.get('room') || sessionStorage.getItem('room') || 'default'; try { sessionStorage.setItem('room', r); } catch {} return r; } catch { return 'default'; } }, []);
-  const autoFollowRef = useRef(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
 
@@ -248,18 +252,18 @@ export default function StudentAssignment(){
           const p = JSON.parse(raw) as TeacherPresenceState
           if (typeof p.teacherPageIndex === 'number') {
             teacherPageIndexRef.current = p.teacherPageIndex
-            guardedSetPage(p.teacherPageIndex)
+            setPageIndex(p.teacherPageIndex)
           } else {
-            guardedSetPage(0)
+            setPageIndex(0)
           }
           setAutoFollow(!!p.autoFollow)
           setAllowedPages(p.allowedPages ?? null)
           setFocusOn(!!p.focusOn)
           setNavLocked(!!p.focusOn && !!p.lockNav)
         } else {
-          guardedSetPage(0)
+          setPageIndex(0)
         }
-      } catch { guardedSetPage(0) }
+      } catch { setPageIndex(0) }
       currIds.current = {}
     })
     return off
@@ -278,7 +282,7 @@ export default function StudentAssignment(){
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        guardedSetPage(p.teacherPageIndex)
+        setPageIndex(p.teacherPageIndex)
       }
     } catch {}
   }, [rtAssignmentId])
@@ -511,7 +515,7 @@ export default function StudentAssignment(){
       try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
     }
 
-    guardedSetPage(nextIndex)
+    setPageIndex(nextIndex)
   }
 
   // two-finger pan host
@@ -568,78 +572,13 @@ useEffect(() => {
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  useEffect(() => { autoFollowRef.current = !!autoFollow }, [autoFollow]);
-
-  
-  // Listen for per-assignment 'set-page' broadcasts
-  useEffect(() => {
-    if (!rtAssignmentId) return;
-    const ch = assignmentChannel(rtAssignmentId)
-      .on('broadcast', { event: 'set-page' }, (e: any) => {
-        try {
-          if (!autoFollowRef.current) return;
-          const payload = e?.payload || {};
-          const teacherIdx = typeof payload.pageIndex === 'number' ? payload.pageIndex : null;
-          if (teacherIdx !== null) guardedSetPage(teacherIdx);
-        } catch {}
-      })
-      .subscribe();
-    return () => { try { ch.unsubscribe(); } catch {} };
-  }, [rtAssignmentId]);
-
-  
-  function canNavigateTo(targetIndex: number) {
-    if (!focusOn) return true;
-    if (!navLocked) return true;
-    if (!allowedPages || !Array.isArray(allowedPages)) return false;
-    return allowedPages.includes(targetIndex);
-  }
-  const guardedSetPage = (idx: number) => { if (canNavigateTo(idx)) guardedSetPage(idx); };
-
-  
-  /* Visibility hello throttled */
-  useEffect(() => {
-    const roomId = ROOM_ID;
-    let last = 0;
-    const onVis = () => {
-      const now = Date.now();
-      if (document.visibilityState === 'visible' && now - last > 10000) {
-        last = now;
-        try { studentGlobalHello(roomId); } catch {}
-      }
-    };
-    document.addEventListener('visibilitychange', onVis);
-    // fire once on mount
-    try { studentGlobalHello(roomId); } catch {}
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, []);
-
-  
-  /* Listen for set-assignment on global class channel */
-  useEffect(() => {
-    const ch = subscribeToGlobal(ROOM_ID)
-      .on('broadcast', { event: 'set-assignment' }, (e: any) => {
-        const payload = e?.payload || {};
-        const aId = payload.assignmentId as string | undefined;
-        const tIdx = typeof payload.teacherPageIndex === 'number' ? payload.teacherPageIndex : 0;
-        if (aId) {
-          setRtAssignmentId(aId);
-          try { assignmentChannel(aId).subscribe(); } catch {}
-          setAutoFollow(true);
-          guardedSetPage(tIdx);
-        }
-      })
-      .subscribe();
-    return () => { try { ch.unsubscribe(); } catch {} };
-  }, [ROOM_ID]);
-
   /* ---------- Realtime teacher controls ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
         teacherPageIndexRef.current = pageIndex
-        if (autoFollow) guardedSetPage(pageIndex)
+        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
         setFocusOn(!!on)
@@ -650,7 +589,7 @@ useEffect(() => {
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
         if (on && typeof teacherPageIndexRef.current === 'number') {
-          guardedSetPage(teacherPageIndexRef.current)
+          setPageIndex(teacherPageIndexRef.current)
         }
       },
       onPresence: (p: TeacherPresenceState) => {
@@ -661,7 +600,7 @@ useEffect(() => {
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
-          if (p.autoFollow) guardedSetPage(p.teacherPageIndex!)
+          if (p.autoFollow) setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
         }
       }
     })
