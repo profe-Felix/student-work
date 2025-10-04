@@ -19,6 +19,8 @@ import {
   setTeacherPresence,
   teacherPresenceResponder,
   controlSetPage,
+  // 👇 NEW: import heartbeat sender
+  controlPresence,
 } from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
@@ -204,12 +206,11 @@ export default function TeacherDashboard() {
     return off
   }, [assignmentId, pageIndex])
 
-  // 2) Whenever the page changes, broadcast set-page + control mirror + presence (page only)
+  // 2) Whenever the page changes, broadcast set-page + control mirror + presence (page only) + immediate pulse
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
       try {
-        // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         // Include pageId and pdfPath so students can render immediately.
         const curr = pages.find(p => p.id === pageId)
         const pdfPath = curr?.pdf_path || undefined
@@ -231,13 +232,57 @@ export default function TeacherDashboard() {
           lockNav: false,
           allowedPages: null,
         })
-        // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+        // Immediate control presence pulse (helps late joiners hydrate instantly)
+        await controlPresence({
+          teacherAlive: true,
+          assignmentId,
+          pageId,
+          pageIndex,
+          pdfPath,
+          ts: Date.now(),
+        })
       } catch (e) {
         console.warn('page/presence broadcast failed', e)
       }
     })()
   }, [assignmentId, pageIndex, pageId, pages])
   // ===== END NEW =====
+
+  // ===== NEW: heartbeat every 2.5s so students always see current state =====
+  const currentAssignment = useMemo(
+    () => assignments.find(a => a.id === assignmentId) || null,
+    [assignments, assignmentId]
+  )
+  const currentPage = useMemo(
+    () => pages.find(p => p.id === pageId) || null,
+    [pages, pageId]
+  )
+
+  useEffect(() => {
+    if (!assignmentId) return
+    let stopped = false
+
+    const tick = async () => {
+      try {
+        const pdfPath = currentPage?.pdf_path || undefined
+        await controlPresence({
+          teacherAlive: true,
+          assignmentId,
+          pageId,
+          pageIndex,
+          pdfPath,
+          ts: Date.now(),
+        })
+      } catch { /* ignore */ }
+    }
+
+    // first pulse quickly, then interval
+    tick()
+    const id = window.setInterval(() => { if (!stopped) tick() }, 2500)
+    return () => { stopped = true; window.clearInterval(id) }
+  }, [assignmentId, pageId, pageIndex, currentPage])
+  // ===== END heartbeat =====
 
   // realtime refreshers for teacher grid
   useEffect(() => {
@@ -330,15 +375,6 @@ export default function TeacherDashboard() {
       setPreviewLoadingSid(null)
     }
   }
-
-  const currentAssignment = useMemo(
-    () => assignments.find(a => a.id === assignmentId) || null,
-    [assignments, assignmentId]
-  )
-  const currentPage = useMemo(
-    () => pages.find(p => p.id === pageId) || null,
-    [pages, pageId]
-  )
 
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
