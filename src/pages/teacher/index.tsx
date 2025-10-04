@@ -444,15 +444,23 @@ useEffect(() => {
         if (stop) return;
         if (syncOnRef.current) {
           try { await publishSetAssignment(assignmentId, ROOM_ID) } catch {}
-          try { await setTeacherPresence(assignmentId, { autoFollow: true, allowedPages: null, teacherPageIndex: pageIndex, focusOn: focus, lockNav }) } catch {}
-        }
+          try {
+            const p: any = getLatestPresence() || {};
+            await setTeacherPresence(assignmentId, {
+              autoFollow: true,
+              allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : (p.allowedPages ?? null),
+              teacherPageIndex: typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : pageIndex,
+              focusOn: !!p.focusOn,
+              lockNav: !!p.lockNav
+            });
+          } catch {}}
       } finally {
         if (!stop) timer = setTimeout(tick, 10000);
       }
     }
     timer = setTimeout(tick, 10000);
     return () => { stop = true; if (timer) clearTimeout(timer); };
-  }, [assignmentId, pageIndex, focus, lockNav]);
+  }, [assignmentId, pageIndex]);
 return (
             <div key={sid} style={{
               border: '1px solid #e5e7eb',
