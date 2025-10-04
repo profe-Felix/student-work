@@ -10,7 +10,16 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import { publishSetAssignment, respondToAssignmentRequests, controlSetAssignment } from '../../lib/realtime' // ⬅️ added controlSetAssignment
+import {
+  publishSetAssignment,
+  respondToAssignmentRequests,
+  controlSetAssignment,
+  // NEW: presence + page broadcasting for late joiners
+  publishSetPage,
+  setTeacherPresence,
+  teacherPresenceResponder,
+  controlSetPage,
+} from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
 type LatestCell = {
@@ -27,7 +36,7 @@ export default function TeacherDashboard() {
 
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
-  const lastAnnouncedAssignment = useRef<string>('') // NEW: prevent double-broadcasts
+  const lastAnnouncedAssignment = useRef<string>('') // prevent double-broadcasts
 
   const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
@@ -37,7 +46,7 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
-  // PREVIEW STATE (NEW) — audioUrl is string | undefined to match PlaybackDrawer
+  // PREVIEW STATE — audioUrl is string | undefined to match PlaybackDrawer
   const [previewOpen, setPreviewOpen] = useState(false)
   const [preview, setPreview] = useState<{
     studentId: string
@@ -46,7 +55,7 @@ export default function TeacherDashboard() {
   } | null>(null)
   const [previewLoadingSid, setPreviewLoadingSid] = useState<string | null>(null)
 
-  // ===== NEW: resolve a URL for the current page's PDF (for PlaybackDrawer/PdfCanvas) =====
+  // ===== Resolve a URL for the current page's PDF (for PlaybackDrawer/PdfCanvas) =====
   const STORAGE_BUCKET = 'pdfs'
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('')
 
@@ -73,7 +82,7 @@ export default function TeacherDashboard() {
     })()
     return () => { cancelled = true }
   }, [pageId, pages])
-  // ===== END NEW =====
+  // ===== END PDF URL resolve =====
 
   // fetch helper
   const refreshGrid = useRef<(why?: string) => Promise<void>>(async () => {})
@@ -152,14 +161,14 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
-  // NEW: after assignmentId is resolved (initial load), broadcast it once.
+  // After assignmentId is resolved (initial load), broadcast it once.
   useEffect(() => {
     if (!assignmentId) return
     if (lastAnnouncedAssignment.current === assignmentId) return
     ;(async () => {
       try {
         await publishSetAssignment(assignmentId)
-        await controlSetAssignment(assignmentId) // ⬅️ control channel mirror
+        await controlSetAssignment(assignmentId) // control channel mirror
         lastAnnouncedAssignment.current = assignmentId
       } catch (err) {
         console.error('initial broadcast failed', err)
@@ -167,7 +176,7 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
-  // ✅ NEW: respond to late-joining students who request the current assignment
+  // Respond to late-joining students who request the current assignment
   useEffect(() => {
     if (!assignmentId) return
     const off = respondToAssignmentRequests(() => assignmentId)
@@ -180,7 +189,40 @@ export default function TeacherDashboard() {
     refreshGrid.current('page change')
   }, [assignmentId, pageId])
 
-  // realtime refreshers
+  // ===== NEW: advertise page + presence so late joiners snap correctly =====
+  // 1) Answer "hello" with a presence snapshot including the current pageIndex.
+  useEffect(() => {
+    if (!assignmentId) return
+    // Minimal snapshot: only teacherPageIndex; (autoFollow/focus/locks are handled in TeacherSyncBar)
+    const off = teacherPresenceResponder(assignmentId, () => ({
+      autoFollow: false,
+      focusOn: false,
+      lockNav: false,
+      allowedPages: null,
+      teacherPageIndex: pageIndex,
+    }))
+    return off
+  }, [assignmentId, pageIndex])
+
+  // 2) Whenever the page changes, broadcast set-page + control mirror + presence (page only)
+  useEffect(() => {
+    if (!assignmentId) return
+    ;(async () => {
+      try {
+        await publishSetPage(assignmentId, { pageIndex })
+        await controlSetPage({ pageIndex })
+        await setTeacherPresence(assignmentId, {
+          teacherPageIndex: pageIndex,
+          autoFollow: false, focusOn: false, lockNav: false, allowedPages: null,
+        })
+      } catch (e) {
+        console.warn('page/presence broadcast failed', e)
+      }
+    })()
+  }, [assignmentId, pageIndex])
+  // ===== END NEW =====
+
+  // realtime refreshers for teacher grid
   useEffect(() => {
     if (!pageId) return
 
@@ -235,7 +277,7 @@ export default function TeacherDashboard() {
     } | null
   }
 
-  // PREVIEW LOADER (NEW)
+  // PREVIEW LOADER
   async function openPreviewForStudent(sid: string) {
     if (!assignmentId || !pageId) return
     setPreviewLoadingSid(sid)
@@ -300,7 +342,7 @@ export default function TeacherDashboard() {
             // Broadcast to students now and mark as announced to avoid double-fire
             try {
               await publishSetAssignment(newId)
-              await controlSetAssignment(newId) // ⬅️ control channel mirror
+              await controlSetAssignment(newId) // control channel mirror
               lastAnnouncedAssignment.current = newId
             } catch (err) {
               console.error('broadcast onCreated failed', err)
@@ -319,7 +361,7 @@ export default function TeacherDashboard() {
               setAssignmentId(next)
               try {
                 await publishSetAssignment(next) // tell students to switch
-                await controlSetAssignment(next) // ⬅️ control channel mirror
+                await controlSetAssignment(next) // control channel mirror
                 lastAnnouncedAssignment.current = next // avoid double fire with the effect
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
@@ -403,7 +445,7 @@ export default function TeacherDashboard() {
                     {cell!.audioUrl && (
                       <audio controls src={cell!.audioUrl} style={{ width: '100%' }} />
                     )}
-                    {/* NEW: Preview button */}
+                    {/* Preview button */}
                     <button
                       type="button"
                       onClick={() => openPreviewForStudent(sid)}
@@ -425,7 +467,7 @@ export default function TeacherDashboard() {
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
 
-      {/* NEW: Drawer instance — render only when open */}
+      {/* Drawer instance — render only when open */}
       {previewOpen && (
         <PlaybackDrawer
           onClose={() => setPreviewOpen(false)}
