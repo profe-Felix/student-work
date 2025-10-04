@@ -6,6 +6,7 @@ import {
   publishFocus,
   publishSetPage,
   setTeacherPresence,
+  teacherPresenceResponder, // ✅ added
 } from '../lib/realtime';
 
 type Props = {
@@ -81,6 +82,19 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
       void publishSetPage(chRef.current, pageId, pageIndex);
     }
   }, [autoFollow, pageId, pageIndex]);
+
+  // ✅ NEW: respond to student "hello" with a presence snapshot (autosync-on-open)
+  useEffect(() => {
+    if (!assignmentId) return;
+    const off = teacherPresenceResponder(assignmentId, () => ({
+      autoFollow,
+      focusOn: focus,
+      lockNav,
+      allowedPages: allowedRef.current ?? null,
+      teacherPageIndex: pageIndex,
+    }));
+    return () => { try { (off as any)?.(); } catch {} };
+  }, [assignmentId, autoFollow, focus, lockNav, pageIndex]);
 
   async function toggleAutoFollow() {
     if (!chRef.current) return;
