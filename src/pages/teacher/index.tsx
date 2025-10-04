@@ -14,15 +14,15 @@ import {
   publishSetAssignment,
   respondToAssignmentRequests,
   controlSetAssignment,
-  // NEW: presence + page broadcasting for late joiners
+  // presence + page broadcasting for late joiners
   publishSetPage,
   setTeacherPresence,
   teacherPresenceResponder,
   controlSetPage,
-  // 👇 NEW: import heartbeat sender
+  // one-shot presence pulse (no interval)
   controlPresence,
 } from '../../lib/realtime'
-import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
+import PlaybackDrawer from '../../components/PlaybackDrawer' // preview drawer
 
 type LatestCell = {
   submission_id: string
@@ -172,11 +172,21 @@ export default function TeacherDashboard() {
         await publishSetAssignment(assignmentId)
         await controlSetAssignment(assignmentId) // control channel mirror
         lastAnnouncedAssignment.current = assignmentId
+
+        // fire a one-shot presence pulse so late joiners hydrate even before page effect runs
+        await controlPresence({
+          teacherAlive: true,
+          assignmentId,
+          pageId,
+          pageIndex,
+          pdfPath: pages.find(p => p.id === pageId)?.pdf_path || undefined,
+          ts: Date.now(),
+        })
       } catch (err) {
         console.error('initial broadcast failed', err)
       }
     })()
-  }, [assignmentId])
+  }, [assignmentId, pageId, pageIndex, pages])
 
   // Respond to late-joining students who request the current assignment
   useEffect(() => {
@@ -191,11 +201,10 @@ export default function TeacherDashboard() {
     refreshGrid.current('page change')
   }, [assignmentId, pageId])
 
-  // ===== NEW: advertise page + presence so late joiners snap correctly =====
+  // ===== Late joiner hydration =====
   // 1) Answer "hello" with a presence snapshot including the current pageIndex.
   useEffect(() => {
     if (!assignmentId) return
-    // Minimal snapshot: only teacherPageIndex; (autoFollow/focus/locks are handled in TeacherSyncBar)
     const off = teacherPresenceResponder(assignmentId, () => ({
       autoFollow: false,
       focusOn: false,
@@ -206,22 +215,23 @@ export default function TeacherDashboard() {
     return off
   }, [assignmentId, pageIndex])
 
-  // 2) Whenever the page changes, broadcast set-page + control mirror + presence (page only) + immediate pulse
+  // 2) Whenever the page changes, broadcast set-page + control mirror + presence (page-only) + single pulse
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
       try {
-        // Include pageId and pdfPath so students can render immediately.
         const curr = pages.find(p => p.id === pageId)
         const pdfPath = curr?.pdf_path || undefined
 
         await publishSetPage(assignmentId, {
           pageIndex,
           pageId,
+          // @ts-expect-error allow pdfPath passthrough for clients that read it
           pdfPath,
         })
         await controlSetPage({
           pageIndex,
+          // @ts-expect-error allow pdfPath passthrough for clients that read it
           pageId,
           pdfPath,
         })
@@ -233,7 +243,7 @@ export default function TeacherDashboard() {
           allowedPages: null,
         })
 
-        // Immediate control presence pulse (helps late joiners hydrate instantly)
+        // one-shot control presence pulse (NO interval heartbeat)
         await controlPresence({
           teacherAlive: true,
           assignmentId,
@@ -247,42 +257,7 @@ export default function TeacherDashboard() {
       }
     })()
   }, [assignmentId, pageIndex, pageId, pages])
-  // ===== END NEW =====
-
-  // ===== NEW: heartbeat every 2.5s so students always see current state =====
-  const currentAssignment = useMemo(
-    () => assignments.find(a => a.id === assignmentId) || null,
-    [assignments, assignmentId]
-  )
-  const currentPage = useMemo(
-    () => pages.find(p => p.id === pageId) || null,
-    [pages, pageId]
-  )
-
-  useEffect(() => {
-    if (!assignmentId) return
-    let stopped = false
-
-    const tick = async () => {
-      try {
-        const pdfPath = currentPage?.pdf_path || undefined
-        await controlPresence({
-          teacherAlive: true,
-          assignmentId,
-          pageId,
-          pageIndex,
-          pdfPath,
-          ts: Date.now(),
-        })
-      } catch { /* ignore */ }
-    }
-
-    // first pulse quickly, then interval
-    tick()
-    const id = window.setInterval(() => { if (!stopped) tick() }, 2500)
-    return () => { stopped = true; window.clearInterval(id) }
-  }, [assignmentId, pageId, pageIndex, currentPage])
-  // ===== END heartbeat =====
+  // ===== END Late joiner hydration =====
 
   // realtime refreshers for teacher grid
   useEffect(() => {
@@ -376,6 +351,15 @@ export default function TeacherDashboard() {
     }
   }
 
+  const currentAssignment = useMemo(
+    () => assignments.find(a => a.id === assignmentId) || null,
+    [assignments, assignmentId]
+  )
+  const currentPage = useMemo(
+    () => pages.find(p => p.id === pageId) || null,
+    [pages, pageId]
+  )
+
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
@@ -397,6 +381,16 @@ export default function TeacherDashboard() {
               await publishSetAssignment(newId)
               await controlSetAssignment(newId) // control channel mirror
               lastAnnouncedAssignment.current = newId
+
+              // one-shot pulse
+              await controlPresence({
+                teacherAlive: true,
+                assignmentId: newId,
+                pageId,
+                pageIndex,
+                pdfPath: pages.find(p => p.id === pageId)?.pdf_path || undefined,
+                ts: Date.now(),
+              })
             } catch (err) {
               console.error('broadcast onCreated failed', err)
             }
@@ -416,6 +410,16 @@ export default function TeacherDashboard() {
                 await publishSetAssignment(next) // tell students to switch
                 await controlSetAssignment(next) // control channel mirror
                 lastAnnouncedAssignment.current = next // avoid double fire with the effect
+
+                // one-shot pulse
+                await controlPresence({
+                  teacherAlive: true,
+                  assignmentId: next,
+                  pageId,
+                  pageIndex,
+                  pdfPath: pages.find(p => p.id === pageId)?.pdf_path || undefined,
+                  ts: Date.now(),
+                })
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
               }
