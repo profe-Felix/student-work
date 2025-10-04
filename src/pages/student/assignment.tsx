@@ -18,6 +18,7 @@ import {
   type AutoFollowPayload,
   subscribeToGlobal,
   type TeacherPresenceState,
+  assignmentChannel,
 } from '../../lib/realtime'
 
 // Eraser utils
@@ -607,7 +608,7 @@ useEffect(() => {
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
         teacherPageIndexRef.current = pageIndex
-        if (autoFollow) guardedSetPage(prev => (prev !== pageIndex ? pageIndex : prev))
+        if (autoFollow) guardedSetPage(pageIndex)
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
         setFocusOn(!!on)
@@ -629,7 +630,7 @@ useEffect(() => {
         setNavLocked(!!p.focusOn && !!p.lockNav)
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
-          if (p.autoFollow) guardedSetPage(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
+          if (p.autoFollow) guardedSetPage(p.teacherPageIndex!)
         }
       }
     })

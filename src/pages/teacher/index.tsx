@@ -274,6 +274,25 @@ export default function TeacherDashboard() {
     [pages, pageId]
   )
 
+
+  // Push page + presence on teacher page changes while Sync is ON
+  useEffect(() => {
+    if (!assignmentId) return;
+    if (!syncOnRef.current) return;
+    (async () => {
+      try { await publishSetPage(assignmentId, pageIndex); } catch {}
+      try {
+        await setTeacherPresence(assignmentId, {
+          autoFollow: true,
+          allowedPages: null,
+          teacherPageIndex: pageIndex,
+          focusOn: false,
+          lockNav: false,
+        });
+      } catch {}
+    })();
+  }, [assignmentId, pageIndex]);
+
   return (
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
@@ -370,19 +389,6 @@ export default function TeacherDashboard() {
         {STUDENTS.map(sid => {
           const cell = grid[sid] ?? null
           const has = !!cell
-          
-  // Push page + presence on teacher page changes while Sync is ON
-  useEffect(() => {
-    if (!assignmentId) return;
-    if (!syncOnRef.current) return;
-    (async () => {
-      try { await publishSetPage(assignmentId, pageIndex) } catch {}
-      try {
-        const p: any =  ? (() || {}) : {};
-        await setTeacherPresence(assignmentId, { autoFollow: true, allowedPages: null, teacherPageIndex: pageIndex, focusOn: false, lockNav: false });
-} catch {}
-    })();
-  }, [assignmentId, pageIndex]);
 return (
             <div key={sid} style={{
               border: '1px solid #e5e7eb',
