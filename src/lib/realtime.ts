@@ -5,10 +5,54 @@
 // - Cleanups use ch.unsubscribe() only (no removeChannel recursion)
 
 import type { RealtimeChannel } from '@supabase/supabase-js'
+// ---- Canonical realtime helpers (single source of truth) ----
+export const globalChannel = (roomId?: string) =>
+  supabase.channel(`global:${roomId ?? 'default'}`, { config: { broadcast: { ack: true } } });
+
+export async function publishSetAssignment(roomId: string, assignmentId: string, teacherPageIndex: number) {
+  const ch = globalChannel(roomId);
+  await ch.subscribe();
+  try {
+    await ch.send({ type: 'broadcast', event: 'set-assignment', payload: { assignmentId, teacherPageIndex, ts: Date.now() } });
+  } finally { try { await ch.unsubscribe(); } catch {} }
+}
+
+export async function publishSetPage(chOrId: string | RealtimeChannel, pageIndex: number) {
+  if (typeof chOrId === 'string') {
+    const ch = assignmentChannel(chOrId);
+    await ch.subscribe();
+    try { await ch.send({ type: 'broadcast', event: 'set-page', payload: { pageIndex, ts: Date.now() } }); }
+    finally { try { await ch.unsubscribe(); } catch {} }
+    return;
+  }
+  await chOrId.send({ type: 'broadcast', event: 'set-page', payload: { pageIndex, ts: Date.now() } });
+}
+
+export async function setTeacherPresence(chOrId: string | RealtimeChannel, snap: {
+  autoFollow: boolean; allowedPages: number[] | null;
+  teacherPageIndex: number | null; focusOn: boolean; lockNav: boolean;
+}) {
+  const payload = { ...snap, ts: Date.now() };
+  if (typeof chOrId === 'string') {
+    const ch = assignmentChannel(chOrId);
+    await ch.subscribe();
+    try { await ch.send({ type: 'broadcast', event: 'presence', payload }); }
+    finally { try { await ch.unsubscribe(); } catch {} }
+    return;
+  }
+  await chOrId.send({ type: 'broadcast', event: 'presence', payload });
+}
+
+export function studentGlobalHello(roomId: string) {
+  const ch = globalChannel(roomId);
+  ch.subscribe()
+    .then(() => ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } }))
+    .finally(() => { try { ch.unsubscribe(); } catch {} });
+}
+// ---- End helpers ----
 import { supabase } from './supabaseClient'
 
 /** ---------- Types (kept broad for compatibility) ---------- */
-export const globalChannel = (roomId: string) => supabase.channel(`global:${roomId}`, { config: { broadcast: { ack: true } } });
 export interface SetPagePayload {
   pageId?: string;         // optional for legacy calls
   pageIndex: number;
@@ -57,13 +101,7 @@ export function globalChannel(roomId) {
 }
 
 /** Teacher fires this when changing the assignment dropdown. */
-export async function publishSetAssignment(assignmentId: string) {
-  const ch = globalChannel(roomId)
-  await (ch as any)!.subscribe()
-  await (ch as any)!.send({
-    type: 'broadcast',
-    event: 'set-assignment',
-    payload: { assignmentId, ts: Date.now() },
+,
   })
   // Avoid returning a Promise from cleanup in React effects
   void ch.unsubscribe()
@@ -102,16 +140,7 @@ function resolveChannel(input: ChannelOrId): { ch: RealtimeChannel; temporary: b
 //   publishSetPage(assign, { pageIndex, pageId? })
 //   publishSetPage(assign, 3)
 //   publishSetPage(assign, 'page-uuid', 3)
-export async function publishSetPage(
-  assignment: ChannelOrId,
-  payloadOrPageId: SetPagePayload | number | string,
-  maybeIndex?: number,
-  ..._legacy: any[]
-) {
-  let payload: SetPagePayload
-  if (typeof payloadOrPageId === 'object') {
-    payload = payloadOrPageId as SetPagePayload
-  } else if (typeof payloadOrPageId === 'number') {
+else if (typeof payloadOrPageId === 'number') {
     payload = { pageIndex: payloadOrPageId }
   } else {
     payload = { pageId: payloadOrPageId, pageIndex: typeof maybeIndex === 'number' ? maybeIndex : 0 }
@@ -211,11 +240,7 @@ export function subscribeToAutoFollow(
 }
 
 /** ---------- Presence (legacy-expected by TeacherSyncBar) ---------- */
-export async function setTeacherPresence(
-  assignment: ChannelOrId,
-  state: TeacherPresenceState
-) {
-  const { ch, temporary } = resolveChannel(assignment)
+= resolveChannel(assignment)
   if (temporary) { await (ch as any)!.subscribe() }
   const payload: TeacherPresenceState = {
     role: 'teacher',

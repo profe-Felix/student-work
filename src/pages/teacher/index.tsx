@@ -11,7 +11,7 @@ import {
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
 import { publishSetAssignment, setTeacherPresence, publishSetPage } from '../../lib/realtime'
-import { publishSetPage, setTeacherPresence} from '../../lib/realtime'
+
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
 type LatestCell = {
