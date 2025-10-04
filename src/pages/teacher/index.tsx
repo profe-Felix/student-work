@@ -385,6 +385,29 @@ const pageIndex = useMemo(
     const ch = teacherPresenceResponder(assignmentId, () => getLatestPresence() || { autoFollow: false, teacherPageIndex: 0, allowedPages: null });
     return () => { try { ch?.unsubscribe?.(); } catch {} };
   }, [assignmentId]);
+
+  // Answer assignment-level presence hellos with the latest presence
+  useEffect(() => {
+    if (!assignmentId) return;
+    // Coerce latest presence to the stricter PresenceSnapshot type
+    const mkSnapshot = () => {
+      const p: any = getLatestPresence() || {};
+      return {
+        autoFollow: !!p.autoFollow,
+        focusOn: !!p.focusOn,
+        lockNav: !!p.lockNav,
+        allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : (p.allowedPages ?? null),
+        teacherPageIndex: typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : 0,
+      };
+    };
+    const off = teacherPresenceResponder(assignmentId, mkSnapshot);
+    return () => {
+      try {
+        if (typeof off === 'function') { off(); }
+        else (off as any)?.unsubscribe?.();
+      } catch {}
+    };
+  }, [assignmentId]);
 return (
             <div key={sid} style={{
               border: '1px solid #e5e7eb',
