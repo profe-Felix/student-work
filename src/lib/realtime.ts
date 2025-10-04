@@ -91,16 +91,16 @@ export async function requestAssignment() {
 }
 
 /** Teacher: respond to 'request-assignment' by re-broadcasting current assignmentId */
-export function respondToAssignmentRequests(getAssignmentId: () => string | undefined) {
+export function respondToAssignmentRequests(getAssignmentId: () => string) {
   const ch = globalChannel()
     .on('broadcast', { event: 'request-assignment' }, async () => {
-      const id = getAssignmentId?.()
+      const id = (getAssignmentId?.() || '').trim()
       if (!id) return
       try {
         await ch.send({
           type: 'broadcast',
           event: 'set-assignment',
-          payload: { assignmentId: id, ts: Date.now() }
+          payload: { assignmentId: id, ts: Date.now() },
         })
       } catch { /* ignore */ }
     })
