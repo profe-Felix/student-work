@@ -49,13 +49,11 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     const ch = assignmentChannel(assignmentId);
     ch.subscribe(async (status: string) => {
       if (status === 'SUBSCRIBED') {
-        await setTeacherPresence(ch, {
-          autoFollow,
-          allowedPages: allowedRef.current ?? null,
-          teacherPageIndex: pageIndex,
+        await setTeacherPresence(ch, { autoFollow: { autoFollow: {
+          autoFollow, allowedPages: null, teacherPageIndex: allowedPages: allowedPages: allowedRef.current ?? null ?? null, teacherPageIndex: teacherPageIndex: pageIndex,
           focusOn: focus,
           lockNav,
-        });
+        }, focusOn, lockNav }, focusOn, lockNav });
       }
     });
     chRef.current = ch;
@@ -66,19 +64,17 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
   // Whenever these change, update presence
   useEffect(() => {
     if (!chRef.current) return;
-    void setTeacherPresence(chRef.current, {
-      autoFollow,
-      allowedPages: allowedRef.current ?? null,
-      teacherPageIndex: pageIndex,
+    void setTeacherPresence(chRef.current, { autoFollow: { autoFollow: {
+      autoFollow, allowedPages: null, teacherPageIndex: allowedPages: allowedPages: allowedRef.current ?? null ?? null, teacherPageIndex: teacherPageIndex: pageIndex,
       focusOn: focus,
       lockNav,
-    });
+    }, focusOn, lockNav }, focusOn, lockNav });
   }, [autoFollow, focus, lockNav, pageIndex]);
 
   // When auto-follow is ON, rebroadcast current page on change (snappy)
   useEffect(() => {
     if (autoFollow && chRef.current && pageId) {
-      void publishSetPage(chRef.current, pageId, pageIndex);
+      void publishSetPage(chRef.current, pageId);
     }
   }, [autoFollow, pageId, pageIndex]);
 
@@ -91,18 +87,16 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     allowedRef.current = allowed;
 
     // presence first (so late joiners immediately see it)
-    await setTeacherPresence(chRef.current, {
-      autoFollow: next,
-      allowedPages: allowed ?? null,
-      teacherPageIndex: pageIndex,
+    await setTeacherPresence(chRef.current, { autoFollow: { autoFollow: {
+      autoFollow: next, allowedPages: null, teacherPageIndex: allowedPages: allowedPages: allowed ?? null ?? null, teacherPageIndex: teacherPageIndex: pageIndex,
       focusOn: focus,
       lockNav,
-    });
+    }, focusOn, lockNav }, focusOn, lockNav });
 
     // broadcast for currently connected students
-    await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
+    await publishAutoFollow(chRef.current, { on: next, allowedPages: allowed ?? null, pageIndex });
     if (next) {
-      await publishSetPage(chRef.current, pageId, pageIndex);
+      await publishSetPage(chRef.current, pageId);
     }
   }
 
@@ -110,14 +104,12 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     if (!chRef.current) return;
     const next = !focus;
     setFocus(next);
-    await setTeacherPresence(chRef.current, {
-      autoFollow,
-      allowedPages: allowedRef.current ?? null,
-      teacherPageIndex: pageIndex,
+    await setTeacherPresence(chRef.current, { autoFollow: { autoFollow: {
+      autoFollow, allowedPages: null, teacherPageIndex: allowedPages: allowedPages: allowedRef.current ?? null ?? null, teacherPageIndex: teacherPageIndex: pageIndex,
       focusOn: next,
       lockNav,
-    });
-    await publishFocus(chRef.current, next, lockNav);
+    }, focusOn, lockNav }, focusOn, lockNav });
+    await publishFocus(chRef.current, { on: next, lockNav: lockNav });
   }
 
   return (
