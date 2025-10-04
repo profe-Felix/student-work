@@ -11,6 +11,7 @@ import {
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
 import { publishSetAssignment, teacherGlobalAssignmentResponder, teacherPresenceResponder, getLatestPresence } from '../../lib/realtime' // NEW
+import { assignmentChannel, setTeacherPresence } from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 function __getRoomId() {
   try {
@@ -432,6 +433,26 @@ useEffect(() => {
       } catch {}
     };
   }, [assignmentId]);
+
+  // Heartbeat: rebroadcast assignment & presence while Sync ON
+  useEffect(() => {
+    if (!assignmentId) return;
+    let stop = false;
+    let timer: any = null;
+    async function tick() {
+      try {
+        if (stop) return;
+        if (syncOnRef.current) {
+          try { await publishSetAssignment(assignmentId, ROOM_ID) } catch {}
+          try { await setTeacherPresence(assignmentId, { autoFollow: true, allowedPages: null, teacherPageIndex: pageIndex, focusOn: focus, lockNav }) } catch {}
+        }
+      } finally {
+        if (!stop) timer = setTimeout(tick, 10000);
+      }
+    }
+    timer = setTimeout(tick, 10000);
+    return () => { stop = true; if (timer) clearTimeout(timer); };
+  }, [assignmentId, pageIndex, focus, lockNav]);
 return (
             <div key={sid} style={{
               border: '1px solid #e5e7eb',
