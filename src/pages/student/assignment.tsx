@@ -1,4 +1,4 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -135,14 +135,6 @@ export default function StudentAssignment(){
     return (s ? s.toUpperCase() : inferStation(studentId))
   }, [location.search, studentId])
 
-  // ✅ SYNC STATE HOOKS — must appear before any effects use them
-  const [focusOn, setFocusOn] = useState(false)
-  const [navLocked, setNavLocked] = useState(false)
-  const [autoFollow, setAutoFollow] = useState(false)
-  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
-  const teacherPageIndexRef = useRef<number | null>(null)
-  // -------------------------------------------------------------
-
   // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
 
@@ -235,7 +227,8 @@ export default function StudentAssignment(){
           const p = JSON.parse(raw) as TeacherPresenceState
           if (typeof p.teacherPageIndex === 'number') {
             teacherPageIndexRef.current = p.teacherPageIndex
-            setPageIndex(p.teacherPageIndex)
+            // ⬇️ Only snap if teacher had autoFollow ON
+            if (p.autoFollow) setPageIndex(p.teacherPageIndex)
           } else {
             setPageIndex(0)
           }
@@ -252,7 +245,7 @@ export default function StudentAssignment(){
     return off
   }, [])
 
-  // ✅ EXTRA: plain control channel listeners
+  // ✅ EXTRA: plain control channel listeners (fast page mirror if autoFollow is ON)
   useEffect(() => {
     const ch = supabase
       .channel('control:all', { config: { broadcast: { ack: true } } })
@@ -264,19 +257,16 @@ export default function StudentAssignment(){
           setRtAssignmentId(id)
         }
       })
-      // ⬅️ NEW: teacher set-page mirror (fast page follow for late joiners)
+      // teacher set-page mirror — only follow when autoFollow is ON
       .on('broadcast', { event: 'set-page' }, (msg: any) => {
         const idx = msg?.payload?.pageIndex
         if (typeof idx === 'number') {
           teacherPageIndexRef.current = idx
-          if (autoFollow) {
-            setPageIndex(prev => (prev !== idx ? idx : prev))
-          }
+          if (autoFollow) setPageIndex(prev => (prev !== idx ? idx : prev))
         }
       })
       .subscribe()
     return () => { try { ch.unsubscribe() } catch {} }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFollow])
 
   // ✅ After we know assignment: say hello and get a presence snapshot (page index, etc.)
@@ -291,7 +281,8 @@ export default function StudentAssignment(){
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        setPageIndex(p.teacherPageIndex)
+        // ⬇️ Only snap if autoFollow is ON
+        if (p.autoFollow) setPageIndex(p.teacherPageIndex)
       }
     })
     return () => { try { (off as any)?.() } catch {} }
@@ -321,7 +312,8 @@ export default function StudentAssignment(){
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        setPageIndex(p.teacherPageIndex)
+        // ⬇️ Only snap if autoFollow is ON
+        if (p.autoFollow) setPageIndex(p.teacherPageIndex)
       }
     } catch {}
   }, [rtAssignmentId])
@@ -356,6 +348,12 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
+  const [focusOn, setFocusOn] = useState(false)
+  const [navLocked, setNavLocked] = useState(false)
+  const [autoFollow, setAutoFollow] = useState(false)
+  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
+  const teacherPageIndexRef = useRef<number | null>(null)
+
   const lastAppliedServerHash = useRef<string>('')
   const lastLocalHash = useRef<string>('')
   const localDirty = useRef<boolean>(false)
