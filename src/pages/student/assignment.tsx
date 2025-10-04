@@ -127,6 +127,23 @@ function inferStation(id: string): string {
 }
 
 export default function StudentAssignment(){
+  // Late join hello to teacher (10s throttle)
+  useEffect(() => {
+    let last = 0;
+    const tick = async () => {
+      const now = Date.now();
+      if (now - last < 10000) return;
+      last = now;
+      try { await studentGlobalHello(ROOM_ID); } catch {}
+    };
+    // on mount
+    tick();
+    // on visibility
+    const onVis = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [ROOM_ID]);
+
   const location = useLocation()
   const nav = useNavigate()
   const studentId = useMemo(()=>{
