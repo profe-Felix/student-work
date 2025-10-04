@@ -32,20 +32,6 @@ function __getRoomId() {
 }
 const ROOM_ID = __getRoomId();
 
-// Normalize room in URL (HashRouter safe)
-useEffect(() => {
-  const hash = window.location.hash || '';
-  const hasQuery = hash.includes('?');
-  const q = new URLSearchParams(hasQuery ? hash.split('?')[1] : '');
-  if (!q.get('room')) {
-    q.set('room', ROOM_ID);
-    const base = hasQuery ? hash.split('?')[0] : hash;
-    const next = `${base}?${q.toString()}`;
-    window.location.replace(next);
-  }
-}, [ROOM_ID]);
-
-
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
 import { objectErase, softErase } from '../../lib/erase'
@@ -141,24 +127,6 @@ function inferStation(id: string): string {
 }
 
 export default function StudentAssignment(){
-  // Normalize room in URL (HashRouter safe) — keep ?room= in the hash
-  const __loc = useLocation();
-  const __nav = useNavigate();
-  useEffect(() => {
-    try {
-      const hash = window.location.hash || '';
-      const hasQuery = hash.includes('?');
-      const q = new URLSearchParams(hasQuery ? hash.split('?')[1] : '');
-      if (!q.get('room')) {
-        q.set('room', ROOM_ID);
-        const base = hasQuery ? hash.split('?')[0] : hash;
-        const next = `${base}?${q.toString()}`;
-        // replace so we don't add history entries
-        window.location.replace(next);
-      }
-    } catch {}
-  }, [ROOM_ID, __loc]);
-
   const location = useLocation()
   const nav = useNavigate()
   const studentId = useMemo(()=>{
