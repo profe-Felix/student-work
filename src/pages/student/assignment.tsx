@@ -204,6 +204,14 @@ export default function StudentAssignment(){
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
+  /* ---------- These must be declared before any effect that uses them ---------- */
+  const [focusOn, setFocusOn] = useState(false)
+  const [navLocked, setNavLocked] = useState(false)
+  const [autoFollow, setAutoFollow] = useState(false)
+  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
+  const teacherPageIndexRef = useRef<number | null>(null)
+  /* --------------------------------------------------------------------------- */
+
   // ✅ Ask for current assignment shortly after mount (if unknown)
   useEffect(() => {
     if (rtAssignmentId) return
@@ -227,7 +235,7 @@ export default function StudentAssignment(){
           const p = JSON.parse(raw) as TeacherPresenceState
           if (typeof p.teacherPageIndex === 'number') {
             teacherPageIndexRef.current = p.teacherPageIndex
-            // ⬇️ Only snap if teacher had autoFollow ON
+            // Only snap if teacher had autoFollow ON
             if (p.autoFollow) setPageIndex(p.teacherPageIndex)
           } else {
             setPageIndex(0)
@@ -281,7 +289,7 @@ export default function StudentAssignment(){
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        // ⬇️ Only snap if autoFollow is ON
+        // Only snap if autoFollow is ON
         if (p.autoFollow) setPageIndex(p.teacherPageIndex)
       }
     })
@@ -312,7 +320,7 @@ export default function StudentAssignment(){
       setNavLocked(!!p.focusOn && !!p.lockNav)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
-        // ⬇️ Only snap if autoFollow is ON
+        // Only snap if autoFollow is ON
         if (p.autoFollow) setPageIndex(p.teacherPageIndex)
       }
     } catch {}
@@ -348,12 +356,6 @@ export default function StudentAssignment(){
   }
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
-  const [focusOn, setFocusOn] = useState(false)
-  const [navLocked, setNavLocked] = useState(false)
-  const [autoFollow, setAutoFollow] = useState(false)
-  const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
-  const teacherPageIndexRef = useRef<number | null>(null)
-
   const lastAppliedServerHash = useRef<string>('')
   const lastLocalHash = useRef<string>('')
   const localDirty = useRef<boolean>(false)
@@ -1028,7 +1030,7 @@ export default function StudentAssignment(){
         style={{
           position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)',
           zIndex: 10020, display:'flex', gap:10, alignItems:'center',
-          background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
+          background:'#fff', border:'1px solid '#e5e7eb', borderRadius:999,
           boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
         }}
       >
