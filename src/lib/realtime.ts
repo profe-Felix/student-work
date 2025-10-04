@@ -11,6 +11,7 @@ import { supabase } from './supabaseClient'
 export interface SetPagePayload {
   pageId?: string;         // optional for legacy calls
   pageIndex: number;
+  pdfPath?: string;        // NEW: let students render immediately without DB reads
   ts?: number;
 }
 export interface FocusPayload {
