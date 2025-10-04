@@ -17,8 +17,14 @@ import {
   type FocusPayload,
   type AutoFollowPayload,
   subscribeToGlobal,
+  studentGlobalHello,
+  subscribePresenceSnapshot,
+  studentHello,
   type TeacherPresenceState,
 } from '../../lib/realtime'
+const params = new URLSearchParams(window.location.search);
+const ROOM_ID = params.get('room') || 'default';
+
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
@@ -241,7 +247,24 @@ export default function StudentAssignment(){
   const clientIdRef = useRef<string>('c_' + Math.random().toString(36).slice(2))
   const liveChRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
-  // assignment handoff listener (teacher broadcast)
+  
+  // Send a global hello on mount and on visibility (throttled 10s) to catch late joins / iPad background
+  useEffect(() => {
+    let lastHello = 0;
+    const sendHello = async () => {
+      const now = Date.now();
+      if (now - lastHello < 10000) return;
+      lastHello = now;
+      try { await studentGlobalHello(ROOM_ID); } catch {}
+    };
+    // initial
+    void sendHello();
+    // visibility retry
+    const onVis = () => { if (document.visibilityState === 'visible') void sendHello(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { document.removeEventListener('visibilitychange', onVis); };
+  }, []);
+// assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
@@ -265,7 +288,7 @@ export default function StudentAssignment(){
         }
       } catch { setPageIndex(0) }
       currIds.current = {}
-    })
+    }, ROOM_ID)
     return off
   }, [])
 
@@ -572,7 +595,24 @@ useEffect(() => {
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  /* ---------- Realtime teacher controls ---------- */
+  
+  // When assignment changes, ask teacher for a presence snapshot (late-join snap to page/locks)
+  useEffect(() => {
+    if (!rtAssignmentId) return;
+    const off = subscribePresenceSnapshot(rtAssignmentId, (p: TeacherPresenceState) => {
+      try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+      setAutoFollow(!!p.autoFollow);
+      setAllowedPages(p.allowedPages ?? null);
+      setFocusOn(!!p.focusOn);
+      setNavLocked(!!p.focusOn && !!p.lockNav);
+      if (p.autoFollow && typeof p.teacherPageIndex === 'number') {
+        setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev);
+      }
+    });
+    void studentHello(rtAssignmentId);
+    return () => { try { off?.(); } catch {} };
+  }, [rtAssignmentId]);
+/* ---------- Realtime teacher controls ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {

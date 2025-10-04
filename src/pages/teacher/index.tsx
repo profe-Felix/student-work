@@ -10,8 +10,10 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import { publishSetAssignment } from '../../lib/realtime' // NEW
+import { publishSetAssignment, teacherGlobalAssignmentResponder, teacherPresenceResponder, getLatestPresence } from '../../lib/realtime' // NEW
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
+const params = new URLSearchParams(window.location.search);
+const ROOM_ID = params.get('room') || 'default';
 
 type LatestCell = {
   submission_id: string
@@ -158,7 +160,7 @@ export default function TeacherDashboard() {
     if (lastAnnouncedAssignment.current === assignmentId) return
     ;(async () => {
       try {
-        await publishSetAssignment(assignmentId)
+        await publishSetAssignment(assignmentId, ROOM_ID)
         lastAnnouncedAssignment.current = assignmentId
       } catch (err) {
         console.error('initial broadcast failed', err)
@@ -291,7 +293,7 @@ export default function TeacherDashboard() {
 
       // Broadcast to students now and mark as announced to avoid double-fire
       try {
-        await publishSetAssignment(newId)
+        await publishSetAssignment(newId, ROOM_ID)
         lastAnnouncedAssignment.current = newId
       } catch (err) {
         console.error('broadcast onCreated failed', err)
@@ -309,7 +311,7 @@ export default function TeacherDashboard() {
               const next = e.target.value
               setAssignmentId(next)
               try {
-                await publishSetAssignment(next) // NEW: tell students to switch
+                await publishSetAssignment(next, ROOM_ID) // NEW: tell students to switch
                 lastAnnouncedAssignment.current = next // avoid double fire with the effect
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
@@ -351,7 +353,7 @@ export default function TeacherDashboard() {
 
       {assignmentId && pageId && (
         <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
-          <TeacherSyncBar
+          <TeacherSyncBar roomId={ROOM_ID} onSyncChange={(on)=>{ syncOnRef.current = !!on; }}
             assignmentId={assignmentId}
             pageId={pageId}
             pageIndex={pageIndex}

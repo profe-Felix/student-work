@@ -51,13 +51,14 @@ export type InkUpdate = {
 /** -------------------------------------------------------------------------------------------
  *  Global “class” channel (assignment-agnostic) used to hand students off to another assignment
  *  ----------------------------------------------------------------------------------------- */
-export function globalChannel() {
-  return supabase.channel('global-class', { config: { broadcast: { ack: true } } })
+export function globalChannel(roomId: string = 'default') {
+  return supabase.channel(`global-class:${roomId}`,
+    { config: { broadcast: { ack: true } } })
 }
 
 /** Teacher fires this when changing the assignment dropdown. */
-export async function publishSetAssignment(assignmentId: string) {
-  const ch = globalChannel()
+export async function publishSetAssignment(assignmentId: string, roomId: string = 'default') {
+  const ch = globalChannel(roomId)
   await ch.subscribe()
   await ch.send({
     type: 'broadcast',
@@ -69,8 +70,8 @@ export async function publishSetAssignment(assignmentId: string) {
 }
 
 /** Student bootstraps this once and will jump to any new assignmentId the teacher selects. */
-export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => void) {
-  const ch = globalChannel()
+export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => void, roomId: string = 'default') {
+  const ch = globalChannel(roomId)
     .on('broadcast', { event: 'set-assignment' }, (msg: any) => {
       const id = msg?.payload?.assignmentId
       if (typeof id === 'string' && id) onSetAssignment(id)
@@ -79,6 +80,33 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
   return () => { void ch.unsubscribe() }
 }
 
+
+/** Student -> global hello (late join handshake) */
+export async function studentGlobalHello(roomId: string = 'default') {
+  const ch = globalChannel(roomId);
+  await ch.subscribe();
+  await ch.send({ type: 'broadcast', event: 'hello-global', payload: { ts: Date.now() } });
+  void ch.unsubscribe();
+}
+
+/** Teacher -> respond to hello-global with current assignmentId (only if Sync is ON) */
+export function teacherGlobalAssignmentResponder(
+  roomId: string,
+  getAssignmentId: () => string | null | undefined,
+  isSyncOn: () => boolean
+) {
+  const ch = globalChannel(roomId)
+    .on('broadcast', { event: 'hello-global' }, async () => {
+      try {
+        if (!isSyncOn()) return;
+        const id = getAssignmentId?.() ?? null;
+        if (!id) return;
+        await ch.send({ type: 'broadcast', event: 'set-assignment', payload: { assignmentId: id, ts: Date.now() } });
+      } catch {/* noop */}
+    })
+    .subscribe();
+  return () => { void ch.unsubscribe(); };
+}
 /** -------------------------------------------------------------------------------------------
  *  Per-assignment channels
  *  ----------------------------------------------------------------------------------------- */
@@ -222,6 +250,9 @@ export function subscribeToAutoFollow(
     .subscribe()
   return () => { void ch.unsubscribe() }
 }
+
+let latestPresence: TeacherPresenceState | null = null;
+export function getLatestPresence() { return latestPresence; }
 
 /** ---------- Presence (legacy-expected by TeacherSyncBar) ---------- */
 export async function setTeacherPresence(

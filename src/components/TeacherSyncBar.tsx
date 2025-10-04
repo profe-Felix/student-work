@@ -5,6 +5,7 @@ import {
   publishAutoFollow,
   publishFocus,
   publishSetPage,
+  publishSetAssignment,
   setTeacherPresence,
 } from '../lib/realtime';
 
@@ -13,6 +14,8 @@ type Props = {
   pageId: string;
   pageIndex: number;
   className?: string;
+  roomId?: string;
+  onSyncChange?: (on: boolean) => void;
 };
 
 // Accept "1-3,5,8-9" (1-based) -> [0,1,2,4,7,8] (0-based)
@@ -38,7 +41,31 @@ function parseRanges(input: string): number[] {
 export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, className }: Props) {
   const [autoFollow, setAutoFollow] = useState(false);
   const [focus, setFocus] = useState(false);
-  const [lockNav, setLockNav] = useState(true);
+  
+  async function toggleSync() {
+    if (!chRef.current) return;
+    const next = !autoFollow;
+    setAutoFollow(next);
+    try {
+      const allowed = parseRange(rangeText);
+      allowedRef.current = allowed ?? null;
+      await setTeacherPresence(chRef.current, {
+        autoFollow: next,
+        allowedPages: allowedRef.current ?? null,
+        teacherPageIndex: pageIndex,
+        focusOn: focus,
+        lockNav,
+      });
+      await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
+      if (next) {
+        await publishSetPage(chRef.current, pageId, pageIndex);
+        try { await publishSetAssignment(assignmentId, props.roomId || 'default'); } catch {}
+      }
+    } finally {
+      try { props.onSyncChange?.(next); } catch {}
+    }
+  }
+const [lockNav, setLockNav] = useState(true);
   const [rangeText, setRangeText] = useState('');
   const allowedRef = useRef<number[] | null>(null);
   const chRef = useRef<ReturnType<typeof assignmentChannel> | null>(null);
