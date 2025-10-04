@@ -1,3 +1,4 @@
+// src/pages/student/index.tsx
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -135,7 +136,7 @@ export default function StudentAssignment(){
     return (s ? s.toUpperCase() : inferStation(studentId))
   }, [location.search, studentId])
 
-  // pdf path resolved from DB page row OR realtime
+  // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
 
   // PDF URL for PdfCanvas
@@ -172,13 +173,16 @@ export default function StudentAssignment(){
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
-  // ---------- Sync state ----------
+  // ---------- Sync state (DECLARE BEFORE ANY EFFECTS THAT READ THEM) ----------
   const [focusOn, setFocusOn] = useState(false)
   const [navLocked, setNavLocked] = useState(false)
   const [autoFollow, setAutoFollow] = useState(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
-  // --------------------------------
+  // ---------------------------------------------------------------------------
+
+  // 👇 NEW: one-time cold-start hydration flag
+  const hasHydratedRef = useRef(false)
 
   // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
@@ -217,7 +221,8 @@ export default function StudentAssignment(){
     if (rtAssignmentId) return
     const to = window.setTimeout(() => { try { void requestAssignment() } catch {} }, 400)
     return () => { if (to) window.clearTimeout(to) }
-  }, [rtAssignmentId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ✅ Global assignment handoff
   useEffect(() => {
@@ -229,13 +234,18 @@ export default function StudentAssignment(){
         const raw = localStorage.getItem(presenceKey(nextAssignmentId))
         if (raw) {
           const p = JSON.parse(raw) as TeacherPresenceState
-          setAutoFollow(!!p.autoFollow)
-          setAllowedPages(p.allowedPages ?? null)
-          setFocusOn(!!p.focusOn)
-          setNavLocked(!!p.focusOn && !!p.lockNav)
-          if (p.autoFollow && typeof p.teacherPageIndex === 'number') {
-            teacherPageIndexRef.current = p.teacherPageIndex
-            setPageIndex(p.teacherPageIndex)
+          // do not read focus/autoFollow from presence here
+          if (typeof (p as any)?.teacherPageIndex === 'number') {
+            teacherPageIndexRef.current = (p as any).teacherPageIndex
+          }
+          // cold-start hydration if we haven't yet
+          const pdfPath = (p as any)?.pdfPath as string | undefined
+          const pid = (p as any)?.pageId as string | undefined
+          if (!hasHydratedRef.current && pdfPath && typeof teacherPageIndexRef.current === 'number') {
+            setPdfStoragePath(pdfPath)
+            if (pid) currIds.current.page_id = pid
+            setPageIndex(teacherPageIndexRef.current)
+            hasHydratedRef.current = true
           }
         } else {
           setPageIndex(0)
@@ -255,29 +265,28 @@ export default function StudentAssignment(){
         try { void studentHello(id) } catch {}
       },
 
-      // ⬇️ Now also hydrates pageId + pdfPath when the teacher broadcasts them
+      // ⬇️ Hydrate page/pdf immediately; cold-start snaps once unconditionally
       onSetPage: (p) => {
-        // cache teacher page
-        if (typeof p.pageIndex === 'number') {
-          teacherPageIndexRef.current = p.pageIndex
-        }
+        teacherPageIndexRef.current = p.pageIndex
 
-        // if a pdf path is supplied, render it immediately (even before DB round-trip)
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
+        if (p.pageId) currIds.current.page_id = p.pageId
 
-        // we can also cache the page_id for later submits
-        if ((p as any)?.pageId) {
-          currIds.current.page_id = (p as any).pageId
+        if (!hasHydratedRef.current) {
+          // First-time snap regardless of focus/autoFollow
+          setPageIndex(p.pageIndex)
+          hasHydratedRef.current = true
+          return
         }
 
-        // follow only if autoFollow is on OR focus is on+locked
+        // After hydration, respect policy
         if (autoFollow || (focusOn && navLocked)) {
-          setPageIndex(prev => (prev !== p.pageIndex ? p.pageIndex : prev))
+          setPageIndex(prev => prev !== p.pageIndex ? p.pageIndex : prev)
         }
       },
 
-      onFocus: ({ on, lockNav }) => {
+      onFocus: ({ on, lockNav }: FocusPayload) => {
         setFocusOn(!!on)
         setNavLocked(!!on && !!lockNav)
         if (on && lockNav && typeof teacherPageIndexRef.current === 'number') {
@@ -285,7 +294,7 @@ export default function StudentAssignment(){
         }
       },
 
-      onAutoFollow: ({ on, allowedPages, teacherPageIndex }) => {
+      onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
@@ -294,9 +303,8 @@ export default function StudentAssignment(){
         }
       },
 
-      // 👇 NEW: accept presence pulses as a catch-all hydration
+      // 👇 Presence is page/pdf hydration ONLY; cold-start snap once if needed
       onPresence: (p) => {
-        // adopt assignmentId from presence if provided
         const incomingAid = (p as any)?.assignmentId as string | undefined
         if (incomingAid && incomingAid !== rtAssignmentId) {
           try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, incomingAid) } catch {}
@@ -304,64 +312,62 @@ export default function StudentAssignment(){
           try { void studentHello(incomingAid) } catch {}
         }
 
-        // flags
-        setAutoFollow(!!p.autoFollow)
-        setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)
-        setNavLocked(!!p.focusOn && !!p.lockNav)
-
-        // page index + pdf
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
         }
+
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
 
-        // snap only if policy allows
-        const shouldSnap = autoFollow || (p.focusOn && p.lockNav)
-        if (shouldSnap && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(prev => (prev !== teacherPageIndexRef.current! ? teacherPageIndexRef.current! : prev))
-        }
-
-        // optionally cache page_id if present
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
 
-        try { localStorage.setItem(presenceKey(rtAssignmentId || 'latest'), JSON.stringify(p)) } catch {}
+        if (!hasHydratedRef.current && typeof teacherPageIndexRef.current === 'number') {
+          setPageIndex(teacherPageIndexRef.current)
+          hasHydratedRef.current = true
+          return
+        }
+
+        const shouldSnap = autoFollow || (focusOn && navLocked)
+        if (shouldSnap && typeof teacherPageIndexRef.current === 'number') {
+          setPageIndex(prev => (prev !== teacherPageIndexRef.current! ? teacherPageIndexRef.current! : prev))
+        }
       }
     })
     return off
   }, [autoFollow, focusOn, navLocked, rtAssignmentId])
 
-  // ✅ After we know assignment: say hello and get a presence snapshot (page index, etc.)
+  // ✅ After we know assignment: say hello and get a presence snapshot (PAGE-ONLY) with cold-start
   useEffect(() => {
     if (!rtAssignmentId) return
     try { void studentHello(rtAssignmentId) } catch {}
     const off = subscribePresenceSnapshot(rtAssignmentId, (p) => {
       try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
-      setAutoFollow(!!p.autoFollow)
-      setAllowedPages(p.allowedPages ?? null)
-      setFocusOn(!!p.focusOn)
-      setNavLocked(!!p.focusOn && !!p.lockNav)
 
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
       }
 
-      // NEW: use provided pdfPath right away so we don't sit on "No hay tareas"
       const pdfPath = (p as any)?.pdfPath as string | undefined
       if (pdfPath) setPdfStoragePath(pdfPath)
 
-      // optional: cache page_id if the snapshot includes it
       const pid = (p as any)?.pageId as string | undefined
       if (pid) currIds.current.page_id = pid
 
-      if ((p.autoFollow || (p.focusOn && p.lockNav)) && typeof teacherPageIndexRef.current === 'number') {
+      // Cold-start snap once unconditionally when we have a page index
+      if (!hasHydratedRef.current && typeof teacherPageIndexRef.current === 'number') {
+        setPageIndex(teacherPageIndexRef.current)
+        hasHydratedRef.current = true
+        return
+      }
+
+      // After hydration, obey policy
+      if ((autoFollow || (focusOn && navLocked)) && typeof teacherPageIndexRef.current === 'number') {
         setPageIndex(teacherPageIndexRef.current)
       }
     })
     return () => { try { (off as any)?.() } catch {} }
-  }, [rtAssignmentId])
+  }, [rtAssignmentId, autoFollow, focusOn, navLocked])
 
   // ✅ Retry “hello” once if no teacher page yet
   useEffect(() => {
@@ -381,20 +387,17 @@ export default function StudentAssignment(){
       const raw = localStorage.getItem(presenceKey(rtAssignmentId))
       if (!raw) return
       const p = JSON.parse(raw) as TeacherPresenceState
-      setAutoFollow(!!p.autoFollow)
-      setAllowedPages(p.allowedPages ?? null)
-      setFocusOn(!!p.focusOn)
-      setNavLocked(!!p.focusOn && !!p.lockNav)
-      if (typeof p.teacherPageIndex === 'number') {
-        teacherPageIndexRef.current = p.teacherPageIndex
+      if (typeof (p as any)?.teacherPageIndex === 'number') {
+        teacherPageIndexRef.current = (p as any).teacherPageIndex
       }
       const pdfPath = (p as any)?.pdfPath as string | undefined
       if (pdfPath) setPdfStoragePath(pdfPath)
       const pid = (p as any)?.pageId as string | undefined
       if (pid) currIds.current.page_id = pid
 
-      if ((p.autoFollow || (p.focusOn && p.lockNav)) && typeof teacherPageIndexRef.current === 'number') {
+      if (!hasHydratedRef.current && typeof teacherPageIndexRef.current === 'number' && pdfPath) {
         setPageIndex(teacherPageIndexRef.current)
+        hasHydratedRef.current = true
       }
     } catch {}
   }, [rtAssignmentId])
@@ -407,7 +410,7 @@ export default function StudentAssignment(){
   }
   // -------------------------------------
 
-  // Resolve assignment/page (prefers realtime-known pageId first)
+  // Resolve assignment/page
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
     if (!rtAssignmentId) {
       currIds.current = {}
@@ -422,10 +425,7 @@ export default function StudentAssignment(){
       setHasTask(false)
       return null
     }
-    const knownPid = currIds.current.page_id
-    const known = knownPid ? pages.find(p => p.id === knownPid) : undefined
-    const curr = known ?? (pages.find(p => p.page_index === pageIndex) ?? pages[0])
-
+    const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
     currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
     setPdfStoragePath(curr.pdf_path || '')
     return { assignment_id: rtAssignmentId, page_id: curr.id }
@@ -625,14 +625,11 @@ export default function StudentAssignment(){
   }
 
   const blockedBySync = (idx: number) => {
-    // Focus+lockNav has highest priority: must be exactly teacher page
     const tpi = teacherPageIndexRef.current
     if (focusOn && navLocked) {
       return typeof tpi === 'number' ? idx !== tpi : true
     }
-    // Page range limits apply even when autoFollow is off
     if (!isAllowedByPageRange(idx)) return true
-    // Auto-follow (when on) also restricts to teacher page
     if (autoFollow) {
       return typeof tpi === 'number' ? idx !== tpi : true
     }
@@ -643,7 +640,6 @@ export default function StudentAssignment(){
   useEffect(() => {
     if (!allowedPages || allowedPages.length === 0) return
     if (!isAllowedByPageRange(pageIndex)) {
-      // prefer teacher page if allowed; else first allowed page
       const tpi = teacherPageIndexRef.current
       if (typeof tpi === 'number' && allowedPages.includes(tpi)) {
         setPageIndex(tpi)
@@ -750,13 +746,10 @@ export default function StudentAssignment(){
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
-      onSetPage: (p: SetPagePayload) => {
-        teacherPageIndexRef.current = p.pageIndex
-        const pdfPath = (p as any)?.pdfPath as string | undefined
-        if (pdfPath) setPdfStoragePath(pdfPath)
-        if ((p as any)?.pageId) currIds.current.page_id = (p as any).pageId
+      onSetPage: ({ pageIndex }: SetPagePayload) => {
+        teacherPageIndexRef.current = pageIndex
         if (autoFollow || (focusOn && navLocked)) {
-          setPageIndex(prev => (prev !== p.pageIndex ? p.pageIndex : prev))
+          setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
         }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
@@ -776,10 +769,7 @@ export default function StudentAssignment(){
       },
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
-        setAutoFollow(!!p.autoFollow)
-        setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)
-        setNavLocked(!!p.focusOn && !!p.lockNav)
+        // do not flip focus/autoFollow here
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
         }
@@ -787,8 +777,12 @@ export default function StudentAssignment(){
         if (pdfPath) setPdfStoragePath(pdfPath)
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
-
-        if ((p.autoFollow || (p.focusOn && p.lockNav)) && typeof teacherPageIndexRef.current === 'number') {
+        if (!hasHydratedRef.current && typeof teacherPageIndexRef.current === 'number') {
+          setPageIndex(teacherPageIndexRef.current)
+          hasHydratedRef.current = true
+          return
+        }
+        if ((autoFollow || (focusOn && navLocked)) && typeof teacherPageIndexRef.current === 'number') {
           setPageIndex(teacherPageIndexRef.current)
         }
       }
