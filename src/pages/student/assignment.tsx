@@ -213,10 +213,14 @@ export default function StudentAssignment(){
   }, [])
 
   // ✅ Listen to global handoff (teacher dropdown)
-  useEffect(() => {
+    useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
+
+      // Ask the teacher for the current presence/page right away
+      try { void studentHello(nextAssignmentId) } catch {}
+
       try {
         const raw = localStorage.getItem(presenceKey(nextAssignmentId))
         if (raw) {
@@ -239,6 +243,7 @@ export default function StudentAssignment(){
     })
     return off
   }, [])
+
 
   // ✅ EXTRA: mirror listener that behaves like live-strokes — plain channel
   // Teacher broadcasts (via their page) to 'control:all' → event 'set-assignment'
