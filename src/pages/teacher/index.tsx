@@ -31,7 +31,8 @@ export default function TeacherDashboard() {
   const [pageId, setPageId] = useState<string>('')
   const lastAnnouncedAssignment = useRef<string>('') // NEW: prevent double-broadcasts
 
-  const pageIndex = useMemo(
+    const syncOnRef = useRef(false)
+const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
     [pages, pageId]
   )

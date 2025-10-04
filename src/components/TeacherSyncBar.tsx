@@ -38,7 +38,7 @@ function parseRanges(input: string): number[] {
   return Array.from(out.values()).sort((a, b) => a - b);
 }
 
-export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, className }: Props) {
+export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, className, roomId, onSyncChange }: Props) {
   const [autoFollow, setAutoFollow] = useState(false);
   const [focus, setFocus] = useState(false);
   
@@ -47,7 +47,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     const next = !autoFollow;
     setAutoFollow(next);
     try {
-      const allowed = parseRange(rangeText);
+      const allowed = parseRanges(rangeText);
       allowedRef.current = allowed ?? null;
       await setTeacherPresence(chRef.current, {
         autoFollow: next,
@@ -59,10 +59,10 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
       await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
       if (next) {
         await publishSetPage(chRef.current, pageId, pageIndex);
-        try { await publishSetAssignment(assignmentId, props.roomId || 'default'); } catch {}
+        try { await publishSetAssignment(assignmentId, roomId || 'default'); } catch {}
       }
     } finally {
-      try { props.onSyncChange?.(next); } catch {}
+      try { onSyncChange?.(next); } catch {}
     }
   }
 const [lockNav, setLockNav] = useState(true);
