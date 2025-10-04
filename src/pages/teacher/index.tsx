@@ -19,7 +19,6 @@ import {
   setTeacherPresence,
   teacherPresenceResponder,
   controlSetPage,
-  // one-shot presence pulse (NOT a heartbeat)
   controlPresence,
 } from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer'
@@ -38,9 +37,7 @@ export default function TeacherDashboard() {
 
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
-
-  // prevent double-broadcasts of assignment
-  const lastAnnouncedAssignment = useRef<string>('')
+  const lastAnnouncedAssignment = useRef<string>('') // prevent double-broadcasts
 
   const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
@@ -126,7 +123,7 @@ export default function TeacherDashboard() {
     }
   }
 
-  // debounce for grid refresh
+  // debounce
   const debTimer = useRef<number | null>(null)
   const debouncedRefresh = (delay = 300) => {
     if (debTimer.current) window.clearTimeout(debTimer.current)
@@ -187,82 +184,132 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     if (!assignmentId || !pageId) return
-    setGrid({})
+    setGrid({}) // reset grid when page changes
     refreshGrid.current('page change')
   }, [assignmentId, pageId])
 
-  // ===== PRESENCE/SYNC (event-driven; no heartbeat) =====
+  // ============================================================================
+  // ROBUST PRESENCE WITHOUT HEARTBEAT
+  // ============================================================================
 
-  // Helper to emit a one-shot presence/page pulse (the “presence kick”)
-  const presenceKickOnceRef = useRef<string>('') // cache of assignmentId|pageId we already kicked for
-  const presenceKick = useRef(async () => {})
-  presenceKick.current = async () => {
-    if (!assignmentId || !pageId) return
-    const key = `${assignmentId}|${pageId}`
-    if (presenceKickOnceRef.current === key) return
-    try {
-      const curr = pages.find(p => p.id === pageId)
-      const pdfPath = curr?.pdf_path || undefined
+  // Keep latest state in a ref so our responder always returns fresh info
+  const latestRef = useRef<{
+    assignmentId: string | null
+    pageId: string | null
+    pageIndex: number
+    pdfPath: string | null
+  }>({ assignmentId: null, pageId: null, pageIndex: 0, pdfPath: null })
 
-      // Tell students our current page (assignment channel + control mirror)
-      await publishSetPage(assignmentId, { pageIndex, pageId, pdfPath })
-      await controlSetPage({ pageIndex, pageId, pdfPath })
-
-      // Set teacher presence flags (kept false/neutral here)
-      await setTeacherPresence(assignmentId, {
-        teacherPageIndex: pageIndex,
-        autoFollow: false,
-        focusOn: false,
-        lockNav: false,
-        allowedPages: null,
-      })
-
-      // ONE immediate presence pulse on control channel so late joiners hydrate
-      await controlPresence({
-        teacherAlive: true,
-        assignmentId,
-        pageId,
-        pageIndex,
-        pdfPath,
-        ts: Date.now(),
-      })
-
-      presenceKickOnceRef.current = key
-    } catch (e) {
-      console.warn('presenceKick failed', e)
+  // Keep latest values synced into the ref
+  useEffect(() => {
+    const curr = pages.find(p => p.id === pageId) || null
+    latestRef.current = {
+      assignmentId: assignmentId || null,
+      pageId: pageId || null,
+      pageIndex,
+      pdfPath: curr?.pdf_path ?? null,
     }
-  }
+  }, [assignmentId, pageId, pageIndex, pages])
 
-  // 1) Answer “hello” with a full snapshot (this is the reliable path for late joiners)
+  // Install ONE stable responder early. It reads from latestRef each time it's called.
   useEffect(() => {
     if (!assignmentId) return
     const off = teacherPresenceResponder(assignmentId, () => {
-      const curr = pages.find(p => p.id === pageId)
-      const pdfPath = curr?.pdf_path || undefined
+      const snap = latestRef.current
       return {
-        // full snapshot so students can hydrate without touching DB:
-        assignmentId,
-        pageId,
-        pdfPath,
-        teacherPageIndex: pageIndex,
-        // keep flags neutral here; TeacherSyncBar still controls them
+        // required flags (we don't toggle them here; TeacherSyncBar handles changes)
         autoFollow: false,
         focusOn: false,
         lockNav: false,
         allowedPages: null,
+
+        // current page snapshot
+        teacherPageIndex: snap.pageIndex ?? 0,
+
+        // enrich so students can render immediately
+        assignmentId: snap.assignmentId ?? assignmentId,
+        pageId: snap.pageId ?? '',
+        pdfPath: snap.pdfPath ?? undefined,
       }
     })
     return off
-  }, [assignmentId, pageIndex, pageId, pages])
+  }, [assignmentId])
 
-  // 2) Fire a one-shot presence kick once assignment+page are ready (and if either changes)
+  // One-time presence kick + page broadcast as soon as we have a page
+  const initialKickSent = useRef(false)
   useEffect(() => {
     if (!assignmentId || !pageId) return
-    presenceKick.current()
-  }, [assignmentId, pageId, pageIndex, pages])
-  // ===== END presence/sync =====
+    if (initialKickSent.current) return
+    ;(async () => {
+      try {
+        const curr = pages.find(p => p.id === pageId)
+        const pdfPath = curr?.pdf_path || undefined
 
-  // realtime refreshers for teacher grid
+        // Seed everyone with current page (even if it "didn't change")
+        await publishSetPage(assignmentId, { pageIndex, pageId, pdfPath })
+        await controlSetPage({ pageIndex, pageId, pdfPath })
+
+        // Presence snapshot (flags false so it won't fight focus UI)
+        await setTeacherPresence(assignmentId, {
+          teacherPageIndex: pageIndex,
+          autoFollow: false,
+          focusOn: false,
+          lockNav: false,
+          allowedPages: null,
+        })
+
+        // Instant control presence pulse (no interval)
+        await controlPresence({
+          teacherAlive: true,
+          assignmentId,
+          pageId,
+          pageIndex,
+          pdfPath,
+          ts: Date.now(),
+        })
+        initialKickSent.current = true
+      } catch (e) {
+        console.warn('initial presence/page kick failed', e)
+      }
+    })()
+  }, [assignmentId, pageId, pageIndex, pages])
+
+  // Also broadcast page/presence whenever the page actually changes
+  useEffect(() => {
+    if (!assignmentId) return
+    ;(async () => {
+      try {
+        const curr = pages.find(p => p.id === pageId)
+        const pdfPath = curr?.pdf_path || undefined
+
+        await publishSetPage(assignmentId, { pageIndex, pageId, pdfPath })
+        await controlSetPage({ pageIndex, pageId, pdfPath })
+        await setTeacherPresence(assignmentId, {
+          teacherPageIndex: pageIndex,
+          autoFollow: false,
+          focusOn: false,
+          lockNav: false,
+          allowedPages: null,
+        })
+
+        // A single pulse here ensures late listeners snap promptly without a heartbeat
+        await controlPresence({
+          teacherAlive: true,
+          assignmentId,
+          pageId,
+          pageIndex,
+          pdfPath,
+          ts: Date.now(),
+        })
+      } catch (e) {
+        console.warn('page/presence broadcast failed', e)
+      }
+    })()
+  }, [assignmentId, pageIndex, pageId, pages])
+
+  // ============================================================================
+  // realtime refreshers for teacher grid (unchanged)
+  // ============================================================================
   useEffect(() => {
     if (!pageId) return
 
@@ -352,6 +399,7 @@ export default function TeacherDashboard() {
     }
   }
 
+  // Render
   const currentAssignment = useMemo(
     () => assignments.find(a => a.id === assignmentId) || null,
     [assignments, assignmentId]
@@ -400,8 +448,6 @@ export default function TeacherDashboard() {
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
               }
-              // Reset the one-shot kick cache so we kick again for the new assignment+page
-              presenceKickOnceRef.current = ''
             }}
             style={{ padding: '6px 8px', minWidth: 260 }}
           >
@@ -415,11 +461,7 @@ export default function TeacherDashboard() {
           <span style={{ marginBottom: 4, color: '#555' }}>Page</span>
           <select
             value={pageId}
-            onChange={(e) => {
-              setPageId(e.target.value)
-              // Reset kick cache so we kick for this page too
-              presenceKickOnceRef.current = ''
-            }}
+            onChange={(e) => setPageId(e.target.value)}
             style={{ padding: '6px 8px', minWidth: 120 }}
             disabled={!assignmentId}
           >
