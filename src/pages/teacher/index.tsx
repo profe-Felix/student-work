@@ -10,7 +10,7 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import { publishSetAssignment, respondToAssignmentRequests } from '../../lib/realtime' // ✅ updated import
+import { publishSetAssignment, respondToAssignmentRequests, controlSetAssignment } from '../../lib/realtime' // ⬅️ added controlSetAssignment
 import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
 type LatestCell = {
@@ -159,6 +159,7 @@ export default function TeacherDashboard() {
     ;(async () => {
       try {
         await publishSetAssignment(assignmentId)
+        await controlSetAssignment(assignmentId) // ⬅️ control channel mirror
         lastAnnouncedAssignment.current = assignmentId
       } catch (err) {
         console.error('initial broadcast failed', err)
@@ -245,7 +246,7 @@ export default function TeacherDashboard() {
         return
       }
       const strokesArt = latest.artifacts?.find(a => a.kind === 'strokes' && (a as any).strokes_json) as any | undefined
-      const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path) // ✅ fixed stray quote
+      const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
 
       let audioUrl: string | undefined = undefined
       if (audioArt?.storage_path) {
@@ -299,6 +300,7 @@ export default function TeacherDashboard() {
             // Broadcast to students now and mark as announced to avoid double-fire
             try {
               await publishSetAssignment(newId)
+              await controlSetAssignment(newId) // ⬅️ control channel mirror
               lastAnnouncedAssignment.current = newId
             } catch (err) {
               console.error('broadcast onCreated failed', err)
@@ -316,7 +318,8 @@ export default function TeacherDashboard() {
               const next = e.target.value
               setAssignmentId(next)
               try {
-                await publishSetAssignment(next) // NEW: tell students to switch
+                await publishSetAssignment(next) // tell students to switch
+                await controlSetAssignment(next) // ⬅️ control channel mirror
                 lastAnnouncedAssignment.current = next // avoid double fire with the effect
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
