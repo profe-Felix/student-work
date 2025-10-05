@@ -31,6 +31,15 @@ type LatestCell = {
 
 const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
 
+// Parse "student-work/foo/bar.pdf", "/pdfs/x.pdf", "public/pdfs/x.pdf" → { bucket, key }
+function parseStoragePath(path: string): { bucket: string; key: string } {
+  if (!path) return { bucket: '', key: '' }
+  let p = path.replace(/^\/+/, '')
+  p = p.replace(/^public\//, '')
+  const [bucket, ...rest] = p.split('/')
+  return { bucket: bucket || '', key: rest.join('/') }
+}
+
 export default function TeacherDashboard() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
   const [assignmentId, setAssignmentId] = useState<string>('')
@@ -58,27 +67,25 @@ export default function TeacherDashboard() {
   const [previewLoadingSid, setPreviewLoadingSid] = useState<string | null>(null)
 
   // ===== Resolve a URL for the current page's PDF (for PlaybackDrawer/PdfCanvas) =====
-  const STORAGE_BUCKET = 'pdfs'
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('')
-
-  function keyForBucket(path: string) {
-    if (!path) return ''
-    let k = path.replace(/^\/+/, '')
-    k = k.replace(/^public\//, '')
-    k = k.replace(/^pdfs\//, '')
-    return k
-  }
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       const storagePath = pages.find(p => p.id === pageId)?.pdf_path || ''
       if (!storagePath) { setPreviewPdfUrl(''); return }
-      const key = keyForBucket(storagePath)
-      const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
-      if (!cancelled && sData?.signedUrl) { setPreviewPdfUrl(sData.signedUrl); return }
-      const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
-      if (!cancelled) setPreviewPdfUrl(pData?.publicUrl ?? '')
+
+      const { bucket, key } = parseStoragePath(storagePath)
+      if (!bucket || !key) { setPreviewPdfUrl(''); return }
+
+      try {
+        const { data: sData } = await supabase.storage.from(bucket).createSignedUrl(key, 60 * 60)
+        if (!cancelled && sData?.signedUrl) { setPreviewPdfUrl(sData.signedUrl); return }
+        const { data: pData } = supabase.storage.from(bucket).getPublicUrl(key)
+        if (!cancelled) setPreviewPdfUrl(pData?.publicUrl ?? '')
+      } catch {
+        if (!cancelled) setPreviewPdfUrl('')
+      }
     })()
     return () => { cancelled = true }
   }, [pageId, pages])
@@ -166,7 +173,6 @@ export default function TeacherDashboard() {
           setPageId(p0.id)
 
           // ---- NEW: immediately bootstrap students with page + presence
-          // (Don’t wait for state effects; this prevents a brief “No hay tareas” race.)
           if (!bootstrappedOnce.current) {
             const pdfPath = p0.pdf_path || undefined
             const pageIndex0 = p0.page_index ?? 0
@@ -194,7 +200,6 @@ export default function TeacherDashboard() {
               console.warn('initial bootstrap at pages load failed', e)
             }
           }
-          // ---- END NEW
         }
       } catch (e) {
         console.error('load pages failed', e)
@@ -239,8 +244,6 @@ export default function TeacherDashboard() {
   // ============================================================================
   // ROBUST PRESENCE WITHOUT HEARTBEAT
   // ============================================================================
-
-  // Keep latest state in a ref so our responder always returns fresh info
   const latestRef = useRef<{
     assignmentId: string | null
     pageId: string | null
@@ -248,7 +251,6 @@ export default function TeacherDashboard() {
     pdfPath: string | null
   }>({ assignmentId: null, pageId: null, pageIndex: 0, pdfPath: null })
 
-  // Keep latest values synced into the ref
   useEffect(() => {
     const curr = pages.find(p => p.id === pageId) || null
     latestRef.current = {
@@ -259,22 +261,16 @@ export default function TeacherDashboard() {
     }
   }, [assignmentId, pageId, pageIndex, pages])
 
-  // Install ONE stable responder early. It reads from latestRef each time it's called.
   useEffect(() => {
     if (!assignmentId) return
     const off = teacherPresenceResponder(assignmentId, () => {
       const snap = latestRef.current
       return {
-        // required flags (we don't toggle them here; TeacherSyncBar handles changes)
         autoFollow: false,
         focusOn: false,
         lockNav: false,
         allowedPages: null,
-
-        // current page snapshot
         teacherPageIndex: snap.pageIndex ?? 0,
-
-        // enrich so students can render immediately
         assignmentId: snap.assignmentId ?? assignmentId,
         pageId: snap.pageId ?? '',
         pdfPath: snap.pdfPath ?? undefined,
@@ -283,7 +279,6 @@ export default function TeacherDashboard() {
     return off
   }, [assignmentId])
 
-  // One-time presence kick + page broadcast as soon as we have a page
   useEffect(() => {
     if (!assignmentId || !pageId) return
     if (initialKickSent.current) return
@@ -292,11 +287,9 @@ export default function TeacherDashboard() {
         const curr = pages.find(p => p.id === pageId)
         const pdfPath = curr?.pdf_path || undefined
 
-        // Seed everyone with current page (even if it "didn't change")
         await publishSetPage(assignmentId, { pageIndex, pageId, pdfPath })
         await controlSetPage({ pageIndex, pageId, pdfPath })
 
-        // Presence snapshot (flags false so it won't fight focus UI)
         await setTeacherPresence(assignmentId, {
           teacherPageIndex: pageIndex,
           autoFollow: false,
@@ -305,7 +298,6 @@ export default function TeacherDashboard() {
           allowedPages: null,
         })
 
-        // Instant control presence pulse (no interval heartbeat)
         await controlPresence({
           teacherAlive: true,
           assignmentId,
@@ -321,7 +313,6 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId, pageId, pageIndex, pages])
 
-  // Also broadcast page/presence whenever the page actually changes
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
@@ -339,7 +330,6 @@ export default function TeacherDashboard() {
           allowedPages: null,
         })
 
-        // A single pulse here ensures late listeners snap promptly without a heartbeat
         await controlPresence({
           teacherAlive: true,
           assignmentId,
@@ -355,7 +345,7 @@ export default function TeacherDashboard() {
   }, [assignmentId, pageIndex, pageId, pages])
 
   // ============================================================================
-  // realtime refreshers for teacher grid (unchanged, but cleanup via unsubscribe)
+  // realtime refreshers for teacher grid
   // ============================================================================
   useEffect(() => {
     if (!pageId) return
