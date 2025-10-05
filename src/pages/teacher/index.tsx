@@ -147,6 +147,14 @@ export default function TeacherDashboard() {
     })()
   }, [])
 
+  // ---- NEW: one-time bootstrap per assignment to avoid double "first kicks"
+  const bootstrappedOnce = useRef(false)
+  useEffect(() => {
+    // whenever assignment changes, allow bootstrapping again
+    bootstrappedOnce.current = false
+  }, [assignmentId])
+  // ---- END new guard
+
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
@@ -154,7 +162,40 @@ export default function TeacherDashboard() {
         const ps = await listPages(assignmentId)
         setPages(ps)
         const p0 = ps.find(p => p.page_index === 0) ?? ps[0]
-        if (p0) setPageId(p0.id)
+        if (p0) {
+          setPageId(p0.id)
+
+          // ---- NEW: immediately bootstrap students with page + presence
+          // (Don’t wait for state effects; this prevents a brief “No hay tareas” race.)
+          if (!bootstrappedOnce.current) {
+            const pdfPath = p0.pdf_path || undefined
+            const pageIndex0 = p0.page_index ?? 0
+
+            try {
+              await publishSetPage(assignmentId, { pageIndex: pageIndex0, pageId: p0.id, pdfPath })
+              await controlSetPage({ pageIndex: pageIndex0, pageId: p0.id, pdfPath })
+              await setTeacherPresence(assignmentId, {
+                teacherPageIndex: pageIndex0,
+                autoFollow: false,
+                focusOn: false,
+                lockNav: false,
+                allowedPages: null,
+              })
+              await controlPresence({
+                teacherAlive: true,
+                assignmentId,
+                pageId: p0.id,
+                pageIndex: pageIndex0,
+                pdfPath,
+                ts: Date.now(),
+              })
+              bootstrappedOnce.current = true
+            } catch (e) {
+              console.warn('initial bootstrap at pages load failed', e)
+            }
+          }
+          // ---- END NEW
+        }
       } catch (e) {
         console.error('load pages failed', e)
       }
@@ -432,6 +473,7 @@ export default function TeacherDashboard() {
               await publishSetAssignment(newId)
               await controlSetAssignment(newId)
               lastAnnouncedAssignment.current = newId
+              bootstrappedOnce.current = false // allow immediate bootstrap on new assignment
             } catch (err) {
               console.error('broadcast onCreated failed', err)
             }
@@ -451,6 +493,7 @@ export default function TeacherDashboard() {
                 await publishSetAssignment(next)
                 await controlSetAssignment(next)
                 lastAnnouncedAssignment.current = next
+                bootstrappedOnce.current = false // allow bootstrap on new assignment
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
               }
