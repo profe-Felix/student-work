@@ -530,44 +530,55 @@ export default function StudentAssignment(){
   }, [pageIndex, studentId])
 
   /* ---------- Draft autosave (coarse) ---------- */
-  useEffect(()=>{
-    let lastSerialized = ''
-    let running = !document.hidden
-    let intervalId: number | null = null
-    const tick = ()=>{
-      try {
-        if (!running) return
-        const data = drawRef.current?.getStrokes()
-        if (!data) return
-        const s = JSON.stringify(data)
-        if (s !== lastSerialized) {
-          const { assignmentUid, pageUid } = getCacheIds()
-          saveDraft(studentId, assignmentUid, pageUid, data)
-          lastSerialized = s
-        }
-      } catch {}
-    }
-    const start = ()=>{ if (intervalId==null){ intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS) } }
-    const stop  = ()=>{ if (intervalId!=null){ window.clearInterval(intervalId); intervalId=null } }
-    const onVis = ()=>{ running = !document.hidden; if (running) start(); else stop() }
-    document.addEventListener('visibilitychange', onVis)
-    start()
-    const Unload = ()=>{
-      try {
-        const data = drawRef.current?.getStrokes()
-        if (data) {
-          const { assignmentUid, pageUid } = getCacheIds()
-          saveDraft(studentId, assignmentUid, pageUid, data)
-        }
-      } catch {}
-    }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return ()=>{
-      stop()
-      document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload as any)
-    }
-  }, [pageIndex, studentId])
+useEffect(() => {
+  let lastSerialized = ''
+  let running = !document.hidden
+  let intervalId: number | null = null
+
+  const tick = () => {
+    try {
+      if (!running) return
+      const data = drawRef.current?.getStrokes()
+      if (!data) return
+      const s = JSON.stringify(data)
+      if (s !== lastSerialized) {
+        const { assignmentUid, pageUid } = getCacheIds()
+        saveDraft(studentId, assignmentUid, pageUid, data)
+        lastSerialized = s
+      }
+    } catch {}
+  }
+
+  const start = () => {
+    if (intervalId == null) intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS)
+  }
+  const stop = () => {
+    if (intervalId != null) { window.clearInterval(intervalId); intervalId = null }
+  }
+
+  const onVis = () => { running = !document.hidden; if (running) start(); else stop() }
+
+  function handleBeforeUnload() {
+    try {
+      const data = drawRef.current?.getStrokes()
+      if (data) {
+        const { assignmentUid, pageUid } = getCacheIds()
+        saveDraft(studentId, assignmentUid, pageUid, data)
+      }
+    } catch {}
+  }
+
+  document.addEventListener('visibilitychange', onVis)
+  start()
+  window.addEventListener('beforeunload', handleBeforeUnload)
+
+  return () => {
+    stop()
+    document.removeEventListener('visibilitychange', onVis)
+    window.removeEventListener('beforeunload', handleBeforeUnload)
+  }
+}, [pageIndex, studentId])
+
 
   /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async ()=>{
