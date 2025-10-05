@@ -337,6 +337,31 @@ export default function StudentAssignment(){
     return off
   }, [])
 
+  // 👉 NEW: As soon as we have an assignment id (from any source), prime the page/pdf immediately.
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const pages = await listPages(rtAssignmentId)
+        if (!pages || pages.length === 0) { await applyPdfPath(''); return }
+        const tpi = typeof teacherPageIndexRef.current === 'number' ? teacherPageIndexRef.current : 0
+        const current = pages.find(p => p.page_index === tpi) ?? pages[0]
+        if (cancelled) return
+        currIds.current = { assignment_id: rtAssignmentId, page_id: current.id }
+        await applyPdfPath(current.pdf_path || '')
+        // first snap if we haven't yet
+        if (!firstSnapDone.current) {
+          setPageIndex(current.page_index ?? 0)
+          firstSnapDone.current = true
+        }
+      } catch {
+        await applyPdfPath('')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [rtAssignmentId])
+
   // ✅ ALSO listen to control:all (with first-snap)
   useEffect(() => {
     const off = subscribeToControl({
