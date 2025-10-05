@@ -11,7 +11,7 @@ import { supabase } from './supabaseClient'
 export interface SetPagePayload {
   pageId?: string;         // optional for legacy calls
   pageIndex: number;
-  pdfPath?: string;        // NEW: let students render immediately without DB reads
+  pdfPath?: string;        // include so students can render immediately without DB reads
   ts?: number;
 }
 export interface FocusPayload {
@@ -36,7 +36,7 @@ export type TeacherPresenceState = {
   [k: string]: any;
 };
 
-/** ---------- NEW: Live ink updates (pre-submission co-editing) ---------- */
+/** ---------- Live ink updates (pre-submission co-editing) ---------- */
 export type InkUpdate = {
   id: string
   color?: string
@@ -51,7 +51,7 @@ export type InkUpdate = {
  *  Global “class” channel (assignment-agnostic) used to hand students off to another assignment
  *  ----------------------------------------------------------------------------------------- */
 export function globalChannel() {
-  // IMPORTANT: ack:false -> use WebSocket broadcast (no REST => no CORS)
+  // IMPORTANT: ack:false -> use WebSocket broadcast (no REST => no CORS) and self:false to avoid echo
   return supabase.channel('global-class', { config: { broadcast: { ack: false, self: false } } })
 }
 
@@ -79,7 +79,7 @@ export function subscribeToGlobal(onSetAssignment: (assignmentId: string) => voi
   return () => { void ch.unsubscribe() }
 }
 
-/** ---------- ADDED: Student asks; teacher answers (late join autosync) ---------- */
+/** ---------- Student asks; teacher answers (late join autosync) ---------- */
 /** Student: request the current assignment on the global channel */
 export async function requestAssignment() {
   const ch = globalChannel()
@@ -117,7 +117,7 @@ export function assignmentChannel(assignmentId: string) {
   return supabase.channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: false, self: false } } })
 }
 
-/** ---------- NEW: Per-(assignment,page) ink channel ---------- */
+/** ---------- Per-(assignment,page) ink channel ---------- */
 export function inkChannel(assignmentId: string, pageId: string) {
   return supabase.channel(`ink:${assignmentId}:${pageId}`, { config: { broadcast: { ack: false, self: false } } })
 }
@@ -287,10 +287,10 @@ export function subscribeToAssignment(assignmentId: string, handlers: Assignment
     .on('broadcast', { event: 'auto-follow' }, (msg: any) => handlers.onAutoFollow?.(msg?.payload))
     .on('broadcast', { event: 'presence' }, (msg: any) => handlers.onPresence?.(msg?.payload))
     .subscribe()
-  return ch
+  return ch // caller may ch.unsubscribe()
 }
 
-/** ---------- NEW: Ink publish/subscribe helpers ---------- */
+/** ---------- Ink publish/subscribe helpers ---------- */
 export async function publishInk(
   inkChOrIds: RealtimeChannel | { assignmentId: string; pageId: string },
   update: InkUpdate
@@ -329,11 +329,11 @@ export function subscribeToInk(
 }
 
 // --- Presence responder: teacher answers "hello" with a presence snapshot ---
-// MINIMAL EXPANSION: include page/pdf so students can hydrate immediately.
+// Include page/pdf so students can hydrate immediately.
 export type PresenceSnapshot = {
-  assignmentId?: string;        // <- added
-  pageId?: string;              // <- added
-  pdfPath?: string;             // <- added
+  assignmentId?: string;
+  pageId?: string;
+  pdfPath?: string;
   autoFollow?: boolean;
   focusOn?: boolean;
   lockNav?: boolean;
@@ -356,7 +356,6 @@ export function teacherPresenceResponder(
         lockNav: !!base.lockNav,
         allowedPages: base.allowedPages ?? null,
         teacherPageIndex: typeof base.teacherPageIndex === 'number' ? base.teacherPageIndex : 0,
-        // pass-through page/pdf if provided by teacher UI
         pageId: base.pageId,
         pdfPath: base.pdfPath,
       }
