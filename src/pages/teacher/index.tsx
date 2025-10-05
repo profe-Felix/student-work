@@ -37,6 +37,7 @@ export default function TeacherDashboard() {
 
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
+
   const lastAnnouncedAssignment = useRef<string>('') // prevent double-broadcasts
 
   const pageIndex = useMemo(
@@ -182,6 +183,12 @@ export default function TeacherDashboard() {
     return () => { try { (off as any)?.() } catch {} }
   }, [assignmentId])
 
+  // Reset the one-time “initial kick” when the teacher switches assignments
+  const initialKickSent = useRef(false)
+  useEffect(() => {
+    initialKickSent.current = false
+  }, [assignmentId])
+
   useEffect(() => {
     if (!assignmentId || !pageId) return
     setGrid({}) // reset grid when page changes
@@ -236,7 +243,6 @@ export default function TeacherDashboard() {
   }, [assignmentId])
 
   // One-time presence kick + page broadcast as soon as we have a page
-  const initialKickSent = useRef(false)
   useEffect(() => {
     if (!assignmentId || !pageId) return
     if (initialKickSent.current) return
@@ -258,7 +264,7 @@ export default function TeacherDashboard() {
           allowedPages: null,
         })
 
-        // Instant control presence pulse (no interval)
+        // Instant control presence pulse (no interval heartbeat)
         await controlPresence({
           teacherAlive: true,
           assignmentId,
@@ -308,7 +314,7 @@ export default function TeacherDashboard() {
   }, [assignmentId, pageIndex, pageId, pages])
 
   // ============================================================================
-  // realtime refreshers for teacher grid (unchanged)
+  // realtime refreshers for teacher grid (unchanged, but cleanup via unsubscribe)
   // ============================================================================
   useEffect(() => {
     if (!pageId) return
@@ -327,8 +333,8 @@ export default function TeacherDashboard() {
       .subscribe()
 
     return () => {
-      supabase.removeChannel(ch1)
-      supabase.removeChannel(ch2)
+      try { ch1.unsubscribe() } catch {}
+      try { ch2.unsubscribe() } catch {}
       if (debTimer.current) { window.clearTimeout(debTimer.current); debTimer.current = null }
     }
   }, [pageId])
