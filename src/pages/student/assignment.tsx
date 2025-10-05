@@ -1,4 +1,3 @@
-// src/pages/student/index.tsx
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -30,7 +29,7 @@ import type { Pt } from '../../lib/geometry'
 import { objectErase, softErase } from '../../lib/erase'
 
 /** Constants */
-const assignmentTitle = 'Handwriting - Daily' // only used for legacy purge text
+const assignmentTitle = 'Handwriting - Daily'
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
@@ -113,7 +112,7 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   )
 }
 
-/** NEW: station inference — prefers ?station=, else tries to grab a prefix like A_02 from studentId */
+/** station inference */
 function inferStation(id: string): string {
   const m = id.match(/^([A-Za-z]_\d{2})/)
   return (m?.[1] ?? id).toUpperCase()
@@ -129,15 +128,17 @@ export default function StudentAssignment(){
     return id
   }, [location.search])
 
-  /** NEW: stationId used for live-sync grouping */
+  /** stationId used for live-sync grouping */
   const stationId = useMemo(()=>{
     const qs = new URLSearchParams(location.search)
     const s = qs.get('station')
     return (s ? s.toUpperCase() : inferStation(studentId))
   }, [location.search, studentId])
 
-  // === PDF state ===
-  const [pdfStoragePath, setPdfStoragePath] = useState<string>('')  // teacher-supplied or DB-resolved
+  // pdf path resolved from DB page row
+  const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
+
+  // PDF URL for PdfCanvas
   const [pdfUrl, setPdfUrl] = useState<string>('')
   const [hasTask, setHasTask] = useState<boolean>(false)
   const STORAGE_BUCKET = 'pdfs'
@@ -177,9 +178,9 @@ export default function StudentAssignment(){
   const [autoFollow, setAutoFollow] = useState(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
-  // One-time cold start snap (the fix)
-  const coldStartSnappedRef = useRef(false)
-  // -------------------------------------------------------------------
+
+  // NEW: first time snap flag
+  const firstSnapDone = useRef(false)
 
   // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
@@ -213,62 +214,70 @@ export default function StudentAssignment(){
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
-  // ✅ Ask for current assignment shortly after mount (if unknown)
+  // Ask for current assignment shortly after mount (if unknown)
   useEffect(() => {
     if (rtAssignmentId) return
-    coldStartSnappedRef.current = false
-    const to = window.setTimeout(() => { try { void requestAssignment() } catch {} }, 300)
+    const to = window.setTimeout(() => { try { void requestAssignment() } catch {} }, 400)
     return () => { if (to) window.clearTimeout(to) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ✅ Global assignment handoff
+  // Global assignment handoff
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      coldStartSnappedRef.current = false
       try { void studentHello(nextAssignmentId) } catch {}
+
+      try {
+        const raw = localStorage.getItem(presenceKey(nextAssignmentId))
+        if (raw) {
+          const p = JSON.parse(raw) as TeacherPresenceState
+          // keep flags out to avoid fighting focus; we just adopt page if first time
+          if (typeof p.teacherPageIndex === 'number') {
+            teacherPageIndexRef.current = p.teacherPageIndex
+            if (!firstSnapDone.current) {
+              setPageIndex(p.teacherPageIndex)
+              firstSnapDone.current = true
+            }
+          }
+          const pdfPath = (p as any)?.pdfPath as string | undefined
+          if (pdfPath) setPdfStoragePath(pdfPath)
+          const pid = (p as any)?.pageId as string | undefined
+          if (pid) currIds.current.page_id = pid
+        } else {
+          setPageIndex(0)
+        }
+      } catch { setPageIndex(0) }
       currIds.current = {}
     })
     return off
   }, [])
 
-  // ✅ ALSO listen to control:all for set-page/focus/autofollow/presence mirrors
+  // ✅ ALSO listen to control:all (with first-snap)
   useEffect(() => {
     const off = subscribeToControl({
       onSetAssignment: (id) => {
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, id) } catch {}
         setRtAssignmentId(id)
-        coldStartSnappedRef.current = false
         try { void studentHello(id) } catch {}
       },
-
-      // Hydrates pageId + pdfPath when the teacher broadcasts them
       onSetPage: (p) => {
-        if (typeof p.pageIndex === 'number') {
-          teacherPageIndexRef.current = p.pageIndex
-        }
+        teacherPageIndexRef.current = p.pageIndex
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
-        if ((p as any)?.pageId) {
-          currIds.current.page_id = (p as any).pageId
-        }
+        if (p.pageId) currIds.current.page_id = p.pageId
 
-        // 🔥 COLD START: first good setPage -> snap regardless of autoFollow/focus
-        if (!coldStartSnappedRef.current && typeof p.pageIndex === 'number') {
+        // First time? snap unconditionally
+        if (!firstSnapDone.current) {
           setPageIndex(p.pageIndex)
-          coldStartSnappedRef.current = true
+          firstSnapDone.current = true
           return
         }
-
-        // Afterwards, respect sync policy
+        // otherwise respect policy
         if (autoFollow || (focusOn && navLocked)) {
           setPageIndex(prev => prev !== p.pageIndex ? p.pageIndex : prev)
         }
       },
-
-      // Focus ONLY via this dedicated event
       onFocus: ({ on, lockNav }: FocusPayload) => {
         setFocusOn(!!on)
         setNavLocked(!!on && !!lockNav)
@@ -276,47 +285,36 @@ export default function StudentAssignment(){
           setPageIndex(teacherPageIndexRef.current)
         }
       },
-
-      // AutoFollow ONLY via this dedicated event
       onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-
-        // cold start already handled above; here obey policy
         if (on && typeof teacherPageIndexRef.current === 'number') {
           setPageIndex(teacherPageIndexRef.current)
         }
       },
-
-      // Presence is page/pdf hydration + optional cold-start snap
+      // Presence: hydrate page/pdf only; snap once if first time
       onPresence: (p) => {
         const incomingAid = (p as any)?.assignmentId as string | undefined
         if (incomingAid && incomingAid !== rtAssignmentId) {
           try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, incomingAid) } catch {}
           setRtAssignmentId(incomingAid)
-          coldStartSnappedRef.current = false
           try { void studentHello(incomingAid) } catch {}
         }
-
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
+          if (!firstSnapDone.current) {
+            setPageIndex(p.teacherPageIndex)
+            firstSnapDone.current = true
+          }
         }
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
 
-        // 🔥 COLD START: first good presence -> snap regardless of flags
-        if (!coldStartSnappedRef.current && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(teacherPageIndexRef.current)
-          coldStartSnappedRef.current = true
-          return
-        }
-
-        // After cold start, respect policy
-        const shouldSnap = autoFollow || (focusOn && navLocked)
-        if (shouldSnap && typeof teacherPageIndexRef.current === 'number') {
+        // after first snap, only follow if policy says so
+        if (firstSnapDone.current && (autoFollow || (focusOn && navLocked)) && typeof teacherPageIndexRef.current === 'number') {
           setPageIndex(prev => (prev !== teacherPageIndexRef.current! ? teacherPageIndexRef.current! : prev))
         }
       }
@@ -324,7 +322,7 @@ export default function StudentAssignment(){
     return off
   }, [autoFollow, focusOn, navLocked, rtAssignmentId])
 
-  // ✅ After we know assignment: say hello and get a presence snapshot (PAGE-ONLY)
+  // ✅ Presence snapshot (PAGE-ONLY) with first-snap
   useEffect(() => {
     if (!rtAssignmentId) return
     try { void studentHello(rtAssignmentId) } catch {}
@@ -333,41 +331,42 @@ export default function StudentAssignment(){
 
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
+        if (!firstSnapDone.current) {
+          setPageIndex(p.teacherPageIndex)
+          firstSnapDone.current = true
+        }
       }
+
       const pdfPath = (p as any)?.pdfPath as string | undefined
       if (pdfPath) setPdfStoragePath(pdfPath)
       const pid = (p as any)?.pageId as string | undefined
       if (pid) currIds.current.page_id = pid
 
-      // 🔥 COLD START: first good snapshot -> snap regardless of flags
-      if (!coldStartSnappedRef.current && typeof teacherPageIndexRef.current === 'number') {
-        setPageIndex(teacherPageIndexRef.current)
-        coldStartSnappedRef.current = true
-        return
-      }
-
-      // after cold start, obey policy only
-      if ((autoFollow || (focusOn && navLocked)) && typeof teacherPageIndexRef.current === 'number') {
+      if (firstSnapDone.current && (autoFollow || (focusOn && navLocked)) && typeof teacherPageIndexRef.current === 'number') {
         setPageIndex(teacherPageIndexRef.current)
       }
     })
     return () => { try { (off as any)?.() } catch {} }
   }, [rtAssignmentId, autoFollow, focusOn, navLocked])
 
-  // hydrate presence on refresh (do NOT snap here; cold start handled above)
+  // hydrate presence on refresh (optional snap if not yet done)
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
       const raw = localStorage.getItem(presenceKey(rtAssignmentId))
       if (!raw) return
       const p = JSON.parse(raw) as TeacherPresenceState
+      if (typeof p.teacherPageIndex === 'number') {
+        teacherPageIndexRef.current = p.teacherPageIndex
+        if (!firstSnapDone.current) {
+          setPageIndex(p.teacherPageIndex)
+          firstSnapDone.current = true
+        }
+      }
       const pdfPath = (p as any)?.pdfPath as string | undefined
       if (pdfPath) setPdfStoragePath(pdfPath)
       const pid = (p as any)?.pageId as string | undefined
       if (pid) currIds.current.page_id = pid
-      if (typeof p.teacherPageIndex === 'number') {
-        teacherPageIndexRef.current = p.teacherPageIndex
-      }
     } catch {}
   }, [rtAssignmentId])
 
@@ -396,8 +395,7 @@ export default function StudentAssignment(){
     }
     const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
     currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
-    // Only set pdfStoragePath if we don't already have a teacher-supplied one
-    setPdfStoragePath(prev => prev || curr.pdf_path || '')
+    setPdfStoragePath(curr.pdf_path || '')
     return { assignment_id: rtAssignmentId, page_id: curr.id }
   }
 
@@ -606,7 +604,7 @@ export default function StudentAssignment(){
     return false
   }
 
-  // If allowedPages changes and current page is outside the range, snap into range
+  // Snap into range if needed
   useEffect(() => {
     if (!allowedPages || allowedPages.length === 0) return
     if (!isAllowedByPageRange(pageIndex)) {
@@ -619,14 +617,14 @@ export default function StudentAssignment(){
     }
   }, [allowedPages]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // If focus+lock is enabled later, snap immediately to teacher page
+  // Focus snap
   useEffect(() => {
     if (focusOn && navLocked && typeof teacherPageIndexRef.current === 'number') {
       setPageIndex(teacherPageIndexRef.current)
     }
   }, [focusOn, navLocked])
 
-  // If autoFollow turns on later, snap immediately to teacher page
+  // AutoFollow snap (post-firstSnap)
   useEffect(() => {
     if (!autoFollow) return
     const tpi = teacherPageIndexRef.current
@@ -718,14 +716,11 @@ export default function StudentAssignment(){
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
         teacherPageIndexRef.current = pageIndex
-
-        // 🔥 COLD START: if not snapped yet, do it now
-        if (!coldStartSnappedRef.current) {
+        if (!firstSnapDone.current) {
           setPageIndex(pageIndex)
-          coldStartSnappedRef.current = true
+          firstSnapDone.current = true
           return
         }
-
         if (autoFollow || (focusOn && navLocked)) {
           setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
         }
@@ -747,21 +742,19 @@ export default function StudentAssignment(){
       },
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+        if (typeof p.teacherPageIndex === 'number') {
+          teacherPageIndexRef.current = p.teacherPageIndex
+          if (!firstSnapDone.current) {
+            setPageIndex(p.teacherPageIndex)
+            firstSnapDone.current = true
+          }
+        }
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
-        if (typeof p.teacherPageIndex === 'number') teacherPageIndexRef.current = p.teacherPageIndex
-
-        // 🔥 COLD START: first good presence -> snap
-        if (!coldStartSnappedRef.current && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(teacherPageIndexRef.current)
-          coldStartSnappedRef.current = true
-          return
-        }
-
-        if ((autoFollow || (focusOn && navLocked)) && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(teacherPageIndexRef.current)
+        if (firstSnapDone.current && (autoFollow || (p.focusOn && p.lockNav)) && typeof p.teacherPageIndex === 'number') {
+          setPageIndex(p.teacherPageIndex)
         }
       }
     })
@@ -834,13 +827,10 @@ export default function StudentAssignment(){
       const ids = await resolveIds()
       if (!ids) return
 
-      // swap previous
       try { liveChRef.current?.unsubscribe() } catch {}
 
-      // SCOPE: by assignment page AND stationId
       const ch = supabase.channel(`page-live-${ids.page_id}:${stationId}`, { config: { broadcast: { self: false } } })
 
-      // Peer finishes a stroke -> append it immediately (only same station)
       ch.on('broadcast', { event: 'stroke-commit' }, (msg) => {
         const { clientId, stroke, station } = (msg as any)?.payload || {}
         if (!stroke) return
@@ -850,7 +840,6 @@ export default function StudentAssignment(){
         drawRef.current?.loadStrokes({ strokes: [...(cur.strokes || []), stroke] })
       })
 
-      // Peer completes an erase gesture -> apply same transform (only same station)
       ch.on('broadcast', { event: 'erase-commit' }, (msg) => {
         const { clientId, path, radius, mode, station } = (msg as any)?.payload || {}
         if (!Array.isArray(path)) return
@@ -936,10 +925,8 @@ export default function StudentAssignment(){
     erasePathRef.current = []
     if (!final) return
 
-    // apply locally
     drawRef.current?.loadStrokes(final)
 
-    // broadcast the erase gesture so others update instantly (same station only)
     const ch = liveChRef.current
     if (ch && path.length >= 2) {
       ch.send({
@@ -947,7 +934,7 @@ export default function StudentAssignment(){
         event: 'erase-commit',
         payload: {
           clientId: clientIdRef.current,
-          station: stationId,            // <— scope by station
+          station: stationId,
           path,
           radius: dynamicRadius,
           mode: (tool === 'eraserObject') ? 'object' : 'soft'
@@ -955,7 +942,6 @@ export default function StudentAssignment(){
       })
     }
 
-    // mark dirty + draft
     localDirty.current = true
     try { lastLocalHash.current = await hashStrokes(final) } catch {}
     const { assignmentUid, pageUid } = getCacheIds()
@@ -1089,7 +1075,6 @@ export default function StudentAssignment(){
               size={size}
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
-              // broadcast stroke commits so peers in SAME station see them immediately
               onStrokeCommit={(stroke: Stroke) =>{
                 const ch = liveChRef.current
                 if (!ch || !stroke) return
