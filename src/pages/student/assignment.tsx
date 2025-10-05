@@ -561,7 +561,7 @@ export default function StudentAssignment(){
         }
       } catch {}
     }
-    window.addEventListener('beforeunload', Unload)
+    window.addEventListener('beforeunload', onBeforeUnload)
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
