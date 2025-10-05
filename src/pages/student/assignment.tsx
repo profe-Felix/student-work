@@ -96,7 +96,7 @@ function clearSubmittedCache(student:string, assignmentUid:string, pageUid:strin
 }
 async function hashStrokes(strokes:any): Promise<string> {
   const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
-  const buf = await crypto.suble.digest('SHA-256', enc) as ArrayBuffer
+  const buf = await crypto.subtle.digest('SHA-256', enc) as ArrayBuffer
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
 
@@ -1124,7 +1124,7 @@ export default function StudentAssignment(){
               Conectando…
             </div>
           ) : hasTask && pdfUrl ? (
-            <div style={{ position:'absolute', inset:0, z-index:0 as any }} >
+            <div style={{ position:'absolute', inset:0, zIndex:0 }}>
               <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
             </div>
           ) : (
