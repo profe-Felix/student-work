@@ -552,7 +552,7 @@ export default function StudentAssignment(){
     const onVis = ()=>{ running = !document.hidden; if (running) start(); else stop() }
     document.addEventListener('visibilitychange', onVis)
     start()
-    const onBeforeUnload = ()=>{
+    const Unload = ()=>{
       try {
         const data = drawRef.current?.getStrokes()
         if (data) {
@@ -561,11 +561,11 @@ export default function StudentAssignment(){
         }
       } catch {}
     }
-    window.addEventListener('beforeunload', onBeforeUnload)
+    window.addEventListener('beforeunload', Unload)
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeunload as any)
+      window.removeEventListener('beforeunload', onBeforeUnload as any)
     }
   }, [pageIndex, studentId])
 
