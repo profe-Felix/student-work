@@ -337,7 +337,7 @@ export default function StudentAssignment(){
     return off
   }, [])
 
-  // 👉 NEW: As soon as we have an assignment id (from any source), prime the page/pdf immediately.
+  // 👉 prime page/pdf as soon as we have an assignment id
   useEffect(() => {
     if (!rtAssignmentId) return
     let cancelled = false
@@ -350,7 +350,6 @@ export default function StudentAssignment(){
         if (cancelled) return
         currIds.current = { assignment_id: rtAssignmentId, page_id: current.id }
         await applyPdfPath(current.pdf_path || '')
-        // first snap if we haven't yet
         if (!firstSnapDone.current) {
           setPageIndex(current.page_index ?? 0)
           firstSnapDone.current = true
@@ -378,13 +377,11 @@ export default function StudentAssignment(){
         if (pdfPath) applyPdfPath(pdfPath)
         if (p.pageId) currIds.current.page_id = p.pageId
 
-        // First time? snap unconditionally
         if (!firstSnapDone.current) {
           setPageIndex(p.pageIndex)
           firstSnapDone.current = true
           return
         }
-        // otherwise respect policy
         if (autoFollow || (focusOn && navLocked)) {
           setPageIndex(prev => prev !== p.pageIndex ? p.pageIndex : prev)
         }
@@ -427,7 +424,6 @@ export default function StudentAssignment(){
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
 
-        // after first snap, only follow if policy says so
         if (firstSnapDone.current && (autoFollow || (focusOn && navLocked)) && typeof teacherPageIndexRef.current === 'number') {
           setPageIndex(prev => (prev !== teacherPageIndexRef.current! ? teacherPageIndexRef.current! : prev))
         }
@@ -839,16 +835,21 @@ export default function StudentAssignment(){
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
-      onSetPage: ({ pageIndex }: SetPagePayload) => {
+      onSetPage: (p: SetPagePayload) => {
         setHydrated(true)
-        teacherPageIndexRef.current = pageIndex
+        teacherPageIndexRef.current = p.pageIndex
+        // NEW: hydrate pdf/pageId if present on the assignment channel too
+        const pdfPath = (p as any)?.pdfPath as string | undefined
+        if (pdfPath) applyPdfPath(pdfPath)
+        if (p.pageId) currIds.current.page_id = p.pageId
+
         if (!firstSnapDone.current) {
-          setPageIndex(pageIndex)
+          setPageIndex(p.pageIndex)
           firstSnapDone.current = true
           return
         }
         if (autoFollow || (focusOn && navLocked)) {
-          setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+          setPageIndex(prev => (prev !== p.pageIndex ? p.pageIndex : prev))
         }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
@@ -958,7 +959,8 @@ export default function StudentAssignment(){
 
       try { liveChRef.current?.unsubscribe() } catch {}
 
-      const ch = supabase.channel(`page-live-${ids.page_id}:${stationId}`, { config: { broadcast: { self: false } } })
+      // add ack:false to avoid REST/202 preflights and speed up first paint
+      const ch = supabase.channel(`page-live-${ids.page_id}:${stationId}`, { config: { broadcast: { self: false, ack: false } } })
 
       ch.on('broadcast', { event: 'stroke-commit' }, (msg) => {
         const { clientId, stroke, station } = (msg as any)?.payload || {}
