@@ -1,3 +1,4 @@
+// src/pages/student/assignment.tsx
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -146,7 +147,11 @@ export default function StudentAssignment(){
   // PDF URL for PdfCanvas
   const [pdfUrl, setPdfUrl] = useState<string>('') 
   const [hasTask, setHasTask] = useState<boolean>(false)
+
+  // ---- PDF resolver (IMMEDIATE) ----
   const STORAGE_BUCKET = 'pdfs'
+  const resolvingUrlRef = useRef<Promise<void> | null>(null)
+
   function keyForBucket(path: string) {
     if (!path) return ''
     let k = path.replace(/^\/+/, '')
@@ -154,11 +159,46 @@ export default function StudentAssignment(){
     k = k.replace(/^pdfs\//, '')
     return k
   }
+
+  async function applyPdfPath(path?: string) {
+    // central place to resolve & set url + flags immediately
+    const finalPath = path || ''
+    setPdfStoragePath(finalPath)
+    if (!finalPath) {
+      setPdfUrl(''); setHasTask(false); setHydrated(true)
+      return
+    }
+    const key = keyForBucket(finalPath)
+    try {
+      const p = (async () => {
+        const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
+        if (sData?.signedUrl) {
+          setPdfUrl(sData.signedUrl)
+          setHasTask(true)
+          setHydrated(true)
+          return
+        }
+        const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
+        const ok = !!pData?.publicUrl
+        setPdfUrl(pData?.publicUrl ?? '')
+        setHasTask(ok)
+        setHydrated(true)
+      })()
+      resolvingUrlRef.current = p
+      await p
+    } catch {
+      setPdfUrl('')
+      setHasTask(false)
+      setHydrated(true)
+    } finally {
+      resolvingUrlRef.current = null
+    }
+  }
+
+  // Also keep legacy effect (acts as a safety net if pdfStoragePath changes elsewhere)
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      // This effect always flips hydrated true after we attempt URL resolution
-      // (even if there is no pdf yet), to avoid the perpetual "connecting…" state.
       if (!pdfStoragePath) { 
         if (!cancelled){ setPdfUrl(''); setHasTask(false); setHydrated(true) } 
         return 
@@ -285,7 +325,7 @@ export default function StudentAssignment(){
             }
           }
           const pdfPath = (p as any)?.pdfPath as string | undefined
-          if (pdfPath) setPdfStoragePath(pdfPath)
+          if (pdfPath) applyPdfPath(pdfPath)
           const pid = (p as any)?.pageId as string | undefined
           if (pid) currIds.current.page_id = pid
         } else {
@@ -310,7 +350,7 @@ export default function StudentAssignment(){
         setHydrated(true)
         teacherPageIndexRef.current = p.pageIndex
         const pdfPath = (p as any)?.pdfPath as string | undefined
-        if (pdfPath) setPdfStoragePath(pdfPath)
+        if (pdfPath) applyPdfPath(pdfPath)
         if (p.pageId) currIds.current.page_id = p.pageId
 
         // First time? snap unconditionally
@@ -358,7 +398,7 @@ export default function StudentAssignment(){
           }
         }
         const pdfPath = (p as any)?.pdfPath as string | undefined
-        if (pdfPath) setPdfStoragePath(pdfPath)
+        if (pdfPath) applyPdfPath(pdfPath)
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
 
@@ -388,7 +428,7 @@ export default function StudentAssignment(){
       }
 
       const pdfPath = (p as any)?.pdfPath as string | undefined
-      if (pdfPath) setPdfStoragePath(pdfPath)
+      if (pdfPath) applyPdfPath(pdfPath)
       const pid = (p as any)?.pageId as string | undefined
       if (pid) currIds.current.page_id = pid
 
@@ -415,7 +455,7 @@ export default function StudentAssignment(){
         }
       }
       const pdfPath = (p as any)?.pdfPath as string | undefined
-      if (pdfPath) setPdfStoragePath(pdfPath)
+      if (pdfPath) applyPdfPath(pdfPath)
       const pid = (p as any)?.pageId as string | undefined
       if (pid) currIds.current.page_id = pid
     } catch {}
@@ -433,23 +473,20 @@ export default function StudentAssignment(){
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
     if (!rtAssignmentId) {
       currIds.current = {}
-      setPdfStoragePath('')
-      setHasTask(false)
-      setHydrated(true) // we've attempted resolution
+      await applyPdfPath('')
       return null
     }
     const pages = await listPages(rtAssignmentId)
     if (!pages || pages.length === 0) {
       currIds.current = {}
-      setPdfStoragePath('')
-      setHasTask(false)
-      setHydrated(true)
+      await applyPdfPath('')
       return null
     }
-    const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
+    // prefer teacher's page if we already know it
+    const tpi = typeof teacherPageIndexRef.current === 'number' ? teacherPageIndexRef.current : pageIndex
+    const curr = pages.find(p => p.page_index === tpi) ?? pages[0]
     currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
-    setPdfStoragePath(curr.pdf_path || '')
-    setHydrated(true)
+    await applyPdfPath(curr.pdf_path || '')
     return { assignment_id: rtAssignmentId, page_id: curr.id }
   }
 
@@ -817,7 +854,7 @@ export default function StudentAssignment(){
           }
         }
         const pdfPath = (p as any)?.pdfPath as string | undefined
-        if (pdfPath) setPdfStoragePath(pdfPath)
+        if (pdfPath) applyPdfPath(pdfPath)
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
         if (firstSnapDone.current && (autoFollow || (p.focusOn && p.lockNav)) && typeof p.teacherPageIndex === 'number') {
