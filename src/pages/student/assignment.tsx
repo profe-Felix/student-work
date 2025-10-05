@@ -121,6 +121,18 @@ function inferStation(id: string): string {
   return (m?.[1] ?? id).toUpperCase()
 }
 
+/** Parse a storage path like:
+ *  "student-work/some.pdf", "/pdfs/foo.pdf", "public/pdfs/foo.pdf"
+ *  → { bucket: "student-work" | "pdfs", key: "..." }
+ */
+function parseStoragePath(path: string): { bucket: string; key: string } {
+  if (!path) return { bucket: '', key: '' }
+  let p = path.replace(/^\/+/, '')
+  p = p.replace(/^public\//, '')
+  const [bucket, ...rest] = p.split('/')
+  return { bucket: bucket || '', key: rest.join('/') }
+}
+
 export default function StudentAssignment(){
   const location = useLocation()
   const nav = useNavigate()
@@ -149,16 +161,7 @@ export default function StudentAssignment(){
   const [hasTask, setHasTask] = useState<boolean>(false)
 
   // ---- PDF resolver (IMMEDIATE) ----
-  const STORAGE_BUCKET = 'pdfs'
   const resolvingUrlRef = useRef<Promise<void> | null>(null)
-
-  function keyForBucket(path: string) {
-    if (!path) return ''
-    let k = path.replace(/^\/+/, '')
-    k = k.replace(/^public\//, '')
-    k = k.replace(/^pdfs\//, '')
-    return k
-  }
 
   async function applyPdfPath(path?: string) {
     // central place to resolve & set url + flags immediately
@@ -168,17 +171,23 @@ export default function StudentAssignment(){
       setPdfUrl(''); setHasTask(false); setHydrated(true)
       return
     }
-    const key = keyForBucket(finalPath)
+
+    const { bucket, key } = parseStoragePath(finalPath)
+    if (!bucket || !key) {
+      setPdfUrl(''); setHasTask(false); setHydrated(true)
+      return
+    }
+
     try {
       const p = (async () => {
-        const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
+        const { data: sData } = await supabase.storage.from(bucket).createSignedUrl(key, 60 * 60)
         if (sData?.signedUrl) {
           setPdfUrl(sData.signedUrl)
           setHasTask(true)
           setHydrated(true)
           return
         }
-        const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
+        const { data: pData } = supabase.storage.from(bucket).getPublicUrl(key)
         const ok = !!pData?.publicUrl
         setPdfUrl(pData?.publicUrl ?? '')
         setHasTask(ok)
@@ -203,10 +212,14 @@ export default function StudentAssignment(){
         if (!cancelled){ setPdfUrl(''); setHasTask(false); setHydrated(true) } 
         return 
       }
-      const key = keyForBucket(pdfStoragePath)
-      const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
+      const { bucket, key } = parseStoragePath(pdfStoragePath)
+      if (!bucket || !key) {
+        if (!cancelled){ setPdfUrl(''); setHasTask(false); setHydrated(true) }
+        return
+      }
+      const { data: sData } = await supabase.storage.from(bucket).createSignedUrl(key, 60 * 60)
       if (!cancelled && sData?.signedUrl) { setPdfUrl(sData.signedUrl); setHasTask(true); setHydrated(true); return }
-      const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
+      const { data: pData } = supabase.storage.from(bucket).getPublicUrl(key)
       if (!cancelled) { 
         const ok=!!pData?.publicUrl; 
         setPdfUrl(pData?.publicUrl ?? ''); 
