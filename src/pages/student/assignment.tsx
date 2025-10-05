@@ -34,6 +34,8 @@ const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
 const ERASE_RADIUS_BASE = 10
+// NEW: one-time per tab “first join” ping flag
+const FIRST_JOIN_KEY = 'first-join-pinged'
 
 /* ---------- Colors ---------- */
 const CRAYOLA_24 = [
@@ -214,12 +216,41 @@ export default function StudentAssignment(){
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
-  // Ask for current assignment shortly after mount (if unknown)
+  // NEW: One-time “first join” request (multi-ping). Student asks teacher for assignment if unknown.
   useEffect(() => {
     if (rtAssignmentId) return
-    const to = window.setTimeout(() => { try { void requestAssignment() } catch {} }, 400)
-    return () => { if (to) window.clearTimeout(to) }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    if (typeof window !== 'undefined' && sessionStorage.getItem(FIRST_JOIN_KEY) === '1') return
+
+    let cancelled = false
+    let tries = 0
+
+    const ping = () => {
+      if (cancelled) return
+      if (rtAssignmentId) {
+        try { sessionStorage.setItem(FIRST_JOIN_KEY, '1') } catch {}
+        return
+      }
+      try { void requestAssignment() } catch {}
+      tries += 1
+      if (tries >= 6) {
+        try { sessionStorage.setItem(FIRST_JOIN_KEY, '1') } catch {}
+      }
+    }
+
+    // fire a few spaced pings to cover timing races
+    ping()
+    const t1 = window.setTimeout(ping, 600)
+    const t2 = window.setTimeout(ping, 1400)
+    const t3 = window.setTimeout(ping, 2600)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      window.clearTimeout(t3)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Global assignment handoff
   useEffect(() => {
@@ -534,7 +565,7 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload as any)
+      window.removeEventListener('beforeunload', onBeforeunload as any)
     }
   }, [pageIndex, studentId])
 
