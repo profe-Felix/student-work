@@ -96,7 +96,7 @@ function clearSubmittedCache(student:string, assignmentUid:string, pageUid:strin
 }
 async function hashStrokes(strokes:any): Promise<string> {
   const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
-  const buf = await crypto.subtle.digest('SHA-256', enc)
+  const buf = await crypto.suble.digest('SHA-256', enc) as ArrayBuffer
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('')
 }
 
@@ -137,11 +137,14 @@ export default function StudentAssignment(){
     return (s ? s.toUpperCase() : inferStation(studentId))
   }, [location.search, studentId])
 
+  // NEW: hydration gate — we don't show "No hay tareas" until we've tried to hydrate once.
+  const [hydrated, setHydrated] = useState(false)
+
   // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
 
   // PDF URL for PdfCanvas
-  const [pdfUrl, setPdfUrl] = useState<string>('')
+  const [pdfUrl, setPdfUrl] = useState<string>('') 
   const [hasTask, setHasTask] = useState<boolean>(false)
   const STORAGE_BUCKET = 'pdfs'
   function keyForBucket(path: string) {
@@ -154,12 +157,22 @@ export default function StudentAssignment(){
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      if (!pdfStoragePath) { if (!cancelled){ setPdfUrl(''); setHasTask(false) } return }
+      // This effect always flips hydrated true after we attempt URL resolution
+      // (even if there is no pdf yet), to avoid the perpetual "connecting…" state.
+      if (!pdfStoragePath) { 
+        if (!cancelled){ setPdfUrl(''); setHasTask(false); setHydrated(true) } 
+        return 
+      }
       const key = keyForBucket(pdfStoragePath)
       const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
-      if (!cancelled && sData?.signedUrl) { setPdfUrl(sData.signedUrl); setHasTask(true); return }
+      if (!cancelled && sData?.signedUrl) { setPdfUrl(sData.signedUrl); setHasTask(true); setHydrated(true); return }
       const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
-      if (!cancelled) { const ok=!!pData?.publicUrl; setPdfUrl(pData?.publicUrl ?? ''); setHasTask(ok) }
+      if (!cancelled) { 
+        const ok=!!pData?.publicUrl; 
+        setPdfUrl(pData?.publicUrl ?? ''); 
+        setHasTask(ok); 
+        setHydrated(true) 
+      }
     })()
     return () => { cancelled = true }
   }, [pdfStoragePath])
@@ -257,13 +270,13 @@ export default function StudentAssignment(){
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
+      setHydrated(true) // we learned assignment
       try { void studentHello(nextAssignmentId) } catch {}
 
       try {
         const raw = localStorage.getItem(presenceKey(nextAssignmentId))
         if (raw) {
           const p = JSON.parse(raw) as TeacherPresenceState
-          // keep flags out to avoid fighting focus; we just adopt page if first time
           if (typeof p.teacherPageIndex === 'number') {
             teacherPageIndexRef.current = p.teacherPageIndex
             if (!firstSnapDone.current) {
@@ -290,9 +303,11 @@ export default function StudentAssignment(){
       onSetAssignment: (id) => {
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, id) } catch {}
         setRtAssignmentId(id)
+        setHydrated(true)
         try { void studentHello(id) } catch {}
       },
       onSetPage: (p) => {
+        setHydrated(true)
         teacherPageIndexRef.current = p.pageIndex
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
@@ -310,6 +325,7 @@ export default function StudentAssignment(){
         }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
+        setHydrated(true)
         setFocusOn(!!on)
         setNavLocked(!!on && !!lockNav)
         if (on && lockNav && typeof teacherPageIndexRef.current === 'number') {
@@ -317,6 +333,7 @@ export default function StudentAssignment(){
         }
       },
       onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
+        setHydrated(true)
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
@@ -326,6 +343,7 @@ export default function StudentAssignment(){
       },
       // Presence: hydrate page/pdf only; snap once if first time
       onPresence: (p) => {
+        setHydrated(true)
         const incomingAid = (p as any)?.assignmentId as string | undefined
         if (incomingAid && incomingAid !== rtAssignmentId) {
           try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, incomingAid) } catch {}
@@ -358,6 +376,7 @@ export default function StudentAssignment(){
     if (!rtAssignmentId) return
     try { void studentHello(rtAssignmentId) } catch {}
     const off = subscribePresenceSnapshot(rtAssignmentId, (p) => {
+      setHydrated(true)
       try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
 
       if (typeof p.teacherPageIndex === 'number') {
@@ -387,6 +406,7 @@ export default function StudentAssignment(){
       const raw = localStorage.getItem(presenceKey(rtAssignmentId))
       if (!raw) return
       const p = JSON.parse(raw) as TeacherPresenceState
+      setHydrated(true)
       if (typeof p.teacherPageIndex === 'number') {
         teacherPageIndexRef.current = p.teacherPageIndex
         if (!firstSnapDone.current) {
@@ -415,6 +435,7 @@ export default function StudentAssignment(){
       currIds.current = {}
       setPdfStoragePath('')
       setHasTask(false)
+      setHydrated(true) // we've attempted resolution
       return null
     }
     const pages = await listPages(rtAssignmentId)
@@ -422,11 +443,13 @@ export default function StudentAssignment(){
       currIds.current = {}
       setPdfStoragePath('')
       setHasTask(false)
+      setHydrated(true)
       return null
     }
     const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
     currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
     setPdfStoragePath(curr.pdf_path || '')
+    setHydrated(true)
     return { assignment_id: rtAssignmentId, page_id: curr.id }
   }
 
@@ -530,55 +553,54 @@ export default function StudentAssignment(){
   }, [pageIndex, studentId])
 
   /* ---------- Draft autosave (coarse) ---------- */
-useEffect(() => {
-  let lastSerialized = ''
-  let running = !document.hidden
-  let intervalId: number | null = null
+  useEffect(() => {
+    let lastSerialized = ''
+    let running = !document.hidden
+    let intervalId: number | null = null
 
-  const tick = () => {
-    try {
-      if (!running) return
-      const data = drawRef.current?.getStrokes()
-      if (!data) return
-      const s = JSON.stringify(data)
-      if (s !== lastSerialized) {
-        const { assignmentUid, pageUid } = getCacheIds()
-        saveDraft(studentId, assignmentUid, pageUid, data)
-        lastSerialized = s
-      }
-    } catch {}
-  }
+    const tick = () => {
+      try {
+        if (!running) return
+        const data = drawRef.current?.getStrokes()
+        if (!data) return
+        const s = JSON.stringify(data)
+        if (s !== lastSerialized) {
+          const { assignmentUid, pageUid } = getCacheIds()
+          saveDraft(studentId, assignmentUid, pageUid, data)
+          lastSerialized = s
+        }
+      } catch {}
+    }
 
-  const start = () => {
-    if (intervalId == null) intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS)
-  }
-  const stop = () => {
-    if (intervalId != null) { window.clearInterval(intervalId); intervalId = null }
-  }
+    const start = () => {
+      if (intervalId == null) intervalId = window.setInterval(tick, DRAFT_INTERVAL_MS)
+    }
+    const stop = () => {
+      if (intervalId != null) { window.clearInterval(intervalId); intervalId = null }
+    }
 
-  const onVis = () => { running = !document.hidden; if (running) start(); else stop() }
+    const onVis = () => { running = !document.hidden; if (running) start(); else stop() }
 
-  function handleBeforeUnload() {
-    try {
-      const data = drawRef.current?.getStrokes()
-      if (data) {
-        const { assignmentUid, pageUid } = getCacheIds()
-        saveDraft(studentId, assignmentUid, pageUid, data)
-      }
-    } catch {}
-  }
+    function handleBeforeUnload() {
+      try {
+        const data = drawRef.current?.getStrokes()
+        if (data) {
+          const { assignmentUid, pageUid } = getCacheIds()
+          saveDraft(studentId, assignmentUid, pageUid, data)
+        }
+      } catch {}
+    }
 
-  document.addEventListener('visibilitychange', onVis)
-  start()
-  window.addEventListener('beforeunload', handleBeforeUnload)
+    document.addEventListener('visibilitychange', onVis)
+    start()
+    window.addEventListener('beforeunload', handleBeforeUnload)
 
-  return () => {
-    stop()
-    document.removeEventListener('visibilitychange', onVis)
-    window.removeEventListener('beforeunload', handleBeforeUnload)
-  }
-}, [pageIndex, studentId])
-
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [pageIndex, studentId])
 
   /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async ()=>{
@@ -747,7 +769,6 @@ useEffect(() => {
     }
   }, [handMode])
 
-
   const flipToolbarSide = ()=> {
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
@@ -757,6 +778,7 @@ useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
       onSetPage: ({ pageIndex }: SetPagePayload) => {
+        setHydrated(true)
         teacherPageIndexRef.current = pageIndex
         if (!firstSnapDone.current) {
           setPageIndex(pageIndex)
@@ -768,6 +790,7 @@ useEffect(() => {
         }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
+        setHydrated(true)
         setFocusOn(!!on)
         setNavLocked(!!on && !!lockNav)
         if (on && lockNav && typeof teacherPageIndexRef.current === 'number') {
@@ -775,6 +798,7 @@ useEffect(() => {
         }
       },
       onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
+        setHydrated(true)
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
@@ -783,6 +807,7 @@ useEffect(() => {
         }
       },
       onPresence: (p: TeacherPresenceState) => {
+        setHydrated(true)
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
@@ -1091,8 +1116,15 @@ useEffect(() => {
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
           {/* PDF layer */}
-          {hasTask && pdfUrl ? (
-            <div style={{ position:'absolute', inset:0, zIndex:0 }}>
+          {(!hydrated) ? (
+            <div style={{
+              position:'absolute', inset:0, zIndex:0, display:'grid', placeItems:'center',
+              color:'#6b7280', fontWeight:700, fontSize:20
+            }}>
+              Conectando…
+            </div>
+          ) : hasTask && pdfUrl ? (
+            <div style={{ position:'absolute', inset:0, z-index:0 as any }} >
               <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
             </div>
           ) : (
