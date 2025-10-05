@@ -329,8 +329,12 @@ export function subscribeToInk(
 }
 
 // --- Presence responder: teacher answers "hello" with a presence snapshot ---
+// MINIMAL EXPANSION: include page/pdf so students can hydrate immediately.
 export type PresenceSnapshot = {
-  autoFollow: boolean;
+  assignmentId?: string;        // <- added
+  pageId?: string;              // <- added
+  pdfPath?: string;             // <- added
+  autoFollow?: boolean;
   focusOn?: boolean;
   lockNav?: boolean;
   allowedPages?: number[] | null;
@@ -344,12 +348,17 @@ export function teacherPresenceResponder(
   const ch = assignmentChannel(assignmentId)
   ch.on('broadcast', { event: 'hello' }, async () => {
     try {
-      const snap = getSnapshot?.() ?? {
-        autoFollow: false,
-        focusOn: false,
-        lockNav: false,
-        allowedPages: null,
-        teacherPageIndex: 0,
+      const base = getSnapshot?.() ?? {}
+      const snap: PresenceSnapshot = {
+        assignmentId,                   // always include—helps students persist cache
+        autoFollow: !!base.autoFollow,
+        focusOn: !!base.focusOn,
+        lockNav: !!base.lockNav,
+        allowedPages: base.allowedPages ?? null,
+        teacherPageIndex: typeof base.teacherPageIndex === 'number' ? base.teacherPageIndex : 0,
+        // pass-through page/pdf if provided by teacher UI
+        pageId: base.pageId,
+        pdfPath: base.pdfPath,
       }
       await ch.send({
         type: 'broadcast',
@@ -391,6 +400,7 @@ export async function studentHello(assignmentId: string) {
   await ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } })
   void ch.unsubscribe()
 }
+
 /** -------------------------------------------------------------------------------------------
  *  CONTROL CHANNEL: simple, live-strokes-style broadcast for teacher → all students
  *  Everyone subscribes to control:all. Teacher broadcasts here in addition to assignment channel.
