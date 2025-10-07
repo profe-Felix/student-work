@@ -4,7 +4,6 @@ import { listAssignments, listPages, listLatestSubmissionsByPage, getThumbnailFo
 import { publicUrl } from '../../lib/supabaseHelpers';
 import TeacherSyncBar from '../../components/TeacherSyncBar';
 import PdfDropZone from '../../components/PdfDropZone';
-import { supabase } from '../../lib/db'; // <-- add this
 
 export default function TeacherDashboard() {
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -35,35 +34,6 @@ export default function TeacherDashboard() {
     }
     load();
   }, [pageId]);
-
-  // ---------------- NEW: reply to student "hello" with a presence snapshot ----------------
-  useEffect(() => {
-    if (!assignmentId) return;
-
-    const ch = supabase
-      .channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: true } } })
-      .on('broadcast', { event: 'hello' }, async () => {
-        // Minimal snapshot that forces snap-to-teacher-page on join.
-        // If you want this to respect a Sync toggle, wire that boolean here.
-        await ch.send({
-          type: 'broadcast',
-          event: 'presence-snapshot',
-          payload: {
-            autoFollow: true,              // forces snap on join
-            teacherPageIndex: pageIndex,   // current teacher page
-            allowedPages: null,
-            focusOn: false,
-            lockNav: false,
-            ts: Date.now()
-          }
-        });
-      });
-
-    ch.subscribe();
-
-    return () => { try { ch.unsubscribe(); } catch {} };
-  }, [assignmentId, pageIndex]);
-  // ----------------------------------------------------------------------------------------
 
   return (
     <div className="p-4 space-y-4">
