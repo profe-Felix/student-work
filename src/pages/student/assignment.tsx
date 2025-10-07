@@ -162,17 +162,7 @@ export default function StudentAssignment(){
     return () => { cancelled = true }
   }, [pdfStoragePath])
 
-  // ✅ Initialize pageIndex from any cached presence so joiners render on the last known teacher page
-  const [pageIndex, setPageIndex]   = useState<number>(() => {
-    try {
-      const aid = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || ''
-      if (!aid) return 0
-      const raw = localStorage.getItem(presenceKey(aid))
-      if (!raw) return 0
-      const p = JSON.parse(raw) as Partial<TeacherPresenceState> & { teacherPageIndex?: number }
-      return (typeof p.teacherPageIndex === 'number') ? p.teacherPageIndex : 0
-    } catch { return 0 }
-  })
+  const [pageIndex, setPageIndex]   = useState(0)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
   const [color, setColor] = useState('#1F75FE')
@@ -230,17 +220,6 @@ export default function StudentAssignment(){
     return () => { if (to) window.clearTimeout(to) }
   }, [rtAssignmentId])
 
-  // ✅ Helper: snap exactly once to the teacher page when we first learn it
-  const maybeSnapToTeacher = (hint?: { pdfPath?: string; pageId?: string }) => {
-    const tpi = teacherPageIndexRef.current
-    if (snappedToTeacherRef.current) return
-    if (typeof tpi !== 'number') return
-    if (hint?.pdfPath) setPdfStoragePath(hint.pdfPath)
-    if (hint?.pageId)  (currIds.current.page_id = hint.pageId)
-    setPageIndex(tpi)
-    snappedToTeacherRef.current = true
-  }
-
   // ✅ Global assignment handoff
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
@@ -255,14 +234,15 @@ export default function StudentAssignment(){
           setAllowedPages(p.allowedPages ?? null)
           setFocusOn(!!p.focusOn)
           setNavLocked(!!p.focusOn && !!p.lockNav)
-          if (typeof p.teacherPageIndex === 'number') {
+          if (p.autoFollow && typeof p.teacherPageIndex === 'number') {
             teacherPageIndexRef.current = p.teacherPageIndex
-            // don't force pageIndex here; maybeSnapToTeacher will do it once
-            maybeSnapToTeacher({ pdfPath: (p as any)?.pdfPath as string | undefined, pageId: (p as any)?.pageId as string | undefined })
+            setPageIndex(p.teacherPageIndex)
           }
+        } else {
+          // removed: don't force pageIndex(0); wait for presence snapshot to arrive
         }
       } catch {
-        // ignore
+        // removed: don't force pageIndex(0) on error either
       }
       currIds.current = {}
     })
@@ -278,21 +258,23 @@ export default function StudentAssignment(){
         try { void studentHello(id) } catch {}
       },
 
-      // ⬇️ Hydrates pageId + pdfPath when the teacher broadcasts them
+      // ⬇️ Now also hydrates pageId + pdfPath when the teacher broadcasts them
       onSetPage: (p) => {
+        // cache teacher page
         if (typeof p.pageIndex === 'number') {
           teacherPageIndexRef.current = p.pageIndex
         }
+
+        // if a pdf path is supplied, render it immediately (even before DB round-trip)
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
+
+        // we can also cache the page_id for later submits
         if ((p as any)?.pageId) {
           currIds.current.page_id = (p as any).pageId
         }
 
-        // One-time late-join snap, even if autoFollow/focus are off
-        maybeSnapToTeacher({ pdfPath, pageId: (p as any)?.pageId })
-
-        // Follow only if autoFollow is on OR focus is on+locked
+        // follow only if autoFollow is on OR focus is on+locked
         if (autoFollow || (focusOn && navLocked)) {
           setPageIndex(prev => (prev !== p.pageIndex ? p.pageIndex : prev))
         }
@@ -317,6 +299,7 @@ export default function StudentAssignment(){
 
       // 👇 Presence pulses are READ-ONLY: hydrate hints, never flip flags/page (avoid heartbeat clobber)
       onPresence: (p) => {
+        // adopt assignmentId from presence if provided (safe)
         const incomingAid = (p as any)?.assignmentId as string | undefined
         if (incomingAid && incomingAid !== rtAssignmentId) {
           try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, incomingAid) } catch {}
@@ -324,17 +307,23 @@ export default function StudentAssignment(){
           try { void studentHello(incomingAid) } catch {}
         }
 
+        // cache teacher page index hint
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
         }
 
+        // pdf+pageId hydration only (no policy flips)
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
 
         // Safety: one-time snap if we somehow missed the initial snapshot
-        maybeSnapToTeacher({ pdfPath, pageId: pid })
+        const tpi = teacherPageIndexRef.current
+        if (!snappedToTeacherRef.current && typeof tpi === 'number') {
+          setPageIndex(tpi)
+          snappedToTeacherRef.current = true
+        }
 
         try { localStorage.setItem(presenceKey(rtAssignmentId || 'latest'), JSON.stringify(p)) } catch {}
       }
@@ -359,31 +348,26 @@ export default function StudentAssignment(){
         teacherPageIndexRef.current = p.teacherPageIndex
       }
 
+      // Use provided pdfPath immediately so we don't sit on "No hay tareas"
       const pdfPath = (p as any)?.pdfPath as string | undefined
       if (pdfPath) setPdfStoragePath(pdfPath)
+
+      // Optional: cache page_id if the snapshot includes it
       const pid = (p as any)?.pageId as string | undefined
       if (pid) currIds.current.page_id = pid
 
       // One-time snap to the teacher page on the FIRST snapshot we receive
-      maybeSnapToTeacher({ pdfPath, pageId: pid })
+      const tpi = teacherPageIndexRef.current
+      if (!snappedToTeacherRef.current && typeof tpi === 'number') {
+        setPageIndex(tpi)
+        snappedToTeacherRef.current = true
+      }
     })
 
     // say hello AFTER we’re subscribed so we don't miss the reply
     try { void studentHello(rtAssignmentId) } catch {}
 
     return () => { try { (off as any)?.() } catch {} }
-  }, [rtAssignmentId])
-
-  // ✅ Late fallback snap in case ordering/racing delayed our first snap
-  useEffect(() => {
-    if (!rtAssignmentId) return
-    const t = window.setTimeout(() => {
-      if (!snappedToTeacherRef.current && typeof teacherPageIndexRef.current === 'number') {
-        setPageIndex(teacherPageIndexRef.current)
-        snappedToTeacherRef.current = true
-      }
-    }, 2000)
-    return () => window.clearTimeout(t)
   }, [rtAssignmentId])
 
   // ✅ Retry “hello” once if no teacher page yet
@@ -430,7 +414,7 @@ export default function StudentAssignment(){
   }
   // -------------------------------------
 
-  // Resolve assignment/page (prefer teacher page index when available)
+  // Resolve assignment/page (prefers realtime-known pageId first)
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
     if (!rtAssignmentId) {
       currIds.current = {}
@@ -447,13 +431,7 @@ export default function StudentAssignment(){
     }
     const knownPid = currIds.current.page_id
     const known = knownPid ? pages.find(p => p.id === knownPid) : undefined
-
-    // ✅ Prefer teacher page index if we know it; else current pageIndex; else first
-    const preferredIndex = (typeof teacherPageIndexRef.current === 'number')
-      ? teacherPageIndexRef.current
-      : pageIndex
-
-    const curr = known ?? (pages.find(p => p.page_index === preferredIndex) ?? pages[0])
+    const curr = known ?? (pages.find(p => p.page_index === pageIndex) ?? pages[0])
 
     currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
     setPdfStoragePath(curr.pdf_path || '')
@@ -784,10 +762,6 @@ export default function StudentAssignment(){
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
         if ((p as any)?.pageId) currIds.current.page_id = (p as any).pageId
-
-        // One-time late-join snap
-        maybeSnapToTeacher({ pdfPath, pageId: (p as any)?.pageId })
-
         if (autoFollow || (focusOn && navLocked)) {
           setPageIndex(prev => (prev !== p.pageIndex ? p.pageIndex : prev))
         }
@@ -811,6 +785,7 @@ export default function StudentAssignment(){
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
 
+        // no policy flips from presence pulses
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
         }
@@ -821,7 +796,11 @@ export default function StudentAssignment(){
         if (pid) currIds.current.page_id = pid
 
         // Safety one-time snap (if initial snapshot was missed)
-        maybeSnapToTeacher({ pdfPath, pageId: pid })
+        const tpi = teacherPageIndexRef.current
+        if (!snappedToTeacherRef.current && typeof tpi === 'number') {
+          setPageIndex(tpi)
+          snappedToTeacherRef.current = true
+        }
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
