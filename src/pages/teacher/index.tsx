@@ -191,27 +191,20 @@ export default function TeacherDashboard() {
     refreshGrid.current('page change')
   }, [assignmentId, pageId])
 
- // ===== NEW: advertise page + presence so late joiners snap correctly =====
-// 1) Answer "hello" with a presence snapshot including the current page info.
-useEffect(() => {
-  if (!assignmentId) return
-  // resolve the current page we’re on
-  const curr = pages.find(p => p.id === pageId) ?? pages.find(p => p.page_index === pageIndex)
-
-  const off = teacherPresenceResponder(assignmentId, () => ({
-    // IMPORTANT: true here makes late joiners snap to the teacher page on first snapshot
-    autoFollow: true,          // one-time snap on join
-    focusOn: false,
-    lockNav: false,
-    allowedPages: null,
-    teacherPageIndex: pageIndex,
-    // include these so the student can render instantly without DB reads
-    pageId: curr?.id,
-    pdfPath: curr?.pdf_path,
-  }))
-  return off
-}, [assignmentId, pageId, pageIndex, pages])
-
+  // ===== NEW: advertise page + presence so late joiners snap correctly =====
+  // 1) Answer "hello" with a presence snapshot including the current pageIndex.
+  useEffect(() => {
+    if (!assignmentId) return
+    // Minimal snapshot: only teacherPageIndex; (autoFollow/focus/locks are handled in TeacherSyncBar)
+    const off = teacherPresenceResponder(assignmentId, () => ({
+      autoFollow: false,
+      focusOn: false,
+      lockNav: false,
+      allowedPages: null,
+      teacherPageIndex: pageIndex,
+    }))
+    return off
+  }, [assignmentId, pageIndex])
 
   // 2) Whenever the page changes, broadcast set-page + control mirror + presence (page only) + immediate pulse
   useEffect(() => {
