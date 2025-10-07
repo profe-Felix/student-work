@@ -1,4 +1,4 @@
-// src/pages/teacher/index.tsx
+//src/pages/teacher/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   listAssignments,
@@ -10,18 +10,8 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import {
-  publishSetAssignment,
-  respondToAssignmentRequests,
-  controlSetAssignment,
-  // presence + page broadcasting for late joiners
-  publishSetPage,
-  setTeacherPresence,
-  teacherPresenceResponder,
-  controlSetPage,
-  controlPresence,
-} from '../../lib/realtime'
-import PlaybackDrawer from '../../components/PlaybackDrawer'
+import { publishSetAssignment } from '../../lib/realtime' // NEW
+import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
 
 type LatestCell = {
   submission_id: string
@@ -31,23 +21,13 @@ type LatestCell = {
 
 const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
 
-// Parse "student-work/foo/bar.pdf", "/pdfs/x.pdf", "public/pdfs/x.pdf" → { bucket, key }
-function parseStoragePath(path: string): { bucket: string; key: string } {
-  if (!path) return { bucket: '', key: '' }
-  let p = path.replace(/^\/+/, '')
-  p = p.replace(/^public\//, '')
-  const [bucket, ...rest] = p.split('/')
-  return { bucket: bucket || '', key: rest.join('/') }
-}
-
 export default function TeacherDashboard() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
   const [assignmentId, setAssignmentId] = useState<string>('')
 
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
-
-  const lastAnnouncedAssignment = useRef<string>('') // prevent double-broadcasts
+  const lastAnnouncedAssignment = useRef<string>('') // NEW: prevent double-broadcasts
 
   const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
@@ -57,7 +37,7 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
-  // PREVIEW STATE
+  // PREVIEW STATE (NEW) — audioUrl is string | undefined to match PlaybackDrawer
   const [previewOpen, setPreviewOpen] = useState(false)
   const [preview, setPreview] = useState<{
     studentId: string
@@ -66,30 +46,34 @@ export default function TeacherDashboard() {
   } | null>(null)
   const [previewLoadingSid, setPreviewLoadingSid] = useState<string | null>(null)
 
-  // ===== Resolve a URL for the current page's PDF (for PlaybackDrawer/PdfCanvas) =====
+  // ===== NEW: resolve a URL for the current page's PDF (for PlaybackDrawer/PdfCanvas) =====
+  const STORAGE_BUCKET = 'pdfs'
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('')
+
+  function keyForBucket(path: string) {
+    if (!path) return ''
+    let k = path.replace(/^\/+/, '')
+    k = k.replace(/^public\//, '')
+    k = k.replace(/^pdfs\//, '')
+    return k
+  }
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       const storagePath = pages.find(p => p.id === pageId)?.pdf_path || ''
       if (!storagePath) { setPreviewPdfUrl(''); return }
-
-      const { bucket, key } = parseStoragePath(storagePath)
-      if (!bucket || !key) { setPreviewPdfUrl(''); return }
-
-      try {
-        const { data: sData } = await supabase.storage.from(bucket).createSignedUrl(key, 60 * 60)
-        if (!cancelled && sData?.signedUrl) { setPreviewPdfUrl(sData.signedUrl); return }
-        const { data: pData } = supabase.storage.from(bucket).getPublicUrl(key)
-        if (!cancelled) setPreviewPdfUrl(pData?.publicUrl ?? '')
-      } catch {
-        if (!cancelled) setPreviewPdfUrl('')
-      }
+      const key = keyForBucket(storagePath)
+      // try a signed URL first (one hour)
+      const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
+      if (!cancelled && sData?.signedUrl) { setPreviewPdfUrl(sData.signedUrl); return }
+      // fallback to public URL
+      const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
+      if (!cancelled) setPreviewPdfUrl(pData?.publicUrl ?? '')
     })()
     return () => { cancelled = true }
   }, [pageId, pages])
-  // ===== END PDF URL resolve =====
+  // ===== END NEW =====
 
   // fetch helper
   const refreshGrid = useRef<(why?: string) => Promise<void>>(async () => {})
@@ -154,14 +138,6 @@ export default function TeacherDashboard() {
     })()
   }, [])
 
-  // ---- NEW: one-time bootstrap per assignment to avoid double "first kicks"
-  const bootstrappedOnce = useRef(false)
-  useEffect(() => {
-    // whenever assignment changes, allow bootstrapping again
-    bootstrappedOnce.current = false
-  }, [assignmentId])
-  // ---- END new guard
-
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
@@ -169,52 +145,20 @@ export default function TeacherDashboard() {
         const ps = await listPages(assignmentId)
         setPages(ps)
         const p0 = ps.find(p => p.page_index === 0) ?? ps[0]
-        if (p0) {
-          setPageId(p0.id)
-
-          // ---- NEW: immediately bootstrap students with page + presence
-          if (!bootstrappedOnce.current) {
-            const pdfPath = p0.pdf_path || undefined
-            const pageIndex0 = p0.page_index ?? 0
-
-            try {
-              await publishSetPage(assignmentId, { pageIndex: pageIndex0, pageId: p0.id, pdfPath })
-              await controlSetPage({ pageIndex: pageIndex0, pageId: p0.id, pdfPath })
-              await setTeacherPresence(assignmentId, {
-                teacherPageIndex: pageIndex0,
-                autoFollow: false,
-                focusOn: false,
-                lockNav: false,
-                allowedPages: null,
-              })
-              await controlPresence({
-                teacherAlive: true,
-                assignmentId,
-                pageId: p0.id,
-                pageIndex: pageIndex0,
-                pdfPath,
-                ts: Date.now(),
-              })
-              bootstrappedOnce.current = true
-            } catch (e) {
-              console.warn('initial bootstrap at pages load failed', e)
-            }
-          }
-        }
+        if (p0) setPageId(p0.id)
       } catch (e) {
         console.error('load pages failed', e)
       }
     })()
   }, [assignmentId])
 
-  // After assignmentId is resolved (initial load), broadcast it once.
+  // NEW: after assignmentId is resolved (initial load), broadcast it once.
   useEffect(() => {
     if (!assignmentId) return
     if (lastAnnouncedAssignment.current === assignmentId) return
     ;(async () => {
       try {
         await publishSetAssignment(assignmentId)
-        await controlSetAssignment(assignmentId) // control channel mirror
         lastAnnouncedAssignment.current = assignmentId
       } catch (err) {
         console.error('initial broadcast failed', err)
@@ -222,134 +166,17 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
-  // Respond to late-joining students who request the current assignment
-  useEffect(() => {
-    if (!assignmentId) return
-    const off = respondToAssignmentRequests(() => assignmentId)
-    return () => { try { (off as any)?.() } catch {} }
-  }, [assignmentId])
-
-  // Reset the one-time “initial kick” when the teacher switches assignments
-  const initialKickSent = useRef(false)
-  useEffect(() => {
-    initialKickSent.current = false
-  }, [assignmentId])
-
   useEffect(() => {
     if (!assignmentId || !pageId) return
-    setGrid({}) // reset grid when page changes
+    setGrid({})
     refreshGrid.current('page change')
   }, [assignmentId, pageId])
 
-  // ============================================================================
-  // ROBUST PRESENCE WITHOUT HEARTBEAT
-  // ============================================================================
-  const latestRef = useRef<{
-    assignmentId: string | null
-    pageId: string | null
-    pageIndex: number
-    pdfPath: string | null
-  }>({ assignmentId: null, pageId: null, pageIndex: 0, pdfPath: null })
-
-  useEffect(() => {
-    const curr = pages.find(p => p.id === pageId) || null
-    latestRef.current = {
-      assignmentId: assignmentId || null,
-      pageId: pageId || null,
-      pageIndex,
-      pdfPath: curr?.pdf_path ?? null,
-    }
-  }, [assignmentId, pageId, pageIndex, pages])
-
-  useEffect(() => {
-    if (!assignmentId) return
-    const off = teacherPresenceResponder(assignmentId, () => {
-      const snap = latestRef.current
-      return {
-        autoFollow: false,
-        focusOn: false,
-        lockNav: false,
-        allowedPages: null,
-        teacherPageIndex: snap.pageIndex ?? 0,
-        assignmentId: snap.assignmentId ?? assignmentId,
-        pageId: snap.pageId ?? '',
-        pdfPath: snap.pdfPath ?? undefined,
-      }
-    })
-    return off
-  }, [assignmentId])
-
-  useEffect(() => {
-    if (!assignmentId || !pageId) return
-    if (initialKickSent.current) return
-    ;(async () => {
-      try {
-        const curr = pages.find(p => p.id === pageId)
-        const pdfPath = curr?.pdf_path || undefined
-
-        await publishSetPage(assignmentId, { pageIndex, pageId, pdfPath })
-        await controlSetPage({ pageIndex, pageId, pdfPath })
-
-        await setTeacherPresence(assignmentId, {
-          teacherPageIndex: pageIndex,
-          autoFollow: false,
-          focusOn: false,
-          lockNav: false,
-          allowedPages: null,
-        })
-
-        await controlPresence({
-          teacherAlive: true,
-          assignmentId,
-          pageId,
-          pageIndex,
-          pdfPath,
-          ts: Date.now(),
-        })
-        initialKickSent.current = true
-      } catch (e) {
-        console.warn('initial presence/page kick failed', e)
-      }
-    })()
-  }, [assignmentId, pageId, pageIndex, pages])
-
-  useEffect(() => {
-    if (!assignmentId) return
-    ;(async () => {
-      try {
-        const curr = pages.find(p => p.id === pageId)
-        const pdfPath = curr?.pdf_path || undefined
-
-        await publishSetPage(assignmentId, { pageIndex, pageId, pdfPath })
-        await controlSetPage({ pageIndex, pageId, pdfPath })
-        await setTeacherPresence(assignmentId, {
-          teacherPageIndex: pageIndex,
-          autoFollow: false,
-          focusOn: false,
-          lockNav: false,
-          allowedPages: null,
-        })
-
-        await controlPresence({
-          teacherAlive: true,
-          assignmentId,
-          pageId,
-          pageIndex,
-          pdfPath,
-          ts: Date.now(),
-        })
-      } catch (e) {
-        console.warn('page/presence broadcast failed', e)
-      }
-    })()
-  }, [assignmentId, pageIndex, pageId, pages])
-
-  // ============================================================================
-  // realtime refreshers for teacher grid
-  // ============================================================================
+  // realtime refreshers
   useEffect(() => {
     if (!pageId) return
 
+    // submissions on this page
     const ch1 = supabase.channel(`tgrid-subs-${pageId}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'submissions',
@@ -357,6 +184,7 @@ export default function TeacherDashboard() {
       }, () => debouncedRefresh(200))
       .subscribe()
 
+    // artifacts anywhere (audio / strokes)
     const ch2 = supabase.channel(`tgrid-arts`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'artifacts'
@@ -364,8 +192,8 @@ export default function TeacherDashboard() {
       .subscribe()
 
     return () => {
-      try { ch1.unsubscribe() } catch {}
-      try { ch2.unsubscribe() } catch {}
+      supabase.removeChannel(ch1)
+      supabase.removeChannel(ch2)
       if (debTimer.current) { window.clearTimeout(debTimer.current); debTimer.current = null }
     }
   }, [pageId])
@@ -399,7 +227,7 @@ export default function TeacherDashboard() {
     } | null
   }
 
-  // PREVIEW LOADER
+  // PREVIEW LOADER (NEW)
   async function openPreviewForStudent(sid: string) {
     if (!assignmentId || !pageId) return
     setPreviewLoadingSid(sid)
@@ -436,7 +264,6 @@ export default function TeacherDashboard() {
     }
   }
 
-  // Render
   const currentAssignment = useMemo(
     () => assignments.find(a => a.id === assignmentId) || null,
     [assignments, assignmentId]
@@ -450,26 +277,28 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
-      <div style={{ margin: '12px 0 16px' }}>
-        <PdfDropZone
-          onCreated={async (newId: string, title: string) => {
-            setAssignments((prev) => {
-              if (prev.some((a) => a.id === newId)) return prev
-              return [{ id: newId, title }, ...prev]
-            })
-            setAssignmentId(newId)
+<div style={{ margin: '12px 0 16px' }}>
+  <PdfDropZone
+    onCreated={async (newId: string, title: string) => {
+      // Show it immediately in the dropdown
+      setAssignments((prev) => {
+        if (prev.some((a) => a.id === newId)) return prev
+        return [{ id: newId, title }, ...prev]
+      })
 
-            try {
-              await publishSetAssignment(newId)
-              await controlSetAssignment(newId)
-              lastAnnouncedAssignment.current = newId
-              bootstrappedOnce.current = false // allow immediate bootstrap on new assignment
-            } catch (err) {
-              console.error('broadcast onCreated failed', err)
-            }
-          }}
-        />
-      </div>
+      // Select it
+      setAssignmentId(newId)
+
+      // Broadcast to students now and mark as announced to avoid double-fire
+      try {
+        await publishSetAssignment(newId)
+        lastAnnouncedAssignment.current = newId
+      } catch (err) {
+        console.error('broadcast onCreated failed', err)
+      }
+    }}
+  />
+</div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
@@ -480,10 +309,8 @@ export default function TeacherDashboard() {
               const next = e.target.value
               setAssignmentId(next)
               try {
-                await publishSetAssignment(next)
-                await controlSetAssignment(next)
-                lastAnnouncedAssignment.current = next
-                bootstrappedOnce.current = false // allow bootstrap on new assignment
+                await publishSetAssignment(next) // NEW: tell students to switch
+                lastAnnouncedAssignment.current = next // avoid double fire with the effect
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
               }
@@ -566,6 +393,7 @@ export default function TeacherDashboard() {
                     {cell!.audioUrl && (
                       <audio controls src={cell!.audioUrl} style={{ width: '100%' }} />
                     )}
+                    {/* NEW: Preview button */}
                     <button
                       type="button"
                       onClick={() => openPreviewForStudent(sid)}
@@ -587,6 +415,7 @@ export default function TeacherDashboard() {
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
 
+      {/* NEW: Drawer instance — render only when open */}
       {previewOpen && (
         <PlaybackDrawer
           onClose={() => setPreviewOpen(false)}
