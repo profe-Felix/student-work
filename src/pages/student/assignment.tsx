@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
-import type { Stroke } from '../../components/DrawCanvas'
+import type { RemoteStrokeUpdate } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
@@ -57,7 +57,7 @@ const SKIN_TONES = [
 
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
-/* ---------- Keys & helpers ---------- */
+/* ---------- Keys & helpers (now namespaced by assignmentId + pageId) ---------- */
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
 const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
 
@@ -70,6 +70,7 @@ function normalizeStrokes(data: unknown): StrokesPayload {
   const arr = Array.isArray((data as any).strokes) ? (data as any).strokes : []
   return { strokes: arr }
 }
+
 function saveDraft(student:string, assignmentUid:string, pageUid:string, strokes:any){
   try { localStorage.setItem(draftKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), strokes })) } catch {}
 }
@@ -88,6 +89,7 @@ function loadSubmittedCache(student:string, assignmentUid:string, pageUid:string
 function clearSubmittedCache(student:string, assignmentUid:string, pageUid:string){
   try { localStorage.removeItem(submittedKey(student, assignmentUid, pageUid)) } catch {}
 }
+
 async function hashStrokes(strokes:any): Promise<string> {
   const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
   const buf = await crypto.subtle.digest('SHA-256', enc)
@@ -108,10 +110,72 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   )
 }
 
-/** NEW: station inference — prefers ?station=, else tries to grab a prefix like A_02 from studentId */
-function inferStation(id: string): string {
-  const m = id.match(/^([A-Za-z]_\d{2})/)
-  return (m?.[1] ?? id).toUpperCase()
+/* ---------- NEW: find newest assignment with at least one page ---------- */
+async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
+  try {
+    const { data, error } = await supabase
+      .from('assignments')
+      .select('id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(5)
+
+    if (error || !data || data.length === 0) return null
+
+    for (const row of data) {
+      try {
+        const pages = await listPages(row.id)
+        if (pages && pages.length > 0) return row.id
+      } catch {/* skip if pages lookup fails */}
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/* ---------- NEW: initial page index from cached presence (best effort) ---------- */
+function initialPageIndexFromPresence(): number {
+  try {
+    const cachedAssignmentId = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || ''
+    if (!cachedAssignmentId) return 0
+    const raw = localStorage.getItem(presenceKey(cachedAssignmentId))
+    if (!raw) return 0
+    const p = JSON.parse(raw) as TeacherPresenceState
+    if (p && p.autoFollow && typeof p.teacherPageIndex === 'number') {
+      return p.teacherPageIndex
+    }
+  } catch {/* ignore */}
+  return 0
+}
+
+/* ---------- NEW: server fallback to get teacher presence snapshot ---------- */
+async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPresenceState | null> {
+  try {
+    // Adjust table/columns if your schema differs.
+    const { data, error } = await supabase
+      .from('teacher_presence')
+      .select('*')
+      .eq('assignment_id', assignmentId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error || !data) return null
+    // Normalize a bit to our expected shape
+    const p = data as any
+    const snapshot: TeacherPresenceState = {
+      autoFollow: !!p.auto_follow || !!p.autofollow || !!p.autoFollow,
+      allowedPages: Array.isArray(p.allowed_pages) ? p.allowed_pages : (p.allowedPages ?? null),
+      focusOn: !!p.focus_on || !!p.focusOn,
+      lockNav: !!p.lock_nav || !!p.lockNav,
+      teacherPageIndex: typeof p.teacher_page_index === 'number'
+        ? p.teacher_page_index
+        : (typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : undefined),
+    }
+    return snapshot
+  } catch {
+    return null
+  }
 }
 
 export default function StudentAssignment(){
@@ -123,13 +187,6 @@ export default function StudentAssignment(){
     localStorage.setItem('currentStudent', id)
     return id
   }, [location.search])
-
-  /** NEW: stationId used for live-sync grouping */
-  const stationId = useMemo(()=>{
-    const qs = new URLSearchParams(location.search)
-    const s = qs.get('station')
-    return (s ? s.toUpperCase() : inferStation(studentId))
-  }, [location.search, studentId])
 
   // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
@@ -158,7 +215,8 @@ export default function StudentAssignment(){
     return () => { cancelled = true }
   }, [pdfStoragePath])
 
-  const [pageIndex, setPageIndex]   = useState(0)
+  /* ---------- start page using cached teacher presence if any ---------- */
+  const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence())
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
   const [color, setColor] = useState('#1F75FE')
@@ -195,12 +253,12 @@ export default function StudentAssignment(){
   // assignment/page ids for realtime
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
-  // Persist assignment id from teacher
+  // Persist assignment id from teacher (or DB fallback)
   const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
 
-  // purge legacy caches by title
+  // >>> One-time purge of legacy local caches that used the static title
   useEffect(() => {
     try {
       for (let i = localStorage.length - 1; i >= 0; i--) {
@@ -216,7 +274,7 @@ export default function StudentAssignment(){
     } catch {}
   }, [])
 
-  // stable cache ids
+  // Helper: stable cache ids (assignmentUid + pageUid)
   const getCacheIds = (pageId?: string) => {
     const assignmentUid = rtAssignmentId || currIds.current.assignment_id || 'no-assignment'
     const pageUid = pageId || currIds.current.page_id || `page-${pageIndex}`
@@ -230,6 +288,9 @@ export default function StudentAssignment(){
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
 
+  // snap-once flag
+  const initialSnappedRef = useRef(false)
+
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')
   const lastLocalHash = useRef<string>('')
@@ -237,75 +298,172 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // LIVE: per-page channel for instant peer updates (scoped by station)
-  const clientIdRef = useRef<string>('c_' + Math.random().toString(36).slice(2))
-  const liveChRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  // === NEW: ink channel reference for live pre-submission strokes ===
+  const inkChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+
+  /* ---------- NEW: apply a presence snapshot and (optionally) snap ---------- */
+  const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
+    if (!p) return
+    setAutoFollow(!!p.autoFollow)
+    setAllowedPages(p.allowedPages ?? null)
+    setFocusOn(!!p.focusOn)
+    setNavLocked(!!p.focusOn && !!p.lockNav)
+    if (typeof p.teacherPageIndex === 'number') {
+      teacherPageIndexRef.current = p.teacherPageIndex
+      const shouldSnap = (opts?.snap ?? true) && !!p.autoFollow && !initialSnappedRef.current
+      if (shouldSnap) {
+        setPageIndex(p.teacherPageIndex)
+        initialSnappedRef.current = true
+      }
+    }
+  }
+
+  // --- helper: snap to teacher using local presence if available
+  const snapToTeacherIfAvailable = (assignmentId: string) => {
+    try {
+      const raw = localStorage.getItem(presenceKey(assignmentId))
+      if (!raw) return
+      const p = JSON.parse(raw) as TeacherPresenceState
+      applyPresenceSnapshot(p, { snap: true })
+    } catch {/* ignore */}
+  }
+
+  // --- NEW: ensure we also fetch presence from server if cache is missing/stale
+  const ensurePresenceFromServer = async (assignmentId: string) => {
+    const cached = localStorage.getItem(presenceKey(assignmentId))
+    if (!cached) {
+      const p = await fetchPresenceSnapshot(assignmentId)
+      if (p) {
+        try { localStorage.setItem(presenceKey(assignmentId), JSON.stringify(p)) } catch {}
+        applyPresenceSnapshot(p, { snap: true })
+      }
+    }
+  }
 
   // assignment handoff listener (teacher broadcast)
   useEffect(() => {
     const off = subscribeToGlobal((nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      try {
-        const raw = localStorage.getItem(presenceKey(nextAssignmentId))
-        if (raw) {
-          const p = JSON.parse(raw) as TeacherPresenceState
-          if (typeof p.teacherPageIndex === 'number') {
-            teacherPageIndexRef.current = p.teacherPageIndex
-            setPageIndex(p.teacherPageIndex)
-          } else {
-            setPageIndex(0)
-          }
-          setAutoFollow(!!p.autoFollow)
-          setAllowedPages(p.allowedPages ?? null)
-          setFocusOn(!!p.focusOn)
-          setNavLocked(!!p.focusOn && !!p.lockNav)
-        } else {
-          setPageIndex(0)
-        }
-      } catch { setPageIndex(0) }
+      // Best effort: use cache quickly, then fetch from server to be sure
+      snapToTeacherIfAvailable(nextAssignmentId)
+      ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
+      // keep initialSnappedRef as-is
     })
     return off
   }, [])
 
-  // hydrate presence on refresh
+  // On first mount, if we don't have an assignment id, fetch the latest with pages.
+  useEffect(() => {
+    if (rtAssignmentId) {
+      snapToTeacherIfAvailable(rtAssignmentId)
+      ensurePresenceFromServer(rtAssignmentId)
+      return
+    }
+    ;(async () => {
+      const latest = await fetchLatestAssignmentIdWithPages()
+      if (latest) {
+        setRtAssignmentId(latest)
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
+        snapToTeacherIfAvailable(latest)
+        ensurePresenceFromServer(latest)
+      }
+    })()
+  }, [rtAssignmentId])
+
+  // hydrate presence on refresh (if cached)
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
       const raw = localStorage.getItem(presenceKey(rtAssignmentId))
-      if (!raw) return
-      const p = JSON.parse(raw) as TeacherPresenceState
-      setAutoFollow(!!p.autoFollow)
-      setAllowedPages(p.allowedPages ?? null)
-      setFocusOn(!!p.focusOn)
-      setNavLocked(!!p.focusOn && !!p.lockNav)
-      if (typeof p.teacherPageIndex === 'number') {
-        teacherPageIndexRef.current = p.teacherPageIndex
-        setPageIndex(p.teacherPageIndex)
+      if (raw) {
+        const p = JSON.parse(raw) as TeacherPresenceState
+        applyPresenceSnapshot(p, { snap: true })
+      } else {
+        // No cache? Pull from server now.
+        ;(async () => {
+          const p = await fetchPresenceSnapshot(rtAssignmentId)
+          if (p) {
+            try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+            applyPresenceSnapshot(p, { snap: true })
+          }
+        })()
       }
     } catch {}
   }, [rtAssignmentId])
 
-  // Resolve assignment/page
+  // Resolve assignment/page with early “snap to teacher” if autoFollow is ON or presence says so
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
-    if (!rtAssignmentId) {
+    let assignmentId = rtAssignmentId
+    if (!assignmentId) {
+      assignmentId = await fetchLatestAssignmentIdWithPages() || ''
+      if (assignmentId) {
+        setRtAssignmentId(assignmentId)
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignmentId) } catch {}
+        snapToTeacherIfAvailable(assignmentId)
+        await ensurePresenceFromServer(assignmentId)
+      }
+    }
+    if (!assignmentId) {
       currIds.current = {}
       setPdfStoragePath('')
       setHasTask(false)
       return null
     }
-    const pages = await listPages(rtAssignmentId)
+
+    // One more pre-fetch snap attempt (covers races), then fetch from server if still not snapped.
+    snapToTeacherIfAvailable(assignmentId)
+    if (!initialSnappedRef.current) {
+      await ensurePresenceFromServer(assignmentId)
+      if (initialSnappedRef.current) {
+        // we just snapped; wait a render pass before continuing
+        return null
+      }
+    }
+
+    const tpi = teacherPageIndexRef.current
+    if (!initialSnappedRef.current && typeof tpi === 'number' && autoFollow && pageIndex !== tpi) {
+      setPageIndex(tpi)
+      initialSnappedRef.current = true
+      return null
+    }
+
+    let pages = await listPages(assignmentId).catch(() => [] as any[])
+    if (!pages || pages.length === 0) {
+      // Fallback: maybe cached id is stale—try newest from DB
+      const latest = await fetchLatestAssignmentIdWithPages()
+      if (latest && latest !== assignmentId) {
+        assignmentId = latest
+        setRtAssignmentId(latest)
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
+        snapToTeacherIfAvailable(latest)
+        await ensurePresenceFromServer(latest)
+        pages = await listPages(latest).catch(() => [] as any[])
+      }
+    }
+
     if (!pages || pages.length === 0) {
       currIds.current = {}
       setPdfStoragePath('')
       setHasTask(false)
       return null
     }
-    const curr = pages.find(p => p.page_index === pageIndex) ?? pages[0]
-    currIds.current = { assignment_id: rtAssignmentId, page_id: curr.id }
+
+    const preferredIndex = (autoFollow && typeof tpi === 'number') ? tpi : pageIndex
+    const curr = pages.find(p => p.page_index === preferredIndex)
+             ?? pages.find(p => p.page_index === pageIndex)
+             ?? pages[0]
+
+    // If this differs from our current state, set and wait a pass
+    if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
+      setPageIndex(curr.page_index)
+      return null
+    }
+
+    currIds.current = { assignment_id: assignmentId, page_id: curr.id }
     setPdfStoragePath(curr.pdf_path || '')
-    return { assignment_id: rtAssignmentId, page_id: curr.id }
+    return { assignment_id: assignmentId, page_id: curr.id }
   }
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
@@ -317,6 +475,7 @@ export default function StudentAssignment(){
       const ids = await resolveIds()
 
       if (!ids) {
+        // No task: clear any cache for this "slot"
         const { assignmentUid, pageUid } = getCacheIds()
         try {
           drawRef.current?.clearStrokes()
@@ -375,7 +534,7 @@ export default function StudentAssignment(){
     })()
 
     return ()=>{ cancelled=true }
-  }, [pageIndex, studentId, rtAssignmentId])
+  }, [pageIndex, studentId, rtAssignmentId, autoFollow])
 
   /* ---------- Local dirty watcher ---------- */
   useEffect(()=>{
@@ -519,66 +678,35 @@ export default function StudentAssignment(){
   }
 
   // two-finger pan host
-const scrollHostRef = useRef<HTMLDivElement | null>(null)
-useEffect(() => {
-  const host = scrollHostRef.current
-  if (!host) return
-
-  let pan = false, startY = 0, startX = 0, startT = 0, startL = 0
-
-  const onTS = (e: TouchEvent) => {
-    if (e.touches.length >= 2 && !handMode) {
-      pan = true
-      const [t1, t2] = [e.touches[0], e.touches[1]]
-      startY = (t1.clientY + t2.clientY) / 2
-      startX = (t1.clientX + t2.clientX) / 2
-      startT = host.scrollTop
-      startL = host.scrollLeft
-    }
-  }
-
-  const onTM = (e: TouchEvent) => {
-    if (pan && e.touches.length >= 2) {
-      e.preventDefault()
-      const [t1, t2] = [e.touches[0], e.touches[1]]
-      const y = (t1.clientY + t2.clientY) / 2
-      const x = (t1.clientX + t2.clientX) / 2
-      host.scrollTop = startT - (y - startY)
-      host.scrollLeft = startL - (x - startX)
-    }
-  }
-
-  const end = () => { pan = false }
-
-  const addOpts = { passive: true, capture: true } as AddEventListenerOptions
-  const moveOpts = { passive: false, capture: true } as AddEventListenerOptions
-  const rmOpts = { capture: true } as EventListenerOptions
-
-  host.addEventListener('touchstart', onTS, addOpts)
-  host.addEventListener('touchmove', onTM, moveOpts)
-  host.addEventListener('touchend', end, addOpts)
-  host.addEventListener('touchcancel', end, addOpts)
-
-  return () => {
-    host.removeEventListener('touchstart', onTS, rmOpts)
-    host.removeEventListener('touchmove', onTM, rmOpts)
-    host.removeEventListener('touchend', end, rmOpts)
-    host.removeEventListener('touchcancel', end, rmOpts)
-  }
-}, [handMode])
-
+  const scrollHostRef = useRef<HTMLDivElement|null>(null)
+  useEffect(()=>{
+    const host=scrollHostRef.current; if(!host) return
+    let pan=false, startY=0, startX=0, startT=0, startL=0
+    const onTS=(e:TouchEvent)=>{ if(e.touches.length>=2 && !handMode){ pan=true; const [t1,t2]=[e.touches[0],e.touches[1]]; startY=(t1.clientY+t2.clientY)/2; startX=(t1.clientX+t2.clientX)/2; startT=host.scrollTop; startL=host.scrollLeft } }
+    const onTM=(e:TouchEvent)=>{ if(pan && e.touches.length>=2){ e.preventDefault(); const [t1,t2]=[e.touches[0],e.touches[1]]; const y=(t1.clientY+t2.clientY)/2, x=(t1.clientX+t2.clientX)/2; host.scrollTop=startT-(y-startY); host.scrollLeft=startL-(x-startX) } }
+    const end=()=>{ pan=false }
+    host.addEventListener('touchstart',onTS,{passive:true,capture:true})
+    host.addEventListener('touchmove', onTM,{passive:false,capture:true})
+    host.addEventListener('touchend',  end,{passive:true,capture:true})
+    host.addEventListener('touchcancel',end,{passive:true,capture:true})
+    return ()=>{ host.removeEventListener('touchstart',onTS as any,true); host.removeEventListener('touchmove',onTM as any,true); host.removeEventListener('touchend',end as any,true); host.removeEventListener('touchcancel',end,{capture:true} as any) }
+  }, [handMode])
 
   const flipToolbarSide = ()=> {
     setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
   }
 
-  /* ---------- Realtime teacher controls ---------- */
+  /* ---------- Realtime + polling (defensive) ---------- */
+
+  // subscribe to teacher broadcast once we know the assignment id
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(rtAssignmentId, {
-      onSetPage: ({ pageIndex }: SetPagePayload) => {
-        teacherPageIndexRef.current = pageIndex
-        if (autoFollow) setPageIndex(prev => (prev !== pageIndex ? pageIndex : prev))
+      onSetPage: ({ pageIndex: tpi }: SetPagePayload) => {
+        teacherPageIndexRef.current = tpi
+        if (autoFollow && typeof tpi === 'number') {
+          setPageIndex(prev => (prev !== tpi ? tpi : prev))
+        }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
         setFocusOn(!!on)
@@ -588,24 +716,24 @@ useEffect(() => {
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        if (on && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(teacherPageIndexRef.current)
-        }
+        // Snap once on join if not already snapped
+        applyPresenceSnapshot({
+          autoFollow: !!on,
+          allowedPages: allowedPages ?? null,
+          focusOn, // leave focus state as-is here; focus events come via onFocus / onPresence
+          lockNav: navLocked,
+          teacherPageIndex: teacherPageIndexRef.current ?? undefined
+        } as TeacherPresenceState, { snap: true })
       },
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
-        setAutoFollow(!!p.autoFollow)
-        setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)
-        setNavLocked(!!p.focusOn && !!p.lockNav)
-        if (typeof p.teacherPageIndex === 'number') {
-          teacherPageIndexRef.current = p.teacherPageIndex
-          if (p.autoFollow) setPageIndex(prev => prev !== p.teacherPageIndex! ? p.teacherPageIndex! : prev)
-        }
+        applyPresenceSnapshot(p, { snap: true })
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
-  }, [rtAssignmentId, autoFollow])
+    // include 'focusOn' and 'navLocked' so we can reuse current values in the synthetic snapshot above
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rtAssignmentId, autoFollow, focusOn, navLocked])
 
   const reloadFromServer = async ()=>{
     if (!hasTask) return
@@ -636,7 +764,7 @@ useEffect(() => {
     } catch {/* ignore */}
   }
 
-  // Artifacts table watch + polling (safety net)
+  // === UPDATED: subscribe to artifacts AND the live ink channel ===
   useEffect(()=>{
     let cleanup: (()=>void)|null = null
     let pollId: number | null = null
@@ -645,6 +773,8 @@ useEffect(() => {
     ;(async ()=>{
       const ids = await resolveIds()
       if (!ids) return
+
+      // live submissions polling (unchanged)
       try{
         const ch = supabase.channel(`art-strokes-${ids.page_id}`)
           .on('postgres_changes', {
@@ -657,60 +787,41 @@ useEffect(() => {
         console.error('realtime subscribe failed', e)
       }
       pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
+
+      // NEW: realtime ink (pre-submission co-editing)
+      try { inkChannelRef.current?.unsubscribe() } catch {}
+      const inkCh = supabase.channel(`ink:${ids.assignment_id}:${ids.page_id}`)
+      inkCh.on('broadcast', { event: 'ink' }, (evt: any) => {
+        try {
+          const u = evt?.payload as RemoteStrokeUpdate & { from?: string }
+          if (!u) return
+          if (u.from && u.from === studentId) return // ignore our own echoes
+          // basic validation
+          if (!u.id || !u.tool) return
+          if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+          drawRef.current?.applyRemote({
+            id: u.id,
+            color: u.color,
+            size: u.size,
+            tool: u.tool,
+            pts: u.pts,
+            done: !!u.done
+          })
+        } catch {}
+      })
+      await inkCh.subscribe()
+      inkChannelRef.current = inkCh
     })()
 
     return ()=> {
       mounted = false
       if (cleanup) cleanup()
       if (pollId!=null) window.clearInterval(pollId)
+      try { inkChannelRef.current?.unsubscribe() } catch {}
     }
   }, [studentId, pageIndex, rtAssignmentId])
 
-  /* ---------- LIVE: page channel for instant co-editing (scoped by station) ---------- */
-  useEffect(()=>{
-    let cleanup: (()=>void)|null = null
-    ;(async ()=>{
-      const ids = await resolveIds()
-      if (!ids) return
-
-      // swap previous
-      try { liveChRef.current?.unsubscribe() } catch {}
-
-      // SCOPE: by assignment page AND stationId
-      const ch = supabase.channel(`page-live-${ids.page_id}:${stationId}`, { config: { broadcast: { self: false } } })
-
-      // Peer finishes a stroke -> append it immediately (only same station)
-      ch.on('broadcast', { event: 'stroke-commit' }, (msg) => {
-        const { clientId, stroke, station } = (msg as any)?.payload || {}
-        if (!stroke) return
-        if (station && station.toUpperCase() !== stationId) return
-        if (clientId === clientIdRef.current) return
-        const cur = drawRef.current?.getStrokes() || { strokes: [] }
-        drawRef.current?.loadStrokes({ strokes: [...(cur.strokes || []), stroke] })
-      })
-
-      // Peer completes an erase gesture -> apply same transform (only same station)
-      ch.on('broadcast', { event: 'erase-commit' }, (msg) => {
-        const { clientId, path, radius, mode, station } = (msg as any)?.payload || {}
-        if (!Array.isArray(path)) return
-        if (station && station.toUpperCase() !== stationId) return
-        if (clientId === clientIdRef.current) return
-        const cur = drawRef.current?.getStrokes() || { strokes: [] }
-        const base = normalizeStrokes(cur)
-        const trimmed = mode === 'object'
-          ? (objectErase(base.strokes as any, path, radius).kept as any)
-          : (softErase(base.strokes as any, path, radius) as any)
-        drawRef.current?.loadStrokes({ strokes: trimmed })
-      })
-
-      await ch.subscribe()
-      liveChRef.current = ch
-      cleanup = ()=>{ try { ch.unsubscribe() } catch {} }
-    })()
-    return ()=>{ if (cleanup) cleanup() }
-  }, [pageIndex, rtAssignmentId, stationId])
-
-  /* ---------- LIVE eraser overlay (broadcast on commit) ---------- */
+  /* ---------- LIVE eraser overlay ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
   const erasingRef = useRef(false)
   const erasePathRef = useRef<Pt[]>([])
@@ -771,30 +882,9 @@ useEffect(() => {
     erasingRef.current = false
     addPoint(e)
     const final = computePreview()
-    const path = erasePathRef.current
     erasePathRef.current = []
     if (!final) return
-
-    // apply locally
     drawRef.current?.loadStrokes(final)
-
-    // broadcast the erase gesture so others update instantly (same station only)
-    const ch = liveChRef.current
-    if (ch && path.length >= 2) {
-      ch.send({
-        type: 'broadcast',
-        event: 'erase-commit',
-        payload: {
-          clientId: clientIdRef.current,
-          station: stationId,            // <— scope by station
-          path,
-          radius: dynamicRadius,
-          mode: (tool === 'eraserObject') ? 'object' : 'soft'
-        }
-      })
-    }
-
-    // mark dirty + draft
     localDirty.current = true
     try { lastLocalHash.current = await hashStrokes(final) } catch {}
     const { assignmentUid, pageUid } = getCacheIds()
@@ -885,7 +975,7 @@ useEffect(() => {
         <h2>Student Assignment</h2>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
-            Student: <strong>{studentId}</strong> — Station: <strong>{stationId}</strong>
+            Student: <strong>{studentId}</strong>
           </div>
           <button onClick={()=> nav('/start')} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}>
             Switch
@@ -928,15 +1018,11 @@ useEffect(() => {
               size={size}
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
-              // broadcast stroke commits so peers in SAME station see them immediately
-              onStrokeCommit={(stroke: Stroke) =>{
-                const ch = liveChRef.current
-                if (!ch || !stroke) return
-                ch.send({
-                  type: 'broadcast',
-                  event: 'stroke-commit',
-                  payload: { clientId: clientIdRef.current, station: stationId, stroke }
-                })
+              onStrokeUpdate={(u) => {
+                const ch = inkChannelRef.current
+                if (!ch) return
+                const payload = { ...u, from: studentId }
+                ch.send({ type: 'broadcast', event: 'ink', payload })
               }}
             />
           </div>
@@ -947,7 +1033,7 @@ useEffect(() => {
               position:'absolute', inset:0, zIndex:20,
               pointerEvents: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')) ? 'auto' : 'none',
               cursor: (hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject'))
-                ? 'crosshair'
+                ? (tool === 'eraserObject' ? 'not-allowed' : 'crosshair')
                 : 'default'
             }}
             onPointerDown={onErasePointerDown}
