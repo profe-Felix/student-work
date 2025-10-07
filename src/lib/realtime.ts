@@ -1,4 +1,4 @@
-//src/lib/realtime.ts
+// src/lib/realtime.ts
 // Realtime utilities: legacy-compatible + global assignment handoff.
 // - Accept either assignmentId (string) or a RealtimeChannel for publish* helpers
 // - Accept loose/legacy param shapes (booleans, numbers, strings)
@@ -46,6 +46,8 @@ export type InkUpdate = {
   done?: boolean
   // optional echo-guard field
   from?: string
+  // optional room guard (assignment:page:studentCode)
+  roomKey?: string
 }
 
 /** -------------------------------------------------------------------------------------------
@@ -64,7 +66,6 @@ export async function publishSetAssignment(assignmentId: string) {
     event: 'set-assignment',
     payload: { assignmentId, ts: Date.now() },
   })
-  // Avoid returning a Promise from cleanup in React effects
   void ch.unsubscribe()
 }
 
@@ -86,11 +87,27 @@ export function assignmentChannel(assignmentId: string) {
   return supabase.channel(`assignment:${assignmentId}`, { config: { broadcast: { ack: true } } })
 }
 
-/** ---------- NEW: Per-(assignment,page) ink channel ---------- */
-export function inkChannel(assignmentId: string, pageId: string) {
-  return supabase.channel(`ink:${assignmentId}:${pageId}`, { config: { broadcast: { ack: true } } })
+/** ---------- NEW: Room helpers for ink ---------- */
+function makeRoomKey(assignmentId: string, pageId: string, studentCode?: string) {
+  return studentCode ? `${assignmentId}:${pageId}:${studentCode}` : `${assignmentId}:${pageId}`
 }
-// Add this helper (e.g., after inkChannel)
+
+function makeInkChannelName(assignmentId: string, pageId: string, studentCode?: string) {
+  const base = `ink:${assignmentId}:${pageId}`
+  return studentCode ? `${base}:${studentCode}` : base
+}
+
+/** Per-(assignment,page[,studentCode]) ink channel.
+ *  If studentCode is provided, ink is isolated to that *student instance*.
+ *  If omitted, it falls back to legacy per-page channel.
+ */
+export function inkChannel(assignmentId: string, pageId: string, studentCode?: string) {
+  return supabase.channel(makeInkChannelName(assignmentId, pageId, studentCode), {
+    config: { broadcast: { ack: true } },
+  })
+}
+
+// Type guard for channels
 function isRealtimeChannel(x: any): x is RealtimeChannel {
   return !!x && typeof x === 'object'
     && typeof x.subscribe === 'function'
@@ -277,45 +294,73 @@ export function subscribeToAssignment(assignmentId: string, handlers: Assignment
   return ch
 }
 
-/** ---------- NEW: Ink publish/subscribe helpers ---------- */
-// Publish using either a live ink channel or ids (assignmentId,pageId).
-// If you pass ids, this function will open, send, and close for you.
-// Replace your existing publishInk with this version
+/** ---------- NEW: Ink publish/subscribe helpers (SCOPED) ---------- */
+/**
+ * Publish a live ink update into a room.
+ * Accepts either:
+ *   - a RealtimeChannel created by inkChannel(assignmentId, pageId, studentCode)
+ *   - an ids object: { assignmentId, pageId, studentCode? }
+ *
+ * If studentCode is provided, the event goes only to that *student instance* room.
+ * If omitted, it falls back to legacy per-(assignment,page) room.
+ */
 export async function publishInk(
-  inkChOrIds: RealtimeChannel | { assignmentId: string; pageId: string },
+  inkChOrIds: RealtimeChannel | { assignmentId: string; pageId: string; studentCode?: string },
   update: InkUpdate
 ) {
   if (!update || !update.id || !update.tool) return
 
   let ch: RealtimeChannel | null
   let temporary = false
+  let roomKey: string | undefined
 
   if (isRealtimeChannel(inkChOrIds)) {
     ch = inkChOrIds
   } else {
-    const { assignmentId, pageId } = inkChOrIds
-    ch = inkChannel(assignmentId, pageId)
+    const { assignmentId, pageId, studentCode } = inkChOrIds
+    ch = inkChannel(assignmentId, pageId, studentCode)
     temporary = true
+    roomKey = makeRoomKey(assignmentId, pageId, studentCode)
     await ch.subscribe()
   }
 
-  await ch.send({ type: 'broadcast', event: 'ink', payload: { ...update } })
+  const payload = roomKey ? { ...update, roomKey } : { ...update }
+  await ch.send({ type: 'broadcast', event: 'ink', payload })
   if (temporary) { void ch.unsubscribe() }
 }
 
-
-// Subscribe to an ink stream for a page. Caller should unsubscribe the channel returned.
+/**
+ * Subscribe to an ink stream for a page (and optionally studentCode).
+ * Overloads keep legacy callers working:
+ *   subscribeToInk(assignmentId, pageId, onUpdate)                  // legacy (per page)
+ *   subscribeToInk(assignmentId, pageId, onUpdate, studentCode)     // new (per student instance)
+ */
 export function subscribeToInk(
   assignmentId: string,
   pageId: string,
   onUpdate: (u: InkUpdate) => void
+): RealtimeChannel
+export function subscribeToInk(
+  assignmentId: string,
+  pageId: string,
+  onUpdate: (u: InkUpdate) => void,
+  studentCode?: string
+): RealtimeChannel
+export function subscribeToInk(
+  assignmentId: string,
+  pageId: string,
+  onUpdate: (u: InkUpdate) => void,
+  studentCode?: string
 ) {
-  const ch = inkChannel(assignmentId, pageId)
+  const roomKey = makeRoomKey(assignmentId, pageId, studentCode)
+  const ch = inkChannel(assignmentId, pageId, studentCode)
     .on('broadcast', { event: 'ink' }, (msg: any) => {
       const u = msg?.payload as InkUpdate
       if (!u || !u.id || !u.tool) return
-      // allow empty pts if this is a terminal "done" update
+      // Allow empty pts if this is a terminal "done" update
       if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+      // Guard against stragglers from other rooms (in case of late events)
+      if (u.roomKey && u.roomKey !== roomKey) return
       onUpdate(u)
     })
     .subscribe()
@@ -323,8 +368,6 @@ export function subscribeToInk(
 }
 
 // --- Presence responder: teacher answers "hello" with a presence snapshot ---
-// Students broadcast {type:'broadcast', event:'hello'} on assignment:<id>.
-// Teacher listens here and replies with {event:'presence-snapshot', payload:<snapshot>}.
 export type PresenceSnapshot = {
   autoFollow: boolean;
   focusOn?: boolean;
@@ -361,4 +404,3 @@ export function teacherPresenceResponder(
   ch.subscribe();
   return () => { void ch.unsubscribe(); };
 }
-
