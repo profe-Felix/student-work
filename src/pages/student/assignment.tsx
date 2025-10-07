@@ -178,6 +178,7 @@ export default function StudentAssignment(){
   const [autoFollow, setAutoFollow] = useState(false)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
   const teacherPageIndexRef = useRef<number | null>(null)
+  const snappedToTeacherRef = useRef(false) // one-time join snap guard
   // --------------------------------
 
   // toolbar side (persisted)
@@ -238,9 +239,11 @@ export default function StudentAssignment(){
             setPageIndex(p.teacherPageIndex)
           }
         } else {
-          setPageIndex(0)
+          // removed: don't force pageIndex(0); wait for presence snapshot to arrive
         }
-      } catch { setPageIndex(0) }
+      } catch {
+        // removed: don't force pageIndex(0) on error either
+      }
       currIds.current = {}
     })
     return off
@@ -333,12 +336,13 @@ export default function StudentAssignment(){
     return off
   }, [autoFollow, focusOn, navLocked, rtAssignmentId])
 
-  // ✅ After we know assignment: say hello and get a presence snapshot (page index, etc.)
+  // ✅ After we know assignment: subscribe FIRST, then hello; do a one-time snap on the first snapshot
   useEffect(() => {
     if (!rtAssignmentId) return
-    try { void studentHello(rtAssignmentId) } catch {}
+
     const off = subscribePresenceSnapshot(rtAssignmentId, (p) => {
       try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+
       setAutoFollow(!!p.autoFollow)
       setAllowedPages(p.allowedPages ?? null)
       setFocusOn(!!p.focusOn)
@@ -348,18 +352,25 @@ export default function StudentAssignment(){
         teacherPageIndexRef.current = p.teacherPageIndex
       }
 
-      // NEW: use provided pdfPath right away so we don't sit on "No hay tareas"
+      // Use provided pdfPath immediately so we don't sit on "No hay tareas"
       const pdfPath = (p as any)?.pdfPath as string | undefined
       if (pdfPath) setPdfStoragePath(pdfPath)
 
-      // optional: cache page_id if the snapshot includes it
+      // Optional: cache page_id if the snapshot includes it
       const pid = (p as any)?.pageId as string | undefined
       if (pid) currIds.current.page_id = pid
 
-      if ((p.autoFollow || (p.focusOn && p.lockNav)) && typeof teacherPageIndexRef.current === 'number') {
-        setPageIndex(teacherPageIndexRef.current)
+      // One-time snap to the teacher page on the FIRST snapshot we receive
+      const tpi = teacherPageIndexRef.current
+      if (!snappedToTeacherRef.current && typeof tpi === 'number') {
+        setPageIndex(tpi)
+        snappedToTeacherRef.current = true
       }
     })
+
+    // say hello AFTER we’re subscribed so we don't miss the reply
+    try { void studentHello(rtAssignmentId) } catch {}
+
     return () => { try { (off as any)?.() } catch {} }
   }, [rtAssignmentId])
 
