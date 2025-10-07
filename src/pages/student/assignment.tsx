@@ -297,9 +297,9 @@ export default function StudentAssignment(){
         }
       },
 
-      // 👇 NEW: accept presence pulses as a catch-all hydration
+      // 👇 Presence pulses are READ-ONLY: hydrate hints, never flip flags/page (avoid heartbeat clobber)
       onPresence: (p) => {
-        // adopt assignmentId from presence if provided
+        // adopt assignmentId from presence if provided (safe)
         const incomingAid = (p as any)?.assignmentId as string | undefined
         if (incomingAid && incomingAid !== rtAssignmentId) {
           try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, incomingAid) } catch {}
@@ -307,28 +307,23 @@ export default function StudentAssignment(){
           try { void studentHello(incomingAid) } catch {}
         }
 
-        // flags
-        setAutoFollow(!!p.autoFollow)
-        setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)
-        setNavLocked(!!p.focusOn && !!p.lockNav)
-
-        // page index + pdf
+        // cache teacher page index hint
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
         }
+
+        // pdf+pageId hydration only (no policy flips)
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
-
-        // snap only if policy allows
-        const shouldSnap = autoFollow || (p.focusOn && p.lockNav)
-        if (shouldSnap && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(prev => (prev !== teacherPageIndexRef.current! ? teacherPageIndexRef.current! : prev))
-        }
-
-        // optionally cache page_id if present
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
+
+        // Safety: one-time snap if we somehow missed the initial snapshot
+        const tpi = teacherPageIndexRef.current
+        if (!snappedToTeacherRef.current && typeof tpi === 'number') {
+          setPageIndex(tpi)
+          snappedToTeacherRef.current = true
+        }
 
         try { localStorage.setItem(presenceKey(rtAssignmentId || 'latest'), JSON.stringify(p)) } catch {}
       }
@@ -343,6 +338,7 @@ export default function StudentAssignment(){
     const off = subscribePresenceSnapshot(rtAssignmentId, (p) => {
       try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
 
+      // hydrate policy flags ONCE from the initial snapshot
       setAutoFollow(!!p.autoFollow)
       setAllowedPages(p.allowedPages ?? null)
       setFocusOn(!!p.focusOn)
@@ -785,22 +781,25 @@ export default function StudentAssignment(){
           setPageIndex(teacherPageIndexRef.current)
         }
       },
+      // Presence heartbeats are read-only here too
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
-        setAutoFollow(!!p.autoFollow)
-        setAllowedPages(p.allowedPages ?? null)
-        setFocusOn(!!p.focusOn)
-        setNavLocked(!!p.focusOn && !!p.lockNav)
+
+        // no policy flips from presence pulses
         if (typeof p.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = p.teacherPageIndex
         }
+
         const pdfPath = (p as any)?.pdfPath as string | undefined
         if (pdfPath) setPdfStoragePath(pdfPath)
         const pid = (p as any)?.pageId as string | undefined
         if (pid) currIds.current.page_id = pid
 
-        if ((p.autoFollow || (p.focusOn && p.lockNav)) && typeof teacherPageIndexRef.current === 'number') {
-          setPageIndex(teacherPageIndexRef.current)
+        // Safety one-time snap (if initial snapshot was missed)
+        const tpi = teacherPageIndexRef.current
+        if (!snappedToTeacherRef.current && typeof tpi === 'number') {
+          setPageIndex(tpi)
+          snappedToTeacherRef.current = true
         }
       }
     })
