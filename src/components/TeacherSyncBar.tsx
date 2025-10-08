@@ -1,7 +1,6 @@
 // src/components/TeacherSyncBar.tsx
 import { useEffect, useRef, useState } from 'react';
 import {
-  assignmentChannel,
   publishAutoFollow,
   publishFocus,
   publishSetPage,
@@ -41,49 +40,41 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
   const [lockNav, setLockNav] = useState(true);
   const [rangeText, setRangeText] = useState('');
   const allowedRef = useRef<number[] | null>(null);
-  const chRef = useRef<ReturnType<typeof assignmentChannel> | null>(null);
 
-  // Open teacher channel and publish initial presence AFTER subscribe
+  // Publish initial presence whenever assignmentId becomes available
   useEffect(() => {
     if (!assignmentId) return;
-    const ch = assignmentChannel(assignmentId);
-    ch.subscribe(async (status: string) => {
-      if (status === 'SUBSCRIBED') {
-        await setTeacherPresence(ch, {
-          autoFollow,
-          allowedPages: allowedRef.current ?? null,
-          teacherPageIndex: pageIndex,
-          focusOn: focus,
-          lockNav,
-        });
-      }
-    });
-    chRef.current = ch;
-    return () => { ch.unsubscribe(); chRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignmentId]);
-
-  // Whenever these change, update presence
-  useEffect(() => {
-    if (!chRef.current) return;
-    void setTeacherPresence(chRef.current, {
+    void setTeacherPresence(assignmentId, {
       autoFollow,
       allowedPages: allowedRef.current ?? null,
       teacherPageIndex: pageIndex,
       focusOn: focus,
       lockNav,
     });
-  }, [autoFollow, focus, lockNav, pageIndex]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignmentId]);
+
+  // Whenever these change, update presence
+  useEffect(() => {
+    if (!assignmentId) return;
+    void setTeacherPresence(assignmentId, {
+      autoFollow,
+      allowedPages: allowedRef.current ?? null,
+      teacherPageIndex: pageIndex,
+      focusOn: focus,
+      lockNav,
+    });
+  }, [assignmentId, autoFollow, focus, lockNav, pageIndex]);
 
   // When auto-follow is ON, rebroadcast current page on change (snappy)
   useEffect(() => {
-    if (autoFollow && chRef.current && pageId) {
-      void publishSetPage(chRef.current, pageId, pageIndex);
+    if (autoFollow && assignmentId && pageId) {
+      void publishSetPage(assignmentId, pageId, pageIndex);
     }
-  }, [autoFollow, pageId, pageIndex]);
+  }, [autoFollow, assignmentId, pageId, pageIndex]);
 
   async function toggleAutoFollow() {
-    if (!chRef.current) return;
+    if (!assignmentId) return;
     const next = !autoFollow;
     setAutoFollow(next);
 
@@ -91,7 +82,7 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
     allowedRef.current = allowed;
 
     // presence first (so late joiners immediately see it)
-    await setTeacherPresence(chRef.current, {
+    await setTeacherPresence(assignmentId, {
       autoFollow: next,
       allowedPages: allowed ?? null,
       teacherPageIndex: pageIndex,
@@ -99,25 +90,30 @@ export default function TeacherSyncBar({ assignmentId, pageId, pageIndex, classN
       lockNav,
     });
 
-    // broadcast for currently connected students
-    await publishAutoFollow(chRef.current, next, allowed ?? null, pageIndex);
+    // broadcast for currently connected students — use payload object
+    await publishAutoFollow(assignmentId, {
+      on: next,
+      allowedPages: allowed ?? null,
+      teacherPageIndex: pageIndex,
+    });
+
     if (next) {
-      await publishSetPage(chRef.current, pageId, pageIndex);
+      await publishSetPage(assignmentId, pageId, pageIndex);
     }
   }
 
   async function toggleFocus() {
-    if (!chRef.current) return;
+    if (!assignmentId) return;
     const next = !focus;
     setFocus(next);
-    await setTeacherPresence(chRef.current, {
+    await setTeacherPresence(assignmentId, {
       autoFollow,
       allowedPages: allowedRef.current ?? null,
       teacherPageIndex: pageIndex,
       focusOn: next,
       lockNav,
     });
-    await publishFocus(chRef.current, next, lockNav);
+    await publishFocus(assignmentId, { on: next, lockNav });
   }
 
   return (
