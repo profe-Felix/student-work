@@ -1030,7 +1030,10 @@ export default function StudentAssignment(){
           <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
             Student: <strong>{studentId}</strong>
           </div>
-          <button onClick={()=> nav('/start')} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}>
+          <button
+            onClick={()=> nav(`/start?class=${encodeURIComponent(classCode)}`)} // keep class in URL
+            style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
+          >
             Switch
           </button>
         </div>
