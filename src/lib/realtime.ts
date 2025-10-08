@@ -1,4 +1,4 @@
-// src/lib/realtime.ts
+//src/lib/realtime.ts
 // Realtime utilities (now class-scoped with legacy compatibility)
 
 import type { RealtimeChannel } from '@supabase/supabase-js'
