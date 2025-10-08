@@ -158,3 +158,46 @@ export async function listLatestByPage(assignment_id: string, page_id: string) {
   if (error) throw error
   return data
 }
+
+
+// --- CLASS STATE HELPERS ---
+export async function upsertClassState(
+  classCode: string,
+  assignmentId: string,
+  pageId: string,
+  pageIndex: number
+) {
+  const { error } = await supabase
+    .from('class_state')
+    .upsert(
+      {
+        class_code: classCode,
+        assignment_id: assignmentId,
+        page_id: pageId,
+        page_index: pageIndex,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'class_code' } // upsert by PK
+    )
+  if (error) throw error
+}
+
+export async function fetchClassState(classCode: string) {
+  const { data, error } = await supabase
+    .from('class_state')
+    .select('*')
+    .eq('class_code', classCode)
+    .maybeSingle()
+  if (error) throw error
+  return data as
+    | {
+        class_code: string
+        assignment_id: string
+        page_id: string
+        page_index: number
+        updated_at: string
+      }
+    | null
+}
+
+
