@@ -1,21 +1,22 @@
 //src/pages/teacher/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom' // <-- NEW
+import { useLocation } from 'react-router-dom'
 import {
   listAssignments,
   listPages,
   getAudioUrl,
   type AssignmentRow,
   type PageRow,
-  supabase
+  supabase,
+  upsertClassState, // <-- NEW
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
 import {
   publishSetAssignment,
-  publishSetPage,          // NEW
-  setTeacherPresence,     // NEW
-  teacherPresenceResponder // NEW
+  publishSetPage,
+  setTeacherPresence,
+  teacherPresenceResponder
 } from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer'
 
@@ -28,11 +29,11 @@ type LatestCell = {
 const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
 
 export default function TeacherDashboard() {
-  // --- NEW: read class code from URL (?class=A); default 'A' for now
-  const location = useLocation() // <-- NEW
-  const params = new URLSearchParams(location.search) // <-- NEW
-  const classCode = (params.get('class') || 'A').toUpperCase() // <-- NEW
-  useEffect(() => { /* step 2a: classCode computed (used next step) */ }, [classCode]) // <-- NEW (no-op to avoid unused warnings)
+  // --- class code from URL (?class=A); default 'A'
+  const location = useLocation()
+  const params = new URLSearchParams(location.search)
+  const classCode = (params.get('class') || 'A').toUpperCase()
+  useEffect(() => {}, [classCode]) // keep for now so lints don't whine
 
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
   const [assignmentId, setAssignmentId] = useState<string>('')
@@ -164,18 +165,16 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
-  // --- NEW: start/refresh the presence responder whenever assignment/page changes
+  // --- presence responder (answers students' "hello" with current state)
   const stopPresenceResponderRef = useRef<(() => void) | null>(null)
   useEffect(() => {
     if (!assignmentId) return
 
-    // (Re)start responder for this assignment that answers students' "hello" with our current state
     if (stopPresenceResponderRef.current) {
       try { stopPresenceResponderRef.current() } catch {}
       stopPresenceResponderRef.current = null
     }
     const stop = teacherPresenceResponder(assignmentId, () => ({
-      // Keep it simple: always follow teacher + advertise current page
       autoFollow: true,
       allowedPages: null,
       focusOn: false,
@@ -190,7 +189,7 @@ export default function TeacherDashboard() {
     }
   }, [assignmentId, pageIndex])
 
-  // NEW: after assignmentId is resolved (initial load), broadcast it once.
+  // initial assignment broadcast
   useEffect(() => {
     if (!assignmentId) return
     if (lastAnnouncedAssignment.current === assignmentId) return
@@ -204,7 +203,7 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
-  // NEW: whenever the teacher changes page, publish page + presence so students snap immediately
+  // page + presence broadcast
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
@@ -223,6 +222,13 @@ export default function TeacherDashboard() {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignmentId, pageIndex])
+
+  // --- NEW: keep DB "class_state" in sync for cold start
+  useEffect(() => {
+    if (!classCode || !assignmentId || !pageId) return
+    upsertClassState(classCode, assignmentId, pageId, pageIndex)
+      .catch(err => console.error('upsertClassState failed', err))
+  }, [classCode, assignmentId, pageId, pageIndex]) // <-- NEW
 
   useEffect(() => {
     if (!assignmentId || !pageId) return
