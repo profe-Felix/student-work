@@ -594,7 +594,7 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload as any)
+      window.removeEventListener('beforeunload', onBeforeunload as any)
     }
   }, [pageIndex, studentId])
 
@@ -790,20 +790,23 @@ export default function StudentAssignment(){
 
       // NEW: room-scoped realtime ink (assignment + page + studentId)
       try { inkSubRef.current?.unsubscribe?.() } catch {}
-      const chInk = subscribeToInk(ids.assignment_id, ids.page_id, (u) => {
-        // Filter to drawing tools only (ignore eraser-style updates at this layer)
-        if (u.tool !== 'pen' && u.tool !== 'highlighter') return
-        // Accept either streaming pts or finalization
-        if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
-        drawRef.current?.applyRemote({
-          id: u.id,
-          color: u.color!,
-          size: u.size!,
-          tool: u.tool as 'pen'|'highlighter',
-          pts: (u.pts as any) || [],
-          done: !!u.done,
-        })
-      }, studentId) // <— this is the ROOM scope: only same student instance sees strokes
+      const chInk = subscribeToInk(
+        ids.assignment_id,
+        ids.page_id,
+        (u) => {
+          if (u.tool !== 'pen' && u.tool !== 'highlighter') return
+          if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+          drawRef.current?.applyRemote({
+            id: u.id,
+            color: u.color!,
+            size: u.size!,
+            tool: u.tool as 'pen'|'highlighter',
+            pts: (u.pts as any) || [],
+            done: !!u.done,
+          })
+        },
+        studentId // <— ROOM scope: only same student instance sees strokes
+      )
       inkSubRef.current = chInk
     })()
 
@@ -1019,7 +1022,7 @@ export default function StudentAssignment(){
                 if (!ids.assignment_id || !ids.page_id) return
                 // room-scoped publish: same assignment + page + studentId
                 publishInk({ assignmentId: ids.assignment_id, pageId: ids.page_id, studentCode: studentId }, u)
-                  .catch(()=>{/* ignore fire-and-forget errors */})
+                  .catch(()=>{/* fire-and-forget */})
               }}
             />
           </div>
