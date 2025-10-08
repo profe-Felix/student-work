@@ -36,7 +36,6 @@ export type TeacherPresenceState = {
 };
 
 /** ---------- NEW: Live ink updates (pre-submission co-editing) ---------- */
-// Keep this type here to avoid importing from components/
 export type InkUpdate = {
   id: string
   color?: string
@@ -46,7 +45,7 @@ export type InkUpdate = {
   done?: boolean
   // optional echo-guard field
   from?: string
-  // optional room guard (assignment:page:studentCode)
+  // optional room guard (assignment:page[:studentCode])
   roomKey?: string
 }
 
@@ -99,7 +98,7 @@ function makeInkChannelName(assignmentId: string, pageId: string, studentCode?: 
 
 /** Per-(assignment,page[,studentCode]) ink channel.
  *  If studentCode is provided, ink is isolated to that *student instance*.
- *  If omitted, it falls back to legacy per-page channel.
+ *  If omitted, it falls back to per-page channel (A_04 sees only A_04).
  */
 export function inkChannel(assignmentId: string, pageId: string, studentCode?: string) {
   return supabase.channel(makeInkChannelName(assignmentId, pageId, studentCode), {
@@ -128,10 +127,6 @@ function resolveChannel(input: ChannelOrId): { ch: RealtimeChannel; temporary: b
 /** ---------- Low-level publish/subscribe helpers (very permissive for legacy calls) ---------- */
 
 // SET PAGE
-// Accepts any of:
-//   publishSetPage(assign, { pageIndex, pageId? })
-//   publishSetPage(assign, 3)
-//   publishSetPage(assign, 'page-uuid', 3)
 export async function publishSetPage(
   assignment: ChannelOrId,
   payloadOrPageId: SetPagePayload | number | string,
@@ -168,10 +163,6 @@ export function subscribeToSetPage(
 }
 
 // FOCUS
-// Accepts any of:
-//   publishFocus(assign, { on, lockNav? })
-//   publishFocus(assign, true)
-//   publishFocus(assign, true, true)
 export async function publishFocus(
   assignment: ChannelOrId,
   payloadOrOn: FocusPayload | boolean,
@@ -204,10 +195,6 @@ export function subscribeToFocus(
 }
 
 // AUTO-FOLLOW
-// Accepts any of:
-//   publishAutoFollow(assign, { on, allowedPages?, teacherPageIndex? })
-//   publishAutoFollow(assign, true)
-//   publishAutoFollow(assign, true, [0,1,2], 0)
 export async function publishAutoFollow(
   assignment: ChannelOrId,
   payloadOrOn: AutoFollowPayload | boolean,
@@ -302,7 +289,7 @@ export function subscribeToAssignment(assignmentId: string, handlers: Assignment
  *   - an ids object: { assignmentId, pageId, studentCode? }
  *
  * If studentCode is provided, the event goes only to that *student instance* room.
- * If omitted, it falls back to legacy per-(assignment,page) room.
+ * If omitted, it falls back to per-(assignment,page) room.
  */
 export async function publishInk(
   inkChOrIds: RealtimeChannel | { assignmentId: string; pageId: string; studentCode?: string },
@@ -332,8 +319,8 @@ export async function publishInk(
 /**
  * Subscribe to an ink stream for a page (and optionally studentCode).
  * Overloads keep legacy callers working:
- *   subscribeToInk(assignmentId, pageId, onUpdate)                  // legacy (per page)
- *   subscribeToInk(assignmentId, pageId, onUpdate, studentCode)     // new (per student instance)
+ *   subscribeToInk(assignmentId, pageId, onUpdate)                  // per page
+ *   subscribeToInk(assignmentId, pageId, onUpdate, studentCode)     // per student instance
  */
 export function subscribeToInk(
   assignmentId: string,
@@ -357,7 +344,7 @@ export function subscribeToInk(
     .on('broadcast', { event: 'ink' }, (msg: any) => {
       const u = msg?.payload as InkUpdate
       if (!u || !u.id || !u.tool) return
-      // Allow empty pts if this is a terminal "done" update
+      // allow empty pts if this is a terminal "done" update
       if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
       // Guard against stragglers from other rooms (in case of late events)
       if (u.roomKey && u.roomKey !== roomKey) return
