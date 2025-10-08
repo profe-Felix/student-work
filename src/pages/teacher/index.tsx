@@ -1,5 +1,6 @@
 //src/pages/teacher/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom' // <-- NEW
 import {
   listAssignments,
   listPages,
@@ -27,6 +28,12 @@ type LatestCell = {
 const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
 
 export default function TeacherDashboard() {
+  // --- NEW: read class code from URL (?class=A); default 'A' for now
+  const location = useLocation() // <-- NEW
+  const params = new URLSearchParams(location.search) // <-- NEW
+  const classCode = (params.get('class') || 'A').toUpperCase() // <-- NEW
+  useEffect(() => { /* step 2a: classCode computed (used next step) */ }, [classCode]) // <-- NEW (no-op to avoid unused warnings)
+
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
   const [assignmentId, setAssignmentId] = useState<string>('')
 
