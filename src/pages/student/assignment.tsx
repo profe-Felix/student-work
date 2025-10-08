@@ -18,7 +18,7 @@ import {
   type AutoFollowPayload,
   subscribeToGlobal,
   type TeacherPresenceState,
-  // NEW: room-scoped ink helpers
+  // room-scoped ink helpers
   subscribeToInk,
   publishInk
 } from '../../lib/realtime'
@@ -394,6 +394,31 @@ export default function StudentAssignment(){
     } catch {}
   }, [rtAssignmentId])
 
+  /* ---------- NEW: Hello → presence-snapshot handshake ---------- */
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    // Subscribe briefly to receive the teacher's snapshot, then say hello.
+    const ch = supabase
+      .channel(`assignment:${rtAssignmentId}`, { config: { broadcast: { ack: true } } })
+      .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
+        const p = msg?.payload as TeacherPresenceState | undefined
+        if (!p) return
+        try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+        applyPresenceSnapshot(p, { snap: true })
+      })
+      .subscribe()
+
+    ;(async () => {
+      try {
+        await ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } })
+      } catch {/* ignore */}
+    })()
+
+    // Clean up after a short window; we still keep our main subscribeToAssignment
+    const t = window.setTimeout(() => { try { ch.unsubscribe() } catch {} }, 4000)
+    return () => { try { ch.unsubscribe() } catch {}; window.clearTimeout(t) }
+  }, [rtAssignmentId])
+
   // Resolve assignment/page with early “snap to teacher” if autoFollow is ON or presence says so
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
     let assignmentId = rtAssignmentId
@@ -764,7 +789,7 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // === UPDATED: subscribe to artifacts AND the *scoped* live ink channel
+  // subscribe to artifacts AND the room-scoped live ink channel
   useEffect(()=>{
     let cleanupArtifacts: (()=>void) | null = null
     let pollId: number | null = null
@@ -788,7 +813,7 @@ export default function StudentAssignment(){
       }
       pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
 
-      // NEW: room-scoped realtime ink (assignment + page + studentId)
+      // room-scoped realtime ink (assignment + page + studentId)
       try { inkSubRef.current?.unsubscribe?.() } catch {}
       const chInk = subscribeToInk(
         ids.assignment_id,
@@ -805,7 +830,7 @@ export default function StudentAssignment(){
             done: !!u.done,
           })
         },
-        studentId // <— ROOM scope: only same student instance sees strokes
+        studentId // ROOM scope: same student instance
       )
       inkSubRef.current = chInk
     })()
