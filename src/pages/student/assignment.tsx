@@ -190,12 +190,15 @@ export default function StudentAssignment(){
     return (qs.get('class') || 'A').toUpperCase()
   }, [location.search])
 
+  // NEW: remember last student per-class; default `${classCode}_01`
   const studentId = useMemo(()=>{
     const qs = new URLSearchParams(location.search)
-    const id = qs.get('student') || localStorage.getItem('currentStudent') || 'A_01'
-    localStorage.setItem('currentStudent', id)
+    const key = `currentStudent:${classCode}`
+    const fallback = `${classCode}_01`
+    const id = qs.get('student') || localStorage.getItem(key) || fallback
+    try { localStorage.setItem(key, id) } catch {}
     return id
-  }, [location.search])
+  }, [location.search, classCode])
 
   // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
