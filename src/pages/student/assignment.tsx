@@ -354,19 +354,21 @@ const studentId = useMemo(() => {
     }
   }
 
-  // assignment handoff listener (teacher broadcast)
-  useEffect(() => {
-    const off = subscribeToGlobal((nextAssignmentId) => {
-      try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
-      setRtAssignmentId(nextAssignmentId)
-      // Best effort: use cache quickly, then fetch from server to be sure
-      snapToTeacherIfAvailable(nextAssignmentId)
-      ensurePresenceFromServer(nextAssignmentId)
-      currIds.current = {}
-      // keep initialSnappedRef as-is
-    })
-    return off
-  }, [])
+  // assignment handoff listener (teacher broadcast) — class-scoped
+useEffect(() => {
+  if (!classCode) return
+  const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
+    try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
+    setRtAssignmentId(nextAssignmentId)
+    // Best effort: use cache quickly, then fetch from server to be sure
+    snapToTeacherIfAvailable(nextAssignmentId)
+    ensurePresenceFromServer(nextAssignmentId)
+    currIds.current = {}
+    // keep initialSnappedRef as-is
+  })
+  return off
+}, [classCode])
+
 
   // NEW: snap to DB class state on boot (cold start)
   useEffect(() => {
