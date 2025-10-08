@@ -32,13 +32,13 @@ export default function TeacherDashboard() {
   const params = new URLSearchParams(location.search)
   const classCode = (params.get('class') || 'A').toUpperCase()
 
-  // students are derived from class
+  // students list is dynamic from classCode
   const STUDENTS = useMemo(
     () => Array.from({ length: 28 }, (_, i) => `${classCode}_${String(i + 1).padStart(2, '0')}`),
     [classCode]
   )
 
-  // shareable start link
+  // shareable /start link with class
   const startHref = useMemo(() => {
     const base = `${window.location.origin}${window.location.pathname}`
     return `${base}#/start?class=${encodeURIComponent(classCode)}`
@@ -51,7 +51,7 @@ export default function TeacherDashboard() {
 
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
-  const lastAnnouncedAssignment = useRef<string>('') // avoid double-broadcasts
+  const lastAnnouncedAssignment = useRef<string>('')
 
   const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
@@ -183,7 +183,7 @@ export default function TeacherDashboard() {
       try { stopPresenceResponderRef.current() } catch {}
       stopPresenceResponderRef.current = null
     }
-    // NOTE: class-scoped
+    // CLASS-SCOPED responder
     const stop = teacherPresenceResponder(classCode, assignmentId, () => ({
       autoFollow: true,
       allowedPages: null,
@@ -199,13 +199,13 @@ export default function TeacherDashboard() {
     }
   }, [classCode, assignmentId, pageIndex])
 
-  // initial assignment broadcast (class-scoped)
+  // initial assignment broadcast (CLASS-SCOPED)
   useEffect(() => {
     if (!assignmentId) return
     if (lastAnnouncedAssignment.current === assignmentId) return
     ;(async () => {
       try {
-        await publishSetAssignment(classCode, assignmentId) // <-- pass class
+        await publishSetAssignment(classCode, assignmentId)
         lastAnnouncedAssignment.current = assignmentId
       } catch (err) {
         console.error('initial broadcast failed', err)
@@ -213,13 +213,13 @@ export default function TeacherDashboard() {
     })()
   }, [classCode, assignmentId])
 
-  // page + presence broadcast (class-scoped)
+  // page + presence broadcast (CLASS-SCOPED)
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
       try {
-        await publishSetPage(classCode, assignmentId, { pageIndex }) // <-- pass class
-        await setTeacherPresence(classCode, assignmentId, {          // <-- pass class
+        await publishSetPage(classCode, assignmentId, { pageIndex })
+        await setTeacherPresence(classCode, assignmentId, {
           autoFollow: true,
           teacherPageIndex: pageIndex,
           focusOn: false,
@@ -233,7 +233,7 @@ export default function TeacherDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classCode, assignmentId, pageIndex])
 
-  // keep DB "class_state" in sync
+  // --- keep DB "class_state" in sync for cold start
   useEffect(() => {
     if (!classCode || !assignmentId || !pageId) return
     upsertClassState(classCode, assignmentId, pageId, pageIndex)
@@ -249,6 +249,7 @@ export default function TeacherDashboard() {
   // realtime refreshers
   useEffect(() => {
     if (!pageId) return
+
     const ch1 = supabase.channel(`tgrid-subs-${pageId}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'submissions',
@@ -348,7 +349,7 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
-      {/* share box for /start?class=CODE */}
+      {/* quick share box for /start?class=CODE */}
       <div style={{
         margin: '8px 0 16px', padding: 10, background:'#fff',
         border:'1px solid #e5e7eb', borderRadius:10, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'
@@ -361,9 +362,7 @@ export default function TeacherDashboard() {
           style={{ flex:1, minWidth:260, padding:'6px 8px', border:'1px solid #e5e7eb', borderRadius:8, background:'#f9fafb' }}
         />
         <button
-          onClick={async()=>{
-            try { await navigator.clipboard.writeText(startHref) } catch {}
-          }}
+          onClick={async()=>{ try { await navigator.clipboard.writeText(startHref) } catch {} }}
           style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
           title="Copy link"
         >
@@ -392,12 +391,12 @@ export default function TeacherDashboard() {
             // Select it
             setAssignmentId(newId)
 
-            // Broadcast to students in THIS CLASS and mark as announced
+            // Broadcast to students now (CLASS-SCOPED)
             try {
-              await publishSetAssignment(classCode, newId) // <-- pass class
+              await publishSetAssignment(classCode, newId)
               lastAnnouncedAssignment.current = newId
 
-              // snapshot to class_state (best-effort)
+              // snapshot to class_state (best effort)
               if (classCode && pageId) {
                 await upsertClassState(classCode, newId, pageId, pageIndex)
               }
@@ -417,9 +416,11 @@ export default function TeacherDashboard() {
               const next = e.target.value
               setAssignmentId(next)
               try {
-                await publishSetAssignment(classCode, next) // <-- pass class
+                // CLASS-SCOPED handoff
+                await publishSetAssignment(classCode, next)
                 lastAnnouncedAssignment.current = next
 
+                // snapshot to class_state (best-effort)
                 if (classCode && pageId) {
                   await upsertClassState(classCode, next, pageId, pageIndex)
                 }
@@ -449,8 +450,17 @@ export default function TeacherDashboard() {
                 if (classCode && assignmentId) {
                   await upsertClassState(classCode, assignmentId, nextPageId, nextIndex)
                 }
+                // rebroadcast page for this class (snappy)
+                await publishSetPage(classCode, assignmentId, { pageIndex: nextIndex })
+                await setTeacherPresence(classCode, assignmentId, {
+                  autoFollow: true,
+                  teacherPageIndex: nextIndex,
+                  focusOn: false,
+                  lockNav: false,
+                  allowedPages: null
+                })
               } catch (err) {
-                console.error('upsert on page change failed', err)
+                console.error('upsert/publish on page change failed', err)
               }
             }}
             style={{ padding: '6px 8px', minWidth: 120 }}
@@ -518,7 +528,6 @@ export default function TeacherDashboard() {
                     {cell!.audioUrl && (
                       <audio controls src={cell!.audioUrl} style={{ width: '100%' }} />
                     )}
-                    {/* Preview button */}
                     <button
                       type="button"
                       onClick={() => openPreviewForStudent(sid)}
@@ -540,7 +549,6 @@ export default function TeacherDashboard() {
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
 
-      {/* Drawer instance — render only when open */}
       {previewOpen && (
         <PlaybackDrawer
           onClose={() => setPreviewOpen(false)}
