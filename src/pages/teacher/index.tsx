@@ -8,7 +8,7 @@ import {
   type AssignmentRow,
   type PageRow,
   supabase,
-  upsertClassState, // <-- keep
+  upsertClassState,
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
@@ -32,13 +32,13 @@ export default function TeacherDashboard() {
   const params = new URLSearchParams(location.search)
   const classCode = (params.get('class') || 'A').toUpperCase()
 
-  // Students list is dynamic from classCode
+  // students are derived from class
   const STUDENTS = useMemo(
     () => Array.from({ length: 28 }, (_, i) => `${classCode}_${String(i + 1).padStart(2, '0')}`),
     [classCode]
   )
 
-  // Absolute shareable link for /start with class
+  // shareable start link
   const startHref = useMemo(() => {
     const base = `${window.location.origin}${window.location.pathname}`
     return `${base}#/start?class=${encodeURIComponent(classCode)}`
@@ -88,10 +88,8 @@ export default function TeacherDashboard() {
       const storagePath = pages.find(p => p.id === pageId)?.pdf_path || ''
       if (!storagePath) { setPreviewPdfUrl(''); return }
       const key = keyForBucket(storagePath)
-      // try a signed URL first (one hour)
       const { data: sData } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(key, 60 * 60)
       if (!cancelled && sData?.signedUrl) { setPreviewPdfUrl(sData.signedUrl); return }
-      // fallback to public URL
       const { data: pData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(key)
       if (!cancelled) setPreviewPdfUrl(pData?.publicUrl ?? '')
     })()
@@ -185,7 +183,8 @@ export default function TeacherDashboard() {
       try { stopPresenceResponderRef.current() } catch {}
       stopPresenceResponderRef.current = null
     }
-    const stop = teacherPresenceResponder(assignmentId, () => ({
+    // NOTE: class-scoped
+    const stop = teacherPresenceResponder(classCode, assignmentId, () => ({
       autoFollow: true,
       allowedPages: null,
       focusOn: false,
@@ -198,7 +197,7 @@ export default function TeacherDashboard() {
       try { stopPresenceResponderRef.current?.() } catch {}
       stopPresenceResponderRef.current = null
     }
-  }, [assignmentId, pageIndex])
+  }, [classCode, assignmentId, pageIndex])
 
   // initial assignment broadcast (class-scoped)
   useEffect(() => {
@@ -206,21 +205,21 @@ export default function TeacherDashboard() {
     if (lastAnnouncedAssignment.current === assignmentId) return
     ;(async () => {
       try {
-        await publishSetAssignment(assignmentId, classCode) // <-- pass classCode
+        await publishSetAssignment(classCode, assignmentId) // <-- pass class
         lastAnnouncedAssignment.current = assignmentId
       } catch (err) {
         console.error('initial broadcast failed', err)
       }
     })()
-  }, [assignmentId, classCode])
+  }, [classCode, assignmentId])
 
-  // page + presence broadcast
+  // page + presence broadcast (class-scoped)
   useEffect(() => {
     if (!assignmentId) return
     ;(async () => {
       try {
-        await publishSetPage(assignmentId, { pageIndex })
-        await setTeacherPresence(assignmentId, {
+        await publishSetPage(classCode, assignmentId, { pageIndex }) // <-- pass class
+        await setTeacherPresence(classCode, assignmentId, {          // <-- pass class
           autoFollow: true,
           teacherPageIndex: pageIndex,
           focusOn: false,
@@ -232,9 +231,9 @@ export default function TeacherDashboard() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignmentId, pageIndex])
+  }, [classCode, assignmentId, pageIndex])
 
-  // --- keep DB "class_state" in sync for cold start
+  // keep DB "class_state" in sync
   useEffect(() => {
     if (!classCode || !assignmentId || !pageId) return
     upsertClassState(classCode, assignmentId, pageId, pageIndex)
@@ -245,13 +244,11 @@ export default function TeacherDashboard() {
     if (!assignmentId || !pageId) return
     setGrid({})
     refreshGrid.current('page change')
-  }, [assignmentId, pageId, STUDENTS]) // include STUDENTS so grid resets if class changes
+  }, [assignmentId, pageId, STUDENTS])
 
   // realtime refreshers
   useEffect(() => {
     if (!pageId) return
-
-    // submissions on this page
     const ch1 = supabase.channel(`tgrid-subs-${pageId}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'submissions',
@@ -259,7 +256,6 @@ export default function TeacherDashboard() {
       }, () => debouncedRefresh(200))
       .subscribe()
 
-    // artifacts anywhere (audio / strokes)
     const ch2 = supabase.channel(`tgrid-arts`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'artifacts'
@@ -352,7 +348,7 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
-      {/* quick share box for /start?class=CODE */}
+      {/* share box for /start?class=CODE */}
       <div style={{
         margin: '8px 0 16px', padding: 10, background:'#fff',
         border:'1px solid #e5e7eb', borderRadius:10, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'
@@ -396,12 +392,12 @@ export default function TeacherDashboard() {
             // Select it
             setAssignmentId(newId)
 
-            // Broadcast to students now and mark as announced to avoid double-fire
+            // Broadcast to students in THIS CLASS and mark as announced
             try {
-              await publishSetAssignment(newId, classCode) // <-- pass classCode
+              await publishSetAssignment(classCode, newId) // <-- pass class
               lastAnnouncedAssignment.current = newId
 
-              // snapshot to class_state (best-effort; pageId/pageIndex may update right after)
+              // snapshot to class_state (best-effort)
               if (classCode && pageId) {
                 await upsertClassState(classCode, newId, pageId, pageIndex)
               }
@@ -421,10 +417,9 @@ export default function TeacherDashboard() {
               const next = e.target.value
               setAssignmentId(next)
               try {
-                await publishSetAssignment(next, classCode) // <-- pass classCode
+                await publishSetAssignment(classCode, next) // <-- pass class
                 lastAnnouncedAssignment.current = next
 
-                // snapshot to class_state (best-effort)
                 if (classCode && pageId) {
                   await upsertClassState(classCode, next, pageId, pageIndex)
                 }
