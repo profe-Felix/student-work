@@ -9,7 +9,8 @@ import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecord
 import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   listPages,
-  supabase
+  supabase,
+  fetchClassState, // <-- NEW
 } from '../../lib/db'
 import {
   subscribeToAssignment,
@@ -182,6 +183,13 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
 export default function StudentAssignment(){
   const location = useLocation()
   const nav = useNavigate()
+
+  // NEW: class code from URL (?class=), default A
+  const classCode = useMemo(() => {
+    const qs = new URLSearchParams(location.search)
+    return (qs.get('class') || 'A').toUpperCase()
+  }, [location.search])
+
   const studentId = useMemo(()=>{
     const qs = new URLSearchParams(location.search)
     const id = qs.get('student') || localStorage.getItem('currentStudent') || 'A_01'
@@ -354,6 +362,28 @@ export default function StudentAssignment(){
     })
     return off
   }, [])
+
+  // NEW: snap to DB class state on boot (cold start)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const snap = await fetchClassState(classCode)
+        if (!snap || cancelled) return
+
+        setRtAssignmentId(snap.assignment_id)
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, snap.assignment_id) } catch {}
+
+        if (typeof snap.page_index === 'number') {
+          setPageIndex(snap.page_index)
+          initialSnappedRef.current = true // prevent re-snap fights
+        }
+      } catch {
+        // no class snapshot yet — harmless
+      }
+    })()
+    return () => { cancelled = true }
+  }, [classCode])
 
   // On first mount, if we don't have an assignment id, fetch the latest with pages.
   useEffect(() => {
