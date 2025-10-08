@@ -1,4 +1,4 @@
-//src/pages/student/assignment.tsx
+// src/pages/student/assignment.tsx
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -18,6 +18,9 @@ import {
   type AutoFollowPayload,
   subscribeToGlobal,
   type TeacherPresenceState,
+  // NEW: room-scoped ink helpers
+  subscribeToInk,
+  publishInk
 } from '../../lib/realtime'
 
 // Eraser utils
@@ -151,7 +154,6 @@ function initialPageIndexFromPresence(): number {
 /* ---------- NEW: server fallback to get teacher presence snapshot ---------- */
 async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPresenceState | null> {
   try {
-    // Adjust table/columns if your schema differs.
     const { data, error } = await supabase
       .from('teacher_presence')
       .select('*')
@@ -161,7 +163,6 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
       .maybeSingle()
 
     if (error || !data) return null
-    // Normalize a bit to our expected shape
     const p = data as any
     const snapshot: TeacherPresenceState = {
       autoFollow: !!p.auto_follow || !!p.autofollow || !!p.autoFollow,
@@ -298,8 +299,8 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // === NEW: ink channel reference for live pre-submission strokes ===
-  const inkChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  // === UPDATED: ink subscription handle (room-scoped)
+  const inkSubRef = useRef<ReturnType<typeof subscribeToInk> | null>(null)
 
   /* ---------- NEW: apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
@@ -328,7 +329,7 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // --- NEW: ensure we also fetch presence from server if cache is missing/stale
+  // --- ensure we also fetch presence from server if cache is missing/stale
   const ensurePresenceFromServer = async (assignmentId: string) => {
     const cached = localStorage.getItem(presenceKey(assignmentId))
     if (!cached) {
@@ -731,7 +732,6 @@ export default function StudentAssignment(){
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
-    // include 'focusOn' and 'navLocked' so we can reuse current values in the synthetic snapshot above
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rtAssignmentId, autoFollow, focusOn, navLocked])
 
@@ -764,9 +764,9 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // === UPDATED: subscribe to artifacts AND the live ink channel ===
+  // === UPDATED: subscribe to artifacts AND the *scoped* live ink channel
   useEffect(()=>{
-    let cleanup: (()=>void)|null = null
+    let cleanupArtifacts: (()=>void) | null = null
     let pollId: number | null = null
     let mounted = true
 
@@ -782,42 +782,37 @@ export default function StudentAssignment(){
             filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
           }, ()=> reloadFromServer())
           .subscribe()
-        cleanup = ()=> { try { ch.unsubscribe() } catch {} }
+        cleanupArtifacts = ()=> { try { ch.unsubscribe() } catch {} }
       }catch(e){
         console.error('realtime subscribe failed', e)
       }
       pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
 
-      // NEW: realtime ink (pre-submission co-editing)
-      try { inkChannelRef.current?.unsubscribe() } catch {}
-      const inkCh = supabase.channel(`ink:${ids.assignment_id}:${ids.page_id}`)
-      inkCh.on('broadcast', { event: 'ink' }, (evt: any) => {
-        try {
-          const u = evt?.payload as RemoteStrokeUpdate & { from?: string }
-          if (!u) return
-          if (u.from && u.from === studentId) return // ignore our own echoes
-          // basic validation
-          if (!u.id || !u.tool) return
-          if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
-          drawRef.current?.applyRemote({
-            id: u.id,
-            color: u.color,
-            size: u.size,
-            tool: u.tool,
-            pts: u.pts,
-            done: !!u.done
-          })
-        } catch {}
-      })
-      await inkCh.subscribe()
-      inkChannelRef.current = inkCh
+      // NEW: room-scoped realtime ink (assignment + page + studentId)
+      try { inkSubRef.current?.unsubscribe?.() } catch {}
+      const chInk = subscribeToInk(ids.assignment_id, ids.page_id, (u) => {
+        // Filter to drawing tools only (ignore eraser-style updates at this layer)
+        if (u.tool !== 'pen' && u.tool !== 'highlighter') return
+        // Accept either streaming pts or finalization
+        if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+        drawRef.current?.applyRemote({
+          id: u.id,
+          color: u.color!,
+          size: u.size!,
+          tool: u.tool as 'pen'|'highlighter',
+          pts: (u.pts as any) || [],
+          done: !!u.done,
+        })
+      }, studentId) // <— this is the ROOM scope: only same student instance sees strokes
+      inkSubRef.current = chInk
     })()
 
     return ()=> {
       mounted = false
-      if (cleanup) cleanup()
+      if (cleanupArtifacts) cleanupArtifacts()
       if (pollId!=null) window.clearInterval(pollId)
-      try { inkChannelRef.current?.unsubscribe() } catch {}
+      try { inkSubRef.current?.unsubscribe?.() } catch {}
+      inkSubRef.current = null
     }
   }, [studentId, pageIndex, rtAssignmentId])
 
@@ -1018,11 +1013,13 @@ export default function StudentAssignment(){
               size={size}
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
-              onStrokeUpdate={(u) => {
-                const ch = inkChannelRef.current
-                if (!ch) return
-                const payload = { ...u, from: studentId }
-                ch.send({ type: 'broadcast', event: 'ink', payload })
+              selfId={studentId}
+              onStrokeUpdate={(u: RemoteStrokeUpdate) => {
+                const ids = currIds.current
+                if (!ids.assignment_id || !ids.page_id) return
+                // room-scoped publish: same assignment + page + studentId
+                publishInk({ assignmentId: ids.assignment_id, pageId: ids.page_id, studentCode: studentId }, u)
+                  .catch(()=>{/* ignore fire-and-forget errors */})
               }}
             />
           </div>
