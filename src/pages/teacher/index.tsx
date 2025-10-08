@@ -10,8 +10,13 @@ import {
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
-import { publishSetAssignment } from '../../lib/realtime' // NEW
-import PlaybackDrawer from '../../components/PlaybackDrawer' // NEW: preview drawer
+import {
+  publishSetAssignment,
+  publishSetPage,          // NEW
+  setTeacherPresence,     // NEW
+  teacherPresenceResponder // NEW
+} from '../../lib/realtime'
+import PlaybackDrawer from '../../components/PlaybackDrawer'
 
 type LatestCell = {
   submission_id: string
@@ -27,7 +32,7 @@ export default function TeacherDashboard() {
 
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
-  const lastAnnouncedAssignment = useRef<string>('') // NEW: prevent double-broadcasts
+  const lastAnnouncedAssignment = useRef<string>('') // avoid double-broadcasts
 
   const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
@@ -37,7 +42,7 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
 
-  // PREVIEW STATE (NEW) — audioUrl is string | undefined to match PlaybackDrawer
+  // PREVIEW STATE
   const [previewOpen, setPreviewOpen] = useState(false)
   const [preview, setPreview] = useState<{
     studentId: string
@@ -46,7 +51,7 @@ export default function TeacherDashboard() {
   } | null>(null)
   const [previewLoadingSid, setPreviewLoadingSid] = useState<string | null>(null)
 
-  // ===== NEW: resolve a URL for the current page's PDF (for PlaybackDrawer/PdfCanvas) =====
+  // ===== resolve a URL for the current page's PDF (for PlaybackDrawer/PdfCanvas) =====
   const STORAGE_BUCKET = 'pdfs'
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('')
 
@@ -73,7 +78,7 @@ export default function TeacherDashboard() {
     })()
     return () => { cancelled = true }
   }, [pageId, pages])
-  // ===== END NEW =====
+  // ===== END =====
 
   // fetch helper
   const refreshGrid = useRef<(why?: string) => Promise<void>>(async () => {})
@@ -152,6 +157,32 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
+  // --- NEW: start/refresh the presence responder whenever assignment/page changes
+  const stopPresenceResponderRef = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    if (!assignmentId) return
+
+    // (Re)start responder for this assignment that answers students' "hello" with our current state
+    if (stopPresenceResponderRef.current) {
+      try { stopPresenceResponderRef.current() } catch {}
+      stopPresenceResponderRef.current = null
+    }
+    const stop = teacherPresenceResponder(assignmentId, () => ({
+      // Keep it simple: always follow teacher + advertise current page
+      autoFollow: true,
+      allowedPages: null,
+      focusOn: false,
+      lockNav: false,
+      teacherPageIndex: pageIndex
+    }))
+    stopPresenceResponderRef.current = stop
+
+    return () => {
+      try { stopPresenceResponderRef.current?.() } catch {}
+      stopPresenceResponderRef.current = null
+    }
+  }, [assignmentId, pageIndex])
+
   // NEW: after assignmentId is resolved (initial load), broadcast it once.
   useEffect(() => {
     if (!assignmentId) return
@@ -165,6 +196,26 @@ export default function TeacherDashboard() {
       }
     })()
   }, [assignmentId])
+
+  // NEW: whenever the teacher changes page, publish page + presence so students snap immediately
+  useEffect(() => {
+    if (!assignmentId) return
+    ;(async () => {
+      try {
+        await publishSetPage(assignmentId, { pageIndex })
+        await setTeacherPresence(assignmentId, {
+          autoFollow: true,
+          teacherPageIndex: pageIndex,
+          focusOn: false,
+          lockNav: false,
+          allowedPages: null
+        })
+      } catch (err) {
+        console.error('page/presence broadcast failed', err)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignmentId, pageIndex])
 
   useEffect(() => {
     if (!assignmentId || !pageId) return
@@ -227,7 +278,7 @@ export default function TeacherDashboard() {
     } | null
   }
 
-  // PREVIEW LOADER (NEW)
+  // PREVIEW LOADER
   async function openPreviewForStudent(sid: string) {
     if (!assignmentId || !pageId) return
     setPreviewLoadingSid(sid)
@@ -277,28 +328,28 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
-<div style={{ margin: '12px 0 16px' }}>
-  <PdfDropZone
-    onCreated={async (newId: string, title: string) => {
-      // Show it immediately in the dropdown
-      setAssignments((prev) => {
-        if (prev.some((a) => a.id === newId)) return prev
-        return [{ id: newId, title }, ...prev]
-      })
+      <div style={{ margin: '12px 0 16px' }}>
+        <PdfDropZone
+          onCreated={async (newId: string, title: string) => {
+            // Show it immediately in the dropdown
+            setAssignments((prev) => {
+              if (prev.some((a) => a.id === newId)) return prev
+              return [{ id: newId, title }, ...prev]
+            })
 
-      // Select it
-      setAssignmentId(newId)
+            // Select it
+            setAssignmentId(newId)
 
-      // Broadcast to students now and mark as announced to avoid double-fire
-      try {
-        await publishSetAssignment(newId)
-        lastAnnouncedAssignment.current = newId
-      } catch (err) {
-        console.error('broadcast onCreated failed', err)
-      }
-    }}
-  />
-</div>
+            // Broadcast to students now and mark as announced to avoid double-fire
+            try {
+              await publishSetAssignment(newId)
+              lastAnnouncedAssignment.current = newId
+            } catch (err) {
+              console.error('broadcast onCreated failed', err)
+            }
+          }}
+        />
+      </div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
@@ -309,8 +360,8 @@ export default function TeacherDashboard() {
               const next = e.target.value
               setAssignmentId(next)
               try {
-                await publishSetAssignment(next) // NEW: tell students to switch
-                lastAnnouncedAssignment.current = next // avoid double fire with the effect
+                await publishSetAssignment(next) // tell students to switch
+                lastAnnouncedAssignment.current = next
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
               }
@@ -393,7 +444,7 @@ export default function TeacherDashboard() {
                     {cell!.audioUrl && (
                       <audio controls src={cell!.audioUrl} style={{ width: '100%' }} />
                     )}
-                    {/* NEW: Preview button */}
+                    {/* Preview button */}
                     <button
                       type="button"
                       onClick={() => openPreviewForStudent(sid)}
@@ -415,7 +466,7 @@ export default function TeacherDashboard() {
         Assignment: {currentAssignment?.title ?? '—'} • Page: {currentPage ? currentPage.page_index + 1 : '—'}
       </div>
 
-      {/* NEW: Drawer instance — render only when open */}
+      {/* Drawer instance — render only when open */}
       {previewOpen && (
         <PlaybackDrawer
           onClose={() => setPreviewOpen(false)}
