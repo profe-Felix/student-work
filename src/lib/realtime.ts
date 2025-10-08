@@ -1,9 +1,5 @@
 // src/lib/realtime.ts
-// Realtime utilities — class-scoped global handoff + legacy compatibility.
-// - Global "set-assignment" is class-scoped (so Class A doesn't move Class B)
-// - Per-assignment channels keep legacy names (no class in channel) for compatibility
-// - All publish* helpers accept either a RealtimeChannel OR ids
-// - assignmentChannel is exported (TeacherSyncBar imports it)
+// Realtime utilities (class-scoped with legacy compatibility)
 
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase } from './supabaseClient'
@@ -36,7 +32,7 @@ export type TeacherPresenceState = {
   [k: string]: any
 }
 
-/** ---------- Live ink updates (pre-submission co-editing) ---------- */
+/** ---------- Live ink updates ---------- */
 export type InkUpdate = {
   id: string
   color?: string
@@ -49,15 +45,11 @@ export type InkUpdate = {
 }
 
 /** ---------- Channel name helpers ---------- */
-// Global (class-scoped) channel for handoff
 const globalChan = (cls?: string) => (cls ? `global:${cls}` : 'global-class') // legacy fallback
-
-// Per-assignment channels (KEEP LEGACY NAMES — do not include class so older clients still hear)
-const assignmentChan = (assignmentId: string) => `assignment:${assignmentId}`
-
-// Ink rooms (we include class in roomKey so multiple classes don't cross-talk live ink)
+const assignmentChan = (cls: string | undefined, a: string) =>
+  cls ? `assignment:${cls}:${a}` : `assignment:${a}` // legacy fallback
 const inkChan = (cls: string | undefined, a: string, p: string, s?: string) => {
-  const base = cls ? `ink:${cls}:${a}:${p}` : `ink:${a}:${p}` // legacy fallback (no class)
+  const base = cls ? `ink:${cls}:${a}:${p}` : `ink:${a}:${p}` // legacy fallback
   return s ? `${base}:${s}` : base
 }
 
@@ -73,28 +65,28 @@ function isRealtimeChannel(x: any): x is RealtimeChannel {
  *  GLOBAL (assignment handoff) — class scoped with legacy compatibility
  *  ======================================================================================= */
 
-/**
- * Teacher announces the current assignment for a class.
- *   publishSetAssignment(assignmentId, classCode)   // preferred
+/** Teacher announces the current assignment for a class.
+ *   publishSetAssignment(classCode, assignmentId)
  * Legacy:
- *   publishSetAssignment(assignmentId)              // legacy global channel (no class)
+ *   publishSetAssignment(assignmentId)
  */
-export async function publishSetAssignment(assignmentId: string, classCode?: string) {
+export async function publishSetAssignment(a: string, b?: string) {
+  const classCode = b ? a : undefined
+  const assignmentId = b ?? a
   const ch = supabase.channel(globalChan(classCode), { config: { broadcast: { ack: true } } })
   await ch.subscribe()
   await ch.send({
     type: 'broadcast',
     event: 'set-assignment',
-    payload: { assignmentId, ts: Date.now(), classCode: classCode ?? null },
+    payload: { assignmentId, ts: Date.now() },
   })
   void ch.unsubscribe()
 }
 
-/**
- * Students listen for assignment handoff.
- *   subscribeToGlobal(classCode, cb)                // preferred
+/** Students listen for assignment handoff.
+ *   subscribeToGlobal(classCode, cb)
  * Legacy:
- *   subscribeToGlobal(cb)                           // legacy global channel (no class)
+ *   subscribeToGlobal(cb)
  */
 export function subscribeToGlobal(a: string | ((id: string) => void), b?: (id: string) => void) {
   const classCode = typeof a === 'string' ? a : undefined
@@ -110,61 +102,36 @@ export function subscribeToGlobal(a: string | ((id: string) => void), b?: (id: s
 }
 
 /** =========================================================================================
- *  PER-ASSIGNMENT (page, focus, auto-follow, presence)
+ *  PER-ASSIGNMENT (page, focus, auto-follow, presence) — class scoped w/ legacy compatibility
  *  ======================================================================================= */
 
-// Exported so TeacherSyncBar can import/use it directly.
-export function assignmentChannel(assignmentId: string): RealtimeChannel
-export function assignmentChannel(classCode: string, assignmentId: string): RealtimeChannel
-export function assignmentChannel(a: string, b?: string): RealtimeChannel {
-  const id = (b ? b : a) // keep legacy: ignore class in channel name for compatibility
-  return supabase.channel(assignmentChan(id), { config: { broadcast: { ack: true } } })
+function assignmentChannel(classCode: string | undefined, assignmentId: string) {
+  return supabase.channel(assignmentChan(classCode, assignmentId), { config: { broadcast: { ack: true } } })
 }
 
-/** Helper: accept either a RealtimeChannel OR ids */
-type ChannelInput =
-  | RealtimeChannel
-  | string // assignmentId (legacy)
-  | { assignmentId: string } // explicit object (optional future use)
-
-async function withChannel<T>(
-  input: ChannelInput,
-  fn: (ch: RealtimeChannel, temporary: boolean) => Promise<T>
-): Promise<T> {
-  let ch: RealtimeChannel
-  let temporary = false
-  if (isRealtimeChannel(input)) {
-    ch = input
-  } else if (typeof input === 'string') {
-    ch = assignmentChannel(input)
-    temporary = true
-    await ch.subscribe()
-  } else {
-    ch = assignmentChannel(input.assignmentId)
-    temporary = true
-    await ch.subscribe()
-  }
-  try {
-    return await fn(ch, temporary)
-  } finally {
-    if (temporary) { void ch.unsubscribe() }
-  }
-}
-
-/**
- * subscribeToAssignment(assignmentId, handlers)
- * (kept simple — per-assignment channel without class to preserve compatibility)
+/** subscribeToAssignment(classCode, assignmentId, handlers)
+ *  Legacy: subscribeToAssignment(assignmentId, handlers)
  */
 export function subscribeToAssignment(
-  assignmentId: string,
-  handlers: {
+  a: string,
+  b: any,
+  c?: {
     onSetPage?: (p: SetPagePayload) => void
     onFocus?: (p: FocusPayload) => void
     onAutoFollow?: (p: AutoFollowPayload) => void
     onPresence?: (p: TeacherPresenceState) => void
   }
 ) {
-  const ch = assignmentChannel(assignmentId)
+  const classCode = c ? a : undefined
+  const assignmentId = c ? (b as string) : a
+  const handlers = (c ?? b) as {
+    onSetPage?: (p: SetPagePayload) => void
+    onFocus?: (p: FocusPayload) => void
+    onAutoFollow?: (p: AutoFollowPayload) => void
+    onPresence?: (p: TeacherPresenceState) => void
+  }
+
+  const ch = assignmentChannel(classCode, assignmentId)
     .on('broadcast', { event: 'set-page' }, (msg: any) => handlers.onSetPage?.(msg?.payload))
     .on('broadcast', { event: 'focus' }, (msg: any) => handlers.onFocus?.(msg?.payload))
     .on('broadcast', { event: 'auto-follow' }, (msg: any) => handlers.onAutoFollow?.(msg?.payload))
@@ -175,51 +142,74 @@ export function subscribeToAssignment(
   return ch
 }
 
-/** ---------- publish/subscribe helpers that accept Channel OR ids ---------- */
-
-// SET PAGE
+/** publishSetPage(classCode, assignmentId, { pageIndex })
+ *  Legacy: publishSetPage(assignmentId, { pageIndex }) / publishSetPage(assignmentId, pageIndex)
+ */
 export async function publishSetPage(
-  target: ChannelInput,
-  payloadOrPageId: SetPagePayload | number | string,
-  maybeIndex?: number
+  a: string,
+  b: any,
+  c?: SetPagePayload | number | string
 ) {
+  const classCode = c !== undefined ? a : undefined
+  const assignmentId = c !== undefined ? (b as string) : a
+  const payloadOrIndex = (c !== undefined ? c : b) as SetPagePayload | number | string
+
   let payload: SetPagePayload
-  if (typeof payloadOrPageId === 'object') {
-    payload = payloadOrPageId
-  } else if (typeof payloadOrPageId === 'number') {
-    payload = { pageIndex: payloadOrPageId }
+  if (typeof payloadOrIndex === 'object') {
+    payload = payloadOrIndex
+  } else if (typeof payloadOrIndex === 'number') {
+    payload = { pageIndex: payloadOrIndex }
   } else {
-    payload = { pageId: payloadOrPageId, pageIndex: typeof maybeIndex === 'number' ? maybeIndex : 0 }
+    payload = { pageId: payloadOrIndex, pageIndex: 0 }
   }
 
-  await withChannel(target, async (ch) => {
-    await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } })
-  })
+  const ch = assignmentChannel(classCode, assignmentId)
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } })
+  void ch.unsubscribe()
 }
 
-// FOCUS
+/** publishFocus(classCode, assignmentId, payload)
+ *  Legacy: publishFocus(assignmentId, payloadOrBoolean)
+ */
 export async function publishFocus(
-  target: ChannelInput,
-  payloadOrOn: FocusPayload | boolean,
-  maybeLockNav?: boolean
+  a: string,
+  b: any,
+  c?: FocusPayload | boolean,
+  d?: boolean
 ) {
+  const classCode = c !== undefined ? a : undefined
+  const assignmentId = c !== undefined ? (b as string) : a
+  const payloadOrOn = (c !== undefined ? c : b) as FocusPayload | boolean
+  const maybeLock = d
+
   const payload: FocusPayload =
     typeof payloadOrOn === 'boolean'
-      ? { on: payloadOrOn, lockNav: !!maybeLockNav }
+      ? { on: payloadOrOn, lockNav: !!maybeLock }
       : payloadOrOn
 
-  await withChannel(target, async (ch) => {
-    await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } })
-  })
+  const ch = assignmentChannel(classCode, assignmentId)
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } })
+  void ch.unsubscribe()
 }
 
-// AUTO-FOLLOW
+/** publishAutoFollow(classCode, assignmentId, payload)
+ *  Legacy: publishAutoFollow(assignmentId, payloadOrBoolean, allowed?, teacherIdx?)
+ */
 export async function publishAutoFollow(
-  target: ChannelInput,
-  payloadOrOn: AutoFollowPayload | boolean,
-  maybeAllowed?: number[] | null,
-  maybeTeacherIdx?: number
+  a: string,
+  b: any,
+  c?: AutoFollowPayload | boolean,
+  d?: number[] | null,
+  e?: number
 ) {
+  const classCode = c !== undefined ? a : undefined
+  const assignmentId = c !== undefined ? (b as string) : a
+  const payloadOrOn = (c !== undefined ? c : b) as AutoFollowPayload | boolean
+  const maybeAllowed = d
+  const maybeTeacherIdx = e
+
   const payload: AutoFollowPayload =
     typeof payloadOrOn === 'boolean'
       ? {
@@ -229,60 +219,70 @@ export async function publishAutoFollow(
         }
       : payloadOrOn
 
-  await withChannel(target, async (ch) => {
-    await ch.send({ type: 'broadcast', event: 'auto-follow', payload: { ...payload, ts: Date.now() } })
-  })
+  const ch = assignmentChannel(classCode, assignmentId)
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'auto-follow', payload: { ...payload, ts: Date.now() } })
+  void ch.unsubscribe()
 }
 
-// PRESENCE
+/** setTeacherPresence(classCode, assignmentId, snapshot)
+ *  Legacy: setTeacherPresence(assignmentId, snapshot)
+ */
 export async function setTeacherPresence(
-  target: ChannelInput,
-  state: TeacherPresenceState
+  a: string,
+  b: any,
+  c?: TeacherPresenceState
 ) {
+  const classCode = c ? a : undefined
+  const assignmentId = c ? (b as string) : a
+  const state = (c ?? b) as TeacherPresenceState
+
+  const ch = assignmentChannel(classCode, assignmentId)
+  await ch.subscribe()
   const payload: TeacherPresenceState = { role: 'teacher', ...state, ts: Date.now() }
-  await withChannel(target, async (ch) => {
-    await ch.send({ type: 'broadcast', event: 'presence', payload })
-  })
+  await ch.send({ type: 'broadcast', event: 'presence', payload })
+  void ch.unsubscribe()
 }
 
-/** ---------- Presence snapshot responder ---------- */
-export type PresenceSnapshot = {
-  autoFollow: boolean
-  focusOn?: boolean
-  lockNav?: boolean
-  allowedPages?: number[] | null
-  teacherPageIndex?: number
-}
-
+/** teacherPresenceResponder(classCode, assignmentId, getSnapshot)
+ *  Legacy: teacherPresenceResponder(assignmentId, getSnapshot)
+ */
 export function teacherPresenceResponder(
-  assignmentId: string,
-  getSnapshot: () => PresenceSnapshot
+  a: string,
+  b: any,
+  c?: () => {
+    autoFollow: boolean
+    focusOn?: boolean
+    lockNav?: boolean
+    allowedPages?: number[] | null
+    teacherPageIndex?: number
+  }
 ) {
-  const ch = assignmentChannel(assignmentId)
+  const classCode = c ? a : undefined
+  const assignmentId = c ? (b as string) : a
+  const getSnapshot = (c ?? b) as () => {
+    autoFollow: boolean
+    focusOn?: boolean
+    lockNav?: boolean
+    allowedPages?: number[] | null
+    teacherPageIndex?: number
+  }
 
+  const ch = assignmentChannel(classCode, assignmentId)
   ch.on('broadcast', { event: 'hello' }, async () => {
     try {
       const snap = getSnapshot?.() ?? {
-        autoFollow: false,
-        focusOn: false,
-        lockNav: false,
-        allowedPages: null,
-        teacherPageIndex: 0,
+        autoFollow: false, focusOn: false, lockNav: false, allowedPages: null, teacherPageIndex: 0
       }
-      await ch.send({
-        type: 'broadcast',
-        event: 'presence-snapshot',
-        payload: { ...snap, ts: Date.now() },
-      })
+      await ch.send({ type: 'broadcast', event: 'presence-snapshot', payload: { ...snap, ts: Date.now() } })
     } catch { /* ignore */ }
   })
-
   ch.subscribe()
   return () => { void ch.unsubscribe() }
 }
 
 /** =========================================================================================
- *  INK (page or page+student) — we include class in the roomKey to avoid cross-class echo
+ *  INK (page or page+student) — class added to room names for isolation
  *  ======================================================================================= */
 
 function makeRoomKey(classCode: string | undefined, assignmentId: string, pageId: string, studentCode?: string) {
@@ -297,9 +297,8 @@ function inkChannel(classCode: string | undefined, assignmentId: string, pageId:
   })
 }
 
-/**
- * publishInk({ classCode?, assignmentId, pageId, studentCode? } | RealtimeChannel, update)
- * Legacy rooms (without class) still work if classCode omitted.
+/** publishInk({ classCode?, assignmentId, pageId, studentCode? } | RealtimeChannel, update)
+ *  Legacy rooms (without class) still work if classCode omitted.
  */
 export async function publishInk(
   inkChOrIds:
@@ -328,10 +327,8 @@ export async function publishInk(
   if (temporary) { void ch.unsubscribe() }
 }
 
-/**
- * subscribeToInk(classCode, assignmentId, pageId, onUpdate, studentCode?)
- * Legacy:
- *   subscribeToInk(assignmentId, pageId, onUpdate, studentCode?)
+/** subscribeToInk(classCode, assignmentId, pageId, onUpdate, studentCode?)
+ *  Legacy: subscribeToInk(assignmentId, pageId, onUpdate, studentCode?)
  */
 export function subscribeToInk(
   a: string,
@@ -339,13 +336,14 @@ export function subscribeToInk(
   c: ((u: InkUpdate) => void) | string,
   d?: string
 ): RealtimeChannel {
-  // Detect whether first arg is classCode or assignmentId (legacy)
-  const legacy = typeof b === 'string' && typeof c !== 'function'
-  const classCode = legacy ? undefined : a
-  const assignmentId = legacy ? a : (b as string)
-  const pageId = legacy ? (b as string) : (c as any as string)
-  const onUpdate = (legacy ? (c as any as (u: InkUpdate) => void) : (d as any as (u: InkUpdate) => void))
-  const studentCode = legacy ? d : undefined
+  const classCode = typeof b === 'string' && typeof c !== 'function' ? undefined
+    : (typeof b === 'string' ? undefined : a)
+
+  // Determine arg mapping
+  const assignmentId = classCode ? (b as string) : a
+  const pageId = classCode ? (c as any as string) : (b as string)
+  const onUpdate = (classCode ? d : c) as unknown as (u: InkUpdate) => void
+  const studentCode = (classCode ? undefined : d) as string | undefined
 
   const roomKey = makeRoomKey(classCode, assignmentId, pageId, studentCode)
   const ch = inkChannel(classCode, assignmentId, pageId, studentCode)
