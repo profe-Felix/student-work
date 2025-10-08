@@ -1,4 +1,4 @@
-//src/pages/teacher/index.tsx
+// src/pages/teacher/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
@@ -26,14 +26,27 @@ type LatestCell = {
   audioUrl?: string
 } | null
 
-const STUDENTS = Array.from({ length: 28 }, (_, i) => `A_${String(i + 1).padStart(2, '0')}`)
-
 export default function TeacherDashboard() {
   // --- class code from URL (?class=A); default 'A'
   const location = useLocation()
   const params = new URLSearchParams(location.search)
   const classCode = (params.get('class') || 'A').toUpperCase()
-  useEffect(() => {}, [classCode]) // keep for now so lints don't whine
+
+  // ---------- NEW: students list is now dynamic from classCode ----------
+  const STUDENTS = useMemo(
+    () => Array.from({ length: 28 }, (_, i) => `${classCode}_${String(i + 1).padStart(2, '0')}`),
+    [classCode]
+  )
+
+  // ---------- NEW: absolute shareable link for /start with class ----------
+  const startHref = useMemo(() => {
+    // If you use HashRouter in prod, include '#/' so QR works from your domain root.
+    const base = `${window.location.origin}${window.location.pathname}`
+    return `${base}#/start?class=${encodeURIComponent(classCode)}`
+  }, [classCode])
+
+  // (keep this so lints don't whine about classCode being unused in deps)
+  useEffect(() => {}, [classCode])
 
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
   const [assignmentId, setAssignmentId] = useState<string>('')
@@ -95,6 +108,7 @@ export default function TeacherDashboard() {
     setLoading(true)
     try {
       const next: Record<string, LatestCell> = {}
+      // ---------- UPDATED: iterate dynamic students ----------
       for (let i = 0; i < STUDENTS.length; i += 6) {
         const batch = STUDENTS.slice(i, i + 6)
         const results: Array<readonly [string, LatestCell] | null> = await Promise.all(
@@ -223,18 +237,18 @@ export default function TeacherDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignmentId, pageIndex])
 
-  // --- NEW: keep DB "class_state" in sync for cold start
+  // --- keep DB "class_state" in sync for cold start
   useEffect(() => {
     if (!classCode || !assignmentId || !pageId) return
     upsertClassState(classCode, assignmentId, pageId, pageIndex)
       .catch(err => console.error('upsertClassState failed', err))
-  }, [classCode, assignmentId, pageId, pageIndex]) // <-- NEW
+  }, [classCode, assignmentId, pageId, pageIndex])
 
   useEffect(() => {
     if (!assignmentId || !pageId) return
     setGrid({})
     refreshGrid.current('page change')
-  }, [assignmentId, pageId])
+  }, [assignmentId, pageId, STUDENTS]) // include STUDENTS so grid resets if class changes
 
   // realtime refreshers
   useEffect(() => {
@@ -341,6 +355,38 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
+      {/* ---------- NEW: quick share box for /start?class=CODE ---------- */}
+      <div style={{
+        margin: '8px 0 16px', padding: 10, background:'#fff',
+        border:'1px solid #e5e7eb', borderRadius:10, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'
+      }}>
+        <div style={{ fontSize:12, color:'#374151' }}>Class:</div>
+        <strong style={{ fontSize:14 }}>{classCode}</strong>
+        <input
+          readOnly
+          value={startHref}
+          style={{ flex:1, minWidth:260, padding:'6px 8px', border:'1px solid #e5e7eb', borderRadius:8, background:'#f9fafb' }}
+        />
+        <button
+          onClick={async()=>{
+            try { await navigator.clipboard.writeText(startHref) } catch {}
+          }}
+          style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
+          title="Copy link"
+        >
+          Copy link
+        </button>
+        <a
+          href={startHref}
+          target="_blank"
+          rel="noreferrer"
+          style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6', textDecoration:'none', color:'#111' }}
+          title="Open start page"
+        >
+          Open
+        </a>
+      </div>
+
       <div style={{ margin: '12px 0 16px' }}>
         <PdfDropZone
           onCreated={async (newId: string, title: string) => {
@@ -358,7 +404,7 @@ export default function TeacherDashboard() {
               await publishSetAssignment(newId)
               lastAnnouncedAssignment.current = newId
 
-              // NEW: snapshot to class_state (best-effort; pageId/pageIndex may update right after)
+              // snapshot to class_state (best-effort; pageId/pageIndex may update right after)
               if (classCode && pageId) {
                 await upsertClassState(classCode, newId, pageId, pageIndex)
               }
@@ -381,7 +427,7 @@ export default function TeacherDashboard() {
                 await publishSetAssignment(next) // tell students to switch
                 lastAnnouncedAssignment.current = next
 
-                // NEW: snapshot to class_state (best-effort)
+                // snapshot to class_state (best-effort)
                 if (classCode && pageId) {
                   await upsertClassState(classCode, next, pageId, pageIndex)
                 }
@@ -405,7 +451,7 @@ export default function TeacherDashboard() {
               const nextPageId = e.target.value
               setPageId(nextPageId)
 
-              // NEW: upsert immediately with the selected page's index
+              // upsert immediately with the selected page's index
               try {
                 const nextIndex = pages.find(p => p.id === nextPageId)?.page_index ?? pageIndex
                 if (classCode && assignmentId) {
