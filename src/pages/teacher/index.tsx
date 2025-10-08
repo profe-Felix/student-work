@@ -8,7 +8,7 @@ import {
   type AssignmentRow,
   type PageRow,
   supabase,
-  upsertClassState, // <-- NEW
+  upsertClassState, // <-- keep
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
@@ -32,20 +32,18 @@ export default function TeacherDashboard() {
   const params = new URLSearchParams(location.search)
   const classCode = (params.get('class') || 'A').toUpperCase()
 
-  // ---------- NEW: students list is now dynamic from classCode ----------
+  // Students list is dynamic from classCode
   const STUDENTS = useMemo(
     () => Array.from({ length: 28 }, (_, i) => `${classCode}_${String(i + 1).padStart(2, '0')}`),
     [classCode]
   )
 
-  // ---------- NEW: absolute shareable link for /start with class ----------
+  // Absolute shareable link for /start with class
   const startHref = useMemo(() => {
-    // If you use HashRouter in prod, include '#/' so QR works from your domain root.
     const base = `${window.location.origin}${window.location.pathname}`
     return `${base}#/start?class=${encodeURIComponent(classCode)}`
   }, [classCode])
 
-  // (keep this so lints don't whine about classCode being unused in deps)
   useEffect(() => {}, [classCode])
 
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
@@ -108,7 +106,6 @@ export default function TeacherDashboard() {
     setLoading(true)
     try {
       const next: Record<string, LatestCell> = {}
-      // ---------- UPDATED: iterate dynamic students ----------
       for (let i = 0; i < STUDENTS.length; i += 6) {
         const batch = STUDENTS.slice(i, i + 6)
         const results: Array<readonly [string, LatestCell] | null> = await Promise.all(
@@ -203,19 +200,19 @@ export default function TeacherDashboard() {
     }
   }, [assignmentId, pageIndex])
 
-  // initial assignment broadcast
+  // initial assignment broadcast (class-scoped)
   useEffect(() => {
     if (!assignmentId) return
     if (lastAnnouncedAssignment.current === assignmentId) return
     ;(async () => {
       try {
-        await publishSetAssignment(assignmentId)
+        await publishSetAssignment(assignmentId, classCode) // <-- pass classCode
         lastAnnouncedAssignment.current = assignmentId
       } catch (err) {
         console.error('initial broadcast failed', err)
       }
     })()
-  }, [assignmentId])
+  }, [assignmentId, classCode])
 
   // page + presence broadcast
   useEffect(() => {
@@ -355,7 +352,7 @@ export default function TeacherDashboard() {
     <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
       <h2>Teacher Dashboard</h2>
 
-      {/* ---------- NEW: quick share box for /start?class=CODE ---------- */}
+      {/* quick share box for /start?class=CODE */}
       <div style={{
         margin: '8px 0 16px', padding: 10, background:'#fff',
         border:'1px solid #e5e7eb', borderRadius:10, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'
@@ -401,7 +398,7 @@ export default function TeacherDashboard() {
 
             // Broadcast to students now and mark as announced to avoid double-fire
             try {
-              await publishSetAssignment(newId)
+              await publishSetAssignment(newId, classCode) // <-- pass classCode
               lastAnnouncedAssignment.current = newId
 
               // snapshot to class_state (best-effort; pageId/pageIndex may update right after)
@@ -424,7 +421,7 @@ export default function TeacherDashboard() {
               const next = e.target.value
               setAssignmentId(next)
               try {
-                await publishSetAssignment(next) // tell students to switch
+                await publishSetAssignment(next, classCode) // <-- pass classCode
                 lastAnnouncedAssignment.current = next
 
                 // snapshot to class_state (best-effort)
