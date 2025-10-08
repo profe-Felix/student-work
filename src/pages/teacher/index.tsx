@@ -357,6 +357,11 @@ export default function TeacherDashboard() {
             try {
               await publishSetAssignment(newId)
               lastAnnouncedAssignment.current = newId
+
+              // NEW: snapshot to class_state (best-effort; pageId/pageIndex may update right after)
+              if (classCode && pageId) {
+                await upsertClassState(classCode, newId, pageId, pageIndex)
+              }
             } catch (err) {
               console.error('broadcast onCreated failed', err)
             }
@@ -375,6 +380,11 @@ export default function TeacherDashboard() {
               try {
                 await publishSetAssignment(next) // tell students to switch
                 lastAnnouncedAssignment.current = next
+
+                // NEW: snapshot to class_state (best-effort)
+                if (classCode && pageId) {
+                  await upsertClassState(classCode, next, pageId, pageIndex)
+                }
               } catch (err) {
                 console.error('broadcast assignment change failed', err)
               }
@@ -391,7 +401,20 @@ export default function TeacherDashboard() {
           <span style={{ marginBottom: 4, color: '#555' }}>Page</span>
           <select
             value={pageId}
-            onChange={(e) => setPageId(e.target.value)}
+            onChange={async (e) => {
+              const nextPageId = e.target.value
+              setPageId(nextPageId)
+
+              // NEW: upsert immediately with the selected page's index
+              try {
+                const nextIndex = pages.find(p => p.id === nextPageId)?.page_index ?? pageIndex
+                if (classCode && assignmentId) {
+                  await upsertClassState(classCode, assignmentId, nextPageId, nextIndex)
+                }
+              } catch (err) {
+                console.error('upsert on page change failed', err)
+              }
+            }}
             style={{ padding: '6px 8px', minWidth: 120 }}
             disabled={!assignmentId}
           >
