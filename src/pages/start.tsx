@@ -1,79 +1,75 @@
 // src/pages/start.tsx
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-
-const makeRoster = (prefix: string, count: number) =>
-  Array.from({ length: count }, (_, i) => `${prefix}_${String(i + 1).padStart(2, '0')}`)
+import React, { useMemo } from 'react'
+import { useLocation, useNavigate, Link } from 'react-router-dom'
 
 export default function Start() {
-  const nav = useNavigate()
+  const location = useLocation()
+  const navigate = useNavigate()
 
-  // Allow picking class letter if you later add more classes (A, B, C…)
-  const [klass, setKlass] = useState<string>(() => {
-    const saved = localStorage.getItem('currentClass') || 'A'
-    return saved
-  })
-  const [count, setCount] = useState<number>(28)
+  // Read class from the URL; default to 'A'
+  const classCode = useMemo(() => {
+    const qs = new URLSearchParams(location.search)
+    return (qs.get('class') || 'A').toUpperCase()
+  }, [location.search])
 
-  const roster = useMemo(() => makeRoster(klass, count), [klass, count])
+  // Build student ids for this class (A_01..A_28, B_01..B_28, etc.)
+  const students = useMemo(
+    () => Array.from({ length: 28 }, (_, i) => `${classCode}_${String(i + 1).padStart(2, '0')}`),
+    [classCode]
+  )
 
-  const go = (studentId: string) => {
-    try { localStorage.setItem('currentStudent', studentId) } catch {}
-    try { localStorage.setItem('currentClass', klass) } catch {}
-    nav(`/student/assignment?student=${encodeURIComponent(studentId)}`)
+  const setClassInQuery = (next: string) => {
+    const qs = new URLSearchParams(location.search)
+    if (next) qs.set('class', next.toUpperCase())
+    else qs.delete('class')
+    navigate({ pathname: '/start', search: `?${qs.toString()}` }, { replace: true })
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2 style={{ marginBottom: 12 }}>Pick Student</h2>
+    <div style={{ padding: 16, minHeight: '100vh', background: '#fafafa' }}>
+      <h2>Choose Your Class & Student</h2>
 
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-        <label>
-          Class:&nbsp;
-          <select value={klass} onChange={(e) => setKlass(e.target.value)}>
-            {['A','B','C','D','E'].map((k) => (
-              <option key={k} value={k}>{k}</option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          Count:&nbsp;
-          <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
-            {[20, 24, 28, 30, 32].map((n) => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </select>
-        </label>
+      <div style={{
+        margin: '10px 0 16px', padding: 12, background: '#fff',
+        border: '1px solid #e5e7eb', borderRadius: 10, display: 'flex',
+        gap: 8, alignItems: 'center', flexWrap: 'wrap'
+      }}>
+        <label style={{ fontSize: 14 }}>Class code:</label>
+        <input
+          value={classCode}
+          onChange={(e) => setClassInQuery(e.target.value)}
+          style={{ padding: '6px 8px', border: '1px solid #e5e7eb', borderRadius: 8, minWidth: 80 }}
+        />
+        <span style={{ fontSize: 12, color: '#6b7280' }}>
+          Tip: share <code style={{ background:'#f3f4f6', padding:'2px 6px', borderRadius:6 }}>
+          {`${window.location.origin}${window.location.pathname}#/start?class=${encodeURIComponent(classCode)}`}
+          </code>
+        </span>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
-          gap: 10
-        }}
-      >
-        {roster.map((id: string) => (
-          <button
-            key={id}
-            onClick={() => go(id)}
-            style={{
-              padding: '14px 10px',
-              borderRadius: 12,
-              border: '1px solid #e5e7eb',
-              background: '#fff',
-              fontSize: 18,
-              fontWeight: 700
-            }}
-          >
-            {id}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ marginTop: 16, color: '#6b7280', fontSize: 12 }}>
-        Tip: the last picked student persists for quick access.
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+        gap: 10
+      }}>
+        {students.map((sid) => {
+          const url = `#/student/assignment?student=${encodeURIComponent(sid)}&class=${encodeURIComponent(classCode)}`
+          return (
+            <Link
+              key={sid}
+              to={`/student/assignment?student=${encodeURIComponent(sid)}&class=${encodeURIComponent(classCode)}`}
+              style={{
+                border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff',
+                padding: 12, textDecoration: 'none', color: '#111', textAlign: 'center'
+              }}
+              title={url}
+              onClick={() => {
+                try { localStorage.setItem('currentStudent', sid) } catch {}
+              }}
+            >
+              {sid}
+            </Link>
+          )
+        })}
       </div>
     </div>
   )
