@@ -12,8 +12,8 @@ export type Props = {
 }
 
 type TimedPoint = { x: number; y: number; t?: number }
-type Stroke = { color?: string; size?: number; points: TimedPoint[] }
-type Seg = { x0:number; y0:number; x1:number; y1:number; color:string; size:number; t:number }
+type Stroke = { color?: string; size?: number; points: TimedPoint[]; tool?: string }
+type Seg = { x0:number; y0:number; x1:number; y1:number; color:string; size:number; t:number; tool?: string }
 
 type OverlaySize = { cssW: number; cssH: number; dpr: number }
 
@@ -31,25 +31,30 @@ function asPoints(maybe:any): TimedPoint[] {
   }
   return []
 }
+
 function toStroke(obj:any): Stroke | null {
   if (!obj) return null
-  if (Array.isArray(obj.pts))    return { color: obj.color, size: obj.size, points: asPoints(obj.pts) }
-  if (Array.isArray(obj.points)) return { color: obj.color, size: obj.size, points: asPoints(obj.points) }
-  if (Array.isArray(obj.path))   return { color: obj.color, size: obj.size, points: asPoints(obj.path) }
+  const tool = obj.tool ?? obj.mode ?? obj.type
+  if (Array.isArray(obj.pts))    return { color: obj.color, size: obj.size, points: asPoints(obj.pts), tool }
+  if (Array.isArray(obj.points)) return { color: obj.color, size: obj.size, points: asPoints(obj.points), tool }
+  if (Array.isArray(obj.path))   return { color: obj.color, size: obj.size, points: asPoints(obj.path), tool }
   if (Array.isArray(obj) && obj.length && typeof obj[0] === 'object' && 'x' in obj[0]) {
-    return { color: (obj as any).color, size: (obj as any).size, points: asPoints(obj) }
+    return { color: (obj as any).color, size: (obj as any).size, points: asPoints(obj), tool }
   }
   return null
 }
+
 type Parsed = { strokes: Stroke[]; metaW: number; metaH: number }
+
 function parseStrokes(payload:any): Parsed {
   let raw = payload
   try { if (typeof raw === 'string') raw = JSON.parse(raw) } catch {}
   if (!raw) return { strokes: [], metaW: 0, metaH: 0 }
 
-  // try to read capture canvas size if present (not in your current save, but future-proof)
+  // Try to read capture canvas size if present (compatible with student submit { ...strokes, w, h })
   let metaW = N(raw.canvasWidth ?? raw.canvas_w ?? raw.canvasW ?? raw.width ?? raw.w ?? raw.pageWidth ?? raw.page?.width)
   let metaH = N(raw.canvasHeight ?? raw.canvas_h ?? raw.canvasH ?? raw.height ?? raw.h ?? raw.pageHeight ?? raw.page?.height)
+
   if (raw && raw.data) raw = raw.data
 
   const toParsed = (arr:any[]): Parsed => ({ strokes: (arr.map(toStroke).filter(Boolean) as Stroke[]), metaW, metaH })
@@ -93,7 +98,7 @@ function buildSequentialSegments(strokes: Stroke[]): { segs: Seg[]; duration: nu
       const p0 = pts[i - 1], p1 = pts[i]
       segs.push({
         x0: N(p0.x), y0: N(p0.y), x1: N(p1.x), y1: N(p1.y),
-        color: s.color || '#111', size: s.size || 4, t
+        color: s.color || '#111', size: s.size || 4, t, tool: s.tool
       })
       t += SEG_DT
     }
@@ -104,7 +109,7 @@ function buildSequentialSegments(strokes: Stroke[]): { segs: Seg[]; duration: nu
 
 /* ------------ source space inference ------------ */
 function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
-  // Prefer capture metadata if sane
+  // Prefer capture metadata if sane (student save writes w/h)
   if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
   // Fallback: assume capture used the PDF CSS size at the time (best we can do without meta)
   return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
@@ -131,7 +136,7 @@ export default function PlaybackDrawer({
   // Decide the stroke coordinate space to scale from
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
-    [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH] // re-evaluate if page size changes
+    [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH]
   )
 
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
@@ -212,19 +217,25 @@ export default function PlaybackDrawer({
     ctx.restore()
   }
 
+  function applyStyleForTool(ctx: CanvasRenderingContext2D, color: string, size: number, tool?: string) {
+    ctx.strokeStyle = color
+    const isHi = tool === 'highlighter'
+    ctx.globalAlpha = isHi ? 0.35 : 1.0
+    ctx.lineWidth = Math.max(1, (isHi ? size * 1.5 : size))
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+  }
+
   function drawAllStatic() {
     const ctx = ensureCtx()
     if (!ctx) return
     const { cssW, cssH } = overlay
     ctx.clearRect(0, 0, cssW, cssH)
     withScale(ctx, () => {
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
       for (const s of strokes) {
         const pts = s.points || []
         if (!pts.length) continue
-        ctx.strokeStyle = s.color || '#111'
-        ctx.lineWidth = s.size || 4
+        applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
         if (pts.length === 1) {
           const p = pts[0]
           ctx.beginPath()
@@ -238,6 +249,8 @@ export default function PlaybackDrawer({
           ctx.stroke()
         }
       }
+      // reset alpha
+      ctx.globalAlpha = 1
     })
   }
 
@@ -248,20 +261,26 @@ export default function PlaybackDrawer({
     ctx.clearRect(0, 0, cssW, cssH)
     if (!segs.length) { drawAllStatic(); return }
     withScale(ctx, () => {
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
       let lastColor = ''
       let lastSize = -1
+      let lastTool = ''
       for (let i = 0; i < segs.length; i++) {
         const s = segs[i]
         if (s.t > timeSec) break
-        if (s.color !== lastColor) { ctx.strokeStyle = s.color; lastColor = s.color }
-        if (s.size !== lastSize) { ctx.lineWidth = s.size; lastSize = s.size }
+        // re-apply tool style when any “style” attribute changes
+        if (s.color !== lastColor || s.size !== lastSize || (s.tool || '') !== lastTool) {
+          applyStyleForTool(ctx, s.color, s.size, s.tool)
+          lastColor = s.color
+          lastSize = s.size
+          lastTool = s.tool || ''
+        }
         ctx.beginPath()
         ctx.moveTo(s.x0, s.y0)
         ctx.lineTo(s.x1, s.y1)
         ctx.stroke()
       }
+      // reset alpha
+      ctx.globalAlpha = 1
     })
   }
 
