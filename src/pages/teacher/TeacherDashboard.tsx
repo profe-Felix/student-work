@@ -1,12 +1,22 @@
-//src/pages/teacher/TeacherDashboard.tsx
+// src/pages/teacher/TeacherDashboard.tsx
 import { useEffect, useState } from 'react';
-import { listAssignments, listPages, listLatestSubmissionsByPage, getThumbnailForSubmission } from '../../lib/queries';
+import { useLocation } from 'react-router-dom';
+import {
+  listAssignments,
+  listPages,
+  listLatestSubmissionsByPage,
+  getThumbnailForSubmission
+} from '../../lib/queries';
 import { publicUrl } from '../../lib/supabaseHelpers';
 import TeacherSyncBar from '../../components/TeacherSyncBar';
 import PdfDropZone from '../../components/PdfDropZone';
 import { teacherPresenceResponder } from '../../lib/realtime';
 
 export default function TeacherDashboard() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const classCode = (params.get('class') || 'A').toUpperCase();
+
   const [assignments, setAssignments] = useState<any[]>([]);
   const [pages, setPages] = useState<any[]>([]);
   const [assignmentId, setAssignmentId] = useState<string>('');
@@ -27,31 +37,34 @@ export default function TeacherDashboard() {
     async function load() {
       if (!pageId) { setCards([]); return; }
       const subs = await listLatestSubmissionsByPage(pageId);
-      const withThumbs = await Promise.all(subs.map(async (s: any) => {
-        const path = await getThumbnailForSubmission(s.id);
-        return { ...s, thumb: path ? publicUrl(path) : null };
-      }));
+      const withThumbs = await Promise.all(
+        subs.map(async (s: any) => {
+          const path = await getThumbnailForSubmission(s.id);
+          return { ...s, thumb: path ? publicUrl(path) : null };
+        })
+      );
       setCards(withThumbs);
     }
     load();
   }, [pageId]);
 
-  // === NEW: Answer student "hello" pings with the current teacher presence snapshot ===
+  // === Answer student "hello" pings with the current teacher presence snapshot (class-scoped) ===
   useEffect(() => {
     if (!assignmentId) return;
 
-    // We read the freshest presence directly from localStorage (TeacherSyncBar updates it).
-    const stop = teacherPresenceResponder(assignmentId, () => {
+    const stop = teacherPresenceResponder(classCode, assignmentId, () => {
+      // Try class-scoped cache first; fall back to legacy key if present
       try {
-        const raw = localStorage.getItem(`presence:${assignmentId}`);
-        const p = raw ? JSON.parse(raw) : {};
+        const rawScoped = localStorage.getItem(`presence:${classCode}:${assignmentId}`);
+        const rawLegacy = localStorage.getItem(`presence:${assignmentId}`);
+        const p = rawScoped ? JSON.parse(rawScoped) : (rawLegacy ? JSON.parse(rawLegacy) : {});
         return {
           autoFollow: !!p.autoFollow,
           focusOn: !!p.focusOn,
           lockNav: !!p.lockNav,
           allowedPages: Array.isArray(p.allowedPages) ? p.allowedPages : null,
-          // fall back to our current pageIndex if presence doesn't have it yet
-          teacherPageIndex: typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : pageIndex,
+          teacherPageIndex:
+            typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : pageIndex,
         };
       } catch {
         return {
@@ -65,16 +78,19 @@ export default function TeacherDashboard() {
     });
 
     return stop;
-    // Include deps so the responder uses up-to-date values if presence is missing teacherPageIndex
-  }, [assignmentId, pageIndex]);
+  }, [classCode, assignmentId, pageIndex]);
 
   return (
     <div className="p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Teacher Dashboard</h1>
 
-      <PdfDropZone onCreated={(newId: string) => {
-        setAssignmentId(newId);
-      }} />
+      <PdfDropZone
+        onCreated={(newId: string) => {
+          setAssignmentId(newId);
+          setPageId('');
+          setPageIndex(0);
+        }}
+      />
 
       <div className="flex gap-3 items-center">
         <select
@@ -83,7 +99,9 @@ export default function TeacherDashboard() {
           onChange={e => { setAssignmentId(e.target.value); setPageId(''); }}
         >
           <option value="">Select assignment…</option>
-          {assignments.map((a: any) => <option key={a.id} value={a.id}>{a.title}</option>)}
+          {assignments.map((a: any) => (
+            <option key={a.id} value={a.id}>{a.title}</option>
+          ))}
         </select>
 
         <select
@@ -98,17 +116,20 @@ export default function TeacherDashboard() {
           disabled={!assignmentId}
         >
           <option value="">Select page…</option>
-          {pages.map((p: any) => <option key={p.id} value={p.id}>Pg {p.page_index + 1}: {p.title}</option>)}
+          {pages.map((p: any) => (
+            <option key={p.id} value={p.id}>
+              Pg {p.page_index + 1}: {p.title}
+            </option>
+          ))}
         </select>
       </div>
 
       {assignmentId && pageId && (
         <TeacherSyncBar
-          <TeacherSyncBar
-  classCode={classCode}
-  assignmentId={assignmentId}
-  pageId={pageId}
-  pageIndex={pageIndex}
+          classCode={classCode}
+          assignmentId={assignmentId}
+          pageId={pageId}
+          pageIndex={pageIndex}
           className="sticky top-2 z-10"
         />
       )}
@@ -119,7 +140,9 @@ export default function TeacherDashboard() {
             {c.thumb ? (
               <img src={c.thumb} alt="thumbnail" className="w-full aspect-[4/3] object-cover" />
             ) : (
-              <div className="w-full aspect-[4/3] bg-gray-100 grid place-items-center text-gray-500">No preview</div>
+              <div className="w-full aspect-[4/3] bg-gray-100 grid place-items-center text-gray-500">
+                No preview
+              </div>
             )}
             <div className="p-2 text-sm">
               <div className="font-medium">Student: {c.student_id}</div>
