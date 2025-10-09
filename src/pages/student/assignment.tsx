@@ -683,7 +683,9 @@ export default function StudentAssignment(){
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       if (hasInk) {
-        await saveStrokes(submission_id, strokes)
+        // Save strokes with the canvas size so previews can scale correctly
+const strokesWithCanvas = { ...strokes, w: canvasSize.w, h: canvasSize.h }
+await saveStrokes(submission_id, strokesWithCanvas)
         localStorage.setItem(lastKey, encHash)
         saveSubmittedCache(studentId, assignmentUid, pageUid, strokes)
         lastAppliedServerHash.current = encHash
