@@ -10,7 +10,7 @@ import {
   createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
   listPages,
   supabase,
-  fetchClassState, // <-- NEW
+  fetchClassState,
 } from '../../lib/db'
 import {
   subscribeToAssignment,
@@ -29,7 +29,7 @@ import type { Pt } from '../../lib/geometry'
 import { objectErase, softErase } from '../../lib/erase'
 
 /** Constants */
-const assignmentTitle = 'Handwriting - Daily' // only used for legacy purge text
+const assignmentTitle = 'Handwriting - Daily' // legacy purge helper
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
@@ -315,7 +315,7 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // === UPDATED: ink subscription handle (room-scoped)
+  // === UPDATED: ink subscription handle
   const inkSubRef = useRef<ReturnType<typeof subscribeToInk> | null>(null)
 
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
@@ -825,7 +825,7 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // subscribe to artifacts AND the room-scoped live ink channel
+  // subscribe to artifacts AND the class-scoped live ink channel
   useEffect(()=>{
     let cleanupArtifacts: (()=>void) | null = null
     let pollId: number | null = null
@@ -835,7 +835,7 @@ export default function StudentAssignment(){
       const ids = await resolveIds()
       if (!ids) return
 
-      // live submissions polling (unchanged)
+      // live submissions polling
       try{
         const ch = supabase.channel(`art-strokes-${ids.page_id}`)
           .on('postgres_changes', {
@@ -849,25 +849,22 @@ export default function StudentAssignment(){
       }
       pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
 
-      // CLASS-SCOPED realtime ink (assignment + page)
+      // CLASS-SCOPED realtime ink (class + assignment + page)
       try { inkSubRef.current?.unsubscribe?.() } catch {}
-      const chInk = subscribeToInk(
-        classCode,
-        ids.assignment_id,
-        ids.page_id,
-        (u) => {
-          if (u.tool !== 'pen' && u.tool !== 'highlighter') return
-          if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
-          drawRef.current?.applyRemote({
-            id: u.id,
-            color: u.color!,
-            size: u.size!,
-            tool: u.tool as 'pen'|'highlighter',
-            pts: (u.pts as any) || [],
-            done: !!u.done,
-          })
-        }
-      )
+      const onInk = (u: any) => {
+        if (u.tool !== 'pen' && u.tool !== 'highlighter') return
+        if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+        drawRef.current?.applyRemote({
+          id: u.id,
+          color: u.color!,
+          size: u.size!,
+          tool: u.tool as 'pen'|'highlighter',
+          pts: (u.pts as any) || [],
+          done: !!u.done,
+        })
+      }
+      // Use class-scoped overload; cast to any to satisfy TS overload
+      const chInk = (subscribeToInk as any)(classCode, ids.assignment_id, ids.page_id, onInk)
       inkSubRef.current = chInk
     })()
 
