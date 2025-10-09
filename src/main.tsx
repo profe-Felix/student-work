@@ -7,6 +7,7 @@ import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-d
 import StudentAssignment from './pages/student/assignment'
 import Start from './pages/start'
 import Teacher from './pages/teacher'
+import InsideOutsideWS from './pages/workstations/InsideOutsideWS' // NEW
 
 // Base styles (optional)
 const appStyle: React.CSSProperties = {
@@ -34,7 +35,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/student/assignment" element={<StudentAssignment />} />
           <Route path="/teacher" element={<Teacher />} />
 
-          {/* Legacy/shortcut paths that should land on /start but keep query */}
+          {/* Virtual Workstations */}
+          <Route path="/ws/inside-outside" element={<InsideOutsideWS />} />
+
+          {/* Shortcuts / legacy redirects (preserve query) */}
+          <Route path="/inside-outside" element={<RedirectWithQuery to="/ws/inside-outside" />} />
           <Route path="/student" element={<RedirectWithQuery to="/start" />} />
           <Route path="/student/start" element={<RedirectWithQuery to="/start" />} />
 
