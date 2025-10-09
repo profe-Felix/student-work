@@ -104,9 +104,11 @@ export default function TeacherDashboard() {
 
       {assignmentId && pageId && (
         <TeacherSyncBar
-          assignmentId={assignmentId}
-          pageId={pageId}
-          pageIndex={pageIndex}
+          <TeacherSyncBar
+  classCode={classCode}
+  assignmentId={assignmentId}
+  pageId={pageId}
+  pageIndex={pageIndex}
           className="sticky top-2 z-10"
         />
       )}
