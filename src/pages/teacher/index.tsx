@@ -1,4 +1,4 @@
-//src/pages/teacher/index.tsx
+// src/pages/teacher/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
@@ -43,8 +43,6 @@ export default function TeacherDashboard() {
     const base = `${window.location.origin}${window.location.pathname}`
     return `${base}#/start?class=${encodeURIComponent(classCode)}`
   }, [classCode])
-
-  useEffect(() => {}, [classCode])
 
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
   const [assignmentId, setAssignmentId] = useState<string>('')
@@ -487,6 +485,7 @@ export default function TeacherDashboard() {
       {assignmentId && pageId && (
         <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
           <TeacherSyncBar
+            classCode={classCode}             {/* <-- IMPORTANT: scope teacher controls to this class */}
             assignmentId={assignmentId}
             pageId={pageId}
             pageIndex={pageIndex}
