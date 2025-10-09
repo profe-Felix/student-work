@@ -484,12 +484,14 @@ export default function TeacherDashboard() {
 
       {assignmentId && pageId && (
         <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
-          <TeacherSyncBar
-            classCode={classCode}             {/* <-- IMPORTANT: scope teacher controls to this class */}
-            assignmentId={assignmentId}
-            pageId={pageId}
-            pageIndex={pageIndex}
-          />
+{/* IMPORTANT: scope teacher controls to this class */}
+<TeacherSyncBar
+  classCode={classCode}
+  assignmentId={assignmentId}
+  pageId={pageId}
+  pageIndex={pageIndex}
+/>
+
         </div>
       )}
 
