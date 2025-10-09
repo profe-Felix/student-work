@@ -61,9 +61,10 @@ const SKIN_TONES = [
 
 type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
-/* ---------- Keys & helpers (now namespaced by assignmentId + pageId) ---------- */
+/* ---------- Keys & helpers (now namespaced by CLASS + assignmentId + pageId) ---------- */
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
-const presenceKey = (assignmentId:string)=> `presence:${assignmentId}`
+// CLASS-SCOPED presence cache
+const presenceKey = (classCode: string, assignmentId:string)=> `presence:${classCode}:${assignmentId}`
 
 const draftKey      = (student:string, assignmentUid:string, pageUid:string)=> `draft:${student}:${assignmentUid}:${pageUid}`
 const lastHashKey   = (student:string, assignmentUid:string, pageUid:string)=> `lastHash:${student}:${assignmentUid}:${pageUid}`
@@ -114,7 +115,7 @@ function Toast({ text, kind }:{ text:string; kind:'ok'|'err' }){
   )
 }
 
-/* ---------- NEW: find newest assignment with at least one page ---------- */
+/* ---------- find newest assignment with at least one page (fallback) ---------- */
 async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
   try {
     const { data, error } = await supabase
@@ -137,12 +138,12 @@ async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
   }
 }
 
-/* ---------- NEW: initial page index from cached presence (best effort) ---------- */
-function initialPageIndexFromPresence(): number {
+/* ---------- initial page index from cached presence (best effort) ---------- */
+function initialPageIndexFromPresence(classCode: string): number {
   try {
     const cachedAssignmentId = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || ''
     if (!cachedAssignmentId) return 0
-    const raw = localStorage.getItem(presenceKey(cachedAssignmentId))
+    const raw = localStorage.getItem(presenceKey(classCode, cachedAssignmentId))
     if (!raw) return 0
     const p = JSON.parse(raw) as TeacherPresenceState
     if (p && p.autoFollow && typeof p.teacherPageIndex === 'number') {
@@ -152,7 +153,7 @@ function initialPageIndexFromPresence(): number {
   return 0
 }
 
-/* ---------- NEW: server fallback to get teacher presence snapshot ---------- */
+/* ---------- server fallback to get teacher presence snapshot ---------- */
 async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPresenceState | null> {
   try {
     const { data, error } = await supabase
@@ -184,23 +185,22 @@ export default function StudentAssignment(){
   const location = useLocation()
   const nav = useNavigate()
 
-  // NEW: class code from URL (?class=), default A
+  // class code from URL (?class=), default A
   const classCode = useMemo(() => {
     const qs = new URLSearchParams(location.search)
     return (qs.get('class') || 'A').toUpperCase()
   }, [location.search])
 
-  // NEW: remember last student per-class; default `${classCode}_01`
-const studentId = useMemo(() => {
-  const qs = new URLSearchParams(location.search)
-  const q = qs.get('student')
-  const key = `currentStudent:${classCode}`
-  const remembered = (() => { try { return localStorage.getItem(key) } catch { return null } })()
-  const id = q || remembered || `${classCode}_01`
-  try { localStorage.setItem(key, id) } catch {}
-  return id
-}, [location.search, classCode])
-
+  // remember last student per-class; default `${classCode}_01`
+  const studentId = useMemo(() => {
+    const qs = new URLSearchParams(location.search)
+    const q = qs.get('student')
+    const key = `currentStudent:${classCode}`
+    const remembered = (() => { try { return localStorage.getItem(key) } catch { return null } })()
+    const id = q || remembered || `${classCode}_01`
+    try { localStorage.setItem(key, id) } catch {}
+    return id
+  }, [location.search, classCode])
 
   // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
@@ -230,7 +230,7 @@ const studentId = useMemo(() => {
   }, [pdfStoragePath])
 
   /* ---------- start page using cached teacher presence if any ---------- */
-  const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence())
+  const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence(classCode))
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
   const [color, setColor] = useState('#1F75FE')
@@ -271,6 +271,9 @@ const studentId = useMemo(() => {
   const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
     try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
   })
+
+  // flag to sequence boot: wait for class snapshot before using "latest"
+  const [classBootDone, setClassBootDone] = useState(false)
 
   // >>> One-time purge of legacy local caches that used the static title
   useEffect(() => {
@@ -315,7 +318,7 @@ const studentId = useMemo(() => {
   // === UPDATED: ink subscription handle (room-scoped)
   const inkSubRef = useRef<ReturnType<typeof subscribeToInk> | null>(null)
 
-  /* ---------- NEW: apply a presence snapshot and (optionally) snap ---------- */
+  /* ---------- apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
     if (!p) return
     setAutoFollow(!!p.autoFollow)
@@ -332,51 +335,50 @@ const studentId = useMemo(() => {
     }
   }
 
-  // --- helper: snap to teacher using local presence if available
+  // --- helper: snap to teacher using local presence if available (CLASS-SCOPED)
   const snapToTeacherIfAvailable = (assignmentId: string) => {
     try {
-      const raw = localStorage.getItem(presenceKey(assignmentId))
+      const raw = localStorage.getItem(presenceKey(classCode, assignmentId))
       if (!raw) return
       const p = JSON.parse(raw) as TeacherPresenceState
       applyPresenceSnapshot(p, { snap: true })
     } catch {/* ignore */}
   }
 
-  // --- ensure we also fetch presence from server if cache is missing/stale
+  // --- ensure we also fetch presence from server if cache is missing/stale (store CLASS-SCOPED)
   const ensurePresenceFromServer = async (assignmentId: string) => {
-    const cached = localStorage.getItem(presenceKey(assignmentId))
+    const cached = localStorage.getItem(presenceKey(classCode, assignmentId))
     if (!cached) {
       const p = await fetchPresenceSnapshot(assignmentId)
       if (p) {
-        try { localStorage.setItem(presenceKey(assignmentId), JSON.stringify(p)) } catch {}
+        try { localStorage.setItem(presenceKey(classCode, assignmentId), JSON.stringify(p)) } catch {}
         applyPresenceSnapshot(p, { snap: true })
       }
     }
   }
 
-  // assignment handoff listener (teacher broadcast) — class-scoped
-useEffect(() => {
-  if (!classCode) return
-  const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
-    try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
-    setRtAssignmentId(nextAssignmentId)
-    // Best effort: use cache quickly, then fetch from server to be sure
-    snapToTeacherIfAvailable(nextAssignmentId)
-    ensurePresenceFromServer(nextAssignmentId)
-    currIds.current = {}
-    // keep initialSnappedRef as-is
-  })
-  return off
-}, [classCode])
+  // assignment handoff listener (teacher broadcast) — CLASS-SCOPED
+  useEffect(() => {
+    if (!classCode) return
+    const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
+      try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
+      setRtAssignmentId(nextAssignmentId)
+      // Best effort: use cache quickly, then fetch from server to be sure
+      snapToTeacherIfAvailable(nextAssignmentId)
+      ensurePresenceFromServer(nextAssignmentId)
+      currIds.current = {}
+      // keep initialSnappedRef as-is
+    })
+    return off
+  }, [classCode])
 
-
-  // NEW: snap to DB class state on boot (cold start)
+  // Snap to DB class state on boot (cold start) — then mark boot done
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
         const snap = await fetchClassState(classCode)
-        if (!snap || cancelled) return
+        if (!snap || cancelled) { setClassBootDone(true); return }
 
         setRtAssignmentId(snap.assignment_id)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, snap.assignment_id) } catch {}
@@ -387,13 +389,16 @@ useEffect(() => {
         }
       } catch {
         // no class snapshot yet — harmless
+      } finally {
+        if (!cancelled) setClassBootDone(true)
       }
     })()
     return () => { cancelled = true }
   }, [classCode])
 
-  // On first mount, if we don't have an assignment id, fetch the latest with pages.
+  // On first mount fallback: only after class boot finished and we still have no id
   useEffect(() => {
+    if (!classBootDone) return
     if (rtAssignmentId) {
       snapToTeacherIfAvailable(rtAssignmentId)
       ensurePresenceFromServer(rtAssignmentId)
@@ -408,13 +413,13 @@ useEffect(() => {
         ensurePresenceFromServer(latest)
       }
     })()
-  }, [rtAssignmentId])
+  }, [classBootDone, rtAssignmentId])
 
-  // hydrate presence on refresh (if cached)
+  // hydrate presence on refresh (if cached) — CLASS-SCOPED
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
-      const raw = localStorage.getItem(presenceKey(rtAssignmentId))
+      const raw = localStorage.getItem(presenceKey(classCode, rtAssignmentId))
       if (raw) {
         const p = JSON.parse(raw) as TeacherPresenceState
         applyPresenceSnapshot(p, { snap: true })
@@ -423,24 +428,23 @@ useEffect(() => {
         ;(async () => {
           const p = await fetchPresenceSnapshot(rtAssignmentId)
           if (p) {
-            try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+            try { localStorage.setItem(presenceKey(classCode, rtAssignmentId), JSON.stringify(p)) } catch {}
             applyPresenceSnapshot(p, { snap: true })
           }
         })()
       }
     } catch {}
-  }, [rtAssignmentId])
+  }, [classCode, rtAssignmentId])
 
-  /* ---------- NEW: Hello → presence-snapshot handshake ---------- */
+  /* ---------- Hello → presence-snapshot handshake (CLASS-SCOPED channel) ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
-    // Subscribe briefly to receive the teacher's snapshot, then say hello.
     const ch = supabase
-      .channel(`assignment:${rtAssignmentId}`, { config: { broadcast: { ack: true } } })
+      .channel(`assignment:${classCode}:${rtAssignmentId}`, { config: { broadcast: { ack: true } } })
       .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
         const p = msg?.payload as TeacherPresenceState | undefined
         if (!p) return
-        try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+        try { localStorage.setItem(presenceKey(classCode, rtAssignmentId), JSON.stringify(p)) } catch {}
         applyPresenceSnapshot(p, { snap: true })
       })
       .subscribe()
@@ -451,10 +455,9 @@ useEffect(() => {
       } catch {/* ignore */}
     })()
 
-    // Clean up after a short window; we still keep our main subscribeToAssignment
     const t = window.setTimeout(() => { try { ch.unsubscribe() } catch {} }, 4000)
     return () => { try { ch.unsubscribe() } catch {}; window.clearTimeout(t) }
-  }, [rtAssignmentId])
+  }, [classCode, rtAssignmentId])
 
   // Resolve assignment/page with early “snap to teacher” if autoFollow is ON or presence says so
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
@@ -480,7 +483,6 @@ useEffect(() => {
     if (!initialSnappedRef.current) {
       await ensurePresenceFromServer(assignmentId)
       if (initialSnappedRef.current) {
-        // we just snapped; wait a render pass before continuing
         return null
       }
     }
@@ -494,7 +496,6 @@ useEffect(() => {
 
     let pages = await listPages(assignmentId).catch(() => [] as any[])
     if (!pages || pages.length === 0) {
-      // Fallback: maybe cached id is stale—try newest from DB
       const latest = await fetchLatestAssignmentIdWithPages()
       if (latest && latest !== assignmentId) {
         assignmentId = latest
@@ -518,7 +519,6 @@ useEffect(() => {
              ?? pages.find(p => p.page_index === pageIndex)
              ?? pages[0]
 
-    // If this differs from our current state, set and wait a pass
     if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
       setPageIndex(curr.page_index)
       return null
@@ -538,7 +538,6 @@ useEffect(() => {
       const ids = await resolveIds()
 
       if (!ids) {
-        // No task: clear any cache for this "slot"
         const { assignmentUid, pageUid } = getCacheIds()
         try {
           drawRef.current?.clearStrokes()
@@ -761,10 +760,10 @@ useEffect(() => {
 
   /* ---------- Realtime + polling (defensive) ---------- */
 
-  // subscribe to teacher broadcast once we know the assignment id
+  // subscribe to teacher broadcast once we know the assignment id — CLASS-SCOPED
   useEffect(() => {
     if (!rtAssignmentId) return
-    const ch = subscribeToAssignment(rtAssignmentId, {
+    const ch = subscribeToAssignment(classCode, rtAssignmentId, {
       onSetPage: ({ pageIndex: tpi }: SetPagePayload) => {
         teacherPageIndexRef.current = tpi
         if (autoFollow && typeof tpi === 'number') {
@@ -789,13 +788,13 @@ useEffect(() => {
         } as TeacherPresenceState, { snap: true })
       },
       onPresence: (p: TeacherPresenceState) => {
-        try { localStorage.setItem(presenceKey(rtAssignmentId), JSON.stringify(p)) } catch {}
+        try { localStorage.setItem(presenceKey(classCode, rtAssignmentId), JSON.stringify(p)) } catch {}
         applyPresenceSnapshot(p, { snap: true })
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rtAssignmentId, autoFollow, focusOn, navLocked])
+  }, [classCode, rtAssignmentId, autoFollow, focusOn, navLocked])
 
   const reloadFromServer = async ()=>{
     if (!hasTask) return
@@ -850,9 +849,10 @@ useEffect(() => {
       }
       pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
 
-      // room-scoped realtime ink (assignment + page + studentId)
+      // CLASS-SCOPED realtime ink (assignment + page)
       try { inkSubRef.current?.unsubscribe?.() } catch {}
       const chInk = subscribeToInk(
+        classCode,
         ids.assignment_id,
         ids.page_id,
         (u) => {
@@ -866,8 +866,7 @@ useEffect(() => {
             pts: (u.pts as any) || [],
             done: !!u.done,
           })
-        },
-        studentId // ROOM scope: same student instance
+        }
       )
       inkSubRef.current = chInk
     })()
@@ -879,7 +878,7 @@ useEffect(() => {
       try { inkSubRef.current?.unsubscribe?.() } catch {}
       inkSubRef.current = null
     }
-  }, [studentId, pageIndex, rtAssignmentId])
+  }, [classCode, studentId, pageIndex, rtAssignmentId])
 
   /* ---------- LIVE eraser overlay ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
@@ -1038,7 +1037,7 @@ useEffect(() => {
             Student: <strong>{studentId}</strong>
           </div>
           <button
-            onClick={()=> nav(`/start?class=${encodeURIComponent(classCode)}`)} // keep class in URL
+            onClick={()=> nav(`/start?class=${encodeURIComponent(classCode)}`)}
             style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
           >
             Switch
@@ -1085,8 +1084,8 @@ useEffect(() => {
               onStrokeUpdate={(u: RemoteStrokeUpdate) => {
                 const ids = currIds.current
                 if (!ids.assignment_id || !ids.page_id) return
-                // room-scoped publish: same assignment + page + studentId
-                publishInk({ assignmentId: ids.assignment_id, pageId: ids.page_id, studentCode: studentId }, u)
+                // CLASS-SCOPED page room
+                publishInk({ classCode, assignmentId: ids.assignment_id, pageId: ids.page_id }, u)
                   .catch(()=>{/* fire-and-forget */})
               }}
             />
