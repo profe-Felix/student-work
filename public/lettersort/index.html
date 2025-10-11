@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clasificador de letras — Maestro & Estudiante</title>
+
+  <!-- Kid-friendly font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
+
+  <style>
+    *{box-sizing:border-box}
+    :root{--bg:#f7f7fb;--ink:#111;--muted:#666;--brand:#2563eb;--ok:#16a34a;--bad:#dc2626;--card:#fff;--drop:#eef2ff}
+    html,body{height:100%}
+    body{margin:0;font:16px/1.45 Andika, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;background:var(--bg);color:var(--ink)}
+    .wrap{max-width:1100px;margin:0 auto;padding:12px}
+    header{position:sticky;top:0;background:#fff;border-bottom:1px solid #e5e7eb;z-index:5}
+    .row{display:flex;gap:12px;align-items:center}
+    .brand{font-weight:700}
+    .spacer{flex:1}
+    .switch{display:flex;gap:8px;align-items:center}
+    .panel{margin-top:10px}
+    .panel.hidden{display:none}
+    .grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end}
+    .field{margin:6px 0}
+    .field .inline{display:flex;gap:8px}
+    input,button{font:inherit}
+    input{padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;width:100%}
+    .btn{padding:8px 12px;border-radius:10px;border:1px solid transparent;background:var(--brand);color:#fff;cursor:pointer}
+    .btn.outline{background:#fff;border-color:#d1d5db;color:#000}
+    .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+    .buttons{display:flex;gap:8px;align-items:center}
+    .note{font-size:12px;color:var(--muted);margin-top:8px}
+    .letters{display:flex;flex-wrap:wrap;gap:6px}
+    .letters button{min-width:36px;height:36px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
+    .letters button.active{background:var(--brand);color:#fff;border-color:transparent}
+    main{max-width:1100px;margin:14px auto;padding:0 12px}
+    .columns{display:grid;grid-template-columns: repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:16px}
+    .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px}
+    .col h2{margin:0 0 8px;font-size:18px}
+    .drop{min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start}
+    .rackSection{margin-top:18px}
+    .rack{margin-top:8px;background:#fff;border:1px dashed #e5e7eb;border-radius:12px;padding:10px;display:flex;flex-wrap:wrap;gap:8px;min-height:150px}
+    .card{user-select:none;touch-action:none;background:var(--card);border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.06);width:140px;overflow:hidden;cursor:grab;display:flex;flex-direction:column;align-items:center}
+    .card:active{cursor:grabbing}
+    .card img{display:block;width:100%;height:100px;object-fit:contain;background:#fafafa}
+    .card .cap{padding:6px 8px;width:100%;text-align:center;font-size:14px}
+    .card.ok{outline:3px solid var(--ok)}
+    .card.bad{outline:3px solid var(--bad)}
+    .locked{opacity:.85}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <div class="row">
+        <div class="brand">Clasificador de letras</div>
+        <div class="spacer"></div>
+        <label class="switch">
+          <input id="modeToggle" type="checkbox" />
+          <span>Modo Maestro</span>
+        </label>
+      </div>
+
+      <!-- Teacher panel -->
+      <div id="teacherPanel" class="panel hidden">
+        <div class="field">
+          <label>Código de sesión</label>
+          <div class="inline">
+            <input id="roomCode" placeholder="por ej., A_01" />
+            <button id="btnJoin" class="btn">Iniciar sesión</button>
+          </div>
+          <small class="note">Comparte este código con los estudiantes.</small>
+        </div>
+
+        <div class="grid">
+          <div>
+            <label>Letras objetivo (1–5)</label>
+            <div id="letterPicker" class="letters"></div>
+          </div>
+          <div>
+            <label>Cartas por columna</label>
+            <input id="cardsPerCol" type="number" min="1" max="8" value="4" />
+          </div>
+          <div class="buttons">
+            <button id="btnNewRound" class="btn">Nueva ronda</button>
+            <button id="btnVerify" class="btn outline">Verificar</button>
+            <button id="btnReset" class="btn ghost">Reiniciar ronda</button>
+          </div>
+        </div>
+
+        <div class="note">
+          Imágenes y audios desde <code>assets/images</code> y <code>assets/audio</code>.
+          Requiere <code>assets/manifest.json</code>.
+        </div>
+      </div>
+
+      <!-- Student panel -->
+      <div id="studentPanel" class="panel">
+        <div class="field inline">
+          <input id="studentRoom" placeholder="Código de sesión" />
+          <button id="btnStudentJoin" class="btn">Unirse</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div id="columns" class="columns"></div>
+
+    <section class="rackSection">
+      <h3>Cartas</h3>
+      <div id="rack" class="rack" aria-label="rack"></div>
+    </section>
+  </main>
+
+  <audio id="fxOk" preload="auto"></audio>
+  <audio id="fxBad" preload="auto"></audio>
+
+  <!-- Supabase SDK -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+  <script>
+    /************ SUPABASE: usa tu proyecto existente ************/
+    const SUPABASE_URL = "https://YOUR-EXISTING.supabase.co";   // <- pon tu URL
+    const SUPABASE_ANON_KEY = "YOUR-EXISTING-ANON-KEY";         // <- pon tu anon key
+    /************************************************************/
+
+    const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // UI refs
+    const modeToggle = document.getElementById('modeToggle');
+    const teacherPanel = document.getElementById('teacherPanel');
+    const studentPanel = document.getElementById('studentPanel');
+    const btnJoin = document.getElementById('btnJoin');
+    const roomCodeEl = document.getElementById('roomCode');
+    const studentRoomEl = document.getElementById('studentRoom');
+    const btnStudentJoin = document.getElementById('btnStudentJoin');
+    const letterPicker = document.getElementById('letterPicker');
+    const cardsPerColEl = document.getElementById('cardsPerCol');
+    const columnsEl = document.getElementById('columns');
+    const rackEl = document.getElementById('rack');
+    const btnNewRound = document.getElementById('btnNewRound');
+    const btnVerify = document.getElementById('btnVerify');
+    const btnReset = document.getElementById('btnReset');
+
+    // State
+    let ROOM = null;
+    let channel = null;
+    let isTeacher = false;
+    let manifest = null;      // filenames list
+    let currentCols = [];     // [{label, key}]
+    let currentCards = [];    // cards in this round
+    let usedSet = new Set();  // avoid repeats across rounds
+
+    // Mode toggle
+    modeToggle.addEventListener('change', () => {
+      isTeacher = modeToggle.checked;
+      teacherPanel.classList.toggle('hidden', !isTeacher);
+      studentPanel.classList.toggle('hidden', isTeacher);
+    });
+
+    // Letter picker (supports Spanish digraphs)
+    const LETTERS = 'a,b,c,ch,d,e,f,g,h,i,j,k,l,ll,m,n,ñ,o,p,q,r,rr,s,t,u,v,w,x,y,z'.split(',');
+    function renderLetterPicker(){
+      letterPicker.innerHTML='';
+      LETTERS.forEach(L => {
+        const b=document.createElement('button');
+        b.type='button'; b.textContent=L;
+        b.addEventListener('click',()=>{
+          b.classList.toggle('active');
+          const actives=[...letterPicker.querySelectorAll('.active')];
+          if(actives.length>5){ b.classList.remove('active'); }
+        });
+        letterPicker.appendChild(b);
+      });
+    }
+    renderLetterPicker();
+
+    // Room join / subscribe
+    async function joinRoom(room){
+      if(channel){ await channel.unsubscribe(); }
+      ROOM = (room||'').trim();
+      if(!ROOM){ alert('Código de sesión inválido'); return; }
+
+      channel = client.channel(`lettersort:${ROOM}`);
+
+      channel.on('broadcast', { event: 'ROUND' }, payload => {
+        const data = payload.payload;
+        buildColumns(data.columns);
+        setCards(data.cards);
+        clearAllPlacements();
+      });
+      channel.on('broadcast', { event: 'VERIFY' }, () => verifyNow());
+      channel.on('broadcast', { event: 'RESET' }, () => resetRoundPlacements());
+
+      const { error } = await channel.subscribe();
+      if(error){ console.error(error); alert('Error al suscribirse al canal'); }
+    }
+
+    btnJoin.addEventListener('click', async ()=>{
+      const room = roomCodeEl.value || 'A_01';
+      await joinRoom(room);
+      manifest = await loadManifest();
+    });
+    btnStudentJoin.addEventListener('click', async ()=>{
+      const room = studentRoomEl.value || 'A_01';
+      await joinRoom(room);
+    });
+
+    // Manifest loader
+    async function loadManifest(){
+      try{
+        const res = await fetch('assets/manifest.json', {cache:'no-store'});
+        if(!res.ok) throw new Error('No manifest');
+        return await res.json();
+      }catch(e){
+        console.error(e);
+        alert('Falta assets/manifest.json. Crea el archivo con la lista de imágenes.');
+        return [];
+      }
+    }
+
+    // Teacher: New round
+    btnNewRound.addEventListener('click', async ()=>{
+      if(!isTeacher) return;
+      if(!manifest || manifest.length===0) manifest = await loadManifest();
+
+      const activeLetters = [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
+      if(activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
+
+      const perCol = clamp(parseInt(cardsPerColEl.value||'4',10), 1, 8);
+      const columns = [];
+
+      if(activeLetters.length===1){
+        const L = activeLetters[0];
+        columns.push({label:`Con /${L}/`, key:`${L}`});
+        columns.push({label:`Sin /${L}/`, key:`not-${L}`});
+      } else {
+        activeLetters.forEach(L=>columns.push({label:`Con /${L}/`, key:`${L}`}));
+      }
+
+      // Build index by initial
+      const byInitial = {};
+      manifest.forEach(fname=>{
+        const stem = stemFromFile(fname);
+        const initial = initialFromStem(stem);
+        (byInitial[initial] ||= []).push(fname);
+      });
+      const allFiles = [...manifest];
+
+      const pickNoRepeat = (arr, n) => {
+        const pool = arr.filter(x=>!usedSet.has(x));
+        shuffle(pool);
+        return pool.slice(0, n);
+      };
+
+      const cards = [];
+      for(const col of columns){
+        let picks=[];
+        if(col.key.startsWith('not-')){
+          const L = col.key.slice(4);
+          const notList = allFiles.filter(f=>initialFromStem(stemFromFile(f))!==L);
+          picks = pickNoRepeat(notList, perCol);
+        } else {
+          const L = col.key;
+          const list = byInitial[L] || [];
+          picks = pickNoRepeat(list, perCol);
+        }
+        for(const f of picks){ usedSet.add(f); }
+        cards.push(...picks.map(f=>({
+          id: crypto.randomUUID(),
+          file: f,
+          word: stemFromFile(f),
+          imgUrl: `assets/images/${f}`,
+          audioUrl: `assets/audio/${stemFromFile(f)}.mp3`
+        })));
+      }
+
+      // Broadcast round
+      const payload = { columns, cards };
+      await channel.send({ type:'broadcast', event:'ROUND', payload });
+    });
+
+    // Verify / Reset (teacher)
+    btnVerify.addEventListener('click', async ()=>{
+      if(!isTeacher) return;
+      await channel.send({ type:'broadcast', event:'VERIFY', payload:{} });
+    });
+    btnReset.addEventListener('click', async ()=>{
+      if(!isTeacher) return;
+      await channel.send({ type:'broadcast', event:'RESET', payload:{} });
+    });
+
+    /*************** UI builders ****************/
+    function buildColumns(columns){
+      currentCols = columns;
+      columnsEl.innerHTML='';
+      columns.forEach((c, idx)=>{
+        const col = document.createElement('div');
+        col.className='col';
+        col.innerHTML = `<h2>${c.label}</h2><div class="drop" data-col="${idx}"></div>`;
+        columnsEl.appendChild(col);
+      });
+    }
+
+    function setCards(cards){
+      currentCards = cards;
+      rackEl.innerHTML='';
+      cards.forEach(card=> rackEl.appendChild(renderCard(card)) );
+    }
+
+    function renderCard(card){
+      const el = document.createElement('div');
+      el.className='card';
+      el.setAttribute('data-id', card.id);
+      el.setAttribute('tabindex','0');
+      el.innerHTML = `<img alt="${escapeHtml(card.word)}" src="${card.imgUrl}" /><div class="cap">&nbsp;</div>`;
+
+      // Double click / double tap -> play audio
+      let lastTap=0;
+      const playAudio=()=>{ const a = new Audio(card.audioUrl); a.play().catch(()=>{}); };
+      el.addEventListener('dblclick', playAudio);
+      el.addEventListener('touchend', e=>{
+        const now=Date.now();
+        if(now-lastTap<300){ playAudio(); }
+        lastTap=now;
+      });
+
+      makeDraggable(el);
+      return el;
+    }
+
+    function clearAllPlacements(){
+      document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
+      rackEl.innerHTML='';
+      currentCards.forEach(card=> rackEl.appendChild(renderCard(card)) );
+    }
+
+    function resetRoundPlacements(){
+      document.querySelectorAll('.card').forEach(c=>{
+        c.classList.remove('ok','bad','locked');
+      });
+      clearAllPlacements();
+    }
+
+    function verifyNow(){
+      const getTargetForCol = (colKey)=> colKey.startsWith('not-')
+        ? { type:'not', letter:colKey.slice(4) }
+        : { type:'is', letter:colKey };
+
+      document.querySelectorAll('.drop').forEach((drop, idx)=>{
+        const colKey = currentCols[idx].key;
+        const target = getTargetForCol(colKey);
+
+        [...drop.children].forEach(cardEl=>{
+          const id = cardEl.getAttribute('data-id');
+          const card = currentCards.find(c=>c.id===id);
+          if(!card) return;
+          const initial = initialFromStem(card.word);
+          const correct = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
+
+          if(correct){
+            cardEl.classList.add('ok','locked');
+            lockCard(cardEl);
+          } else {
+            cardEl.classList.add('bad');
+            setTimeout(()=>{ ejectToRack(cardEl); }, 350);
+          }
+        });
+      });
+    }
+
+    /*************** Drag & Drop via Pointer Events ****************/
+    let drag = null; // {el, originParent}
+    function makeDraggable(el){
+      el.style.touchAction = 'none';
+      el.addEventListener('pointerdown', onGrab);
+    }
+    function onGrab(e){
+      const el = e.currentTarget;
+      if(el.classList.contains('locked')) return;
+      drag = { el, originParent: el.parentElement };
+      el.setPointerCapture(e.pointerId);
+      el.style.position='absolute';
+      el.style.zIndex=1000;
+      moveTo(el, e.clientX, e.clientY);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onDrop);
+    }
+    function onMove(e){
+      if(!drag) return;
+      moveTo(drag.el, e.clientX, e.clientY);
+    }
+    function onDrop(e){
+      if(!drag) return;
+      const el = drag.el;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onDrop);
+      try{ el.releasePointerCapture(e.pointerId); }catch(_){}
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      const drop = target?.closest?.('.drop');
+      el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex='';
+      const perCol = clamp(parseInt(cardsPerColEl.value||'4',10),1,8);
+      if(drop){
+        if(drop.children.length>=perCol){
+          drag.originParent.appendChild(el); // full — bounce back
+        } else {
+          drop.appendChild(el);
+        }
+      } else {
+        rackEl.appendChild(el);
+      }
+      drag=null;
+    }
+    function moveTo(el, x, y){
+      el.style.left = (x - 60) + 'px';
+      el.style.top  = (y - 60) + 'px';
+    }
+
+    function ejectToRack(cardEl){
+      cardEl.classList.remove('bad');
+      rackEl.appendChild(cardEl);
+    }
+    function lockCard(cardEl){
+      const clone = cardEl.cloneNode(true);
+      clone.classList.add('locked');
+      const id = clone.getAttribute('data-id');
+      const card = currentCards.find(c=>c.id===id);
+      if(card){
+        let lastTap=0;
+        const playAudio=()=>{ const a = new Audio(card.audioUrl); a.play().catch(()=>{}); };
+        clone.addEventListener('dblclick', playAudio);
+        clone.addEventListener('touchend', e=>{
+          const now=Date.now();
+          if(now-lastTap<300){ playAudio(); }
+          lastTap=now;
+        });
+      }
+      cardEl.replaceWith(clone);
+    }
+
+    /*************** Helpers ****************/
+    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+    function stemFromFile(fname){ const dot=fname.lastIndexOf('.'); return (dot>=0?fname.slice(0,dot):fname).toLowerCase(); }
+    function initialFromStem(stem){
+      const s = stem.toLowerCase();
+      if(s.startsWith('ch')) return 'ch';
+      if(s.startsWith('ll')) return 'll';
+      if(s.startsWith('rr')) return 'rr';
+      return s[0];
+    }
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+    function escapeHtml(s){ return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  </script>
+</body>
+</html>
