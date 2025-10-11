@@ -30,7 +30,7 @@
     input{padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;width:100%}
     .btn{padding:8px 12px;border-radius:10px;border:1px solid transparent;background:var(--brand);color:#fff;cursor:pointer}
     .btn.outline{background:#fff;border-color:#d1d5db;color:#111}
-    .btn.ghost{background:transparent;border-color:transparent;color:#muted}
+    .btn.ghost{background:transparent;border-color:transparent;color:#666}
     .buttons{display:flex;gap:8px;align-items:center}
     .note{font-size:12px;color:#666;margin-top:8px}
     .letters{display:flex;flex-wrap:wrap;gap:6px}
@@ -119,7 +119,7 @@
 
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
   <script>
-    /******** SUPABASE CONFIG (tu proyecto existente) ********/
+    /******** SUPABASE CONFIG ********/
     const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
@@ -188,44 +188,32 @@
     }
     renderLetterPicker();
 
-    /******** Helpers for markers ********/
+    /******** Marker helpers ********/
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
 
-    // Normalize your custom markers ANYWHERE in the stem to plain letters,
-    // for consistent initial detection & audio matching.
     function normalizeMarkers(s){
       let t = (s || '').toLowerCase();
-      // vowels with accents stored as a.. e.. i.. o.. u..
       t = t.replace(/a\.\./g, 'a')
            .replace(/e\.\./g, 'e')
            .replace(/i\.\./g, 'i')
            .replace(/o\.\./g, 'o')
            .replace(/u\.\./g, 'u');
-      // ü as u,,
-      t = t.replace(/u,,/g, 'u');
-      // ñ as n..
-      t = t.replace(/n\.\./g, 'n');
+      t = t.replace(/u,,/g, 'u');  // ü
+      t = t.replace(/n\.\./g, 'n'); // ñ (we handle initial ñ separately)
       return t;
     }
-
-    // Initial letter detector (respects Spanish digraphs; detects ñ if the stem STARTS with n..)
     function initialFromStem(stemRaw){
       const raw = (stemRaw || '').toLowerCase();
-      // leading ñ marker
       if (raw.startsWith('n..')) return 'ñ';
-
       const s = normalizeMarkers(raw);
-
-      // Spanish digraphs at start
       if (s.startsWith('ch')) return 'ch';
       if (s.startsWith('ll')) return 'll';
       if (s.startsWith('rr')) return 'rr';
-
       return s[0] || '';
     }
 
-    // *** Root-listing (handles empty prefix) ***
+    /******** Storage ********/
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
       let out = [];
@@ -283,11 +271,10 @@
             const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
             if (data?.publicUrl) {
               const stem = stemOf(base);
-              // key is normalized stem (markers stripped) so lookups are robust
               audioMap.set(normalizeMarkers(stem), data.publicUrl);
             }
           }
-        } catch { /* audio bucket optional */ }
+        } catch {}
 
         if (imageFiles.length === 0){
           storageWarn.style.display = 'block';
@@ -335,7 +322,7 @@
       await joinRoom(room);
     });
 
-    /******** Round building from storage ********/
+    /******** Round building ********/
     const byInitial = ()=> {
       const map = new Map();
       for(const f of imageFiles){
@@ -446,14 +433,13 @@
       el.dataset.id=card.id;
       el.setAttribute('tabindex','0');
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
+
+      // Single click/tap = play audio (if available)
       if(card.audioUrl){
-        let lastTap=0;
-        const play=()=>{ const a=new Audio(card.audioUrl); a.play().catch(()=>{}); };
-        el.addEventListener('dblclick', play);
-        el.addEventListener('touchend', e=>{
-          const now=Date.now();
-          if(now-lastTap<300){ play(); }
-          lastTap=now;
+        el.addEventListener('click', (ev)=>{
+          // ignore if we just dragged
+          if (drag && drag.el === el && drag.moved) return;
+          new Audio(card.audioUrl).play().catch(()=>{});
         });
       }
       makeDraggable(el);
@@ -476,8 +462,7 @@
         [...drop.children].forEach(cardEl=>{
           const card = currentCards.find(c=>c.id===cardEl.dataset.id);
           if(!card) return;
-          const stemRaw = (card.word||'').toLowerCase();
-          const initial = initialFromStem(stemRaw);
+          const initial = initialFromStem((card.word||'').toLowerCase());
           const ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
           if(ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
           else { cardEl.classList.add('bad'); setTimeout(()=> ejectToRack(cardEl), 350); }
@@ -485,7 +470,7 @@
       });
     }
 
-    // Pointer-event DnD (with move threshold)
+    // Pointer-event DnD with "moved" guard
     let drag=null;
     function makeDraggable(el){ el.style.touchAction='none'; el.addEventListener('pointerdown', onGrab); }
     function onGrab(e){
@@ -501,12 +486,13 @@
       el.setPointerCapture(e.pointerId);
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onDrop);
+      window.addEventListener('pointercancel', onCancel);
     }
     function onMove(e){
       if(!drag || e.pointerId!==drag.pointerId) return;
       const dx = e.clientX - drag.startX;
       const dy = e.clientY - drag.startY;
-      if(!drag.moved && Math.hypot(dx,dy) < 4) return; // tiny jitter
+      if(!drag.moved && Math.hypot(dx,dy) < 4) return; // ignore taps
       if(!drag.moved){
         drag.moved = true;
         drag.el.style.position='fixed';
@@ -519,12 +505,17 @@
     }
     function onDrop(e){
       if(!drag || e.pointerId!==drag.pointerId) return;
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onDrop);
-      try{ drag.el.releasePointerCapture(drag.pointerId);}catch(_){}
+      cleanupPointer(e.pointerId);
       const el=drag.el;
-      // restore styles before placing
-      el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex=''; el.style.pointerEvents='';
+
+      // If it wasn't actually moved, do NOTHING (so a tap won't reorder)
+      if(!drag.moved){
+        resetDraggedStyles(el);
+        drag=null;
+        return;
+      }
+
+      resetDraggedStyles(el);
 
       const target=document.elementFromPoint(e.clientX,e.clientY);
       const drop=target?.closest?.('.drop');
@@ -537,20 +528,29 @@
       }
       drag=null;
     }
+    function onCancel(e){
+      if(!drag || e.pointerId!==drag.pointerId) return;
+      cleanupPointer(e.pointerId);
+      resetDraggedStyles(drag.el);
+      drag=null;
+    }
+    function cleanupPointer(pointerId){
+      try{ drag.el.releasePointerCapture(pointerId);}catch(_){}
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onDrop);
+      window.removeEventListener('pointercancel', onCancel);
+    }
+    function resetDraggedStyles(el){
+      el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex=''; el.style.pointerEvents='';
+      el.style.width=''; el.style.height='';
+    }
     function moveTo(el,x,y){ el.style.left=(x-70)+'px'; el.style.top=(y-70)+'px'; }
     function ejectToRack(cardEl){ cardEl.classList.remove('bad'); rackEl.appendChild(cardEl); }
     function lockCard(cardEl, card){
       const clone = cardEl.cloneNode(true);
       clone.classList.add('locked');
       if(card?.audioUrl){
-        let lastTap=0;
-        const play=()=>{ const a=new Audio(card.audioUrl); a.play().catch(()=>{}); };
-        clone.addEventListener('dblclick', play);
-        clone.addEventListener('touchend', e=>{
-          const now=Date.now();
-          if(now-lastTap<300){ play(); }
-          lastTap=now;
-        });
+        clone.addEventListener('click', ()=>{ new Audio(card.audioUrl).play().catch(()=>{}); });
       }
       cardEl.replaceWith(clone);
     }
