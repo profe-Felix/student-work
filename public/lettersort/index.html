@@ -30,9 +30,9 @@
     input{padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;width:100%}
     .btn{padding:8px 12px;border-radius:10px;border:1px solid transparent;background:var(--brand);color:#fff;cursor:pointer}
     .btn.outline{background:#fff;border-color:#d1d5db;color:#111}
-    .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+    .btn.ghost{background:transparent;border-color:transparent;color:#muted}
     .buttons{display:flex;gap:8px;align-items:center}
-    .note{font-size:12px;color:var(--muted);margin-top:8px}
+    .note{font-size:12px;color:#666;margin-top:8px}
     .letters{display:flex;flex-wrap:wrap;gap:6px}
     .letters button{min-width:36px;height:36px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
     .letters button.active{background:var(--brand);color:#fff;border-color:transparent}
@@ -124,12 +124,12 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
     /* NOMBRES/PREFIX DE BUCKETS — AJUSTA ESTO A LO QUE YA CREASTE */
-    const IMAGES_BUCKET = "lettersort-images";   // <-- cambia si tu bucket se llama distinto
-    const AUDIO_BUCKET  = "lettersort-audio";    // <-- opcional, cambia si es distinto
-    const IMAGES_PREFIX = "";                    // e.g., "grade1/" si usas subcarpeta
-    const AUDIO_PREFIX  = "";                    // e.g., "grade1/"
+    const IMAGES_BUCKET = "lettersort-images";
+    const AUDIO_BUCKET  = "lettersort-audio";    // opcional
+    const IMAGES_PREFIX = "";                    // raíz
+    const AUDIO_PREFIX  = "";                    // raíz
 
-    // Permite override rápido por query (?ib=...&ab=...&ip=...&ap=...)
+    // Override por query (?ib=...&ab=...&ip=...&ap=...)
     const qs = new URLSearchParams(location.search);
     const IB = qs.get('ib') || IMAGES_BUCKET;
     const AB = qs.get('ab') || AUDIO_BUCKET;
@@ -203,43 +203,34 @@
       return t[0];
     }
 
-    // NEW: recursive list (walks subfolders) & file detection via metadata
+    // *** FIXED: when prefix is empty, pass undefined to list() so root is listed ***
     async function listAll(bucket, prefix) {
-      const results = [];
-      async function walk(dir) {
-        let offset = 0;
-        const limit = 100;
-        while (true) {
-          const { data, error } = await client.storage.from(bucket).list(dir || '', {
-            limit,
-            offset,
-            sortBy: { column: 'name', order: 'asc' }
-          });
-          if (error) throw error;
-          const items = data || [];
-          const folders = items.filter(it => !it.metadata); // "folders" have null metadata
-          const files   = items.filter(it => it.metadata);  // files have metadata (size/mimetype)
-
-          for (const f of files) {
-            const fullpath = dir ? `${dir.replace(/\/$/,'')}/${f.name}` : f.name;
-            results.push({ ...f, fullpath });
-          }
-          for (const fd of folders) {
-            const next = dir ? `${dir.replace(/\/$/,'')}/${fd.name}` : fd.name;
-            await walk(next);
-          }
-          if (items.length < limit) break;
-          offset += limit;
+      const path = prefix && prefix.trim() !== "" ? prefix : undefined;
+      let out = [];
+      let offset = 0;
+      const limit = 100;
+      while (true) {
+        const { data, error } = await client.storage.from(bucket).list(path, {
+          limit,
+          offset,
+          sortBy: { column: 'name', order: 'asc' }
+        });
+        if (error) throw error;
+        const items = data || [];
+        for (const it of items) {
+          const fullpath = path ? `${path.replace(/\/$/,'')}/${it.name}` : it.name;
+          out.push({ ...it, fullpath });
         }
+        if (items.length < limit) break;
+        offset += limit;
       }
-      await walk(prefix || '');
-      return results;
+      return out;
     }
 
-    // UPDATED: use fullpath for ext, show (raíz) when prefix is empty
+    // *** FIXED: filter by extension only; no metadata/folder heuristics ***
     async function ensureStorageLoaded(){
       try{
-        // images (recursive)
+        // IMAGES
         const imgList = await listAll(IB, IP);
         const pubImg = [];
         for (const f of imgList) {
@@ -260,7 +251,7 @@
         }
         imageFiles = pubImg;
 
-        // audio (recursive, optional)
+        // AUDIO (optional)
         audioMap = new Map();
         try {
           const audList = await listAll(AB, AP);
@@ -270,8 +261,7 @@
             if (!AUD_EXT.has(e)) continue;
             const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
             if (data?.publicUrl) {
-              const stem = stemOf(base).toLowerCase();
-              audioMap.set(stem, data.publicUrl);
+              audioMap.set(stemOf(base).toLowerCase(), data.publicUrl);
             }
           }
         } catch { /* audio bucket optional */ }
@@ -279,8 +269,8 @@
         if (imageFiles.length === 0){
           storageWarn.style.display = 'block';
           storageWarn.textContent =
-            `No se encontraron imágenes en el bucket "${IB}" con el prefijo "${IP || '(raíz)'}". ` +
-            `Verifica: 1) nombre del bucket, 2) que sea PÚBLICO, 3) que haya archivos .png/.jpg/.webp (pueden estar en subcarpetas).`;
+            `No se encontraron imágenes en el bucket "${IB}" (prefijo: ${IP || '(raíz)'}). ` +
+            `Verifica: 1) nombre del bucket, 2) que sea PÚBLICO, 3) que haya .png/.jpg/.webp.`;
         } else {
           storageWarn.style.display = 'none';
         }
@@ -320,7 +310,6 @@
     btnStudentJoin.addEventListener('click', async ()=>{
       const room = studentRoomEl.value || 'A_01';
       await joinRoom(room);
-      // students don’t need to list storage until they get a ROUND payload
     });
 
     /******** Round building from storage ********/
@@ -340,7 +329,6 @@
     btnNewRound.addEventListener('click', async ()=>{
       if(!isTeacher) return;
 
-      // Make sure storage is loaded at least once
       if(imageFiles.length===0){
         await ensureStorageLoaded();
         if(imageFiles.length===0){ alert('No hay imágenes disponibles en Storage.'); return; }
@@ -367,7 +355,6 @@
         const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
         shuffle(pool);
         const chosen = pool.slice(0,n);
-        // if pool too small, allow reuse as fallback:
         if(chosen.length < n){
           const more = arr.filter(x=>!chosen.includes(x));
           shuffle(more);
@@ -391,7 +378,7 @@
         for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
           const stem = f.stem.toLowerCase();
-          const audioUrl = audioMap.get(stem) || null; // ok si no hay audio
+          const audioUrl = audioMap.get(stem) || null;
           cards.push({
             id: crypto.randomUUID(),
             file: f.name,
@@ -436,7 +423,6 @@
       el.dataset.id=card.id;
       el.setAttribute('tabindex','0');
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
-      // double click / double tap audio
       if(card.audioUrl){
         let lastTap=0;
         const play=()=>{ const a=new Audio(card.audioUrl); a.play().catch(()=>{}); };
