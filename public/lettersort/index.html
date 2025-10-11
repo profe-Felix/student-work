@@ -4,9 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Clasificador de letras — Maestro & Estudiante</title>
+
+  <!-- Kid-friendly font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
+
   <style>
     *{box-sizing:border-box}
     :root{--bg:#f7f7fb;--ink:#111;--muted:#666;--brand:#2563eb;--ok:#16a34a;--bad:#dc2626;--card:#fff;--drop:#eef2ff}
@@ -26,7 +29,7 @@
     input,button{font:inherit}
     input{padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;width:100%}
     .btn{padding:8px 12px;border-radius:10px;border:1px solid transparent;background:var(--brand);color:#fff;cursor:pointer}
-    .btn.outline{background:#fff;border-color:#d1d5db;color:var(--ink)}
+    .btn.outline{background:#fff;border-color:#d1d5db;color:#111}
     .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
     .buttons{display:flex;gap:8px;align-items:center}
     .note{font-size:12px;color:var(--muted);margin-top:8px}
@@ -47,6 +50,7 @@
     .card.ok{outline:3px solid var(--ok)}
     .card.bad{outline:3px solid var(--bad)}
     .locked{opacity:.85}
+    .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
   </style>
 </head>
 <body>
@@ -61,7 +65,7 @@
         </label>
       </div>
 
-      <!-- Teacher panel -->
+      <!-- Maestro -->
       <div id="teacherPanel" class="panel hidden">
         <div class="field">
           <label>Código de sesión</label>
@@ -89,12 +93,12 @@
         </div>
 
         <div class="note">
-          Imágenes y audios cargados desde <strong>Supabase Storage</strong> (sin manifest.json).
-          Ajusta los nombres de los buckets en el código si es necesario.
+          Las imágenes y audios se cargan de <strong>Supabase Storage</strong> (buckets públicos).
+          <div id="storageWarn" class="warn" style="display:none"></div>
         </div>
       </div>
 
-      <!-- Student panel -->
+      <!-- Estudiante -->
       <div id="studentPanel" class="panel">
         <div class="field inline">
           <input id="studentRoom" placeholder="Código de sesión" />
@@ -113,30 +117,29 @@
     </section>
   </main>
 
-  <audio id="fxOk" preload="auto"></audio>
-  <audio id="fxBad" preload="auto"></audio>
-
-  <!-- Supabase SDK -->
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
   <script>
-    /************ SUPABASE CONFIG ************/
+    /******** SUPABASE CONFIG (tu proyecto existente) ********/
     const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
-    // CHANGE THESE to match your Storage:
-    const IMAGES_BUCKET = "lettersort-images";   // e.g., "lettersort-images"
-    const AUDIO_BUCKET  = "lettersort-audio";    // e.g., "lettersort-audio"
-    const IMAGES_PREFIX = "";                    // optional folder inside bucket ("" for root)
-    const AUDIO_PREFIX  = "";                    // optional folder inside bucket ("" for root)
+    /* NOMBRES/PREFIX DE BUCKETS — AJUSTA ESTO A LO QUE YA CREASTE */
+    const IMAGES_BUCKET = "lettersort-images";   // <-- cambia si tu bucket se llama distinto
+    const AUDIO_BUCKET  = "lettersort-audio";    // <-- opcional, cambia si es distinto
+    const IMAGES_PREFIX = "";                    // e.g., "grade1/" si usas subcarpeta
+    const AUDIO_PREFIX  = "";                    // e.g., "grade1/"
 
-    // If your buckets are PRIVATE, set this to true to use signed URLs:
-    const USE_SIGNED_URLS = false;
-    const SIGNED_URL_TTL  = 60 * 60; // 1 hour
-    /*****************************************/
+    // Permite override rápido por query (?ib=...&ab=...&ip=...&ap=...)
+    const qs = new URLSearchParams(location.search);
+    const IB = qs.get('ib') || IMAGES_BUCKET;
+    const AB = qs.get('ab') || AUDIO_BUCKET;
+    const IP = qs.get('ip') || IMAGES_PREFIX;
+    const AP = qs.get('ap') || AUDIO_PREFIX;
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // UI
+    /******** UI refs ********/
+    const storageWarn = document.getElementById('storageWarn');
     const modeToggle = document.getElementById('modeToggle');
     const teacherPanel = document.getElementById('teacherPanel');
     const studentPanel = document.getElementById('studentPanel');
@@ -152,19 +155,17 @@
     const btnVerify = document.getElementById('btnVerify');
     const btnReset = document.getElementById('btnReset');
 
-    // state
+    /******** State ********/
     let ROOM = null;
     let channel = null;
     let isTeacher = false;
-    // Storage-loaded assets:
-    // images = [{name, path, stem, initial, url}]
-    // audioByStem = Map(stem -> url)
-    let images = [];
-    let audioByStem = new Map();
+
+    let imageFiles = []; // [{name, urlPublic, stem, initial}]
+    let audioMap = new Map(); // stem -> public url (if exists)
 
     let currentCols = [];
     let currentCards = [];
-    let usedSet = new Set(); // tracks image "path" used across rounds
+    let usedSet = new Set();
 
     modeToggle.addEventListener('change', () => {
       isTeacher = modeToggle.checked;
@@ -172,144 +173,150 @@
       studentPanel.classList.toggle('hidden', isTeacher);
     });
 
-    // letter picker (supports ch, ll, rr)
     const LETTERS = 'a,b,c,ch,d,e,f,g,h,i,j,k,l,ll,m,n,ñ,o,p,q,r,rr,s,t,u,v,w,x,y,z'.split(',');
     function renderLetterPicker(){
       letterPicker.innerHTML='';
-      LETTERS.forEach(L => {
+      LETTERS.forEach(L=>{
         const b=document.createElement('button');
         b.type='button'; b.textContent=L;
-        b.addEventListener('click',()=>{
+        b.addEventListener('click', ()=>{
           b.classList.toggle('active');
-          const actives=[...letterPicker.querySelectorAll('.active')];
-          if(actives.length>5){ b.classList.remove('active'); }
+          const act=[...letterPicker.querySelectorAll('.active')];
+          if(act.length>5) b.classList.remove('active');
         });
         letterPicker.appendChild(b);
       });
     }
     renderLetterPicker();
 
-    // Room join / subscribe
+    /******** Storage listing (no manifest) ********/
+    const IMG_EXT = new Set(['png','jpg','jpeg','webp','gif']);
+    const AUD_EXT = new Set(['mp3','wav','m4a','ogg']);
+
+    function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
+    function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
+    function initialFromStem(s){
+      const t=s.toLowerCase();
+      if(t.startsWith('ch')) return 'ch';
+      if(t.startsWith('ll')) return 'll';
+      if(t.startsWith('rr')) return 'rr';
+      return t[0];
+    }
+
+    async function listAll(bucket, prefix){
+      // paginate; supabase storage .list supports limit/offset
+      let all=[]; let offset=0; const limit=100;
+      while(true){
+        const { data, error } = await client.storage.from(bucket).list(prefix, { limit, offset });
+        if(error){ throw error; }
+        const files = (data||[]).filter(it=>it.id && !it.name.endsWith('/'));
+        all.push(...files.map(f=> ({ ...f, fullpath: prefix ? `${prefix.replace(/\/$/,'')}/${f.name}` : f.name })));
+        if(!data || data.length < limit) break;
+        offset += limit;
+      }
+      return all;
+    }
+
+    async function ensureStorageLoaded(){
+      try{
+        // images
+        const imgList = await listAll(IB, IP);
+        const pubImg = [];
+        for(const f of imgList){
+          const e = extOf(f.name);
+          if(!IMG_EXT.has(e)) continue;
+          const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
+          if(data?.publicUrl){
+            const stem = stemOf(f.name);
+            pubImg.push({ name:f.name, path:f.fullpath, url:data.publicUrl, stem, initial: initialFromStem(stem) });
+          }
+        }
+        imageFiles = pubImg;
+
+        // audio (optional)
+        const audList = await listAll(AB, AP).catch(()=>[]);
+        for(const f of audList){
+          const e = extOf(f.name);
+          if(!AUD_EXT.has(e)) continue;
+          const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
+          if(data?.publicUrl){
+            const stem = stemOf(f.name);
+            // prefer mp3 if multiple ext; last one wins—fine.
+            audioMap.set(stem.toLowerCase(), data.publicUrl);
+          }
+        }
+
+        if(imageFiles.length === 0){
+          storageWarn.style.display = 'block';
+          storageWarn.textContent = `No se encontraron imágenes en el bucket "${IB}" con el prefijo "${IP}". Verifica: 1) nombre del bucket, 2) que sea PÚBLICO, 3) que haya archivos .png/.jpg/.webp.`;
+        } else {
+          storageWarn.style.display = 'none';
+        }
+
+        console.log(`[lettersort] imágenes: ${imageFiles.length}, audios: ${audioMap.size}`);
+      } catch(err){
+        storageWarn.style.display = 'block';
+        storageWarn.textContent = `Error al listar Storage: ${err?.message || err}`;
+      }
+    }
+
+    /******** Realtime ********/
     async function joinRoom(room){
-      if(channel){ await channel.unsubscribe(); }
-      ROOM = room.trim();
+      if(channel){ try{ await channel.unsubscribe(); }catch{} }
+      ROOM = (room||'').trim();
       if(!ROOM){ alert('Código de sesión inválido'); return; }
 
       channel = client.channel(`lettersort:${ROOM}`);
-      channel.on('broadcast', { event: 'ROUND' }, p => {
-        const d = p.payload;
+      channel.on('broadcast', { event:'ROUND' }, p=>{
+        const d=p.payload;
         buildColumns(d.columns);
         setCards(d.cards);
         clearAllPlacements();
       });
-      channel.on('broadcast', { event: 'VERIFY' }, () => verifyNow());
-      channel.on('broadcast', { event: 'RESET' }, () => resetRoundPlacements());
+      channel.on('broadcast', { event:'VERIFY' }, ()=> verifyNow());
+      channel.on('broadcast', { event:'RESET' }, ()=> resetRoundPlacements());
+
       const { error } = await channel.subscribe();
-      if(error){ console.error(error); alert('Error al suscribirse al canal'); }
+      if(error){ alert('Error de Realtime'); console.error(error); }
     }
 
     btnJoin.addEventListener('click', async ()=>{
       const room = roomCodeEl.value || 'A_01';
       await joinRoom(room);
-      // Teacher: load assets from storage (images + audio)
-      const { images: img, audioMap } = await loadAssetsFromStorage();
-      images = img;
-      audioByStem = audioMap;
-      if(images.length === 0){
-        alert('No se encontraron imágenes en el bucket. Revisa los nombres de los buckets/privilegios.');
-      }
+      await ensureStorageLoaded();
     });
-
     btnStudentJoin.addEventListener('click', async ()=>{
       const room = studentRoomEl.value || 'A_01';
       await joinRoom(room);
+      // students don’t need to list storage until they get a ROUND payload
     });
 
-    /*************** Storage listing ***************/
-    // Lists all files in a bucket/prefix, handling offset pagination.
-    async function listAll(bucket, prefix=""){
-      const out = [];
-      let offset = 0;
-      const limit = 100;
-      while(true){
-        const { data, error } = await client.storage.from(bucket).list(prefix, {
-          limit, offset, sortBy: { column: 'name', order: 'asc' }
-        });
-        if(error){ console.error('list error', bucket, prefix, error); break; }
-        if(!data || data.length===0) break;
-        // Only files (not "folders"): Supabase sets metadata for files, null for folders
-        for(const item of data){
-          if(item && item.name && item.metadata && typeof item.metadata.size === 'number'){
-            const path = prefix ? `${prefix}/${item.name}` : item.name;
-            out.push({ name: item.name, path });
-          }
-        }
-        if(data.length < limit) break;
-        offset += data.length;
+    /******** Round building from storage ********/
+    const byInitial = ()=> {
+      const map = new Map();
+      for(const f of imageFiles){
+        const list = map.get(f.initial) || [];
+        list.push(f);
+        map.set(f.initial, list);
       }
-      return out;
-    }
+      return map;
+    };
+    const allImages = ()=> [...imageFiles];
 
-    async function toUrl(bucket, path){
-      if(!USE_SIGNED_URLS){
-        const { data } = client.storage.from(bucket).getPublicUrl(path);
-        return data.publicUrl;
-      } else {
-        const { data, error } = await client.storage.from(bucket).createSignedUrl(path, SIGNED_URL_TTL);
-        if(error){ console.warn('signed url error', error); return ''; }
-        return data.signedUrl;
-      }
-    }
+    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [a[i],a[j]]=[a[j],a[i]] } return a }
 
-    function stemFromFile(fname){ const dot=fname.lastIndexOf('.'); return (dot>=0?fname.slice(0,dot):fname).toLowerCase(); }
-    function initialFromStem(stem){
-      const s=stem.toLowerCase();
-      if(s.startsWith('ch')) return 'ch';
-      if(s.startsWith('ll')) return 'll';
-      if(s.startsWith('rr')) return 'rr';
-      return s[0];
-    }
-    function isImageName(name){ return /\.(png|jpg|jpeg|webp|gif)$/i.test(name); }
-    function isAudioName(name){ return /\.(mp3|m4a|aac|wav|ogg)$/i.test(name); }
-
-    async function loadAssetsFromStorage(){
-      // 1) list images
-      const imgEntries = (await listAll(IMAGES_BUCKET, IMAGES_PREFIX)).filter(f => isImageName(f.name));
-      // 2) build image objects with URL
-      const images = [];
-      for(const f of imgEntries){
-        const url = await toUrl(IMAGES_BUCKET, f.path);
-        const stem = stemFromFile(f.name);
-        images.push({ name: f.name, path: f.path, url, stem, initial: initialFromStem(stem) });
-      }
-      // 3) list audio (optional)
-      const audioEntries = (await listAll(AUDIO_BUCKET, AUDIO_PREFIX)).filter(f => isAudioName(f.name));
-      const audioMap = new Map();
-      for(const f of audioEntries){
-        const url = await toUrl(AUDIO_BUCKET, f.path);
-        const stem = stemFromFile(f.name);
-        if(!audioMap.has(stem)) audioMap.set(stem, url);
-      }
-      return { images, audioMap };
-    }
-
-    /*************** Teacher actions ***************/
     btnNewRound.addEventListener('click', async ()=>{
       if(!isTeacher) return;
 
-      // Ensure assets loaded
-      if(images.length === 0){
-        const res = await loadAssetsFromStorage();
-        images = res.images;
-        audioByStem = res.audioMap;
-      }
-      if(images.length === 0){
-        alert('No hay imágenes disponibles en Storage.');
-        return;
+      // Make sure storage is loaded at least once
+      if(imageFiles.length===0){
+        await ensureStorageLoaded();
+        if(imageFiles.length===0){ alert('No hay imágenes disponibles en Storage.'); return; }
       }
 
       const activeLetters = [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
       if(activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
+
       const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
 
       const columns = [];
@@ -318,45 +325,46 @@
         columns.push({label:`Con /${L}/`, key:`${L}`});
         columns.push({label:`Sin /${L}/`, key:`not-${L}`});
       } else {
-        activeLetters.forEach(L=>columns.push({label:`Con /${L}/`, key:`${L}`}));
+        activeLetters.forEach(L=> columns.push({label:`Con /${L}/`, key:`${L}`}));
       }
 
-      const all = [...images]; // all image objects
-      const byInitial = new Map();
-      for(const img of images){
-        if(!byInitial.has(img.initial)) byInitial.set(img.initial, []);
-        byInitial.get(img.initial).push(img);
-      }
+      const initialMap = byInitial();
+      const everything = allImages();
 
       const pickNoRepeat = (arr, n) => {
-        const pool = arr.filter(x=>!usedSet.has(x.path));
+        const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
         shuffle(pool);
-        return pool.slice(0, n);
+        const chosen = pool.slice(0,n);
+        // if pool too small, allow reuse as fallback:
+        if(chosen.length < n){
+          const more = arr.filter(x=>!chosen.includes(x));
+          shuffle(more);
+          chosen.push(...more.slice(0, n - chosen.length));
+        }
+        return chosen;
       };
 
       const cards = [];
       for(const col of columns){
-        let picks = [];
+        let picks=[];
         if(col.key.startsWith('not-')){
           const L = col.key.slice(4);
-          const notList = all.filter(img => img.initial !== L);
+          const notList = everything.filter(f => f.initial !== L);
           picks = pickNoRepeat(notList, perCol);
         } else {
           const L = col.key;
-          const list = byInitial.get(L) || [];
+          const list = initialMap.get(L) || [];
           picks = pickNoRepeat(list, perCol);
         }
-        for(const img of picks) usedSet.add(img.path);
-
-        // Prepare cards with image URL, and audio if present
-        for(const img of picks){
-          const audioUrl = audioByStem.get(img.stem) || '';
+        for(const f of picks){ usedSet.add(`${f.path}`); }
+        for(const f of picks){
+          const stem = f.stem.toLowerCase();
+          const audioUrl = audioMap.get(stem) || null; // ok si no hay audio
           cards.push({
             id: crypto.randomUUID(),
-            file: img.name,
-            stem: img.stem,
-            word: img.stem,         // (no caption shown, but kept logically)
-            imgUrl: img.url,
+            file: f.name,
+            word: f.stem,
+            imgUrl: f.url,
             audioUrl
           });
         }
@@ -374,7 +382,7 @@
       await channel.send({ type:'broadcast', event:'RESET', payload:{} });
     });
 
-    /*************** UI builders ***************/
+    /******** Board & DnD ********/
     function buildColumns(columns){
       currentCols = columns;
       columnsEl.innerHTML='';
@@ -395,15 +403,15 @@
       el.className='card';
       el.dataset.id=card.id;
       el.setAttribute('tabindex','0');
-      el.innerHTML=`<img alt="${escapeHtml(card.word)}" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
-      // audio on double tap/click
+      el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
+      // double click / double tap audio
       if(card.audioUrl){
         let lastTap=0;
-        const playAudio=()=>{ const a=new Audio(card.audioUrl); a.play().catch(()=>{}); };
-        el.addEventListener('dblclick', playAudio);
+        const play=()=>{ const a=new Audio(card.audioUrl); a.play().catch(()=>{}); };
+        el.addEventListener('dblclick', play);
         el.addEventListener('touchend', e=>{
           const now=Date.now();
-          if(now-lastTap<300){ playAudio(); }
+          if(now-lastTap<300){ play(); }
           lastTap=now;
         });
       }
@@ -420,24 +428,23 @@
       clearAllPlacements();
     }
 
-    // verify on each client
     function verifyNow(){
-      const getTargetForCol = key => key.startsWith('not-') ? {type:'not', letter:key.slice(4)} : {type:'is', letter:key};
-      document.querySelectorAll('.drop').forEach((drop,idx)=>{
-        const colKey=currentCols[idx].key;
-        const target=getTargetForCol(colKey);
+      const getTarget = key => key.startsWith('not-') ? {type:'not', letter:key.slice(4)} : {type:'is', letter:key};
+      document.querySelectorAll('.drop').forEach((drop, idx)=>{
+        const target = getTarget(currentCols[idx].key);
         [...drop.children].forEach(cardEl=>{
-          const card=currentCards.find(c=>c.id===cardEl.dataset.id);
+          const card = currentCards.find(c=>c.id===cardEl.dataset.id);
           if(!card) return;
-          const initial=initialFromStem(card.word);
+          const stem = (card.word||'').toLowerCase();
+          const initial = initialFromStem(stem);
           const ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
           if(ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
-          else { cardEl.classList.add('bad'); setTimeout(()=>ejectToRack(cardEl),350); }
+          else { cardEl.classList.add('bad'); setTimeout(()=> ejectToRack(cardEl), 350); }
         });
       });
     }
 
-    /*************** Drag & Drop via Pointer Events ****************/
+    // Pointer-event DnD
     let drag=null;
     function makeDraggable(el){ el.style.touchAction='none'; el.addEventListener('pointerdown', onGrab); }
     function onGrab(e){
@@ -446,11 +453,11 @@
       drag={el, originParent:el.parentElement};
       el.setPointerCapture(e.pointerId);
       el.style.position='absolute'; el.style.zIndex=1000;
-      moveTo(el,e.clientX,e.clientY);
+      moveTo(el, e.clientX, e.clientY);
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onDrop);
     }
-    function onMove(e){ if(!drag) return; moveTo(drag.el,e.clientX,e.clientY); }
+    function onMove(e){ if(!drag) return; moveTo(drag.el, e.clientX, e.clientY); }
     function onDrop(e){
       if(!drag) return;
       const el=drag.el;
@@ -460,7 +467,6 @@
       const target=document.elementFromPoint(e.clientX,e.clientY);
       const drop=target?.closest?.('.drop');
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex='';
-
       const perCol=Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
       if(drop){
         if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
@@ -471,27 +477,22 @@
       drag=null;
     }
     function moveTo(el,x,y){ el.style.left=(x-60)+'px'; el.style.top=(y-60)+'px'; }
-
     function ejectToRack(cardEl){ cardEl.classList.remove('bad'); rackEl.appendChild(cardEl); }
     function lockCard(cardEl, card){
-      const clone=cardEl.cloneNode(true);
+      const clone = cardEl.cloneNode(true);
       clone.classList.add('locked');
-      if(card && card.audioUrl){
+      if(card?.audioUrl){
         let lastTap=0;
-        const playAudio=()=>{ const a=new Audio(card.audioUrl); a.play().catch(()=>{}); };
-        clone.addEventListener('dblclick', playAudio);
+        const play=()=>{ const a=new Audio(card.audioUrl); a.play().catch(()=>{}); };
+        clone.addEventListener('dblclick', play);
         clone.addEventListener('touchend', e=>{
           const now=Date.now();
-          if(now-lastTap<300){ playAudio(); }
+          if(now-lastTap<300){ play(); }
           lastTap=now;
         });
       }
       cardEl.replaceWith(clone);
     }
-
-    /*************** Helpers ****************/
-    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
-    function escapeHtml(s){ return s.replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
   </script>
 </body>
 </html>
