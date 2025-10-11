@@ -128,6 +128,7 @@
     const IMAGES_PREFIX = "";                  // raíz
     const AUDIO_PREFIX  = "";                  // raíz
 
+    // Override por query (?ib=...&ab=...&ip=...&ap=...)
     const qs = new URLSearchParams(location.search);
     const IB = qs.get('ib') || IMAGES_BUCKET;
     const AB = qs.get('ab') || AUDIO_BUCKET;
@@ -158,8 +159,8 @@
     let channel = null;
     let isTeacher = false;
 
-    let imageFiles = []; // [{name, path, url, stem, baseKey, initial}]
-    let audioMap = new Map(); // baseKey -> public url
+    let imageFiles = []; // [{name, path, url, stem, initial}]
+    let audioMap = new Map(); // normalized core stem -> public url
 
     let currentCols = [];
     let currentCards = [];
@@ -187,50 +188,46 @@
     }
     renderLetterPicker();
 
-    /******** Name helpers (markers + suffixes) ********/
+    /******** Markers & stems ********/
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
 
-    // Your accent markers rules
+    // Your marker scheme: a.. e.. i.. o.. u.. (accent anywhere), n.. for ñ, u,, for ü
     function normalizeMarkers(s){
       let t = (s || '').toLowerCase();
+      // remove accent markers by collapsing them (accent not needed for matching)
       t = t.replace(/a\.\./g, 'a')
            .replace(/e\.\./g, 'e')
            .replace(/i\.\./g, 'i')
            .replace(/o\.\./g, 'o')
-           .replace(/u\.\./g, 'u');
-      t = t.replace(/u,,/g, 'u');   // ü
-      t = t.replace(/n\.\./g, 'n'); // ñ marker collapsed to n for matching
+           .replace(/u\.\./g, 'u')
+           .replace(/u,,/g, 'u')
+           .replace(/n\.\./g, 'n');
       return t;
     }
-    // strip image-only suffixes and trailing index numbers
-    function stripImageSuffixes(s){
-      return (s || '')
-        .replace(/(?:[_-](?:pic|img|image|photo))$/i, '') // _pic, -pic, _img...
-        .replace(/[_-]?\d+$/,''); // optional trailing numbers like _1, -2
+    // strip common image suffixes like _pic, _img, _image, _foto
+    function stripImageSuffix(t){
+      return t.replace(/_(pic|img|image|foto)$/i, '');
     }
-    function baseKeyFromImageStem(stem){
-      // e.g. "abeja_pic" -> "abeja" -> normalizeMarkers -> "abeja"
-      return normalizeMarkers(stripImageSuffixes(stem));
+    // "core" stem used to match audio; we normalize markers and remove suffixes
+    function coreStemFromImageStem(stem){
+      return stripImageSuffix(normalizeMarkers(stem));
     }
-    function baseKeyFromAudioStem(stem){
-      // audio is already plain like "abeja" but still normalize to be safe
-      return normalizeMarkers(stem);
+    function coreStemFromAudioStem(stem){
+      return normalizeMarkers(stem); // audio names don't have _pic
     }
-    function initialFromStem(rawStem){
-      const raw = (rawStem || '').toLowerCase();
-      // special digraphs after normalization
+
+    function initialFromStem(stemRaw){
+      const raw = (stemRaw || '').toLowerCase();
+      if (raw.startsWith('n..')) return 'ñ';
       const s = normalizeMarkers(raw);
       if (s.startsWith('ch')) return 'ch';
       if (s.startsWith('ll')) return 'll';
       if (s.startsWith('rr')) return 'rr';
-      // ñ initial: allow either explicit "ñ" marker style (n..) or just "ñ" already handled -> both normalize to 'n'
-      // For sorting we still want to treat it as 'ñ' if the original started with n.. or ñ
-      if (/^(n\.\.|ñ)/i.test(rawStem)) return 'ñ';
       return s[0] || '';
     }
 
-    /******** Storage listing ********/
+    /******** Storage ********/
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
       let out = [];
@@ -265,14 +262,14 @@
           if (!['png','jpg','jpeg','webp','gif'].includes(e)) continue;
           const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
           if (data?.publicUrl) {
-            const stem = stemOf(base); // e.g. abeja_pic
+            const stem = stemOf(base);
             pubImg.push({
               name: base,
               path: f.fullpath,
               url: data.publicUrl,
               stem,
-              baseKey: baseKeyFromImageStem(stem), // <-- used to match audio
-              initial: initialFromStem(stem)
+              initial: initialFromStem(stem),
+              core: coreStemFromImageStem(stem)
             });
           }
         }
@@ -288,9 +285,8 @@
             if (!['mp3','wav','m4a','ogg'].includes(e)) continue;
             const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
             if (data?.publicUrl) {
-              const stem = stemOf(base);        // e.g. abeja
-              const key  = baseKeyFromAudioStem(stem);
-              audioMap.set(key, data.publicUrl);
+              const stem = stemOf(base);
+              audioMap.set(coreStemFromAudioStem(stem), data.publicUrl);
             }
           }
         } catch {}
@@ -381,10 +377,10 @@
       const everything = allImages();
 
       const pickNoRepeat = (arr, n) => {
-        const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
+        const pool = arr.filter(x=>!usedSet.has(x.path));
         shuffle(pool);
         const chosen = pool.slice(0,n);
-        if(chosen.length < n){
+        if (chosen.length < n) {
           const more = arr.filter(x=>!chosen.includes(x));
           shuffle(more);
           chosen.push(...more.slice(0, n - chosen.length));
@@ -404,17 +400,13 @@
           const list = initialMap.get(L) || [];
           picks = pickNoRepeat(list, perCol);
         }
-        for(const f of picks){ usedSet.add(`${f.path}`); }
+        for(const f of picks){ usedSet.add(f.path); }
         for(const f of picks){
-          const audioUrl = audioMap.get(f.baseKey) || null;
-          if (!audioUrl) {
-            // Helpful console hint if a file didn't find an audio pair
-            console.debug('[lettersort] sin audio para', f.name, '-> clave', f.baseKey);
-          }
+          const audioUrl = audioMap.get(f.core) || null; // match abeja_pic -> abeja.mp3
           cards.push({
             id: crypto.randomUUID(),
             file: f.name,
-            word: f.stem,  // keep the original (with _pic if any) for display/verify
+            word: f.stem,
             imgUrl: f.url,
             audioUrl
           });
@@ -449,6 +441,10 @@
       rackEl.innerHTML='';
       cards.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
+
+    // guard to ignore the synthetic click that fires after a drag
+    let lastDragEndedAt = 0;
+
     function renderCard(card){
       const el=document.createElement('div');
       el.className='card';
@@ -457,16 +453,16 @@
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
 
       if(card.audioUrl){
-        el.addEventListener('click', ()=>{
-          // play only if not in the middle of a drag
-          if (!drag || drag.el !== el || !drag.moved) {
-            new Audio(card.audioUrl).play().catch(()=>{});
-          }
+        el.addEventListener('click', (ev)=>{
+          // if a drag ended very recently, ignore this click
+          if (Date.now() - lastDragEndedAt < 180) return;
+          new Audio(card.audioUrl).play().catch(()=>{});
         });
       }
       makeDraggable(el);
       return el;
     }
+
     function clearAllPlacements(){
       document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
       rackEl.innerHTML='';
@@ -492,10 +488,14 @@
       });
     }
 
-    // Pointer-event DnD with "moved" guard
+    // Pointer-event DnD with movement threshold & full cleanup
     let drag=null;
-    function makeDraggable(el){ el.style.touchAction='none'; el.addEventListener('pointerdown', onGrab); }
+    function makeDraggable(el){
+      el.style.touchAction='none';
+      el.addEventListener('pointerdown', onGrab);
+    }
     function onGrab(e){
+      e.preventDefault(); // avoid generating mouse events that can confuse things
       const el=e.currentTarget;
       if(el.classList.contains('locked')) return;
       drag={
@@ -506,15 +506,15 @@
         moved:false
       };
       el.setPointerCapture(e.pointerId);
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onDrop);
-      window.addEventListener('pointercancel', onCancel);
+      document.addEventListener('pointermove', onMove, {passive:false});
+      document.addEventListener('pointerup', onDrop, {passive:false});
+      document.addEventListener('pointercancel', onCancel, {passive:false});
     }
     function onMove(e){
       if(!drag || e.pointerId!==drag.pointerId) return;
       const dx = e.clientX - drag.startX;
       const dy = e.clientY - drag.startY;
-      if(!drag.moved && Math.hypot(dx,dy) < 4) return; // ignore taps
+      if(!drag.moved && Math.hypot(dx,dy) < 4) return; // tap, not a drag
       if(!drag.moved){
         drag.moved = true;
         drag.el.style.position='fixed';
@@ -530,8 +530,9 @@
       cleanupPointer(e.pointerId);
       const el=drag.el;
 
+      // if not moved -> treat as click only
       if(!drag.moved){
-        resetDraggedStyles(el); // tap -> leave in place; click handler will have played audio
+        resetDraggedStyles(el);
         drag=null;
         return;
       }
@@ -547,6 +548,8 @@
       } else {
         rackEl.appendChild(el);
       }
+
+      lastDragEndedAt = Date.now();
       drag=null;
     }
     function onCancel(e){
@@ -557,9 +560,9 @@
     }
     function cleanupPointer(pointerId){
       try{ drag.el.releasePointerCapture(pointerId);}catch(_){}
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onDrop);
-      window.removeEventListener('pointercancel', onCancel);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onDrop);
+      document.removeEventListener('pointercancel', onCancel);
     }
     function resetDraggedStyles(el){
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex=''; el.style.pointerEvents='';
