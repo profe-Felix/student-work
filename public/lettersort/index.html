@@ -30,7 +30,7 @@
     input{padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;width:100%}
     .btn{padding:8px 12px;border-radius:10px;border:1px solid transparent;background:var(--brand);color:#fff;cursor:pointer}
     .btn.outline{background:#fff;border-color:#d1d5db;color:#111}
-    .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)} /* fixed */
+    .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
     .buttons{display:flex;gap:8px;align-items:center}
     .note{font-size:12px;color:#666;margin-top:8px}
     .letters{display:flex;flex-wrap:wrap;gap:6px}
@@ -40,9 +40,11 @@
     .columns{display:grid;grid-template-columns: repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:16px}
     .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px}
     .col h2{margin:0 0 8px;font-size:18px}
-    .drop{min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;position:relative} /* +position */
+    .drop{min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;position:relative}
+    .drop.over{outline:3px solid #93c5fd;}
     .rackSection{margin-top:18px}
     .rack{margin-top:8px;background:#fff;border:1px dashed #e5e7eb;border-radius:12px;padding:10px;display:flex;flex-wrap:wrap;gap:8px;min-height:150px}
+    .rack.over{outline:3px solid #cbd5e1;}
     .card{user-select:none;touch-action:none;background:var(--card);border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.06);width:140px;overflow:hidden;cursor:grab;display:flex;flex-direction:column;align-items:center}
     .card:active{cursor:grabbing}
     .card img{display:block;width:100%;height:100px;object-fit:contain;background:#fafafa}
@@ -119,17 +121,15 @@
 
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
   <script>
-    /******** SUPABASE CONFIG (tu proyecto existente) ********/
+    /******** SUPABASE CONFIG ********/
     const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
-    /* NOMBRES/PREFIX DE BUCKETS — AJUSTA ESTO A LO QUE YA CREASTE */
     const IMAGES_BUCKET = "lettersort-images";
-    const AUDIO_BUCKET  = "lettersort-audio";    // opcional
-    const IMAGES_PREFIX = "";                    // raíz
-    const AUDIO_PREFIX  = "";                    // raíz
+    const AUDIO_BUCKET  = "lettersort-audio";
+    const IMAGES_PREFIX = "";   // raíz
+    const AUDIO_PREFIX  = "";   // raíz
 
-    // Override por query (?ib=...&ab=...&ip=...&ap=...)
     const qs = new URLSearchParams(location.search);
     const IB = qs.get('ib') || IMAGES_BUCKET;
     const AB = qs.get('ab') || AUDIO_BUCKET;
@@ -161,7 +161,7 @@
     let isTeacher = false;
 
     let imageFiles = []; // [{name, path, url, stem, initial}]
-    let audioMap = new Map(); // stem -> public url (if exists)
+    let audioMap = new Map(); // stem -> public url
 
     let currentCols = [];
     let currentCards = [];
@@ -203,7 +203,6 @@
       return t[0];
     }
 
-    // List root when prefix empty; paginate
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
       let out = [];
@@ -229,7 +228,6 @@
 
     async function ensureStorageLoaded(){
       try{
-        // IMAGES
         const imgList = await listAll(IB, IP);
         const pubImg = [];
         for (const f of imgList) {
@@ -239,18 +237,11 @@
           const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
           if (data?.publicUrl) {
             const stem = stemOf(base);
-            pubImg.push({
-              name: base,
-              path: f.fullpath,
-              url: data.publicUrl,
-              stem,
-              initial: initialFromStem(stem)
-            });
+            pubImg.push({ name: base, path: f.fullpath, url: data.publicUrl, stem, initial: initialFromStem(stem) });
           }
         }
         imageFiles = pubImg;
 
-        // AUDIO (optional)
         audioMap = new Map();
         try {
           const audList = await listAll(AB, AP);
@@ -259,19 +250,13 @@
             const e = extOf(base);
             if (!AUD_EXT.has(e)) continue;
             const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
-            if (data?.publicUrl) {
-              audioMap.set(stemOf(base).toLowerCase(), data.publicUrl);
-            }
+            if (data?.publicUrl) audioMap.set(stemOf(base).toLowerCase(), data.publicUrl);
           }
-        } catch { /* audio bucket optional */ }
+        } catch {}
 
-        if (imageFiles.length === 0){
-          storageWarn.style.display = 'block';
-          storageWarn.textContent =
-            `No se encontraron imágenes en el bucket "${IB}" (prefijo: ${IP || '(raíz)'}). ` +
-            `Verifica: 1) nombre del bucket, 2) que sea PÚBLICO, 3) que haya .png/.jpg/.webp.`;
-        } else {
-          storageWarn.style.display = 'none';
+        storageWarn.style.display = imageFiles.length ? 'none' : 'block';
+        if (!imageFiles.length) {
+          storageWarn.textContent = `No se encontraron imágenes en el bucket "${IB}" (prefijo: ${IP || '(raíz)'}). Verifica permisos y nombres.`;
         }
 
         console.log(`[lettersort] imágenes: ${imageFiles.length}, audios: ${audioMap.size}`);
@@ -378,13 +363,7 @@
         for(const f of picks){
           const stem = f.stem.toLowerCase();
           const audioUrl = audioMap.get(stem) || null;
-          cards.push({
-            id: crypto.randomUUID(),
-            file: f.name,
-            word: f.stem,
-            imgUrl: f.url,
-            audioUrl
-          });
+          cards.push({ id: crypto.randomUUID(), file: f.name, word: f.stem, imgUrl: f.url, audioUrl });
         }
       }
 
@@ -400,7 +379,7 @@
       await channel.send({ type:'broadcast', event:'RESET', payload:{} });
     });
 
-    /******** Audio helpers (click/dbl-tap + speech fallback) ********/
+    /******** Audio helpers ********/
     function trySpeak(word){
       try{
         if ('speechSynthesis' in window && word) {
@@ -429,7 +408,7 @@
       }, { passive:true });
     }
 
-    /******** Board & DnD ********/
+    /******** Board building ********/
     function buildColumns(columns){
       currentCols = columns;
       columnsEl.innerHTML='';
@@ -439,26 +418,35 @@
         col.innerHTML = `<h2>${c.label}</h2><div class="drop" data-col="${idx}"></div>`;
         columnsEl.appendChild(col);
       });
+      setupDropTargets(); // MUST after creating drops
     }
     function setCards(cards){
       currentCards = cards;
       rackEl.innerHTML='';
       cards.forEach(card=> rackEl.appendChild(renderCard(card)) );
+      setupDropTargets(); // ensure rack handlers exist
     }
+
     function renderCard(card){
       const el=document.createElement('div');
       el.className='card';
       el.dataset.id=card.id;
       el.setAttribute('tabindex','0');
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
-      attachAudioHandlers(el, card);                 /* NEW */
-      makeDraggable(el);
+
+      attachAudioHandlers(el, card);
+      enableMouseDnD(el);     // HTML5 DnD for mouse
+      enableTouchDnD(el);     // Pointer Events for touch/pen
+
       return el;
     }
+
+    /******** Verification ********/
     function clearAllPlacements(){
       document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
       rackEl.innerHTML='';
       currentCards.forEach(card=> rackEl.appendChild(renderCard(card)) );
+      setupDropTargets();
     }
     function resetRoundPlacements(){
       document.querySelectorAll('.card').forEach(c=> c.classList.remove('ok','bad','locked') );
@@ -481,18 +469,76 @@
       });
     }
 
-    /* Robust pointer-event DnD for iPad/desktop */
-    let drag=null; // { el, originParent, pointerId, dx, dy }
-    function makeDraggable(el){
-      el.style.touchAction='none';
-      el.addEventListener('pointerdown', onGrab);
+    function ejectToRack(cardEl){ cardEl.classList.remove('bad'); rackEl.appendChild(cardEl); }
+    function lockCard(cardEl, card){
+      const clone = cardEl.cloneNode(true);
+      clone.classList.add('locked');
+      attachAudioHandlers(clone, card);
+      // remove draggable & pointer handlers on locked
+      clone.draggable = false;
+      clone.onpointerdown = null;
+      cardEl.replaceWith(clone);
     }
-    function onGrab(e){
-      const el=e.currentTarget;
+
+    /************ HTML5 Drag & Drop (mouse/trackpad) ************/
+    let dragMouseEl = null;
+    function enableMouseDnD(el){
+      el.draggable = true;
+      el.addEventListener('dragstart', e=>{
+        if (el.classList.contains('locked')) { e.preventDefault(); return; }
+        dragMouseEl = el;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', el.dataset.id || '');
+      });
+      el.addEventListener('dragend', ()=>{
+        dragMouseEl = null;
+      });
+    }
+
+    function setupDropTargets(){
+      const perCol = () => Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
+
+      // Rack is also a drop target
+      const targets = [rackEl, ...document.querySelectorAll('.drop')];
+      targets.forEach(t=>{
+        t.addEventListener('dragover', e=>{
+          e.preventDefault();
+          t.classList.add('over');
+          e.dataTransfer.dropEffect = 'move';
+        });
+        t.addEventListener('dragleave', ()=> t.classList.remove('over'));
+        t.addEventListener('drop', e=>{
+          e.preventDefault();
+          t.classList.remove('over');
+          const id = e.dataTransfer.getData('text/plain');
+          const el = dragMouseEl || document.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+          if(!el) return;
+
+          // capacity check only for columns
+          if (t.classList.contains('drop')) {
+            if (t.children.length >= perCol()) {
+              rackEl.appendChild(el); // bounce to rack
+              return;
+            }
+          }
+          t.appendChild(el);
+        }, { passive:false });
+      });
+    }
+
+    /************ Pointer Events DnD (touch/pen only) ************/
+    let dragTouch = null; // { el, originParent, pointerId, dx, dy }
+    function enableTouchDnD(el){
+      el.style.touchAction='none';
+      el.addEventListener('pointerdown', onGrabTouch);
+    }
+    function onGrabTouch(e){
+      if (e.pointerType === 'mouse') return; // IMPORTANT: skip mouse here
+      const el = e.currentTarget;
       if(el.classList.contains('locked')) return;
 
       const rect = el.getBoundingClientRect();
-      drag = {
+      dragTouch = {
         el,
         originParent: el.parentElement,
         pointerId: e.pointerId,
@@ -506,69 +552,61 @@
       el.style.height = rect.height + 'px';
       el.style.position='fixed';
       el.style.zIndex=1000;
-      moveTo(el, e.clientX - drag.dx, e.clientY - drag.dy);
+      moveTo(el, e.clientX - dragTouch.dx, e.clientY - dragTouch.dy);
 
-      window.addEventListener('pointermove', onMove, { passive:false });
-      window.addEventListener('pointerup', onDrop);
-      window.addEventListener('pointercancel', cancelDrag);
-      el.addEventListener('lostpointercapture', cancelDrag);
+      window.addEventListener('pointermove', onMoveTouch, { passive:false });
+      window.addEventListener('pointerup', onDropTouch);
+      window.addEventListener('pointercancel', cancelTouchDrag);
+      el.addEventListener('lostpointercapture', cancelTouchDrag);
     }
-    function onMove(e){
-      if(!drag) return;
-      e.preventDefault(); // stop page scroll
-      moveTo(drag.el, e.clientX - drag.dx, e.clientY - drag.dy);
+    function onMoveTouch(e){
+      if(!dragTouch) return;
+      if (e.pointerType === 'mouse') return;
+      e.preventDefault();
+      moveTo(dragTouch.el, e.clientX - dragTouch.dx, e.clientY - dragTouch.dy);
     }
-    function onDrop(e){
-      if(!drag) return;
-      const el=drag.el;
+    function onDropTouch(e){
+      if(!dragTouch) return;
+      if (e.pointerType === 'mouse') return;
+      const el=dragTouch.el;
 
-      // hit test under the dragged card
       el.style.pointerEvents='none';
       const target=document.elementFromPoint(e.clientX,e.clientY);
       el.style.pointerEvents='';
 
+      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
       const drop=target?.closest?.('.drop');
 
-      cleanupDragListeners(el, e);
+      cleanupTouchListeners(el, e);
 
-      // reset styles
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex='';
       el.style.width=''; el.style.height='';
 
-      const perCol=Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
       if(drop){
-        if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
+        if(drop.children.length>=perCol){ dragTouch.originParent.appendChild(el); }
         else { drop.appendChild(el); }
       } else {
         rackEl.appendChild(el);
       }
-      drag=null;
+      dragTouch=null;
     }
-    function cancelDrag(){
-      if(!drag) return;
-      const el=drag.el;
+    function cancelTouchDrag(){
+      if(!dragTouch) return;
+      const el=dragTouch.el;
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex='';
       el.style.width=''; el.style.height='';
-      drag.originParent.appendChild(el);
-      cleanupDragListeners(el);
-      drag=null;
+      dragTouch.originParent.appendChild(el);
+      cleanupTouchListeners(el);
+      dragTouch=null;
     }
-    function cleanupDragListeners(el, e){
+    function cleanupTouchListeners(el, e){
       try{ if(e) el.releasePointerCapture(e.pointerId);}catch(_){}
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onDrop);
-      window.removeEventListener('pointercancel', cancelDrag);
-      el.removeEventListener('lostpointercapture', cancelDrag);
+      window.removeEventListener('pointermove', onMoveTouch);
+      window.removeEventListener('pointerup', onDropTouch);
+      window.removeEventListener('pointercancel', cancelTouchDrag);
+      el.removeEventListener('lostpointercapture', cancelTouchDrag);
     }
     function moveTo(el,x,y){ el.style.left=x+'px'; el.style.top=y+'px'; }
-
-    function ejectToRack(cardEl){ cardEl.classList.remove('bad'); rackEl.appendChild(cardEl); }
-    function lockCard(cardEl, card){
-      const clone = cardEl.cloneNode(true);
-      clone.classList.add('locked');
-      attachAudioHandlers(clone, card);   /* keep audio on locked card */
-      cardEl.replaceWith(clone);
-    }
   </script>
 </body>
 </html>
