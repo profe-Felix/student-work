@@ -128,7 +128,6 @@
     const IMAGES_PREFIX = "";                  // raíz
     const AUDIO_PREFIX  = "";                  // raíz
 
-    // Override por query (?ib=...&ab=...&ip=...&ap=...)
     const qs = new URLSearchParams(location.search);
     const IB = qs.get('ib') || IMAGES_BUCKET;
     const AB = qs.get('ab') || AUDIO_BUCKET;
@@ -159,8 +158,8 @@
     let channel = null;
     let isTeacher = false;
 
-    let imageFiles = []; // [{name, path, url, stem, initial}]
-    let audioMap = new Map(); // normalizedStem -> public url
+    let imageFiles = []; // [{name, path, url, stem, baseKey, initial}]
+    let audioMap = new Map(); // baseKey -> public url
 
     let currentCols = [];
     let currentCards = [];
@@ -188,10 +187,11 @@
     }
     renderLetterPicker();
 
-    /******** Marker helpers ********/
+    /******** Name helpers (markers + suffixes) ********/
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
 
+    // Your accent markers rules
     function normalizeMarkers(s){
       let t = (s || '').toLowerCase();
       t = t.replace(/a\.\./g, 'a')
@@ -199,21 +199,38 @@
            .replace(/i\.\./g, 'i')
            .replace(/o\.\./g, 'o')
            .replace(/u\.\./g, 'u');
-      t = t.replace(/u,,/g, 'u');  // ü
-      t = t.replace(/n\.\./g, 'n'); // ñ (we handle initial ñ separately)
+      t = t.replace(/u,,/g, 'u');   // ü
+      t = t.replace(/n\.\./g, 'n'); // ñ marker collapsed to n for matching
       return t;
     }
-    function initialFromStem(stemRaw){
-      const raw = (stemRaw || '').toLowerCase();
-      if (raw.startsWith('n..')) return 'ñ';
+    // strip image-only suffixes and trailing index numbers
+    function stripImageSuffixes(s){
+      return (s || '')
+        .replace(/(?:[_-](?:pic|img|image|photo))$/i, '') // _pic, -pic, _img...
+        .replace(/[_-]?\d+$/,''); // optional trailing numbers like _1, -2
+    }
+    function baseKeyFromImageStem(stem){
+      // e.g. "abeja_pic" -> "abeja" -> normalizeMarkers -> "abeja"
+      return normalizeMarkers(stripImageSuffixes(stem));
+    }
+    function baseKeyFromAudioStem(stem){
+      // audio is already plain like "abeja" but still normalize to be safe
+      return normalizeMarkers(stem);
+    }
+    function initialFromStem(rawStem){
+      const raw = (rawStem || '').toLowerCase();
+      // special digraphs after normalization
       const s = normalizeMarkers(raw);
       if (s.startsWith('ch')) return 'ch';
       if (s.startsWith('ll')) return 'll';
       if (s.startsWith('rr')) return 'rr';
+      // ñ initial: allow either explicit "ñ" marker style (n..) or just "ñ" already handled -> both normalize to 'n'
+      // For sorting we still want to treat it as 'ñ' if the original started with n.. or ñ
+      if (/^(n\.\.|ñ)/i.test(rawStem)) return 'ñ';
       return s[0] || '';
     }
 
-    /******** Storage ********/
+    /******** Storage listing ********/
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
       let out = [];
@@ -248,12 +265,13 @@
           if (!['png','jpg','jpeg','webp','gif'].includes(e)) continue;
           const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
           if (data?.publicUrl) {
-            const stem = stemOf(base);
+            const stem = stemOf(base); // e.g. abeja_pic
             pubImg.push({
               name: base,
               path: f.fullpath,
               url: data.publicUrl,
               stem,
+              baseKey: baseKeyFromImageStem(stem), // <-- used to match audio
               initial: initialFromStem(stem)
             });
           }
@@ -270,8 +288,9 @@
             if (!['mp3','wav','m4a','ogg'].includes(e)) continue;
             const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
             if (data?.publicUrl) {
-              const stem = stemOf(base);
-              audioMap.set(normalizeMarkers(stem), data.publicUrl);
+              const stem = stemOf(base);        // e.g. abeja
+              const key  = baseKeyFromAudioStem(stem);
+              audioMap.set(key, data.publicUrl);
             }
           }
         } catch {}
@@ -387,12 +406,15 @@
         }
         for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
-          const normalizedStem = normalizeMarkers(f.stem);
-          const audioUrl = audioMap.get(normalizedStem) || null;
+          const audioUrl = audioMap.get(f.baseKey) || null;
+          if (!audioUrl) {
+            // Helpful console hint if a file didn't find an audio pair
+            console.debug('[lettersort] sin audio para', f.name, '-> clave', f.baseKey);
+          }
           cards.push({
             id: crypto.randomUUID(),
             file: f.name,
-            word: f.stem,
+            word: f.stem,  // keep the original (with _pic if any) for display/verify
             imgUrl: f.url,
             audioUrl
           });
@@ -434,12 +456,12 @@
       el.setAttribute('tabindex','0');
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
 
-      // Single click/tap = play audio (if available)
       if(card.audioUrl){
-        el.addEventListener('click', (ev)=>{
-          // ignore if we just dragged
-          if (drag && drag.el === el && drag.moved) return;
-          new Audio(card.audioUrl).play().catch(()=>{});
+        el.addEventListener('click', ()=>{
+          // play only if not in the middle of a drag
+          if (!drag || drag.el !== el || !drag.moved) {
+            new Audio(card.audioUrl).play().catch(()=>{});
+          }
         });
       }
       makeDraggable(el);
@@ -508,9 +530,8 @@
       cleanupPointer(e.pointerId);
       const el=drag.el;
 
-      // If it wasn't actually moved, do NOTHING (so a tap won't reorder)
       if(!drag.moved){
-        resetDraggedStyles(el);
+        resetDraggedStyles(el); // tap -> leave in place; click handler will have played audio
         drag=null;
         return;
       }
