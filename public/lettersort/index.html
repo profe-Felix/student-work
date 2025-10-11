@@ -30,7 +30,7 @@
     input{padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;width:100%}
     .btn{padding:8px 12px;border-radius:10px;border:1px solid transparent;background:var(--brand);color:#fff;cursor:pointer}
     .btn.outline{background:#fff;border-color:#d1d5db;color:#111}
-    .btn.ghost{background:transparent;border-color:transparent;color:#muted}
+    .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)} /* fixed */
     .buttons{display:flex;gap:8px;align-items:center}
     .note{font-size:12px;color:#666;margin-top:8px}
     .letters{display:flex;flex-wrap:wrap;gap:6px}
@@ -40,7 +40,7 @@
     .columns{display:grid;grid-template-columns: repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:16px}
     .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px}
     .col h2{margin:0 0 8px;font-size:18px}
-    .drop{min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start}
+    .drop{min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;position:relative} /* +position */
     .rackSection{margin-top:18px}
     .rack{margin-top:8px;background:#fff;border:1px dashed #e5e7eb;border-radius:12px;padding:10px;display:flex;flex-wrap:wrap;gap:8px;min-height:150px}
     .card{user-select:none;touch-action:none;background:var(--card);border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.06);width:140px;overflow:hidden;cursor:grab;display:flex;flex-direction:column;align-items:center}
@@ -203,7 +203,7 @@
       return t[0];
     }
 
-    // *** FIXED: when prefix is empty, pass undefined to list() so root is listed ***
+    // List root when prefix empty; paginate
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
       let out = [];
@@ -227,7 +227,6 @@
       return out;
     }
 
-    // *** FIXED: filter by extension only; no metadata/folder heuristics ***
     async function ensureStorageLoaded(){
       try{
         // IMAGES
@@ -401,6 +400,35 @@
       await channel.send({ type:'broadcast', event:'RESET', payload:{} });
     });
 
+    /******** Audio helpers (click/dbl-tap + speech fallback) ********/
+    function trySpeak(word){
+      try{
+        if ('speechSynthesis' in window && word) {
+          const u = new SpeechSynthesisUtterance(word);
+          u.lang = 'es-ES';
+          speechSynthesis.speak(u);
+        }
+      }catch{}
+    }
+    function attachAudioHandlers(el, card){
+      const play = () => {
+        if (card.audioUrl) {
+          const a = new Audio(card.audioUrl);
+          a.play().catch(() => trySpeak(card.word));
+        } else {
+          trySpeak(card.word);
+        }
+      };
+      el.addEventListener('click', play);
+      el.addEventListener('dblclick', play);
+      let lastTap = 0;
+      el.addEventListener('touchend', () => {
+        const now = Date.now();
+        if (now - lastTap < 300) play();
+        lastTap = now;
+      }, { passive:true });
+    }
+
     /******** Board & DnD ********/
     function buildColumns(columns){
       currentCols = columns;
@@ -423,16 +451,7 @@
       el.dataset.id=card.id;
       el.setAttribute('tabindex','0');
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
-      if(card.audioUrl){
-        let lastTap=0;
-        const play=()=>{ const a=new Audio(card.audioUrl); a.play().catch(()=>{}); };
-        el.addEventListener('dblclick', play);
-        el.addEventListener('touchend', e=>{
-          const now=Date.now();
-          if(now-lastTap<300){ play(); }
-          lastTap=now;
-        });
-      }
+      attachAudioHandlers(el, card);                 /* NEW */
       makeDraggable(el);
       return el;
     }
@@ -462,29 +481,60 @@
       });
     }
 
-    // Pointer-event DnD
-    let drag=null;
-    function makeDraggable(el){ el.style.touchAction='none'; el.addEventListener('pointerdown', onGrab); }
+    /* Robust pointer-event DnD for iPad/desktop */
+    let drag=null; // { el, originParent, pointerId, dx, dy }
+    function makeDraggable(el){
+      el.style.touchAction='none';
+      el.addEventListener('pointerdown', onGrab);
+    }
     function onGrab(e){
       const el=e.currentTarget;
       if(el.classList.contains('locked')) return;
-      drag={el, originParent:el.parentElement};
+
+      const rect = el.getBoundingClientRect();
+      drag = {
+        el,
+        originParent: el.parentElement,
+        pointerId: e.pointerId,
+        dx: e.clientX - rect.left,
+        dy: e.clientY - rect.top
+      };
+
       el.setPointerCapture(e.pointerId);
-      el.style.position='absolute'; el.style.zIndex=1000;
-      moveTo(el, e.clientX, e.clientY);
-      window.addEventListener('pointermove', onMove);
+
+      el.style.width = rect.width + 'px';
+      el.style.height = rect.height + 'px';
+      el.style.position='fixed';
+      el.style.zIndex=1000;
+      moveTo(el, e.clientX - drag.dx, e.clientY - drag.dy);
+
+      window.addEventListener('pointermove', onMove, { passive:false });
       window.addEventListener('pointerup', onDrop);
+      window.addEventListener('pointercancel', cancelDrag);
+      el.addEventListener('lostpointercapture', cancelDrag);
     }
-    function onMove(e){ if(!drag) return; moveTo(drag.el, e.clientX, e.clientY); }
+    function onMove(e){
+      if(!drag) return;
+      e.preventDefault(); // stop page scroll
+      moveTo(drag.el, e.clientX - drag.dx, e.clientY - drag.dy);
+    }
     function onDrop(e){
       if(!drag) return;
       const el=drag.el;
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onDrop);
-      try{ el.releasePointerCapture(e.pointerId);}catch(_){}
+
+      // hit test under the dragged card
+      el.style.pointerEvents='none';
       const target=document.elementFromPoint(e.clientX,e.clientY);
+      el.style.pointerEvents='';
+
       const drop=target?.closest?.('.drop');
+
+      cleanupDragListeners(el, e);
+
+      // reset styles
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex='';
+      el.style.width=''; el.style.height='';
+
       const perCol=Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
       if(drop){
         if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
@@ -494,21 +544,29 @@
       }
       drag=null;
     }
-    function moveTo(el,x,y){ el.style.left=(x-60)+'px'; el.style.top=(y-60)+'px'; }
+    function cancelDrag(){
+      if(!drag) return;
+      const el=drag.el;
+      el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex='';
+      el.style.width=''; el.style.height='';
+      drag.originParent.appendChild(el);
+      cleanupDragListeners(el);
+      drag=null;
+    }
+    function cleanupDragListeners(el, e){
+      try{ if(e) el.releasePointerCapture(e.pointerId);}catch(_){}
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onDrop);
+      window.removeEventListener('pointercancel', cancelDrag);
+      el.removeEventListener('lostpointercapture', cancelDrag);
+    }
+    function moveTo(el,x,y){ el.style.left=x+'px'; el.style.top=y+'px'; }
+
     function ejectToRack(cardEl){ cardEl.classList.remove('bad'); rackEl.appendChild(cardEl); }
     function lockCard(cardEl, card){
       const clone = cardEl.cloneNode(true);
       clone.classList.add('locked');
-      if(card?.audioUrl){
-        let lastTap=0;
-        const play=()=>{ const a=new Audio(card.audioUrl); a.play().catch(()=>{}); };
-        clone.addEventListener('dblclick', play);
-        clone.addEventListener('touchend', e=>{
-          const now=Date.now();
-          if(now-lastTap<300){ play(); }
-          lastTap=now;
-        });
-      }
+      attachAudioHandlers(clone, card);   /* keep audio on locked card */
       cardEl.replaceWith(clone);
     }
   </script>
