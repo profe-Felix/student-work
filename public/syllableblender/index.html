@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Cajas de Elkonin — Sílabas con audio</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  *{box-sizing:border-box}
+  :root{
+    --bg:#f7f8fc; --grid:#eef1f7; --ink:#111; --muted:#6b7280; --brand:#2563eb;
+    --box:#fff; --box-b:#111827; --cover:#e5e7eb; --ok:#16a34a
+  }
+  html,body{height:100%}
+  body{
+    margin:0; font:18px/1.35 Andika, system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+    color:var(--ink); background:
+      linear-gradient(0deg, transparent calc(100% - 1px), var(--grid) 1px),
+      linear-gradient(90deg, transparent calc(100% - 1px), var(--grid) 1px),
+      var(--bg);
+    background-size:40px 40px, 40px 40px, auto;
+  }
+  header{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #e5e7eb}
+  .wrap{max-width:1100px;margin:0 auto;padding:12px}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .spacer{flex:1}
+  h1{font-size:20px;margin:0}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  select,button{font:inherit}
+  select{border:1px solid #d1d5db;border-radius:10px;padding:6px 10px;background:#fff}
+  .btn{border:1px solid #d1d5db;border-radius:10px;padding:8px 12px;cursor:pointer}
+  .btn.primary{background:var(--brand);color:#fff;border-color:transparent}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  main{max-width:1100px;margin:16px auto;padding:0 12px}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;box-shadow:0 6px 18px rgba(0,0,0,.05)}
+
+  .imageWrap{position:relative;border:2px solid var(--box-b);border-radius:12px;overflow:hidden}
+  .imageWrap img{display:block;width:100%;height:270px;object-fit:contain;background:#fafafa}
+  .covers{position:absolute;inset:0;display:grid;gap:6px}
+  .cover{background:var(--cover);opacity:.96;display:flex;align-items:center;justify-content:center}
+  .cover.revealed{opacity:0;pointer-events:none;transition:opacity .25s ease}
+  .cover button{font:inherit;border:1px solid #d1d5db;border-radius:999px;padding:4px 10px;background:#fff}
+  .cover button:disabled{opacity:.5}
+
+  .wordTitle{margin:8px 0 0;font-size:22px;text-align:center}
+
+  .boxes{margin-top:14px;display:grid;gap:10px}
+  .elkonin{display:grid;gap:8px}
+  .elRow{display:grid;gap:8px}
+  .slots{display:grid;gap:12px}
+  .slot{min-height:84px;background:var(--box);border:2px solid var(--box-b);border-radius:8px;display:flex;align-items:center;justify-content:center}
+  .counter{
+    width:46px;height:46px;border:2px solid var(--box-b);border-radius:999px;display:flex;align-items:center;justify-content:center;
+    font-size:18px;cursor:pointer;user-select:none;background:#fff
+  }
+  .counter.heard{background:#ecfdf5;border-color:#10b981}
+  .arrowWrap{display:flex;justify-content:center}
+  .arrow{width:82%;height:26px}
+  small.note{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="row">
+      <h1>Cajas de Elkonin</h1>
+      <div class="spacer"></div>
+      <div class="toolbar">
+        <label>Palabra:
+          <select id="wordSelect"></select>
+        </label>
+        <button id="prevBtn" class="btn">◀</button>
+        <button id="nextBtn" class="btn">▶</button>
+        <button id="rebuildBtn" class="btn">Reiniciar</button>
+        <button id="revealAllBtn" class="btn primary">Destapar todo</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <div class="imageWrap">
+      <img id="pic" alt="Imagen"/>
+      <div id="covers" class="covers"></div>
+    </div>
+    <h2 id="wordTitle" class="wordTitle"></h2>
+
+    <div class="boxes">
+      <div class="elkonin">
+        <div id="slots" class="slots"></div>
+        <div class="arrowWrap">
+          <svg class="arrow" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">
+            <defs><marker id="arrowHead" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+              <polygon points="0 0, 6 3, 0 6" fill="#111827"/>
+            </marker></defs>
+            <line x1="0" y1="3" x2="100" y2="3" stroke="#111827" stroke-width="1.2" marker-end="url(#arrowHead)"/>
+          </svg>
+        </div>
+      </div>
+      <small class="note">Haz clic en cada contador para escuchar la sílaba. Luego pulsa “Destapar” para revelar esa parte de la imagen.</small>
+    </div>
+  </div>
+</main>
+
+<!-- Supabase (only for optional image lookup) -->
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script>
+/*** URL options ***/
+const qs = new URLSearchParams(location.search);
+const WORDS = (qs.get('words')||'manzana,guitarra,camión,helado,caracol').split(',')
+  .map(s=>s.trim()).filter(Boolean);
+
+// Optional Supabase settings for images: <word>_pic.jpg in public bucket
+const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
+const IMAGES_BUCKET = qs.get('ib') || "lettersort-images";
+const IMAGES_PREFIX = (qs.get('ip') || "").replace(/^\//,''); // e.g., "grade1/"
+
+const supa = (SUPABASE_URL && SUPABASE_ANON_KEY) ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+/*** DOM refs ***/
+const wordSelect = document.getElementById('wordSelect');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const rebuildBtn = document.getElementById('rebuildBtn');
+const revealAllBtn = document.getElementById('revealAllBtn');
+const wordTitle = document.getElementById('wordTitle');
+const pic = document.getElementById('pic');
+const coversEl = document.getElementById('covers');
+const slotsEl = document.getElementById('slots');
+
+/*** State ***/
+let index = 0;
+let currentSyllables = [];
+let heard = []; // booleans per syllable
+
+/*** Build UI ***/
+WORDS.forEach((w,i)=>{
+  const opt=document.createElement('option');
+  opt.value=String(i);
+  opt.textContent=w;
+  wordSelect.appendChild(opt);
+});
+
+wordSelect.addEventListener('change', ()=>{
+  index = parseInt(wordSelect.value,10)||0;
+  buildForWord(WORDS[index]);
+});
+prevBtn.addEventListener('click', ()=>{ index=(index-1+WORDS.length)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
+nextBtn.addEventListener('click', ()=>{ index=(index+1)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
+rebuildBtn.addEventListener('click', ()=> buildForWord(WORDS[index]));
+revealAllBtn.addEventListener('click', ()=> revealAll());
+
+/*** Image helpers ***/
+// Your older storage uses accents marked sometimes; here we accept real accents and try a couple fallbacks.
+function imgCandidates(word){
+  // base name candidates: manzana_pic.jpg, manzana.jpg
+  const base = word.toLowerCase()
+    .replaceAll('á','a').replaceAll('é','e').replaceAll('í','i').replaceAll('ó','o').replaceAll('ú','u')
+    .replaceAll('ñ','n'); // storage-friendly fallback
+  const names = [`${word.toLowerCase()}_pic.jpg`, `${base}_pic.jpg`, `${word.toLowerCase()}.jpg`, `${base}.jpg`];
+  return names.map(n=> IMAGES_PREFIX ? `${IMAGES_PREFIX.replace(/\/$/,'')}/${n}` : n);
+}
+
+async function getImageUrl(word){
+  if(!supa) return null;
+  const candidates = imgCandidates(word);
+  for(const path of candidates){
+    const { data } = supa.storage.from(IMAGES_BUCKET).getPublicUrl(path);
+    // Public URL exists regardless of underlying file; we need a cheap HEAD check via image load
+    if(data?.publicUrl){
+      const ok = await canLoadImage(data.publicUrl);
+      if(ok) return data.publicUrl;
+    }
+  }
+  return null;
+}
+function canLoadImage(url){
+  return new Promise(res=>{
+    const i=new Image();
+    i.onload=()=>res(true);
+    i.onerror=()=>res(false);
+    i.src=url;
+  });
+}
+
+/*** Syllabification (Spanish heuristic) ***/
+// This isn’t a research-grade parser, but it handles classroom words well.
+function syllabifyEs(wordRaw){
+  const word = wordRaw.toLowerCase()
+    .replaceAll('á','á').replaceAll('é','é').replaceAll('í','í').replaceAll('ó','ó').replaceAll('ú','ú')
+    .replaceAll('ü','ü'); // keep accents
+  const V = /[aeiouáéíóúü]/;
+  const isV = c=> V.test(c);
+
+  // Digraphs that stay together in onset
+  const onsetPairs = ['pl','pr','bl','br','tr','dr','cl','cr','gl','gr','fl','fr','ch','ll','rr','qu','gu']; // qu/gu before e/i treated below
+
+  // Split into letters keeping digraphs as single tokens where relevant
+  const chars = [];
+  for(let i=0;i<word.length;i++){
+    const two = word.slice(i,i+2);
+    if(['ch','ll','rr'].includes(two)){ chars.push(two); i++; }
+    else { chars.push(word[i]); }
+  }
+
+  // Build syllables greedily:
+  const syl = [];
+  let i=0;
+  while(i<chars.length){
+    // nucleus: at least one vowel, try to include diphthongs/triphthongs
+    let onset = [];
+    // gather pre-vowel consonants as onset
+    while(i<chars.length && !isV(chars[i][0])) onset.push(chars[i++]);
+
+    // nucleus
+    if(i>=chars.length){ // no vowel left; attach leftovers to final syllable
+      if(syl.length) syl[syl.length-1] += onset.join('');
+      else syl.push(onset.join(''));
+      break;
+    }
+
+    let nuc = [chars[i++]]; // first vowel
+    // check for diphthong/triphthong
+    const weak = (v)=>/[iuüíú]/.test(v); // accent on weak usually breaks diphthong, but keep simple
+    const strong = (v)=>/[aeoáéíóú]/.test(v);
+    // lookahead up to 2 vowels
+    for(let k=0;k<2 && i<chars.length && isV(chars[i][0]); k++){
+      const prev = nuc[nuc.length-1];
+      const next = chars[i];
+      const join =
+        // typical diphthongs (weak+strong / strong+weak / weak+weak)
+        (weak(prev) && strong(next)) ||
+        (strong(prev) && weak(next)) ||
+        (weak(prev) && weak(next));
+      if(join) { nuc.push(next); i++; } else break;
+    }
+
+    // coda/onset split for following consonants
+    let after = [];
+    while(i<chars.length && !isV(chars[i][0])) after.push(chars[i++]);
+
+    // split 'after' between coda of current and onset of next
+    let coda = [], nextOnset = after;
+    if(after.length>=2){
+      // if second forms permissible onset with first, keep both for next onset
+      const pair = (after[0]+after[1]).replace(/[^a-zñ]/g,''); // ignore digraph tokens like 'ch'
+      const ok = onsetPairs.includes(pair) || ['l','r'].includes(after[1]);
+      if(!ok){ coda.push(after[0]); nextOnset = after.slice(1); }
+    } else if(after.length===1){
+      // single consonant goes with next onset
+      nextOnset = after;
+    } else {
+      nextOnset = [];
+    }
+
+    syl.push(onset.join('') + nuc.join('') + coda.join(''));
+    // put back nextOnset in stream
+    if(nextOnset.length){
+      i -= nextOnset.length;
+    }
+  }
+
+  // clean empties and make sure every syllable has something
+  return syl.filter(s=>s.length>0).map(s=>s.trim());
+}
+
+/*** Speech (browser TTS) ***/
+function speakEs(text){
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "es-ES"; // Spanish voice
+  u.rate = 0.9;
+  speechSynthesis.speak(u);
+}
+
+/*** Build one word ***/
+async function buildForWord(word){
+  wordTitle.textContent = word;
+  currentSyllables = syllabifyEs(word);
+  heard = currentSyllables.map(()=>false);
+
+  // Image + covers grid
+  coversEl.innerHTML = '';
+  coversEl.style.gridTemplateColumns = `repeat(${currentSyllables.length}, 1fr)`;
+  const imgUrl = await getImageUrl(word);
+  pic.src = imgUrl || 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="100%" height="100%" fill="#fafafa"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="36" fill="#999">(${word})</text></svg>`
+  );
+
+  currentSyllables.forEach((_,i)=>{
+    const cv = document.createElement('div');
+    cv.className = 'cover';
+    const btn = document.createElement('button');
+    btn.textContent = 'Destapar';
+    btn.disabled = true; // enabled after hearing syllable
+    btn.addEventListener('click', ()=> {
+      cv.classList.add('revealed');
+    });
+    cv.appendChild(btn);
+    coversEl.appendChild(cv);
+  });
+
+  // Elkonin boxes + counters
+  slotsEl.innerHTML = '';
+  slotsEl.style.gridTemplateColumns = `repeat(${currentSyllables.length}, 1fr)`;
+  currentSyllables.forEach((syll, i)=>{
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    const c = document.createElement('div');
+    c.className = 'counter';
+    c.textContent = i+1; // numbered counters
+    c.title = `Escuchar: ${syll}`;
+    c.addEventListener('click', ()=>{
+      speakEs(syll);
+      c.classList.add('heard');
+      heard[i] = true;
+      // enable corresponding cover button
+      const btn = coversEl.children[i].querySelector('button');
+      btn.disabled = false;
+    });
+    slot.appendChild(c);
+    slotsEl.appendChild(slot);
+  });
+}
+
+function revealAll(){
+  [...coversEl.children].forEach((cv,i)=>{
+    const btn = cv.querySelector('button');
+    btn.disabled = false;
+    cv.classList.add('revealed');
+  });
+}
+
+/*** Boot ***/
+wordSelect.value = String(index);
+buildForWord(WORDS[index]);
+</script>
+</body>
+</html>
