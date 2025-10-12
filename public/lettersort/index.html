@@ -21,6 +21,7 @@
     .brand{font-weight:700}
     .spacer{flex:1}
     .switch{display:flex;gap:8px;align-items:center}
+    .hidden{display:none}
     .panel{margin-top:10px}
     .panel.hidden{display:none}
     .grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end}
@@ -52,6 +53,9 @@
     .locked{opacity:.85}
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
+
+    /* Solo toolbar */
+    .soloBar{position:sticky;top:56px;z-index:4;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 10px rgba(0,0,0,.04)}
   </style>
 </head>
 <body>
@@ -111,6 +115,13 @@
   </header>
 
   <main class="wrap">
+    <!-- SOLO TOOLBAR (hidden by default; shown in solo mode) -->
+    <div id="soloBar" class="soloBar hidden">
+      <button id="soloNewRound" class="btn">Nueva ronda</button>
+      <button id="soloVerify" class="btn outline">Verificar</button>
+      <button id="soloReset" class="btn ghost">Reiniciar ronda</button>
+    </div>
+
     <div id="columns" class="columns"></div>
 
     <section class="rackSection">
@@ -161,6 +172,12 @@
     const btnReset = document.getElementById('btnReset');
     const soloPill = document.getElementById('soloPill');
 
+    // Solo toolbar refs
+    const soloBar = document.getElementById('soloBar');
+    const soloNewRoundBtn = document.getElementById('soloNewRound');
+    const soloVerifyBtn   = document.getElementById('soloVerify');
+    const soloResetBtn    = document.getElementById('soloReset');
+
     /******** State ********/
     let ROOM = null;
     let channel = null;
@@ -176,11 +193,12 @@
     function setPanelsForSolo() {
       teacherPanel.classList.add('hidden');
       studentPanel.classList.add('hidden');
-      document.querySelector('.switch').style.display = 'none';
+      document.querySelector('.switch').classList.add('hidden');
       if (SOLO_MODE) {
         const per = SOLO_PER || 4;
         soloPill.style.display = 'inline-block';
         soloPill.textContent = `Modo individual: letras=${SOLO_LETTERS.join(', ')} · ${per} por columna`;
+        soloBar.classList.remove('hidden'); // show solo controls
       }
     }
 
@@ -210,7 +228,6 @@
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
 
-    // Marker rules (a.. e.. i.. o.. u.. = accents; n.. => ñ; u,, => ü) -> normalized
     function normalizeMarkers(s){
       let t = (s || '').toLowerCase();
       t = t.replace(/a\.\./g,'a').replace(/e\.\./g,'e').replace(/i\.\./g,'i').replace(/o\.\./g,'o').replace(/u\.\./g,'u');
@@ -292,7 +309,6 @@
         if (!imageFiles.length){
           storageWarn.textContent = `No se encontraron imágenes en "${IB}" (prefijo: ${IP || '(raíz)'}).`;
         }
-        console.log(`[lettersort] imágenes: ${imageFiles.length}, audios: ${audioMap.size}`);
       } catch(err){
         storageWarn.style.display = 'block';
         storageWarn.textContent = `Error al listar Storage: ${err?.message || err}`;
@@ -422,7 +438,7 @@
       shuffled.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
 
-    let lastDragEndedAt = 0; // guard to ignore click right after drag
+    let lastDragEndedAt = 0;
 
     function renderCard(card){
       const el=document.createElement('div');
@@ -466,14 +482,14 @@
       });
     }
 
-    // ----- Robust drag & drop (manual hit-testing) -----
+    // ----- Robust drag & drop -----
     let drag=null;
     function makeDraggable(el){
       el.style.touchAction='none';
       el.addEventListener('pointerdown', onGrab);
     }
     function onGrab(e){
-      e.preventDefault(); // avoid synthetic mouse events
+      e.preventDefault();
       const el=e.currentTarget;
       if(el.classList.contains('locked')) return;
       drag={
@@ -493,14 +509,14 @@
       e.preventDefault();
       const dx = e.clientX - drag.startX;
       const dy = e.clientY - drag.startY;
-      if(!drag.moved && Math.hypot(dx,dy) < 4) return; // ignore taps
+      if(!drag.moved && Math.hypot(dx,dy) < 4) return;
       if(!drag.moved){
         drag.moved = true;
         drag.el.style.position='fixed';
         drag.el.style.width = drag.el.offsetWidth + 'px';
         drag.el.style.height = drag.el.offsetHeight + 'px';
         drag.el.style.zIndex=1000;
-        drag.el.style.pointerEvents='none'; // allow hit-testing elements below
+        drag.el.style.pointerEvents='none';
       }
       moveTo(drag.el, e.clientX, e.clientY);
     }
@@ -545,8 +561,6 @@
       el.style.width=''; el.style.height='';
     }
     function moveTo(el,x,y){ el.style.left=(x-70)+'px'; el.style.top=(y-70)+'px'; }
-
-    // Manual hit-test so dropping works even over gaps/headings/etc.
     function hitTestDrop(x, y){
       const drops = Array.from(document.querySelectorAll('.drop'));
       for(const d of drops){
@@ -555,7 +569,6 @@
       }
       return null;
     }
-
     function ejectToRack(cardEl){ cardEl.classList.remove('bad'); rackEl.appendChild(cardEl); }
     function lockCard(cardEl, card){
       const clone = cardEl.cloneNode(true);
@@ -566,24 +579,28 @@
       cardEl.replaceWith(clone);
     }
 
-    /******** SOLO MODE BOOT ********/
+    /******** SOLO MODE ********/
+    function startSoloRound(){
+      usedSet = new Set(); // fresh picks each round in solo
+      const per = SOLO_PER || 4;
+      const { columns, cards } = buildRoundFromLetters(SOLO_LETTERS, per);
+      buildColumns(columns);
+      setCards(cards);
+      clearAllPlacements();
+    }
+
     (async function boot(){
       if (SOLO_MODE) {
-        // Solo mode UI
-        teacherPanel.classList.add('hidden');
-        studentPanel.classList.add('hidden');
-        document.querySelector('.switch').style.display = 'none';
-        const per = SOLO_PER || 4;
-        soloPill.style.display = 'inline-block';
-        soloPill.textContent = `Modo individual: letras=${SOLO_LETTERS.join(', ')} · ${per} por columna`;
-
+        setPanelsForSolo();
         await ensureStorageLoaded();
         if(imageFiles.length===0) return;
 
-        const { columns, cards } = buildRoundFromLetters(SOLO_LETTERS, per);
-        buildColumns(columns);
-        setCards(cards);
-        clearAllPlacements();
+        // wire solo buttons
+        soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
+        soloVerifyBtn.addEventListener('click', ()=> verifyNow());
+        soloResetBtn.addEventListener('click', ()=> resetRoundPlacements());
+
+        startSoloRound();
         return;
       }
 
