@@ -138,8 +138,7 @@
     const AP = qs.get('ap') || AUDIO_PREFIX;
 
     // Solo mode via URL, e.g.: ?letters=a,b,e&percategory=4
-    const SOLO_LETTERS = (qs.get('letters') || '').split(',')
-      .map(s => s.trim().toLowerCase()).filter(Boolean);
+    const SOLO_LETTERS = (qs.get('letters') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
     const SOLO_PER = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
     const SOLO_MODE = SOLO_LETTERS.length > 0;
 
@@ -168,15 +167,14 @@
     let channel = null;
     let isTeacher = false;
 
-    let imageFiles = []; // [{name, path, url, stem, initial}]
-    let audioMap = new Map(); // normalizedStem -> public url
+    let imageFiles = []; // [{name, path, url, stem, core, initial}]
+    let audioMap = new Map(); // core (normalized) -> public url
 
     let currentCols = [];
     let currentCards = [];
     let usedSet = new Set();
 
     function setPanelsForSolo() {
-      // Hide both panels, show a little pill
       teacherPanel.classList.add('hidden');
       studentPanel.classList.add('hidden');
       document.querySelector('.switch').style.display = 'none';
@@ -221,9 +219,18 @@
            .replace(/i\.\./g, 'i')
            .replace(/o\.\./g, 'o')
            .replace(/u\.\./g, 'u');
-      t = t.replace(/u,,/g, 'u');  // ü → u (normalized)
+      t = t.replace(/u,,/g, 'u');   // ü → u (normalized)
       t = t.replace(/n\.\./g, 'n'); // ñ → n (we still detect initial ñ below)
       return t;
+    }
+    function stripImageSuffix(t){
+      return t.replace(/_(pic|img|image|foto)$/i, ''); // abeja_pic -> abeja
+    }
+    function coreFromImageStem(stem){
+      return normalizeMarkers(stripImageSuffix(stem));
+    }
+    function coreFromAudioStem(stem){
+      return normalizeMarkers(stem);
     }
     function initialFromStem(stemRaw){
       const raw = (stemRaw || '').toLowerCase();
@@ -276,6 +283,7 @@
               path: f.fullpath,
               url: data.publicUrl,
               stem,
+              core: coreFromImageStem(stem),
               initial: initialFromStem(stem)
             });
           }
@@ -293,7 +301,7 @@
             const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
             if (data?.publicUrl) {
               const stem = stemOf(base);
-              audioMap.set(normalizeMarkers(stem), data.publicUrl);
+              audioMap.set(coreFromAudioStem(stem), data.publicUrl);
             }
           }
         } catch {}
@@ -324,7 +332,7 @@
       channel.on('broadcast', { event:'ROUND' }, p=>{
         const d=p.payload;
         buildColumns(d.columns);
-        setCards(d.cards);          // rack gets shuffled inside setCards()
+        setCards(d.cards);
         clearAllPlacements();
       });
       channel.on('broadcast', { event:'VERIFY' }, ()=> verifyNow());
@@ -358,7 +366,6 @@
 
     function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [a[i],a[j]]=[a[j],a[i]] } return a }
 
-    // Core function used by both teacher and solo
     function buildRoundFromLetters(activeLetters, perCol){
       const columns = [];
       if(activeLetters.length===1){
@@ -398,8 +405,7 @@
         }
         for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
-          const normalizedStem = normalizeMarkers(f.stem);
-          const audioUrl = audioMap.get(normalizedStem) || null;
+          const audioUrl = audioMap.get(f.core) || null; // abeja_pic -> abeja.mp3
           cards.push({
             id: crypto.randomUUID(),
             file: f.name,
@@ -451,13 +457,16 @@
       });
     }
 
-    // SHUFFLES the rack so cards aren’t grouped by letter anymore
+    // SHUFFLES the rack so cards aren’t grouped by letter
     function setCards(cards){
       currentCards = [...cards];
       rackEl.innerHTML='';
       const shuffled = shuffle([...currentCards]);
       shuffled.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
+
+    // guard to ignore click just after a drag (prevents accidental audio)
+    let lastDragEndedAt = 0;
 
     function renderCard(card){
       const el=document.createElement('div');
@@ -466,10 +475,9 @@
       el.setAttribute('tabindex','0');
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
 
-      // Click/tap = play audio (if available), but ignore right after a drag
       if(card.audioUrl){
-        el.addEventListener('click', (ev)=>{
-          if (drag && drag.el === el && drag.moved) return;
+        el.addEventListener('click', ()=>{
+          if (Date.now() - lastDragEndedAt < 150) return;
           new Audio(card.audioUrl).play().catch(()=>{});
         });
       }
@@ -557,6 +565,7 @@
       } else {
         rackEl.appendChild(el);
       }
+      lastDragEndedAt = Date.now();
       drag=null;
     }
     function onCancel(e){
@@ -595,11 +604,10 @@
 
         const letters = SOLO_LETTERS;
         const perCol = SOLO_PER || 4;
-        // Build solo round locally (no realtime)
         const { columns, cards } = buildRoundFromLetters(letters, perCol);
         buildColumns(columns);
-        setCards(cards);      // shuffles into rack
-        clearAllPlacements(); // ensure rack shows shuffled cards
+        setCards(cards);
+        clearAllPlacements();
         return;
       }
 
