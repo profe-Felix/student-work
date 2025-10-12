@@ -41,11 +41,8 @@
 
   .imageWrap{position:relative;border:2px solid var(--box-b);border-radius:12px;overflow:hidden}
   .imageWrap img{display:block;width:100%;height:270px;object-fit:contain;background:#fafafa}
-  .covers{position:absolute;inset:0;display:grid;gap:6px}
-  .cover{background:var(--cover);opacity:.96;display:flex;align-items:center;justify-content:center}
-  .cover.revealed{opacity:0;pointer-events:none;transition:opacity .25s ease}
-  .cover button{font:inherit;border:1px solid #d1d5db;border-radius:999px;padding:4px 10px;background:#fff}
-  .cover button:disabled{opacity:.5}
+  .coverLayer{position:absolute;inset:0;background:var(--cover);opacity:1} /* fully opaque */
+  .coverLayer.revealed{opacity:0;pointer-events:none;transition:opacity .25s ease}
 
   .wordTitle{margin:8px 0 0;font-size:22px;text-align:center}
 
@@ -81,7 +78,7 @@
         <button id="prevBtn" class="btn">◀</button>
         <button id="nextBtn" class="btn">▶</button>
         <button id="rebuildBtn" class="btn">Reiniciar</button>
-        <button id="revealAllBtn" class="btn primary">Destapar todo</button>
+        <button id="revealBtn" class="btn primary" disabled>Destapar y escuchar palabra</button>
       </div>
     </div>
   </div>
@@ -91,7 +88,7 @@
   <div class="card">
     <div class="imageWrap">
       <img id="pic" alt="Imagen"/>
-      <div id="covers" class="covers"></div>
+      <div id="coverLayer" class="coverLayer"></div>
     </div>
     <h2 id="wordTitle" class="wordTitle"></h2>
 
@@ -107,7 +104,7 @@
           </svg>
         </div>
       </div>
-      <small class="note">Pulsa cada círculo para escuchar la sílaba y luego “Destapar”.</small>
+      <small class="note">Pulsa cada círculo para escuchar las sílabas. Cuando todos estén escuchados, podrás destapar y oír la palabra completa.</small>
     </div>
   </div>
 </main>
@@ -116,7 +113,6 @@
 <script>
 /*** URL options ***/
 const qs = new URLSearchParams(location.search);
-// If ?words= is provided, we’ll use it; otherwise we auto-load all words from the bucket
 const WORDS_OVERRIDE = (qs.get('words')||'').split(',').map(s=>s.trim()).filter(Boolean);
 
 // Supabase project (images + audio)
@@ -133,47 +129,44 @@ const AUDIO_PREFIX  = (qs.get('sap') || "").replace(/^\//,'');  // e.g., "grade1
 const supa = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /*** DOM refs ***/
-const wordSelect = document.getElementById('wordSelect');
-const prevBtn = document.getElementById('prevBtn');
-const nextBtn = document.getElementById('nextBtn');
-const rebuildBtn = document.getElementById('rebuildBtn');
-const revealAllBtn = document.getElementById('revealAllBtn');
-const wordTitle = document.getElementById('wordTitle');
-const pic = document.getElementById('pic');
-const coversEl = document.getElementById('covers');
-const slotsEl = document.getElementById('slots');
+const wordSelect   = document.getElementById('wordSelect');
+const prevBtn      = document.getElementById('prevBtn');
+const nextBtn      = document.getElementById('nextBtn');
+const rebuildBtn   = document.getElementById('rebuildBtn');
+const revealBtn    = document.getElementById('revealBtn');
+const wordTitle    = document.getElementById('wordTitle');
+const pic          = document.getElementById('pic');
+const coverLayer   = document.getElementById('coverLayer');
+const slotsEl      = document.getElementById('slots');
 
 /*** State ***/
+let WORDS = [];
 let index = 0;
 let currentSyllables = [];
 let heard = [];
 let audioCache = []; // one Audio per syllable
-
-// Image lookup map when auto-loading from bucket
-const imageUrlByWord = new Map();
+let wordAudio = null; // Audio for full word
+let availableCount = 0; // how many syllable counters actually have audio
 
 /*** UI Handlers ***/
 prevBtn.addEventListener('click', ()=>{ index=(index-1+WORDS.length)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
 nextBtn.addEventListener('click', ()=>{ index=(index+1)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
 rebuildBtn.addEventListener('click', ()=> buildForWord(WORDS[index]));
-revealAllBtn.addEventListener('click', ()=> revealAll());
+revealBtn.addEventListener('click', ()=> revealAndPlay());
 
 /*** Marker ↔ accents helpers ***/
-// For audio & folder names (plain)
 function normalizeName(s){
   return (s||'').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove accents
     .replace(/ñ/g,'n').replace(/ü/g,'u')
     .replace(/[^a-z]/g,'');
 }
-// Your storage marker scheme → display accents
 function markersToPretty(s){
   return (s||'')
     .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
     .replace(/n\.\./g,'ñ')
     .replace(/u,,/g,'ü');
 }
-// accents → markers (for matching)
 function prettyToMarkers(s){
   return (s||'')
     .replace(/á/g,'a..').replace(/é/g,'e..').replace(/í/g,'i..').replace(/ó/g,'o..').replace(/ú/g,'u..')
@@ -184,7 +177,6 @@ function prettyToMarkers(s){
 const IMG_EXTS = new Set(['png','jpg','jpeg','webp','gif']);
 function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
 function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
-// strip suffixes like _pic/_img/_image/_foto
 function stripImageSuffix(t){ return t.replace(/_(pic|img|image|foto)$/i,''); }
 
 /*** List all images from the bucket (recursive) and build the word list ***/
@@ -200,11 +192,8 @@ async function listAll(bucket, prefix){
       const items = data || [];
       for(const it of items){
         const fullpath = dir ? `${dir.replace(/\/$/,'')}/${it.name}` : it.name;
-        if (it.metadata) { // file
-          out.push({ ...it, fullpath });
-        } else {          // folder
-          await walk(fullpath);
-        }
+        if (it.metadata) { out.push({ ...it, fullpath }); }
+        else { await walk(fullpath); }
       }
       if(items.length < limit) break;
       offset += limit;
@@ -214,6 +203,7 @@ async function listAll(bucket, prefix){
   return out;
 }
 
+const imageUrlByWord = new Map();
 async function loadWordsFromImages(){
   imageUrlByWord.clear();
   const files = await listAll(IMAGES_BUCKET, IMAGES_PREFIX);
@@ -221,20 +211,17 @@ async function loadWordsFromImages(){
     const base = f.fullpath.split('/').pop() || f.fullpath;
     const ext = extOf(base);
     if(!IMG_EXTS.has(ext)) continue;
-
-    const stem = stripImageSuffix(stemOf(base));     // e.g., "bebe.._pic" -> "bebe.."
-    const pretty = markersToPretty(stem).toLowerCase(); // -> "bebé"
-    // Get a public URL for this exact path
+    const stem = stripImageSuffix(stemOf(base));
+    const pretty = markersToPretty(stem).toLowerCase();
     const { data } = supa.storage.from(IMAGES_BUCKET).getPublicUrl(f.fullpath);
     if (data?.publicUrl && !imageUrlByWord.has(pretty)) {
       imageUrlByWord.set(pretty, data.publicUrl);
     }
   }
-  // Return unique, sorted word list
   return Array.from(imageUrlByWord.keys()).sort((a,b)=>a.localeCompare(b,'es'));
 }
 
-/*** Image fallback (only used if WORDS_OVERRIDE is provided and an image isn’t in the map) ***/
+/*** Image fallback (only for explicit WORDS list) ***/
 function imgCandidates(word){
   const base = normalizeName(word);
   const names = [`${word.toLowerCase()}_pic.jpg`, `${base}_pic.jpg`, `${word.toLowerCase()}.jpg`, `${base}.jpg`];
@@ -247,9 +234,7 @@ async function getPublicUrlIfExists(bucket, path){
   return null;
 }
 async function getImageUrl(word){
-  // Prefer direct map from auto-loaded list
   if (imageUrlByWord.has(word.toLowerCase())) return imageUrlByWord.get(word.toLowerCase());
-  // Fallback candidate search (for WORDS_OVERRIDE cases)
   for(const path of imgCandidates(word)){
     const url = await getPublicUrlIfExists(IMAGES_BUCKET, path);
     if(url) return url;
@@ -257,23 +242,16 @@ async function getImageUrl(word){
   return null;
 }
 
-/*** Spanish syllabifier (classroom-grade) ***/
-// Spanish syllabifier — í/ú are STRONG (force hiatus)
-// Spanish syllabifier — fixes monstruo → mons-truo and keeps qu/gu + í/ú rules
+/*** Syllabifier (handles mons-truo, qu/gu before e/i, í/ú hiatus) ***/
 function syllabifyEs(wordRaw){
   const word = (wordRaw || '').toLowerCase();
-
   const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
-  const isWeakUnaccented = ch => /^(i|u|ü)$/.test((ch||'')[0] || ''); // i/u/ü (without accent)
-  const isAccWeak = ch => /[íú]/.test((ch||'')[0] || '');            // í, ú => hiatus
-  const isStrong = ch => /[aeoáéíóú]/.test((ch||'')[0] || '');       // a,e,o or ANY accented vowel
-
-  // Allowed 2-consonant onsets
+  const isWeakUnaccented = ch => /^(i|u|ü)$/.test((ch||'')[0] || '');
+  const isAccWeak = ch => /[íú]/.test((ch||'')[0] || '');
   const onsetPairs = ['pl','pr','bl','br','tr','dr','cl','cr','gl','gr','fl','fr','ch','ll','rr'];
 
-  // Tokenize with digraphs + qu/gu before e/i (silent u)
   const chars = [];
-  for (let i = 0; i < word.length; i++){
+  for (let i=0;i<word.length;i++){
     const two = word.slice(i, i+2);
     if (['ch','ll','rr'].includes(two)) { chars.push(two); i++; continue; }
     if (word[i]==='q' && word[i+1]==='u' && /[eiéí]/.test(word[i+2]||'')) { chars.push('qu'); i++; continue; }
@@ -285,18 +263,15 @@ function syllabifyEs(wordRaw){
   let i = 0;
 
   while (i < chars.length){
-    // ONSET: gather leading consonants
     let onset = [];
     while (i < chars.length && !isV(chars[i])) onset.push(chars[i++]);
 
-    // If word ends on consonants, attach to previous syllable
     if (i >= chars.length){
       if (syl.length) syl[syl.length-1] += onset.join('');
       else syl.push(onset.join(''));
       break;
     }
 
-    // NUCLEUS: join vowels into diphthong/triphthong unless an accented weak vowel breaks it
     let nuc = [chars[i++]];
     for (let k = 0; k < 2 && i < chars.length && isV(chars[i]); k++){
       const prev = nuc[nuc.length-1], next = chars[i];
@@ -307,42 +282,34 @@ function syllabifyEs(wordRaw){
       if (canJoin) { nuc.push(next); i++; } else break;
     }
 
-    // CONSONANTS after nucleus
     let after = [];
     while (i < chars.length && !isV(chars[i])) after.push(chars[i++]);
 
-    // NEW: move enough consonants into the coda so the remaining onset is legal
     let coda = [], nextOnset = after.slice();
     if (nextOnset.length){
       let m = 0;
       while (nextOnset.length - m >= 2){
         const a = nextOnset[m], b = nextOnset[m+1];
         const pair = (a + b).replace(/[^a-zñ]/g,'');
-        if (onsetPairs.includes(pair)) break; // we found a legal onset pair
-        m++; // move one more consonant to coda
+        if (onsetPairs.includes(pair)) break;
+        m++;
       }
       coda = nextOnset.slice(0, m);
       nextOnset = nextOnset.slice(m);
-
-      // Spanish onsets are at most 2 consonants; push extras to coda
-      while (nextOnset.length > 2){
-        coda.push(nextOnset.shift());
-      }
+      while (nextOnset.length > 2) coda.push(nextOnset.shift());
     }
 
     syl.push(onset.join('') + nuc.join('') + coda.join(''));
-    if (nextOnset.length){ i -= nextOnset.length; } // rewind so the remainder becomes the next onset
+    if (nextOnset.length) i -= nextOnset.length;
   }
 
   return syl.filter(Boolean).map(s => s.trim());
 }
 
-
-
-/*** AUDIO candidates for a word/syllable ***/
-/* Prefer webm first now */
+/*** AUDIO (prefer webm now) ***/
 const AUDIO_EXTS = ['webm','ogg','m4a','mp3','wav'];
 
+/* syllable files */
 function audioPathsFor(word, syll, idx){
   const wPlain = normalizeName(word);
   const sPlain = normalizeName(syll);
@@ -358,16 +325,35 @@ function audioPathsFor(word, syll, idx){
     `${prefix}${sPlain}`,
   ];
   const paths = [];
-  for (const b of bases){
-    for (const ext of AUDIO_EXTS){
-      paths.push(`${b}.${ext}`);
-    }
-  }
+  for (const b of bases) for (const ext of AUDIO_EXTS) paths.push(`${b}.${ext}`);
   return paths;
 }
-
 async function resolveAudioUrl(word, syll, idx){
   const paths = audioPathsFor(word, syll, idx);
+  for(const p of paths){
+    const url = await getPublicUrlIfExists(AUDIO_BUCKET, p);
+    if(url) return url;
+  }
+  return null;
+}
+
+/* whole-word file */
+function wordAudioPaths(word){
+  const wPlain   = normalizeName(word);
+  const wMarker  = prettyToMarkers(word).toLowerCase();
+  const prefix   = AUDIO_PREFIX ? AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
+  const bases = [
+    `${prefix}${wMarker}`,          // e.g., manzana (with markers if present)
+    `${prefix}${wPlain}`,           // e.g., manzana
+    `${prefix}${wPlain}/word`,      // folder/word.ext
+    `${prefix}${wPlain}/${wPlain}`, // folder/same.ext
+  ];
+  const paths = [];
+  for (const b of bases) for (const ext of AUDIO_EXTS) paths.push(`${b}.${ext}`);
+  return paths;
+}
+async function resolveWordAudioUrl(word){
+  const paths = wordAudioPaths(word);
   for(const p of paths){
     const url = await getPublicUrlIfExists(AUDIO_BUCKET, p);
     if(url) return url;
@@ -381,27 +367,29 @@ async function buildForWord(word){
   currentSyllables = syllabifyEs(word);
   heard = currentSyllables.map(()=>false);
   audioCache = new Array(currentSyllables.length).fill(null);
+  availableCount = 0;
+  wordAudio = null;
+  revealBtn.disabled = true;
+  coverLayer.classList.remove('revealed');
 
-  // Image + covers grid
-  coversEl.innerHTML = '';
-  coversEl.style.gridTemplateColumns = `repeat(${currentSyllables.length}, 1fr)`;
+  // Image
   const imgUrl = await getImageUrl(word);
   pic.src = imgUrl || 'data:image/svg+xml;utf8,' + encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="100%" height="100%" fill="#fafafa"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="36" fill="#999">(${word})</text></svg>`
   );
 
-  currentSyllables.forEach((_,i)=>{
-    const cv = document.createElement('div');
-    cv.className = 'cover';
-    const btn = document.createElement('button');
-    btn.textContent = 'Destapar';
-    btn.disabled = true;
-    btn.addEventListener('click', ()=> cv.classList.add('revealed'));
-    cv.appendChild(btn);
-    coversEl.appendChild(cv);
+  // Preload word audio
+  resolveWordAudioUrl(word).then(url=>{
+    if(url){
+      const a = new Audio();
+      a.preload = 'auto';
+      a.src = url;
+      try{ a.load(); }catch{}
+      wordAudio = a;
+    }
   });
 
-  // Elkonin boxes + solid counters
+  // Elkonin boxes + counters
   slotsEl.innerHTML = '';
   slotsEl.style.gridTemplateColumns = `repeat(${currentSyllables.length}, 1fr)`;
   for(let i=0;i<currentSyllables.length;i++){
@@ -413,30 +401,32 @@ async function buildForWord(word){
     c.className = 'counter';
     c.title = `Escuchar: ${syll}`;
 
-    // Resolve and PRELOAD audio (for faster first play)
     resolveAudioUrl(word, syll, i).then(url=>{
       if(url){
+        availableCount++;
         const a = new Audio();
         a.preload = 'auto';
         a.src = url;
-        try { a.load(); } catch {}
+        try{ a.load(); }catch{}
         audioCache[i] = a;
 
         c.addEventListener('click', ()=>{
           const au = audioCache[i];
           if(!au) return;
-          try { au.currentTime = 0; } catch {}
+          try{ au.currentTime = 0; }catch{}
           au.play().catch(()=>{});
-          c.classList.add('heard');
-          heard[i] = true;
-          const btn = coversEl.children[i].querySelector('button');
-          btn.disabled = false;
+          if(!heard[i]){
+            heard[i] = true;
+            c.classList.add('heard');
+            checkAllHeard();
+          }
         });
       } else {
+        // no audio for this syllable: mark missing, but do NOT block reveal
         c.classList.add('missing');
-        c.addEventListener('click', ()=>{});
-        c.title = 'Audio no disponible';
+        heard[i] = true; // count as satisfied
       }
+      checkAllHeard();
     });
 
     slot.appendChild(c);
@@ -444,28 +434,28 @@ async function buildForWord(word){
   }
 }
 
-function revealAll(){
-  [...coversEl.children].forEach(cv=>{
-    const btn = cv.querySelector('button');
-    btn.disabled = false;
-    cv.classList.add('revealed');
-  });
+function checkAllHeard(){
+  const all = heard.every(Boolean);
+  revealBtn.disabled = !all;
+}
+
+function revealAndPlay(){
+  coverLayer.classList.add('revealed');
+  if(wordAudio){
+    try{ wordAudio.currentTime = 0; }catch{}
+    wordAudio.play().catch(()=>{});
+  }
 }
 
 /*** BOOT ***/
-let WORDS = [];
-
 (async function boot(){
   if (WORDS_OVERRIDE.length){
-    // Use explicit list from URL
     WORDS = WORDS_OVERRIDE;
   } else {
-    // Auto-load ALL words from the images bucket
     try{
       WORDS = await loadWordsFromImages();
     }catch(err){
       console.error('Error loading words from bucket:', err);
-      // Fallback small set if something goes wrong
       WORDS = ['manzana','guitarra','camión','helado','caracol'];
     }
   }
@@ -480,12 +470,10 @@ let WORDS = [];
   });
   wordSelect.addEventListener('change', ()=>{ index=+wordSelect.value||0; buildForWord(WORDS[index]); });
 
-  // Start
   index = 0;
   wordSelect.value = String(index);
   buildForWord(WORDS[index]);
 
-  // Nav buttons now that we have WORDS
   prevBtn.disabled = WORDS.length <= 1;
   nextBtn.disabled = WORDS.length <= 1;
 })();
