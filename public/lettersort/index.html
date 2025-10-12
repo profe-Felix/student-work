@@ -51,6 +51,7 @@
     .card.bad{outline:3px solid var(--bad)}
     .locked{opacity:.85}
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
   </style>
 </head>
 <body>
@@ -58,6 +59,7 @@
     <div class="wrap">
       <div class="row">
         <div class="brand">Clasificador de letras</div>
+        <span id="soloPill" class="pill" style="display:none"></span>
         <div class="spacer"></div>
         <label class="switch">
           <input id="modeToggle" type="checkbox" />
@@ -128,12 +130,18 @@
     const IMAGES_PREFIX = "";                  // raíz
     const AUDIO_PREFIX  = "";                  // raíz
 
-    // Override por query (?ib=...&ab=...&ip=...&ap=...)
+    // URL params (also allow solo mode config)
     const qs = new URLSearchParams(location.search);
     const IB = qs.get('ib') || IMAGES_BUCKET;
     const AB = qs.get('ab') || AUDIO_BUCKET;
     const IP = qs.get('ip') || IMAGES_PREFIX;
     const AP = qs.get('ap') || AUDIO_PREFIX;
+
+    // Solo mode via URL, e.g.: ?letters=a,b,e&percategory=4
+    const SOLO_LETTERS = (qs.get('letters') || '').split(',')
+      .map(s => s.trim().toLowerCase()).filter(Boolean);
+    const SOLO_PER = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
+    const SOLO_MODE = SOLO_LETTERS.length > 0;
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -153,6 +161,7 @@
     const btnNewRound = document.getElementById('btnNewRound');
     const btnVerify = document.getElementById('btnVerify');
     const btnReset = document.getElementById('btnReset');
+    const soloPill = document.getElementById('soloPill');
 
     /******** State ********/
     let ROOM = null;
@@ -160,11 +169,23 @@
     let isTeacher = false;
 
     let imageFiles = []; // [{name, path, url, stem, initial}]
-    let audioMap = new Map(); // normalized core stem -> public url
+    let audioMap = new Map(); // normalizedStem -> public url
 
     let currentCols = [];
     let currentCards = [];
     let usedSet = new Set();
+
+    function setPanelsForSolo() {
+      // Hide both panels, show a little pill
+      teacherPanel.classList.add('hidden');
+      studentPanel.classList.add('hidden');
+      document.querySelector('.switch').style.display = 'none';
+      if (SOLO_MODE) {
+        const per = SOLO_PER || 4;
+        soloPill.style.display = 'inline-block';
+        soloPill.textContent = `Modo individual: letras=${SOLO_LETTERS.join(', ')} · ${per} por columna`;
+      }
+    }
 
     modeToggle.addEventListener('change', () => {
       isTeacher = modeToggle.checked;
@@ -188,35 +209,22 @@
     }
     renderLetterPicker();
 
-    /******** Markers & stems ********/
+    /******** Marker helpers ********/
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
 
-    // Your marker scheme: a.. e.. i.. o.. u.. (accent anywhere), n.. for ñ, u,, for ü
+    // Your marker rules (a.., e.., i.., o.., u.. = accents; n.. => ñ; u,, => ü)
     function normalizeMarkers(s){
       let t = (s || '').toLowerCase();
-      // remove accent markers by collapsing them (accent not needed for matching)
       t = t.replace(/a\.\./g, 'a')
            .replace(/e\.\./g, 'e')
            .replace(/i\.\./g, 'i')
            .replace(/o\.\./g, 'o')
-           .replace(/u\.\./g, 'u')
-           .replace(/u,,/g, 'u')
-           .replace(/n\.\./g, 'n');
+           .replace(/u\.\./g, 'u');
+      t = t.replace(/u,,/g, 'u');  // ü → u (normalized)
+      t = t.replace(/n\.\./g, 'n'); // ñ → n (we still detect initial ñ below)
       return t;
     }
-    // strip common image suffixes like _pic, _img, _image, _foto
-    function stripImageSuffix(t){
-      return t.replace(/_(pic|img|image|foto)$/i, '');
-    }
-    // "core" stem used to match audio; we normalize markers and remove suffixes
-    function coreStemFromImageStem(stem){
-      return stripImageSuffix(normalizeMarkers(stem));
-    }
-    function coreStemFromAudioStem(stem){
-      return normalizeMarkers(stem); // audio names don't have _pic
-    }
-
     function initialFromStem(stemRaw){
       const raw = (stemRaw || '').toLowerCase();
       if (raw.startsWith('n..')) return 'ñ';
@@ -268,8 +276,7 @@
               path: f.fullpath,
               url: data.publicUrl,
               stem,
-              initial: initialFromStem(stem),
-              core: coreStemFromImageStem(stem)
+              initial: initialFromStem(stem)
             });
           }
         }
@@ -286,7 +293,7 @@
             const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
             if (data?.publicUrl) {
               const stem = stemOf(base);
-              audioMap.set(coreStemFromAudioStem(stem), data.publicUrl);
+              audioMap.set(normalizeMarkers(stem), data.publicUrl);
             }
           }
         } catch {}
@@ -317,7 +324,7 @@
       channel.on('broadcast', { event:'ROUND' }, p=>{
         const d=p.payload;
         buildColumns(d.columns);
-        setCards(d.cards);
+        setCards(d.cards);          // rack gets shuffled inside setCards()
         clearAllPlacements();
       });
       channel.on('broadcast', { event:'VERIFY' }, ()=> verifyNow());
@@ -351,19 +358,8 @@
 
     function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [a[i],a[j]]=[a[j],a[i]] } return a }
 
-    btnNewRound.addEventListener('click', async ()=>{
-      if(!isTeacher) return;
-
-      if(imageFiles.length===0){
-        await ensureStorageLoaded();
-        if(imageFiles.length===0){ alert('No hay imágenes disponibles en Storage.'); return; }
-      }
-
-      const activeLetters = [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
-      if(activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
-
-      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
-
+    // Core function used by both teacher and solo
+    function buildRoundFromLetters(activeLetters, perCol){
       const columns = [];
       if(activeLetters.length===1){
         const L = activeLetters[0];
@@ -377,10 +373,10 @@
       const everything = allImages();
 
       const pickNoRepeat = (arr, n) => {
-        const pool = arr.filter(x=>!usedSet.has(x.path));
+        const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
         shuffle(pool);
         const chosen = pool.slice(0,n);
-        if (chosen.length < n) {
+        if(chosen.length < n){
           const more = arr.filter(x=>!chosen.includes(x));
           shuffle(more);
           chosen.push(...more.slice(0, n - chosen.length));
@@ -400,9 +396,10 @@
           const list = initialMap.get(L) || [];
           picks = pickNoRepeat(list, perCol);
         }
-        for(const f of picks){ usedSet.add(f.path); }
+        for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
-          const audioUrl = audioMap.get(f.core) || null; // match abeja_pic -> abeja.mp3
+          const normalizedStem = normalizeMarkers(f.stem);
+          const audioUrl = audioMap.get(normalizedStem) || null;
           cards.push({
             id: crypto.randomUUID(),
             file: f.name,
@@ -412,6 +409,23 @@
           });
         }
       }
+
+      return { columns, cards };
+    }
+
+    btnNewRound.addEventListener('click', async ()=>{
+      if(!isTeacher) return;
+
+      if(imageFiles.length===0){
+        await ensureStorageLoaded();
+        if(imageFiles.length===0){ alert('No hay imágenes disponibles en Storage.'); return; }
+      }
+
+      const activeLetters = [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
+      if(activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
+
+      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
+      const { columns, cards } = buildRoundFromLetters(activeLetters, perCol);
 
       await channel.send({ type:'broadcast', event:'ROUND', payload:{ columns, cards } });
     });
@@ -436,14 +450,14 @@
         columnsEl.appendChild(col);
       });
     }
-    function setCards(cards){
-      currentCards = cards;
-      rackEl.innerHTML='';
-      cards.forEach(card=> rackEl.appendChild(renderCard(card)) );
-    }
 
-    // guard to ignore the synthetic click that fires after a drag
-    let lastDragEndedAt = 0;
+    // SHUFFLES the rack so cards aren’t grouped by letter anymore
+    function setCards(cards){
+      currentCards = [...cards];
+      rackEl.innerHTML='';
+      const shuffled = shuffle([...currentCards]);
+      shuffled.forEach(card=> rackEl.appendChild(renderCard(card)) );
+    }
 
     function renderCard(card){
       const el=document.createElement('div');
@@ -452,21 +466,21 @@
       el.setAttribute('tabindex','0');
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
 
+      // Click/tap = play audio (if available), but ignore right after a drag
       if(card.audioUrl){
         el.addEventListener('click', (ev)=>{
-          // if a drag ended very recently, ignore this click
-          if (Date.now() - lastDragEndedAt < 180) return;
+          if (drag && drag.el === el && drag.moved) return;
           new Audio(card.audioUrl).play().catch(()=>{});
         });
       }
       makeDraggable(el);
       return el;
     }
-
     function clearAllPlacements(){
       document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
       rackEl.innerHTML='';
-      currentCards.forEach(card=> rackEl.appendChild(renderCard(card)) );
+      const shuffled = shuffle([...currentCards]);
+      shuffled.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
     function resetRoundPlacements(){
       document.querySelectorAll('.card').forEach(c=> c.classList.remove('ok','bad','locked') );
@@ -488,14 +502,10 @@
       });
     }
 
-    // Pointer-event DnD with movement threshold & full cleanup
+    // Pointer-event DnD with "moved" guard (keeps click for audio)
     let drag=null;
-    function makeDraggable(el){
-      el.style.touchAction='none';
-      el.addEventListener('pointerdown', onGrab);
-    }
+    function makeDraggable(el){ el.style.touchAction='none'; el.addEventListener('pointerdown', onGrab); }
     function onGrab(e){
-      e.preventDefault(); // avoid generating mouse events that can confuse things
       const el=e.currentTarget;
       if(el.classList.contains('locked')) return;
       drag={
@@ -506,15 +516,15 @@
         moved:false
       };
       el.setPointerCapture(e.pointerId);
-      document.addEventListener('pointermove', onMove, {passive:false});
-      document.addEventListener('pointerup', onDrop, {passive:false});
-      document.addEventListener('pointercancel', onCancel, {passive:false});
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onDrop);
+      window.addEventListener('pointercancel', onCancel);
     }
     function onMove(e){
       if(!drag || e.pointerId!==drag.pointerId) return;
       const dx = e.clientX - drag.startX;
       const dy = e.clientY - drag.startY;
-      if(!drag.moved && Math.hypot(dx,dy) < 4) return; // tap, not a drag
+      if(!drag.moved && Math.hypot(dx,dy) < 4) return; // ignore taps
       if(!drag.moved){
         drag.moved = true;
         drag.el.style.position='fixed';
@@ -530,7 +540,6 @@
       cleanupPointer(e.pointerId);
       const el=drag.el;
 
-      // if not moved -> treat as click only
       if(!drag.moved){
         resetDraggedStyles(el);
         drag=null;
@@ -548,8 +557,6 @@
       } else {
         rackEl.appendChild(el);
       }
-
-      lastDragEndedAt = Date.now();
       drag=null;
     }
     function onCancel(e){
@@ -560,9 +567,9 @@
     }
     function cleanupPointer(pointerId){
       try{ drag.el.releasePointerCapture(pointerId);}catch(_){}
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onDrop);
-      document.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onDrop);
+      window.removeEventListener('pointercancel', onCancel);
     }
     function resetDraggedStyles(el){
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex=''; el.style.pointerEvents='';
@@ -578,6 +585,30 @@
       }
       cardEl.replaceWith(clone);
     }
+
+    /******** SOLO MODE BOOT ********/
+    (async function boot(){
+      if (SOLO_MODE) {
+        setPanelsForSolo();
+        await ensureStorageLoaded();
+        if(imageFiles.length===0) return;
+
+        const letters = SOLO_LETTERS;
+        const perCol = SOLO_PER || 4;
+        // Build solo round locally (no realtime)
+        const { columns, cards } = buildRoundFromLetters(letters, perCol);
+        buildColumns(columns);
+        setCards(cards);      // shuffles into rack
+        clearAllPlacements(); // ensure rack shows shuffled cards
+        return;
+      }
+
+      // default (teacher/student UI)
+      modeToggle.checked = false;
+      isTeacher = false;
+      teacherPanel.classList.add('hidden');
+      studentPanel.classList.remove('hidden');
+    })();
   </script>
 </body>
 </html>
