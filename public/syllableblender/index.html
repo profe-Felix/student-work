@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="es">
 <head>
 <meta charset="utf-8"/>
@@ -311,6 +311,11 @@ function syllabifyEs(wordRaw){
 /*** AUDIO (prefer webm) ***/
 const AUDIO_EXTS = ['webm','ogg','m4a','mp3','wav'];
 
+/* --- Soft-r helper: if not first syllable AND starts with 'r', prefer '-syll' --- */
+function isSoftRContext(syll, idx){
+  return idx > 0 && /^r/i.test(syll) && !/^rr/i.test(syll);
+}
+
 /* syllable files (SYLLABLE_AUDIO_BUCKET) */
 function audioPathsFor(word, syll, idx){
   const wPlain = normalizeName(word);
@@ -318,18 +323,37 @@ function audioPathsFor(word, syll, idx){
   const sMarker = prettyToMarkers(syll).toLowerCase();
   const prefix = SYLLABLE_AUDIO_PREFIX ? SYLLABLE_AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
 
-  const bases = [
+  // If this is a soft-r onset, try the hyphen-prefixed versions FIRST
+  const hyphenPretty = '-'+syll;
+  const hyphenMarker = '-'+sMarker;
+  const hyphenPlain  = '-'+sPlain;
+
+  const baseList = [];
+
+  if (isSoftRContext(syll, idx)){
+    baseList.push(
+      `${prefix}${hyphenMarker}`,
+      `${prefix}${wPlain}/${hyphenMarker}`,
+      `${prefix}${wPlain}__${hyphenPlain}`,
+      `${prefix}${hyphenPlain}`
+    );
+  }
+
+  // Regular (fallbacks)
+  baseList.push(
     `${prefix}${sMarker}`,
     `${prefix}${wPlain}/${sMarker}`,
     `${prefix}${wPlain}_${idx+1}`,
     `${prefix}${wPlain}/${idx+1}`,
     `${prefix}${wPlain}__${sPlain}`,
-    `${prefix}${sPlain}`,
-  ];
+    `${prefix}${sPlain}`
+  );
+
   const paths = [];
-  for (const b of bases) for (const ext of AUDIO_EXTS) paths.push(`${b}.${ext}`);
+  for (const b of baseList) for (const ext of AUDIO_EXTS) paths.push(`${b}.${ext}`);
   return paths;
 }
+
 async function resolveSyllableAudioUrl(word, syll, idx){
   const paths = audioPathsFor(word, syll, idx);
   for(const p of paths){
