@@ -50,14 +50,15 @@
   .wordTitle{margin:8px 0 0;font-size:22px;text-align:center}
 
   .boxes{margin-top:14px;display:grid;gap:10px}
-  .elkonin{display:grid;gap:8px}
-  .elRow{display:grid;gap:8px}
   .slots{display:grid;gap:12px}
   .slot{min-height:84px;background:var(--box);border:2px solid var(--box-b);border-radius:8px;display:flex;align-items:center;justify-content:center}
+
+  /* Speaker counters (no numbers) */
   .counter{
-    width:46px;height:46px;border:2px solid var(--box-b);border-radius:999px;display:flex;align-items:center;justify-content:center;
-    font-size:18px;cursor:pointer;user-select:none;background:#fff
+    width:46px;height:46px;border:2px solid var(--box-b);border-radius:999px;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;background:#fff
   }
+  .counter svg{width:22px;height:22px}
   .counter.heard{background:#ecfdf5;border-color:#10b981}
   .arrowWrap{display:flex;justify-content:center}
   .arrow{width:82%;height:26px}
@@ -103,27 +104,30 @@
           </svg>
         </div>
       </div>
-      <small class="note">Haz clic en cada contador para escuchar la sílaba. Luego pulsa “Destapar” para revelar esa parte de la imagen.</small>
+      <small class="note">Pulsa el altavoz de cada casilla para escuchar la sílaba y luego “Destapar”.</small>
     </div>
   </div>
 </main>
 
-<!-- Supabase (only for optional image lookup) -->
+<!-- Supabase -->
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script>
 /*** URL options ***/
 const qs = new URLSearchParams(location.search);
-const WORDS = (qs.get('words')||'manzana,guitarra,camión,helado,caracol').split(',')
-  .map(s=>s.trim()).filter(Boolean);
+const WORDS = (qs.get('words')||'manzana,guitarra,camión,helado,caracol').split(',').map(s=>s.trim()).filter(Boolean);
 
-// Optional Supabase settings for images: <word>_pic.jpg in public bucket
+// Supabase project (images + audio)
 const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
 const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
-const IMAGES_BUCKET = qs.get('ib') || "lettersort-images";
-const IMAGES_PREFIX = (qs.get('ip') || "").replace(/^\//,''); // e.g., "grade1/"
 
-const supa = (SUPABASE_URL && SUPABASE_ANON_KEY) ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const IMAGES_BUCKET = qs.get('ib') || "lettersort-images";
+const IMAGES_PREFIX = (qs.get('ip') || "").replace(/^\//,'');   // e.g., "grade1/"
+
+const AUDIO_BUCKET  = qs.get('ab') || "syllable-audio";
+const AUDIO_PREFIX  = (qs.get('sap') || "").replace(/^\//,'');  // e.g., "grade1/"
+
+const supa = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /*** DOM refs ***/
 const wordSelect = document.getElementById('wordSelect');
@@ -139,7 +143,7 @@ const slotsEl = document.getElementById('slots');
 /*** State ***/
 let index = 0;
 let currentSyllables = [];
-let heard = []; // booleans per syllable
+let heard = [];
 
 /*** Build UI ***/
 WORDS.forEach((w,i)=>{
@@ -148,62 +152,49 @@ WORDS.forEach((w,i)=>{
   opt.textContent=w;
   wordSelect.appendChild(opt);
 });
-
-wordSelect.addEventListener('change', ()=>{
-  index = parseInt(wordSelect.value,10)||0;
-  buildForWord(WORDS[index]);
-});
+wordSelect.addEventListener('change', ()=>{ index=+wordSelect.value||0; buildForWord(WORDS[index]); });
 prevBtn.addEventListener('click', ()=>{ index=(index-1+WORDS.length)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
 nextBtn.addEventListener('click', ()=>{ index=(index+1)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
 rebuildBtn.addEventListener('click', ()=> buildForWord(WORDS[index]));
 revealAllBtn.addEventListener('click', ()=> revealAll());
 
-/*** Image helpers ***/
-// Your older storage uses accents marked sometimes; here we accept real accents and try a couple fallbacks.
-function imgCandidates(word){
-  // base name candidates: manzana_pic.jpg, manzana.jpg
-  const base = word.toLowerCase()
-    .replaceAll('á','a').replaceAll('é','e').replaceAll('í','i').replaceAll('ó','o').replaceAll('ú','u')
-    .replaceAll('ñ','n'); // storage-friendly fallback
-  const names = [`${word.toLowerCase()}_pic.jpg`, `${base}_pic.jpg`, `${word.toLowerCase()}.jpg`, `${base}.jpg`];
-  return names.map(n=> IMAGES_PREFIX ? `${IMAGES_PREFIX.replace(/\/$/,'')}/${n}` : n);
+/*** Helpers ***/
+function normalizeName(s){
+  return (s||'').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove accents
+    .replace(/ñ/g,'n').replace(/ü/g,'u')
+    .replace(/[^a-z]/g,'');
 }
-
+function imgCandidates(word){
+  const base = normalizeName(word);
+  const names = [`${word.toLowerCase()}_pic.jpg`, `${base}_pic.jpg`, `${word.toLowerCase()}.jpg`, `${base}.jpg`];
+  return names.map(n => IMAGES_PREFIX ? `${IMAGES_PREFIX.replace(/\/$/,'')}/${n}` : n);
+}
+async function getPublicUrlIfExists(bucket, path){
+  const { data } = supa.storage.from(bucket).getPublicUrl(path);
+  if(!data?.publicUrl) return null;
+  try{
+    const r = await fetch(data.publicUrl, { method:'HEAD' });
+    if(r.ok) return data.publicUrl;
+  }catch{}
+  return null;
+}
 async function getImageUrl(word){
-  if(!supa) return null;
-  const candidates = imgCandidates(word);
-  for(const path of candidates){
-    const { data } = supa.storage.from(IMAGES_BUCKET).getPublicUrl(path);
-    // Public URL exists regardless of underlying file; we need a cheap HEAD check via image load
-    if(data?.publicUrl){
-      const ok = await canLoadImage(data.publicUrl);
-      if(ok) return data.publicUrl;
-    }
+  for(const path of imgCandidates(word)){
+    const url = await getPublicUrlIfExists(IMAGES_BUCKET, path);
+    if(url) return url;
   }
   return null;
 }
-function canLoadImage(url){
-  return new Promise(res=>{
-    const i=new Image();
-    i.onload=()=>res(true);
-    i.onerror=()=>res(false);
-    i.src=url;
-  });
-}
 
-/*** Syllabification (Spanish heuristic) ***/
-// This isn’t a research-grade parser, but it handles classroom words well.
+// Spanish syllabifier (classroom-grade)
 function syllabifyEs(wordRaw){
-  const word = wordRaw.toLowerCase()
-    .replaceAll('á','á').replaceAll('é','é').replaceAll('í','í').replaceAll('ó','ó').replaceAll('ú','ú')
-    .replaceAll('ü','ü'); // keep accents
+  const word = wordRaw.toLowerCase();
   const V = /[aeiouáéíóúü]/;
   const isV = c=> V.test(c);
 
-  // Digraphs that stay together in onset
-  const onsetPairs = ['pl','pr','bl','br','tr','dr','cl','cr','gl','gr','fl','fr','ch','ll','rr','qu','gu']; // qu/gu before e/i treated below
+  const onsetPairs = ['pl','pr','bl','br','tr','dr','cl','cr','gl','gr','fl','fr','ch','ll','rr','qu','gu'];
 
-  // Split into letters keeping digraphs as single tokens where relevant
   const chars = [];
   for(let i=0;i<word.length;i++){
     const two = word.slice(i,i+2);
@@ -211,73 +202,62 @@ function syllabifyEs(wordRaw){
     else { chars.push(word[i]); }
   }
 
-  // Build syllables greedily:
   const syl = [];
   let i=0;
   while(i<chars.length){
-    // nucleus: at least one vowel, try to include diphthongs/triphthongs
     let onset = [];
-    // gather pre-vowel consonants as onset
     while(i<chars.length && !isV(chars[i][0])) onset.push(chars[i++]);
 
-    // nucleus
-    if(i>=chars.length){ // no vowel left; attach leftovers to final syllable
+    if(i>=chars.length){
       if(syl.length) syl[syl.length-1] += onset.join('');
       else syl.push(onset.join(''));
       break;
     }
 
-    let nuc = [chars[i++]]; // first vowel
-    // check for diphthong/triphthong
-    const weak = (v)=>/[iuüíú]/.test(v); // accent on weak usually breaks diphthong, but keep simple
-    const strong = (v)=>/[aeoáéíóú]/.test(v);
-    // lookahead up to 2 vowels
+    let nuc = [chars[i++]];
+    const weak = v=>/[iuüíú]/.test(v);
+    const strong = v=>/[aeoáéíóú]/.test(v);
     for(let k=0;k<2 && i<chars.length && isV(chars[i][0]); k++){
-      const prev = nuc[nuc.length-1];
-      const next = chars[i];
-      const join =
-        // typical diphthongs (weak+strong / strong+weak / weak+weak)
-        (weak(prev) && strong(next)) ||
-        (strong(prev) && weak(next)) ||
-        (weak(prev) && weak(next));
-      if(join) { nuc.push(next); i++; } else break;
+      const prev=nuc[nuc.length-1], next=chars[i];
+      const join=(weak(prev)&&strong(next))||(strong(prev)&&weak(next))||(weak(prev)&&weak(next));
+      if(join){ nuc.push(next); i++; } else break;
     }
 
-    // coda/onset split for following consonants
-    let after = [];
+    let after=[];
     while(i<chars.length && !isV(chars[i][0])) after.push(chars[i++]);
 
-    // split 'after' between coda of current and onset of next
-    let coda = [], nextOnset = after;
+    let coda=[], nextOnset=after;
     if(after.length>=2){
-      // if second forms permissible onset with first, keep both for next onset
-      const pair = (after[0]+after[1]).replace(/[^a-zñ]/g,''); // ignore digraph tokens like 'ch'
+      const pair=(after[0]+after[1]).replace(/[^a-zñ]/g,'');
       const ok = onsetPairs.includes(pair) || ['l','r'].includes(after[1]);
       if(!ok){ coda.push(after[0]); nextOnset = after.slice(1); }
-    } else if(after.length===1){
-      // single consonant goes with next onset
-      nextOnset = after;
-    } else {
-      nextOnset = [];
-    }
+    } else if(after.length===1){ nextOnset = after; }
+    else { nextOnset=[]; }
 
-    syl.push(onset.join('') + nuc.join('') + coda.join(''));
-    // put back nextOnset in stream
-    if(nextOnset.length){
-      i -= nextOnset.length;
-    }
+    syl.push(onset.join('')+nuc.join('')+coda.join(''));
+    if(nextOnset.length){ i -= nextOnset.length; }
   }
-
-  // clean empties and make sure every syllable has something
-  return syl.filter(s=>s.length>0).map(s=>s.trim());
+  return syl.filter(Boolean).map(s=>s.trim());
 }
 
-/*** Speech (browser TTS) ***/
-function speakEs(text){
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "es-ES"; // Spanish voice
-  u.rate = 0.9;
-  speechSynthesis.speak(u);
+/*** AUDIO candidates for a word/syllable ***/
+function audioCandidates(word, syll, idx){
+  const w = normalizeName(word);
+  const s = normalizeName(syll);
+  const prefix = AUDIO_PREFIX ? AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
+  return [
+    `${prefix}${w}/${idx+1}.mp3`,
+    `${prefix}${w}_${idx+1}.mp3`,
+    `${prefix}${w}__${s}.mp3`,
+    `${prefix}${s}.mp3`,
+  ];
+}
+async function resolveAudioUrl(word, syll, idx){
+  for(const p of audioCandidates(word, syll, idx)){
+    const url = await getPublicUrlIfExists(AUDIO_BUCKET, p);
+    if(url) return url;
+  }
+  return null;
 }
 
 /*** Build one word ***/
@@ -299,39 +279,53 @@ async function buildForWord(word){
     cv.className = 'cover';
     const btn = document.createElement('button');
     btn.textContent = 'Destapar';
-    btn.disabled = true; // enabled after hearing syllable
-    btn.addEventListener('click', ()=> {
-      cv.classList.add('revealed');
-    });
+    btn.disabled = true;
+    btn.addEventListener('click', ()=> cv.classList.add('revealed'));
     cv.appendChild(btn);
     coversEl.appendChild(cv);
   });
 
-  // Elkonin boxes + counters
+  // Elkonin boxes + counters (speaker buttons)
   slotsEl.innerHTML = '';
   slotsEl.style.gridTemplateColumns = `repeat(${currentSyllables.length}, 1fr)`;
-  currentSyllables.forEach((syll, i)=>{
+  for(let i=0;i<currentSyllables.length;i++){
+    const syll = currentSyllables[i];
     const slot = document.createElement('div');
     slot.className = 'slot';
+
     const c = document.createElement('div');
     c.className = 'counter';
-    c.textContent = i+1; // numbered counters
     c.title = `Escuchar: ${syll}`;
-    c.addEventListener('click', ()=>{
-      speakEs(syll);
-      c.classList.add('heard');
-      heard[i] = true;
-      // enable corresponding cover button
-      const btn = coversEl.children[i].querySelector('button');
-      btn.disabled = false;
+    c.innerHTML = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 10h3l4-4v12l-4-4H4z" stroke="#111827" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M16 8a5 5 0 010 8M18.5 5.5a8.5 8.5 0 010 13" stroke="#111827" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>`;
+    // Resolve audio URL then hook click
+    resolveAudioUrl(word, syll, i).then(url=>{
+      if(url){
+        c.addEventListener('click', ()=>{
+          const a = new Audio(url);
+          a.play().catch(()=>{});
+          c.classList.add('heard');
+          heard[i] = true;
+          const btn = coversEl.children[i].querySelector('button');
+          btn.disabled = false;
+        });
+      }else{
+        // no audio found -> disable
+        c.style.opacity = .4;
+        c.style.cursor = 'not-allowed';
+        c.title = 'Audio no disponible';
+      }
     });
+
     slot.appendChild(c);
     slotsEl.appendChild(slot);
-  });
+  }
 }
 
 function revealAll(){
-  [...coversEl.children].forEach((cv,i)=>{
+  [...coversEl.children].forEach(cv=>{
     const btn = cv.querySelector('button');
     btn.disabled = false;
     cv.classList.add('revealed');
