@@ -258,57 +258,74 @@ async function getImageUrl(word){
 }
 
 /*** Spanish syllabifier (classroom-grade) ***/
+// Spanish syllabifier — í/ú are STRONG (force hiatus)
 function syllabifyEs(wordRaw){
   const word = wordRaw.toLowerCase();
-  const V = /[aeiouáéíóúü]/;
-  const isV = c=> V.test(c);
+
+  const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
+  const isWeakUnaccented = ch => /[iuü]/.test((ch||'')[0] || '');  // i/u/ü (no accent)
+  const isAccWeak = ch => /[íú]/.test((ch||'')[0] || '');          // í, ú => hiatus
+  const isStrong = ch => /[aeoáéíóú]/.test((ch||'')[0] || '');     // a,e,o or ANY accented vowel
 
   const onsetPairs = ['pl','pr','bl','br','tr','dr','cl','cr','gl','gr','fl','fr','ch','ll','rr','qu','gu'];
 
+  // Tokenize with digraphs ch/ll/rr
   const chars = [];
-  for(let i=0;i<word.length;i++){
+  for (let i=0;i<word.length;i++){
     const two = word.slice(i,i+2);
-    if(['ch','ll','rr'].includes(two)){ chars.push(two); i++; }
+    if (['ch','ll','rr'].includes(two)) { chars.push(two); i++; }
     else { chars.push(word[i]); }
   }
 
   const syl = [];
-  let i=0;
-  while(i<chars.length){
-    let onset = [];
-    while(i<chars.length && !isV(chars[i][0])) onset.push(chars[i++]);
+  let i = 0;
 
-    if(i>=chars.length){
-      if(syl.length) syl[syl.length-1] += onset.join('');
+  while (i < chars.length){
+    // ONSET
+    let onset = [];
+    while (i < chars.length && !isV(chars[i])) onset.push(chars[i++]);
+
+    if (i >= chars.length){
+      if (syl.length) syl[syl.length-1] += onset.join('');
       else syl.push(onset.join(''));
       break;
     }
 
+    // NUCLEUS (allow diphthong/triphthong only if NO accented weak vowel is involved)
     let nuc = [chars[i++]];
-    const weak = v=>/[iuüíú]/.test(v);
-    const strong = v=>/[aeoáéíóú]/.test(v);
-    for(let k=0;k<2 && i<chars.length && isV(chars[i][0]); k++){
-      const prev=nuc[nuc.length-1], next=chars[i];
-      const join=(weak(prev)&&strong(next))||(strong(prev)&&weak(next))||(weak(prev)&&weak(next));
-      if(join){ nuc.push(next); i++; } else break;
+    for (let k=0; k<2 && i<chars.length && isV(chars[i]); k++){
+      const prev = nuc[nuc.length-1];
+      const next = chars[i];
+      const canJoin =
+        ((isWeakUnaccented(prev) && !isAccWeak(prev)) && !isAccWeak(next)) ||
+        ((isWeakUnaccented(next) && !isAccWeak(next)) && !isAccWeak(prev)) ||
+        (isWeakUnaccented(prev) && isWeakUnaccented(next));
+      if (canJoin) { nuc.push(next); i++; }
+      else break; // hiatus → stop nucleus
     }
 
-    let after=[];
-    while(i<chars.length && !isV(chars[i][0])) after.push(chars[i++]);
+    // CONSONANTS after nucleus
+    let after = [];
+    while (i < chars.length && !isV(chars[i])) after.push(chars[i++]);
 
-    let coda=[], nextOnset=after;
-    if(after.length>=2){
-      const pair=(after[0]+after[1]).replace(/[^a-zñ]/g,'');
-      const ok = onsetPairs.includes(pair) || ['l','r'].includes(after[1]);
-      if(!ok){ coda.push(after[0]); nextOnset = after.slice(1); }
-    } else if(after.length===1){ nextOnset = after; }
-    else { nextOnset=[]; }
+    let coda = [], nextOnset = after;
+    if (after.length >= 2){
+      const pair = (after[0] + after[1]).replace(/[^a-zñ]/g,'');
+      const okCluster = onsetPairs.includes(pair) || ['l','r'].includes(after[1]);
+      if (!okCluster){ coda.push(after[0]); nextOnset = after.slice(1); }
+    } else if (after.length === 1){
+      nextOnset = after; // single consonant goes to next onset
+    } else {
+      nextOnset = [];
+    }
 
-    syl.push(onset.join('')+nuc.join('')+coda.join(''));
-    if(nextOnset.length){ i -= nextOnset.length; }
+    syl.push(onset.join('') + nuc.join('') + coda.join(''));
+    if (nextOnset.length) { i -= nextOnset.length; }
   }
-  return syl.filter(Boolean).map(s=>s.trim());
+
+  return syl.filter(Boolean).map(s => s.trim());
 }
+
 
 /*** AUDIO candidates for a word/syllable ***/
 /* Prefer webm first now */
