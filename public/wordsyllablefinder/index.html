@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Syllable Report — Supabase lettersort-images</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#111;--muted:#666;--brand:#2563eb}
+  body{margin:0;font:16px/1.45 Andika, system-ui, Segoe UI, Roboto, Helvetica, Arial;background:#fafafa;color:var(--ink)}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  header{position:sticky;top:0;background:#fff;border-bottom:1px solid #e5e7eb;z-index:5}
+  h1{margin:8px 0 0}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input,button{font:inherit}
+  input{padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff}
+  .btn{padding:8px 12px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
+  .btn.primary{background:var(--brand);border-color:transparent;color:#fff}
+  table{width:100%;border-collapse:collapse;background:#fff;margin-top:12px}
+  th,td{border:1px solid #e5e7eb;padding:8px;vertical-align:top}
+  th{background:#f5f7ff;text-align:left}
+  .muted{color:var(--muted)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
+  .note{font-size:12px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="row">
+      <h1>Syllable Report</h1>
+      <span id="countPill" class="pill" style="display:none"></span>
+      <div style="flex:1"></div>
+      <button id="btnReload" class="btn">Recargar</button>
+      <button id="btnCSV" class="btn">Descargar CSV</button>
+    </div>
+    <div class="row" style="margin:8px 0 12px">
+      <label>Bucket imágenes: <input id="ib" value="lettersort-images" style="width:220px"></label>
+      <label>Prefijo: <input id="ip" value="" style="width:140px" placeholder="(raíz)"></label>
+      <label>Bucket audio (opcional): <input id="ab" value="syllable-audio" style="width:220px"></label>
+      <label>Prefijo audio: <input id="ap" value="" style="width:140px" placeholder="(raíz)"></label>
+    </div>
+    <div class="note">
+      Pasa parámetros por URL si quieres: <code>?ib=lettersort-images&ip=&ab=syllable-audio&ap=</code>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="warn" class="note" style="display:none"></div>
+  <table id="tbl" style="display:none">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Archivo</th>
+        <th>Palabra (mostrada)</th>
+        <th>Sílabas</th>
+        <th>Sugeridos (nombres de audio)</th>
+        <th class="muted">detalles</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</main>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script>
+/* ====== CONFIG: your project (overrideable via URL if needed) ====== */
+const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
+
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ====== Marker conversions ====== */
+// file -> pretty (markers -> real diacritics for display & syllabification)
+function markersToPretty(s){
+  return s
+    .replace(/a\.\./g,"á").replace(/e\.\./g,"é").replace(/i\.\./g,"í").replace(/o\.\./g,"ó").replace(/u\.\./g,"ú")
+    .replace(/n\.\./g,"ñ").replace(/u,,/g,"ü");
+}
+// pretty -> markers (for suggested filenames)
+function prettyToMarkers(s){
+  return s
+    .replace(/á/g,"a..").replace(/é/g,"e..").replace(/í/g,"i..").replace(/ó/g,"o..").replace(/ú/g,"u..")
+    .replace(/ñ/g,"n..").replace(/ü/g,"u,,");
+}
+// drop known image suffixes like _pic/_img/_image/_foto before syllabifying
+function stripImageSuffix(stem){
+  return stem.replace(/_(pic|img|image|foto)$/i, "");
+}
+
+/* ====== Spanish syllabification (approximate, but solid for classroom) ====== */
+const V = new Set(["a","e","i","o","u","á","é","í","ó","ú","ü"]);
+const WEAK = new Set(["i","u","ü","í","ú"]); // í/ú break diphthongs (hiatus)
+const ACCENTED_WEAK = new Set(["í","ú"]);
+const ALLOWED_ONSETS = new Set(["pr","pl","br","bl","tr","dr","cr","cl","gr","gl","fr","fl"]);
+
+// treat ch/ll/rr as single consonants and ñ as normal consonant
+function tokenize(word){
+  let w = word.toLowerCase();
+  // sentinel replacements for digraphs so they stay together
+  w = w.replace(/ch/g,"Ç").replace(/ll/g,"Ł").replace(/rr/g,"Ŕ");
+  return [...w];
+}
+function detokenize(tokens){
+  return tokens.join("").replace(/Ç/g,"ch").replace(/Ł/g,"ll").replace(/Ŕ/g,"rr");
+}
+function isVowel(t){ return V.has(t); }
+
+function findVowelGroup(tokens, iStart){
+  // Build nucleus: vowel alone, diphthong, or triphthong (Spanish rules)
+  let i = iStart;
+  let group = [tokens[i]];
+  // Try to absorb next vowels according to diphthong/triphthong rules
+  function canDiph(a,b){
+    // hiatus if any is accented weak (í/ú)
+    if (ACCENTED_WEAK.has(a) || ACCENTED_WEAK.has(b)) return false;
+    // strong+strong => hiatus
+    const strong = (x)=>["a","e","o","á","é","ó"].includes(x);
+    if (strong(a) && strong(b)) return false;
+    // otherwise diphthong
+    return true;
+  }
+  if (i+1<tokens.length && isVowel(tokens[i+1]) && canDiph(tokens[i], tokens[i+1])){
+    group.push(tokens[i+1]); i++;
+    if (i+1<tokens.length && isVowel(tokens[i+1]) && canDiph(group[group.length-1], tokens[i+1])){
+      group.push(tokens[i+1]); i++;
+    }
+  }
+  return { group, end: i };
+}
+
+function syllabify(wordPretty){
+  // keep digraphs as single tokens
+  const t = tokenize(wordPretty);
+  const syll = [];
+  let i = 0;
+
+  while (i < t.length){
+    // onset: all starting consonants until first vowel
+    let onset = [];
+    while (i < t.length && !isVowel(t[i])) {
+      onset.push(t[i]); i++;
+    }
+    if (i >= t.length){
+      // no vowel left → attach leftover consonants to previous syllable
+      if (syll.length) syll[syll.length-1] += detokenize(onset);
+      else syll.push(detokenize(onset));
+      break;
+    }
+    // nucleus (vowel or diphthong/triphthong)
+    const { group: nucleus, end } = findVowelGroup(t, i);
+    i = end + 1;
+
+    // now look ahead at consonant cluster before the next vowel to decide break
+    let cStart = i, cEnd = i;
+    while (cEnd < t.length && !isVowel(t[cEnd])) cEnd++;
+    const consCluster = t.slice(cStart, cEnd);
+
+    let cut = 0; // number of consonants to keep with this syllable as coda
+    if (consCluster.length === 0){
+      cut = 0;
+    } else if (consCluster.length === 1){
+      // VCV -> V-CV (no coda)
+      cut = 0;
+    } else if (consCluster.length === 2){
+      // VCCV
+      const a = consCluster[0], b = consCluster[1];
+      const pair = detokenize([a,b]);
+      if (pair === "ch" || pair === "ll" || pair === "rr" || ALLOWED_ONSETS.has(pair)){
+        // allowed onset cluster → split before both (V-CCV)
+        cut = 0;
+      } else {
+        // otherwise VC-CV (one consonant closes syllable)
+        cut = 1;
+      }
+    } else {
+      // VCCCV
+      const b = consCluster[1], c = consCluster[2];
+      const tail = detokenize([b,c]);
+      if (tail === "ch" || tail === "ll" || tail === "rr" || ALLOWED_ONSETS.has(tail)){
+        // VC-CCV
+        cut = 1;
+      } else {
+        // VCC-CV
+        cut = 2;
+      }
+    }
+
+    const coda = consCluster.slice(0, cut);
+    syll.push(detokenize([...onset, ...nucleus, ...coda]));
+    i = cStart + cut;
+  }
+  return syll;
+}
+
+/* ====== Storage listing ====== */
+async function listAll(bucket, prefix){
+  const path = prefix && prefix.trim()!=="" ? prefix : undefined;
+  let out=[], offset=0, limit=100;
+  while(true){
+    const { data, error } = await client.storage.from(bucket).list(path, { limit, offset, sortBy:{column:"name", order:"asc"} });
+    if (error) throw error;
+    const items = data || [];
+    for (const it of items){
+      if (it.name.endsWith("/")) continue;
+      const fullpath = path ? `${path.replace(/\/$/,'')}/${it.name}` : it.name;
+      out.push({ ...it, fullpath });
+    }
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return out;
+}
+
+/* ====== Main ====== */
+const qs = new URLSearchParams(location.search);
+const els = {
+  ib: document.getElementById("ib"),
+  ip: document.getElementById("ip"),
+  ab: document.getElementById("ab"),
+  ap: document.getElementById("ap"),
+  warn: document.getElementById("warn"),
+  tbl: document.getElementById("tbl"),
+  tbody: document.querySelector("#tbl tbody"),
+  countPill: document.getElementById("countPill"),
+  btnReload: document.getElementById("btnReload"),
+  btnCSV: document.getElementById("btnCSV"),
+};
+
+["ib","ip","ab","ap"].forEach(k=>{
+  const v = qs.get(k);
+  if (v!==null) els[k].value = v;
+});
+
+els.btnReload.onclick = run;
+els.btnCSV.onclick = downloadCSV;
+
+let currentRows = [];
+
+function imageStemFromFile(name){
+  const dot = name.lastIndexOf(".");
+  const stem = dot>=0 ? name.slice(0,dot) : name;
+  return stem;
+}
+
+function buildSuggestedFiles(syllablesPretty){
+  // return markerized names like "man.mp3, za.mp3, na.mp3"
+  return syllablesPretty.map(s=> prettyToMarkers(s).toLowerCase() + ".mp3");
+}
+
+async function run(){
+  els.warn.style.display = "none";
+  els.tbl.style.display = "none";
+  els.tbody.innerHTML = "";
+  currentRows = [];
+
+  const IB = els.ib.value.trim();
+  const IP = els.ip.value.trim();
+
+  try{
+    const files = await listAll(IB, IP);
+    const imgs = files.filter(f=>{
+      const n = f.fullpath.toLowerCase();
+      return n.endsWith(".png")||n.endsWith(".jpg")||n.endsWith(".jpeg")||n.endsWith(".webp")||n.endsWith(".gif");
+    });
+
+    if (imgs.length === 0){
+      els.warn.textContent = `No se encontraron imágenes en "${IB}" (prefijo: ${IP||"(raíz)"}).`;
+      els.warn.style.display = "block";
+      return;
+    }
+
+    let idx=0;
+    const seenWords = new Set();
+
+    for (const f of imgs){
+      const stemRaw = stripImageSuffix(imageStemFromFile(f.fullpath.split("/").pop()));
+      const prettyWord = markersToPretty(stemRaw);
+      const baseWord = prettyWord.toLowerCase();
+
+      if (seenWords.has(baseWord)) continue; // avoid duplicates if multiple pics per word
+      seenWords.add(baseWord);
+
+      const sylls = syllabify(prettyWord);
+      const suggestion = buildSuggestedFiles(sylls);
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${++idx}</td>
+        <td><code>${f.fullpath}</code></td>
+        <td>${prettyWord}</td>
+        <td>${sylls.join(" - ")}</td>
+        <td><code>${suggestion.join(", ")}</code></td>
+        <td class="muted">${sylls.length} síl.</td>
+      `;
+      els.tbody.appendChild(tr);
+
+      currentRows.push({
+        index: idx,
+        path: f.fullpath,
+        word_display: prettyWord,
+        syllables_display: sylls.join(" - "),
+        suggested_audio_files: suggestion.join(", "),
+        syllable_count: sylls.length
+      });
+    }
+
+    els.tbl.style.display = "";
+    els.countPill.style.display = "inline-block";
+    els.countPill.textContent = `${currentRows.length} palabras`;
+  } catch(err){
+    els.warn.textContent = `Error: ${err?.message || err}`;
+    els.warn.style.display = "block";
+  }
+}
+
+function downloadCSV(){
+  if (!currentRows.length) return;
+  const headers = ["index","path","word_display","syllables_display","suggested_audio_files","syllable_count"];
+  const lines = [headers.join(",")];
+  for (const r of currentRows){
+    lines.push(headers.map(h => `"${String(r[h]).replace(/"/g,'""')}"`).join(","));
+  }
+  const blob = new Blob([lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "syllable_report.csv";
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 5000);
+}
+
+// auto-run on load
+run();
+</script>
+</body>
+</html>
