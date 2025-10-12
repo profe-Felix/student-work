@@ -53,13 +53,24 @@
   .slots{display:grid;gap:12px}
   .slot{min-height:84px;background:var(--box);border:2px solid var(--box-b);border-radius:8px;display:flex;align-items:center;justify-content:center}
 
-  /* Speaker counters (no numbers) */
+  /* Solid circular counters (clickable) */
   .counter{
-    width:46px;height:46px;border:2px solid var(--box-b);border-radius:999px;
-    display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;background:#fff
+    width:44px;height:44px;border:2px solid var(--box-b);border-radius:999px;
+    background:#111827; /* solid */
+    cursor:pointer; user-select:none;
+    box-shadow: inset 0 0 0 0 #111827;
+    transition: transform .05s ease, box-shadow .15s ease;
   }
-  .counter svg{width:22px;height:22px}
-  .counter.heard{background:#ecfdf5;border-color:#10b981}
+  .counter:active{ transform: scale(.97) }
+  .counter.heard{
+    background:#10b981; border-color:#0f9a72; /* green when heard */
+    box-shadow: inset 0 0 0 0 #10b981;
+  }
+  .counter.missing{
+    opacity:.5; /* still clickable-looking but we won't set "not-allowed" */
+    cursor:default;
+  }
+
   .arrowWrap{display:flex;justify-content:center}
   .arrow{width:82%;height:26px}
   small.note{color:var(--muted)}
@@ -104,7 +115,7 @@
           </svg>
         </div>
       </div>
-      <small class="note">Pulsa el altavoz de cada casilla para escuchar la sílaba y luego “Destapar”.</small>
+      <small class="note">Pulsa cada círculo para escuchar la sílaba y luego “Destapar”.</small>
     </div>
   </div>
 </main>
@@ -158,13 +169,21 @@ nextBtn.addEventListener('click', ()=>{ index=(index+1)%WORDS.length; wordSelect
 rebuildBtn.addEventListener('click', ()=> buildForWord(WORDS[index]));
 revealAllBtn.addEventListener('click', ()=> revealAll());
 
-/*** Helpers ***/
+/*** Name helpers ***/
 function normalizeName(s){
   return (s||'').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove accents
     .replace(/ñ/g,'n').replace(/ü/g,'u')
     .replace(/[^a-z]/g,'');
 }
+/* marker scheme: a.. e.. i.. o.. u.. ; n.. (ñ) ; u,, (ü) */
+function prettyToMarkers(s){
+  return (s||'')
+    .replace(/á/g,'a..').replace(/é/g,'e..').replace(/í/g,'i..').replace(/ó/g,'o..').replace(/ú/g,'u..')
+    .replace(/ñ/g,'n..').replace(/ü/g,'u,,');
+}
+
+/*** Image helpers ***/
 function imgCandidates(word){
   const base = normalizeName(word);
   const names = [`${word.toLowerCase()}_pic.jpg`, `${base}_pic.jpg`, `${word.toLowerCase()}.jpg`, `${base}.jpg`];
@@ -187,7 +206,7 @@ async function getImageUrl(word){
   return null;
 }
 
-// Spanish syllabifier (classroom-grade)
+/*** Spanish syllabifier (classroom-grade) ***/
 function syllabifyEs(wordRaw){
   const word = wordRaw.toLowerCase();
   const V = /[aeiouáéíóúü]/;
@@ -242,14 +261,19 @@ function syllabifyEs(wordRaw){
 
 /*** AUDIO candidates for a word/syllable ***/
 function audioCandidates(word, syll, idx){
-  const w = normalizeName(word);
-  const s = normalizeName(syll);
+  const wPlain = normalizeName(word);
+  const sPlain = normalizeName(syll);
+  const sMarker = prettyToMarkers(syll).toLowerCase();
   const prefix = AUDIO_PREFIX ? AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
+
+  // Try marker names first (your bucket uses markers), then plain fallbacks
   return [
-    `${prefix}${w}/${idx+1}.mp3`,
-    `${prefix}${w}_${idx+1}.mp3`,
-    `${prefix}${w}__${s}.mp3`,
-    `${prefix}${s}.mp3`,
+    `${prefix}${sMarker}.mp3`,
+    `${prefix}${wPlain}/${sMarker}.mp3`,
+    `${prefix}${wPlain}_${idx+1}.mp3`,
+    `${prefix}${wPlain}/${idx+1}.mp3`,
+    `${prefix}${wPlain}__${sPlain}.mp3`,
+    `${prefix}${sPlain}.mp3`,
   ];
 }
 async function resolveAudioUrl(word, syll, idx){
@@ -285,7 +309,7 @@ async function buildForWord(word){
     coversEl.appendChild(cv);
   });
 
-  // Elkonin boxes + counters (speaker buttons)
+  // Elkonin boxes + solid counters
   slotsEl.innerHTML = '';
   slotsEl.style.gridTemplateColumns = `repeat(${currentSyllables.length}, 1fr)`;
   for(let i=0;i<currentSyllables.length;i++){
@@ -296,10 +320,7 @@ async function buildForWord(word){
     const c = document.createElement('div');
     c.className = 'counter';
     c.title = `Escuchar: ${syll}`;
-    c.innerHTML = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M4 10h3l4-4v12l-4-4H4z" stroke="#111827" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M16 8a5 5 0 010 8M18.5 5.5a8.5 8.5 0 010 13" stroke="#111827" stroke-width="1.6" stroke-linecap="round"/>
-    </svg>`;
+
     // Resolve audio URL then hook click
     resolveAudioUrl(word, syll, i).then(url=>{
       if(url){
@@ -311,10 +332,10 @@ async function buildForWord(word){
           const btn = coversEl.children[i].querySelector('button');
           btn.disabled = false;
         });
-      }else{
-        // no audio found -> disable
-        c.style.opacity = .4;
-        c.style.cursor = 'not-allowed';
+      } else {
+        // audio not found: keep as circle, no forbidden cursor
+        c.classList.add('missing');
+        c.addEventListener('click', ()=>{}); // no-op
         c.title = 'Audio no disponible';
       }
     });
