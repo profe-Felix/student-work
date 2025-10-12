@@ -146,6 +146,7 @@ const slotsEl = document.getElementById('slots');
 let index = 0;
 let currentSyllables = [];
 let heard = [];
+let audioCache = []; // one Audio per syllable
 
 /*** Build UI ***/
 WORDS.forEach((w,i)=>{
@@ -251,7 +252,8 @@ function syllabifyEs(wordRaw){
 }
 
 /*** AUDIO candidates for a word/syllable ***/
-const AUDIO_EXTS = ['wav','mp3','m4a','ogg','webm'];
+/* Prefer webm first now */
+const AUDIO_EXTS = ['webm','ogg','m4a','mp3','wav'];
 
 function audioPathsFor(word, syll, idx){
   const wPlain = normalizeName(word);
@@ -259,7 +261,6 @@ function audioPathsFor(word, syll, idx){
   const sMarker = prettyToMarkers(syll).toLowerCase();
   const prefix = AUDIO_PREFIX ? AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
 
-  // Base patterns (without extension). We'll try each with all AUDIO_EXTS.
   const bases = [
     `${prefix}${sMarker}`,
     `${prefix}${wPlain}/${sMarker}`,
@@ -291,6 +292,7 @@ async function buildForWord(word){
   wordTitle.textContent = word;
   currentSyllables = syllabifyEs(word);
   heard = currentSyllables.map(()=>false);
+  audioCache = new Array(currentSyllables.length).fill(null);
 
   // Image + covers grid
   coversEl.innerHTML = '';
@@ -323,11 +325,21 @@ async function buildForWord(word){
     c.className = 'counter';
     c.title = `Escuchar: ${syll}`;
 
+    // Resolve and PRELOAD audio (for faster first play)
     resolveAudioUrl(word, syll, i).then(url=>{
       if(url){
+        const a = new Audio();
+        a.preload = 'auto';
+        a.src = url;
+        // Hint the browser to fetch now
+        try { a.load(); } catch {}
+        audioCache[i] = a;
+
         c.addEventListener('click', ()=>{
-          const a = new Audio(url);
-          a.play().catch(()=>{});
+          const au = audioCache[i];
+          if(!au) return;
+          try { au.currentTime = 0; } catch {}
+          au.play().catch(()=>{});
           c.classList.add('heard');
           heard[i] = true;
           const btn = coversEl.children[i].querySelector('button');
@@ -335,7 +347,7 @@ async function buildForWord(word){
         });
       } else {
         c.classList.add('missing');
-        c.addEventListener('click', ()=>{}); // no-op
+        c.addEventListener('click', ()=>{});
         c.title = 'Audio no disponible';
       }
     });
