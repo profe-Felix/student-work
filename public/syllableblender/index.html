@@ -41,7 +41,7 @@
 
   .imageWrap{position:relative;border:2px solid var(--box-b);border-radius:12px;overflow:hidden}
   .imageWrap img{display:block;width:100%;height:270px;object-fit:contain;background:#fafafa}
-  .coverLayer{position:absolute;inset:0;background:var(--cover);opacity:1} /* fully opaque */
+  .coverLayer{position:absolute;inset:0;background:var(--cover);opacity:1}
   .coverLayer.revealed{opacity:0;pointer-events:none;transition:opacity .25s ease}
 
   .wordTitle{margin:8px 0 0;font-size:22px;text-align:center}
@@ -50,7 +50,6 @@
   .slots{display:grid;gap:12px}
   .slot{min-height:84px;background:var(--box);border:2px solid var(--box-b);border-radius:8px;display:flex;align-items:center;justify-content:center}
 
-  /* Solid circular counters (clickable) */
   .counter{
     width:44px;height:44px;border:2px solid var(--box-b);border-radius:999px;
     background:#111827; cursor:pointer; user-select:none;
@@ -123,8 +122,12 @@ const SUPABASE_ANON_KEY =
 const IMAGES_BUCKET = qs.get('ib') || "lettersort-images";
 const IMAGES_PREFIX = (qs.get('ip') || "").replace(/^\//,'');   // e.g., "grade1/"
 
-const AUDIO_BUCKET  = qs.get('ab') || "syllable-audio";
-const AUDIO_PREFIX  = (qs.get('sap') || "").replace(/^\//,'');  // e.g., "grade1/"
+/* buckets: syllable vs word */
+const SYLLABLE_AUDIO_BUCKET = qs.get('ab')  || "syllable-audio";
+const SYLLABLE_AUDIO_PREFIX = (qs.get('sap') || "").replace(/^\//,'');  // e.g., "grade1/"
+
+const WORD_AUDIO_BUCKET  = qs.get('wab') || "lettersort-audio";
+const WORD_AUDIO_PREFIX  = (qs.get('wap') || "").replace(/^\//,'');     // e.g., "grade1/"
 
 const supa = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -146,7 +149,6 @@ let currentSyllables = [];
 let heard = [];
 let audioCache = []; // one Audio per syllable
 let wordAudio = null; // Audio for full word
-let availableCount = 0; // how many syllable counters actually have audio
 
 /*** UI Handlers ***/
 prevBtn.addEventListener('click', ()=>{ index=(index-1+WORDS.length)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
@@ -157,7 +159,7 @@ revealBtn.addEventListener('click', ()=> revealAndPlay());
 /*** Marker ↔ accents helpers ***/
 function normalizeName(s){
   return (s||'').toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove accents
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/ñ/g,'n').replace(/ü/g,'u')
     .replace(/[^a-z]/g,'');
 }
@@ -242,7 +244,7 @@ async function getImageUrl(word){
   return null;
 }
 
-/*** Syllabifier (handles mons-truo, qu/gu before e/i, í/ú hiatus) ***/
+/*** Syllabifier (mons-truo, qu/gu before e/i, í/ú hiatus) ***/
 function syllabifyEs(wordRaw){
   const word = (wordRaw || '').toLowerCase();
   const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
@@ -306,15 +308,15 @@ function syllabifyEs(wordRaw){
   return syl.filter(Boolean).map(s => s.trim());
 }
 
-/*** AUDIO (prefer webm now) ***/
+/*** AUDIO (prefer webm) ***/
 const AUDIO_EXTS = ['webm','ogg','m4a','mp3','wav'];
 
-/* syllable files */
+/* syllable files (SYLLABLE_AUDIO_BUCKET) */
 function audioPathsFor(word, syll, idx){
   const wPlain = normalizeName(word);
   const sPlain = normalizeName(syll);
   const sMarker = prettyToMarkers(syll).toLowerCase();
-  const prefix = AUDIO_PREFIX ? AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
+  const prefix = SYLLABLE_AUDIO_PREFIX ? SYLLABLE_AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
 
   const bases = [
     `${prefix}${sMarker}`,
@@ -328,25 +330,25 @@ function audioPathsFor(word, syll, idx){
   for (const b of bases) for (const ext of AUDIO_EXTS) paths.push(`${b}.${ext}`);
   return paths;
 }
-async function resolveAudioUrl(word, syll, idx){
+async function resolveSyllableAudioUrl(word, syll, idx){
   const paths = audioPathsFor(word, syll, idx);
   for(const p of paths){
-    const url = await getPublicUrlIfExists(AUDIO_BUCKET, p);
+    const url = await getPublicUrlIfExists(SYLLABLE_AUDIO_BUCKET, p);
     if(url) return url;
   }
   return null;
 }
 
-/* whole-word file */
+/* whole-word file (WORD_AUDIO_BUCKET) */
 function wordAudioPaths(word){
   const wPlain   = normalizeName(word);
   const wMarker  = prettyToMarkers(word).toLowerCase();
-  const prefix   = AUDIO_PREFIX ? AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
+  const prefix   = WORD_AUDIO_PREFIX ? WORD_AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
   const bases = [
-    `${prefix}${wMarker}`,          // e.g., manzana (with markers if present)
-    `${prefix}${wPlain}`,           // e.g., manzana
-    `${prefix}${wPlain}/word`,      // folder/word.ext
-    `${prefix}${wPlain}/${wPlain}`, // folder/same.ext
+    `${prefix}${wMarker}`,
+    `${prefix}${wPlain}`,
+    `${prefix}${wPlain}/word`,
+    `${prefix}${wPlain}/${wPlain}`,
   ];
   const paths = [];
   for (const b of bases) for (const ext of AUDIO_EXTS) paths.push(`${b}.${ext}`);
@@ -355,7 +357,7 @@ function wordAudioPaths(word){
 async function resolveWordAudioUrl(word){
   const paths = wordAudioPaths(word);
   for(const p of paths){
-    const url = await getPublicUrlIfExists(AUDIO_BUCKET, p);
+    const url = await getPublicUrlIfExists(WORD_AUDIO_BUCKET, p);
     if(url) return url;
   }
   return null;
@@ -367,8 +369,6 @@ async function buildForWord(word){
   currentSyllables = syllabifyEs(word);
   heard = currentSyllables.map(()=>false);
   audioCache = new Array(currentSyllables.length).fill(null);
-  availableCount = 0;
-  wordAudio = null;
   revealBtn.disabled = true;
   coverLayer.classList.remove('revealed');
 
@@ -378,7 +378,7 @@ async function buildForWord(word){
     `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="100%" height="100%" fill="#fafafa"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="36" fill="#999">(${word})</text></svg>`
   );
 
-  // Preload word audio
+  // Preload word audio (from WORD_AUDIO_BUCKET)
   resolveWordAudioUrl(word).then(url=>{
     if(url){
       const a = new Audio();
@@ -386,6 +386,8 @@ async function buildForWord(word){
       a.src = url;
       try{ a.load(); }catch{}
       wordAudio = a;
+    } else {
+      wordAudio = null;
     }
   });
 
@@ -401,9 +403,9 @@ async function buildForWord(word){
     c.className = 'counter';
     c.title = `Escuchar: ${syll}`;
 
-    resolveAudioUrl(word, syll, i).then(url=>{
+    // syllable audio from SYLLABLE_AUDIO_BUCKET
+    resolveSyllableAudioUrl(word, syll, i).then(url=>{
       if(url){
-        availableCount++;
         const a = new Audio();
         a.preload = 'auto';
         a.src = url;
@@ -422,11 +424,11 @@ async function buildForWord(word){
           }
         });
       } else {
-        // no audio for this syllable: mark missing, but do NOT block reveal
+        // no audio for this syllable: don’t block reveal
         c.classList.add('missing');
-        heard[i] = true; // count as satisfied
+        heard[i] = true;
+        checkAllHeard();
       }
-      checkAllHeard();
     });
 
     slot.appendChild(c);
