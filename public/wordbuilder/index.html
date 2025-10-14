@@ -14,7 +14,12 @@
   :root{
     --bg:#fafbff; --grid:#eef1f7; --ink:#111; --muted:#6b7280; --brand:#2563eb;
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
-    --trash:#fee2e2; --danger:#ef4444; --ok:#16a34a
+    --trash:#fee2e2; --danger:#ef4444; --ok:#16a34a;
+    --gap:12px;              /* default gap between slots */
+    --slot-min-h:84px;       /* default slot height */
+    --tile-min-w:52px;       /* default tile size */
+    --tile-h:52px;
+    --tile-fs:28px;
   }
   html,body{height:100%}
   body{
@@ -36,6 +41,7 @@
   .btn{border:1px solid #d1d5db;background:var(--brand);color:#fff;border-radius:10px;padding:8px 12px;cursor:pointer}
   .btn.ghost{background:#fff;color:#111}
   input[type=number], input[type=text]{font:inherit;border:1px solid #d1d5db;border-radius:10px;padding:6px 10px;min-width:70px}
+  label.toggle{display:inline-flex;align-items:center;gap:6px}
   small.note{color:var(--muted)}
 
   main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
@@ -48,10 +54,14 @@
     border-radius:12px;
     padding:12px;
   }
-  .slots{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:12px}
+  .slots{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:var(--gap)}
   .slot{
-    min-height:84px;background:#fff;border:2px solid var(--drop-border);border-radius:8px;
-    padding:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap
+    min-height:var(--slot-min-h);
+    background:#fff;
+    border:2px solid var(--drop-border);
+    border-radius:8px;
+    padding:8px;
+    display:flex;gap:8px;align-items:center;flex-wrap:wrap
   }
 
   .row-bottom{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
@@ -71,9 +81,9 @@
   .tile{
     user-select:none; -webkit-user-drag:none; touch-action:none;
     display:inline-flex; align-items:center; justify-content:center;
-    min-width:52px; height:52px; padding:0 10px;
+    min-width:var(--tile-min-w); height:var(--tile-h); padding:0 10px;
     background:var(--tile); border:2px solid var(--tile-border); border-radius:10px;
-    font-size:28px; line-height:1; cursor:grab; position:relative
+    font-size:var(--tile-fs); line-height:1; cursor:grab; position:relative
   }
   .tile:active{cursor:grabbing}
   .tile .x{
@@ -86,6 +96,21 @@
   .highlight{outline:3px solid #a5b4fc; outline-offset:2px}
 
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
+
+  /* ---------- Compact “word” view ---------- */
+  .compact .slots{ --gap:4px; }
+  .compact .slot{
+    background:transparent; border-color:transparent; padding:0;
+    min-height:72px; align-items:center; justify-content:flex-start; flex-wrap:nowrap;
+  }
+  .compact .slot .tile{
+    /* grow a bit and look chunkier so letters read like a word */
+    min-width:clamp(44px, 6.5vw, 90px);
+    height:clamp(56px, 8vh, 96px);
+    font-size:clamp(28px, 6vw, 64px);
+    border-radius:12px;
+    padding:0 8px;
+  }
 </style>
 </head>
 <body>
@@ -100,6 +125,10 @@
           <input id="boxesInput" type="number" min="1" max="12" value="4"/>
         </label>
         <button id="applyBoxes" class="btn ghost">Aplicar</button>
+        <label class="toggle">
+          <input id="compactToggle" type="checkbox">
+          <span>Vista palabra</span>
+        </label>
         <button id="validateBtn" class="btn">Validar</button>
       </div>
     </div>
@@ -132,9 +161,10 @@
 <script>
   /******** URL options ********/
   const qs = new URLSearchParams(location.search);
-  const BOXES = Math.max(1, Math.min(12, parseInt(qs.get('boxes')||'4',10)));
-  const URL_LETTERS = (qs.get('letters')||'').split(',').map(s=>s.trim()).filter(Boolean);
-  const URL_SYLL = (qs.get('syll')||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const BOXES = Math.max(1, Math.min(12, parseInt(qs.get('boxes') || qs.get('drops') || '4', 10)));
+  const URL_LETTERS = (qs.get('letters') || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const URL_SYLL = (qs.get('syllables') || qs.get('syll') || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const COMPACT_FROM_URL = (qs.get('compact') || '') === '1';
 
   /******** Data ********/
   const DEFAULT_LETTERS = [
@@ -157,12 +187,11 @@
   const boxesInput = document.getElementById('boxesInput');
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn = document.getElementById('validateBtn');
+  const compactToggle = document.getElementById('compactToggle');
 
   boxesInput.value = BOXES;
 
   /******** Helpers ********/
-  const uid = ()=> Math.random().toString(36).slice(2,10);
-
   function makeTile(text, isClone=false){
     const div = document.createElement('div');
     div.className = 'tile' + (isClone ? ' clone' : '');
@@ -208,7 +237,6 @@
       if(e.button!==0) return;
       const src = e.currentTarget;
 
-      // If dragging from a palette, create a clone right away to drag
       const isPalette = src.parentElement === lettersTray || src.parentElement === syllTray;
       const dragEl = (cloneOnDrag && isPalette) ? makeTile(src.dataset.text, true) : src;
 
@@ -219,11 +247,9 @@
       drag = {
         el: dragEl,
         pointerId: e.pointerId,
-        startX: e.clientX, startY: e.clientY,
         moved:false,
         fromPalette: isPalette,
-        originParent: isPalette ? null : src.parentElement,
-        placeholder: null
+        originParent: isPalette ? null : src.parentElement
       };
       drag.el.classList.add('dragging');
       drag.el.style.position='fixed';
@@ -246,54 +272,39 @@
     drag.moved = true;
     moveTo(drag.el, e.clientX, e.clientY);
 
-    // highlight slot under pointer
     document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
     const t = document.elementFromPoint(e.clientX, e.clientY);
     const slot = t?.closest?.('.slot');
     if(slot) slot.classList.add('highlight');
 
-    // highlight trash
     trashEl.classList.toggle('highlight', !!t?.closest?.('#trash'));
   }
 
   function onUp(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
 
-    // drop target detection
     const t = document.elementFromPoint(e.clientX, e.clientY);
     const onTrash = !!t?.closest?.('#trash');
     const slot = t?.closest?.('.slot');
 
-    // clear highlights
     document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
     trashEl.classList.remove('highlight');
 
-    // finalize
     drag.el.classList.remove('dragging');
     drag.el.style.position=''; drag.el.style.left=''; drag.el.style.top=''; drag.el.style.zIndex=''; drag.el.style.pointerEvents='';
     drag.el.style.width=''; drag.el.style.height='';
 
     if(onTrash){
-      // If it came from palette and was never placed, just remove; if existing tile, also remove
       drag.el.remove();
     } else if(slot){
-      // insert into slot (append at end)
-      if(!drag.el.classList.contains('clone')){
-        // came from board, keep as is
-        slot.appendChild(drag.el);
-      } else {
-        // cloned tile (already has delete badge)
-        slot.appendChild(drag.el);
-      }
+      slot.appendChild(drag.el);
     } else {
-      // not dropped anywhere: if it was a clone started from palette, remove; otherwise snap back
       if(drag.fromPalette){
         drag.el.remove();
       } else if (drag.originParent) {
         drag.originParent.appendChild(drag.el);
       }
     }
-
     cleanup();
   }
 
@@ -326,9 +337,18 @@
     buildSlots(n);
   });
 
+  /******** Compact toggle ********/
+  function setCompact(on){
+    document.body.classList.toggle('compact', !!on);
+  }
+  compactToggle.addEventListener('change', ()=> setCompact(compactToggle.checked));
+
   /******** Boot ********/
   buildSlots(BOXES);
   fillPalettes();
+  // start in compact mode if asked via URL
+  setCompact(COMPACT_FROM_URL);
+  compactToggle.checked = COMPACT_FROM_URL;
 </script>
 </body>
 </html>
