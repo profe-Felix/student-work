@@ -57,15 +57,6 @@
 
     /* Solo toolbar */
     .soloBar{position:sticky;top:56px;z-index:4;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 10px rgba(0,0,0,.04)}
-
-    /* Speak button */
-    .speakBtn{
-      border:none;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;
-      width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;
-      cursor:pointer
-    }
-    .speakBtn:active{transform:scale(.97)}
-    .speakBtn svg{width:18px;height:18px}
   </style>
 </head>
 <body>
@@ -437,32 +428,6 @@
     btnVerify.addEventListener('click', async ()=>{ if(!isTeacher) return; await channel.send({ type:'broadcast', event:'VERIFY' }); });
     btnReset.addEventListener('click', async ()=>{ if(!isTeacher) return; await channel.send({ type:'broadcast', event:'RESET' }); });
 
-    /******** Speech (TTS) for instructions ********/
-    function getEsVoice(){
-      const voices = window.speechSynthesis?.getVoices?.() || [];
-      return voices.find(v => /^es(-|_)?/i.test(v.lang)) || voices[0] || null;
-    }
-    function speakInstruction(key){
-      if(!('speechSynthesis' in window)) return;
-      const txt = key.startsWith('not-')
-        ? `No empieza con ${key.slice(4)}`
-        : `Empieza con ${key}`;
-      const u = new SpeechSynthesisUtterance(txt.replace(/\//g,''));
-      const v = getEsVoice();
-      if(v) u.voice = v;
-      u.lang = v?.lang || 'es-ES';
-      u.rate = 0.95; u.pitch = 1.0; u.volume = 1.0;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-    }
-    function speakerSVG(){
-      return `
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M4 10h3l4-4v12l-4-4H4z" fill="none" stroke="#1e3a8a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a8.5 8.5 0 0 1 0 13" fill="none" stroke="#1e3a8a" stroke-width="1.6" stroke-linecap="round"/>
-        </svg>`;
-    }
-
     /******** Board & DnD ********/
     function buildColumns(columns){
       currentCols = columns;
@@ -473,17 +438,9 @@
         col.innerHTML = `
           <header>
             <h2>${labelForKey(c.key)}</h2>
-            <button class="speakBtn" data-key="${c.key}" aria-label="Escuchar instrucción">
-              ${speakerSVG()}
-            </button>
           </header>
           <div class="drop" data-col="${idx}"></div>`;
         columnsEl.appendChild(col);
-      });
-
-      // Hook up speaker buttons (event delegation also fine, but we'll bind directly)
-      columnsEl.querySelectorAll('.speakBtn').forEach(btn=>{
-        btn.addEventListener('click', ()=> speakInstruction(btn.dataset.key));
       });
     }
 
@@ -657,12 +614,6 @@
         soloResetBtn.addEventListener('click', ()=> resetRoundPlacements());
 
         startSoloRound();
-
-        // Warm up voices (some browsers need a tick)
-        if ('speechSynthesis' in window) {
-          window.speechSynthesis.onvoiceschanged = ()=>{};
-          window.speechSynthesis.getVoices();
-        }
         return;
       }
 
@@ -671,12 +622,6 @@
       isTeacher = false;
       teacherPanel.classList.add('hidden');
       studentPanel.classList.remove('hidden');
-
-      // Warm up voices as well
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.onvoiceschanged = ()=>{};
-        window.speechSynthesis.getVoices();
-      }
     })();
   </script>
 </body>
