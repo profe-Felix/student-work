@@ -15,9 +15,10 @@
     --bg:#fafbff; --grid:#eef1f7; --ink:#111; --muted:#6b7280; --brand:#2563eb;
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
     --trash:#fee2e2; --danger:#ef4444; --ok:#16a34a;
-    --gap:12px;              /* default gap between slots */
-    --slot-min-h:84px;       /* default slot height */
-    --tile-min-w:52px;       /* default tile size */
+    --gap:12px;              /* gap between boxes */
+    --inner-gap:6px;         /* gap inside a box (between tiles) */
+    --slot-min-h:84px;       /* box height */
+    --tile-min-w:52px;       /* palette tile base size */
     --tile-h:52px;
     --tile-fs:28px;
   }
@@ -40,8 +41,7 @@
   .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .btn{border:1px solid #d1d5db;background:var(--brand);color:#fff;border-radius:10px;padding:8px 12px;cursor:pointer}
   .btn.ghost{background:#fff;color:#111}
-  input[type=number], input[type=text]{font:inherit;border:1px solid #d1d5db;border-radius:10px;padding:6px 10px;min-width:70px}
-  label.toggle{display:inline-flex;align-items:center;gap:6px}
+  input[type=number]{font:inherit;border:1px solid #d1d5db;border-radius:10px;padding:6px 10px;min-width:70px}
   small.note{color:var(--muted)}
 
   main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
@@ -56,12 +56,11 @@
   }
   .slots{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:var(--gap)}
   .slot{
+    --n: 0; /* tiles in this slot; set by JS */
     min-height:var(--slot-min-h);
-    background:#fff;
-    border:2px solid var(--drop-border);
-    border-radius:8px;
-    padding:8px;
-    display:flex;gap:8px;align-items:center;flex-wrap:wrap
+    background:#fff;border:2px solid var(--drop-border);border-radius:8px;
+    padding:8px;display:flex;gap:var(--inner-gap);align-items:center;flex-wrap:nowrap;
+    justify-content:flex-start;
   }
 
   .row-bottom{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
@@ -77,15 +76,16 @@
   .card h2{margin:0 0 8px;font-size:18px}
   .tray{display:flex;flex-wrap:wrap;gap:8px}
 
-  /* Tiles */
+  /* Tiles (base style) */
   .tile{
     user-select:none; -webkit-user-drag:none; touch-action:none;
     display:inline-flex; align-items:center; justify-content:center;
     min-width:var(--tile-min-w); height:var(--tile-h); padding:0 10px;
     background:var(--tile); border:2px solid var(--tile-border); border-radius:10px;
-    font-size:var(--tile-fs); line-height:1; cursor:grab; position:relative
+    font-size:var(--tile-fs); line-height:1; cursor:grab; position:relative;
+    transition:transform .05s ease;
   }
-  .tile:active{cursor:grabbing}
+  .tile:active{cursor:grabbing; transform:scale(.98)}
   .tile .x{
     position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:999px;
     background:#fff; border:2px solid #ef4444; color:#ef4444; font-size:14px; display:none;
@@ -97,17 +97,14 @@
 
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-  /* ---------- Compact “word” view ---------- */
-  .compact .slots{ --gap:4px; }
-  .compact .slot{
-    background:transparent; border-color:transparent; padding:0;
-    min-height:72px; align-items:center; justify-content:flex-start; flex-wrap:nowrap;
-  }
-  .compact .slot .tile{
-    /* grow a bit and look chunkier so letters read like a word */
-    min-width:clamp(44px, 6.5vw, 90px);
-    height:clamp(56px, 8vh, 96px);
-    font-size:clamp(28px, 6vw, 64px);
+  /* >>> Stretch tiles INSIDE boxes <<< */
+  /* When a tile sits in a .slot, JS adds .in-slot and sets --n on the slot.
+     Each tile then flexes to an equal share of the slot width. */
+  .slot .tile.in-slot{
+    flex: 1 1 calc( (100% - (var(--n) - 1) * var(--inner-gap)) / max(var(--n), 1) );
+    min-width:0;                /* allow shrinking to fit evenly */
+    height: clamp(56px, 8vh, 96px);
+    font-size: clamp(28px, 5vw, 60px);
     border-radius:12px;
     padding:0 8px;
   }
@@ -125,10 +122,6 @@
           <input id="boxesInput" type="number" min="1" max="12" value="4"/>
         </label>
         <button id="applyBoxes" class="btn ghost">Aplicar</button>
-        <label class="toggle">
-          <input id="compactToggle" type="checkbox">
-          <span>Vista palabra</span>
-        </label>
         <button id="validateBtn" class="btn">Validar</button>
       </div>
     </div>
@@ -164,7 +157,6 @@
   const BOXES = Math.max(1, Math.min(12, parseInt(qs.get('boxes') || qs.get('drops') || '4', 10)));
   const URL_LETTERS = (qs.get('letters') || '').split(',').map(s=>s.trim()).filter(Boolean);
   const URL_SYLL = (qs.get('syllables') || qs.get('syll') || '').split(',').map(s=>s.trim()).filter(Boolean);
-  const COMPACT_FROM_URL = (qs.get('compact') || '') === '1';
 
   /******** Data ********/
   const DEFAULT_LETTERS = [
@@ -187,7 +179,6 @@
   const boxesInput = document.getElementById('boxesInput');
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn = document.getElementById('validateBtn');
-  const compactToggle = document.getElementById('compactToggle');
 
   boxesInput.value = BOXES;
 
@@ -202,7 +193,7 @@
       x.className = 'x';
       x.textContent = '×';
       x.title = 'Eliminar';
-      x.addEventListener('click', (e)=>{ e.stopPropagation(); div.remove(); });
+      x.addEventListener('click', (e)=>{ e.stopPropagation(); const p=div.parentElement; div.remove(); if(p?.classList.contains('slot')) relayoutSlot(p); });
       div.appendChild(x);
     }
     makeDraggable(div, { cloneOnDrag: !isClone });
@@ -216,6 +207,7 @@
       const s = document.createElement('div');
       s.className = 'slot';
       s.dataset.index = i;
+      s.style.setProperty('--n','0');
       slotsEl.appendChild(s);
     }
   }
@@ -225,6 +217,19 @@
     LETTERS.forEach(t => lettersTray.appendChild(makeTile(t, false)));
     syllTray.innerHTML = '';
     SYLL.forEach(t => syllTray.appendChild(makeTile(t, false)));
+  }
+
+  /******** Layout inside slots ********/
+  function relayoutSlot(slot){
+    const tiles = [...slot.querySelectorAll('.tile')];
+    slot.style.setProperty('--n', String(tiles.length));
+    tiles.forEach(t => t.classList.add('in-slot'));
+  }
+  function removeFromSlot(tile){
+    tile.classList.remove('in-slot');
+  }
+  function relayoutAllSlots(){
+    document.querySelectorAll('.slot').forEach(relayoutSlot);
   }
 
   /******** Drag & Drop (pointer events, clone from palette) ********/
@@ -295,14 +300,26 @@
     drag.el.style.width=''; drag.el.style.height='';
 
     if(onTrash){
+      const prev = drag.el.parentElement;
       drag.el.remove();
+      if(prev?.classList.contains('slot')) relayoutSlot(prev);
     } else if(slot){
+      // If coming from a different slot, update that old slot’s layout first
+      const prev = drag.el.parentElement;
+      if(prev?.classList.contains('slot') && prev!==slot){
+        prev.removeChild(drag.el);
+        relayoutSlot(prev);
+      }
       slot.appendChild(drag.el);
+      relayoutSlot(slot);
     } else {
+      // Not dropped anywhere
       if(drag.fromPalette){
         drag.el.remove();
       } else if (drag.originParent) {
         drag.originParent.appendChild(drag.el);
+        // If origin was slot, keep it laid out
+        if(drag.originParent.classList.contains('slot')) relayoutSlot(drag.originParent);
       }
     }
     cleanup();
@@ -310,8 +327,12 @@
 
   function onCancel(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
-    if(drag.fromPalette){ drag.el.remove(); }
-    else if (drag.originParent){ drag.originParent.appendChild(drag.el); }
+    if(drag.fromPalette){
+      drag.el.remove();
+    } else if (drag.originParent){
+      drag.originParent.appendChild(drag.el);
+      if(drag.originParent.classList.contains('slot')) relayoutSlot(drag.originParent);
+    }
     cleanup();
   }
 
@@ -337,18 +358,10 @@
     buildSlots(n);
   });
 
-  /******** Compact toggle ********/
-  function setCompact(on){
-    document.body.classList.toggle('compact', !!on);
-  }
-  compactToggle.addEventListener('change', ()=> setCompact(compactToggle.checked));
-
   /******** Boot ********/
   buildSlots(BOXES);
   fillPalettes();
-  // start in compact mode if asked via URL
-  setCompact(COMPACT_FROM_URL);
-  compactToggle.checked = COMPACT_FROM_URL;
+  relayoutAllSlots();
 </script>
 </body>
 </html>
