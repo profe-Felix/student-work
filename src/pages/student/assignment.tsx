@@ -900,6 +900,7 @@ useEffect(() => {
     try {
       // class-scoped overload — matches what publishInk sends
       inkSub = (subscribeToInk as any)(
+        classCode,
         ids.assignment_id,
         ids.page_id,
         onInk
@@ -1133,12 +1134,16 @@ onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
   // include studentId so only that student's page syncs
   const payload = { ...u, studentId }
 
-  // publish using LEGACY signature so subscribeToInk() hears it
-  try {
-    await (publishInk as any)(ids.assignment_id, ids.page_id, payload)
-  } catch (e) {
-    console.warn('publishInk failed', e)
-  }
+  // publish using CLASS-SCOPED signature so all clients in same class/page see it
+try {
+  await publishInk(
+    { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+    payload
+  )
+} catch (e) {
+  console.warn('publishInk failed', e)
+}
+
 }}
 
             />
