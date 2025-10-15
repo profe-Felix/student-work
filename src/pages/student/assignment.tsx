@@ -315,8 +315,8 @@ export default function StudentAssignment(){
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // === UPDATED: ink subscription handle
-  const inkSubRef = useRef<ReturnType<typeof subscribeToInk> | null>(null)
+  // === UPDATED: ink subscription handle (unsubscribe-only type to avoid TS mismatch)
+  const inkSubRef = useRef<{ unsubscribe?: () => void } | null>(null)
 
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
@@ -1116,12 +1116,20 @@ useEffect(()=>{
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
               selfId={studentId}
-              onStrokeUpdate={(u: RemoteStrokeUpdate) => {
+              onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
                 const ids = currIds.current
                 if (!ids.assignment_id || !ids.page_id) return
-                // CLASS-SCOPED page room
-                publishInk({ classCode, assignmentId: ids.assignment_id, pageId: ids.page_id }, u)
-                  .catch(()=>{/* fire-and-forget */})
+
+                // NEW class-scoped room
+                try {
+                  await publishInk({ classCode, assignmentId: ids.assignment_id, pageId: ids.page_id }, u)
+                } catch {}
+
+                // LEGACY room (for older clients)
+                try {
+                  // @ts-ignore legacy overload
+                  await (publishInk as any)(ids.assignment_id, ids.page_id, u)
+                } catch {}
               }}
             />
           </div>
