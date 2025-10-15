@@ -2,10 +2,7 @@ import { useEffect, useRef } from 'react'
 
 /**
  * Inside–Outside Counters workstation
- * Ported from your raw HTML version into a single React component.
- * - No external deps
- * - Handles resize/orientation changes
- * - Cleans up all listeners and RAFs on unmount
+ * React single-file component.
  */
 export default function InsideOutsideWS() {
   // refs to key DOM nodes
@@ -31,7 +28,7 @@ export default function InsideOutsideWS() {
     const sctx = sim.getContext('2d')!
     const dctx = draw.getContext('2d')!
 
-    // ====== State captured in closure (same as your script) ======
+    // ====== State captured in closure ======
     let W = 0, H = 0
     let DPR = Math.max(1, window.devicePixelRatio || 1)
 
@@ -84,9 +81,8 @@ export default function InsideOutsideWS() {
     }
 
     function fit() {
-      // size to the "card" panel
       const rect = panel.getBoundingClientRect()
-      const availH = rect.height - 100 // bottom sentence area ~100px
+      const availH = rect.height - 100
       W = Math.max(320, Math.floor(rect.width))
       H = Math.max(320, Math.floor(availH))
       DPR = Math.max(1, window.devicePixelRatio || 1)
@@ -97,7 +93,6 @@ export default function InsideOutsideWS() {
       sim.style.width = `${W}px`
       sim.style.height = `${H}px`
 
-      // full-card drawing canvas so students can write on the sentence too
       draw.width = Math.floor(rect.width * DPR)
       draw.height = Math.floor(rect.height * DPR)
       draw.style.width = `${rect.width}px`
@@ -106,7 +101,6 @@ export default function InsideOutsideWS() {
       redrawStrokes()
     }
 
-    // non-overlap helpers
     function randomPointInside(radius:number){
       const m=18*DPR; const r=Math.random()*(radius-m); const t=Math.random()*Math.PI*2
       return { x:center.x+Math.cos(t)*r, y:center.y+Math.sin(t)*r }
@@ -243,10 +237,27 @@ export default function InsideOutsideWS() {
     }
     const tick = () => { if(running) physics(); drawWorld(); rafId = requestAnimationFrame(tick) }
 
-    // toolbar + drawing
+    // ===== Toolbar + drawing =====
     function setActiveTool(btn: HTMLButtonElement){
+      // aria-pressed flags
       penBtn.setAttribute('aria-pressed', (btn===penBtn).toString())
       eraserBtn.setAttribute('aria-pressed', (btn===eraserBtn).toString())
+
+      // visual highlight (blue outline) on the selected tool
+      const HOT_OUTLINE = '3px solid #3b82f6'
+      const HOT_GLOW = '0 0 0 3px rgba(59,130,246,.20) inset'
+
+      if (btn === penBtn) {
+        penBtn.style.outline = HOT_OUTLINE
+        penBtn.style.boxShadow = HOT_GLOW
+        eraserBtn.style.outline = ''
+        eraserBtn.style.boxShadow = ''
+      } else {
+        eraserBtn.style.outline = HOT_OUTLINE
+        eraserBtn.style.boxShadow = HOT_GLOW
+        penBtn.style.outline = ''
+        penBtn.style.boxShadow = ''
+      }
     }
     function setDrawEnabled(on:boolean){ drawEnabled=on; draw.style.pointerEvents = on ? 'auto' : 'none' }
 
@@ -308,7 +319,7 @@ export default function InsideOutsideWS() {
 
     playBtn.addEventListener('click', () => { resplitSame() })
     refreshBtn.addEventListener('click', () => { newNumber() })
-    penBtn.addEventListener('click', (e) => { erasing=false; setActiveTool(penBtn); setDrawEnabled(true) })
+    penBtn.addEventListener('click', () => { erasing=false; setActiveTool(penBtn); setDrawEnabled(true) })
     eraserBtn.addEventListener('click', () => { erasing=true; setActiveTool(eraserBtn); setDrawEnabled(true) })
     clearBtn.addEventListener('click', () => { strokes.length=0; dctx.clearRect(0,0,draw.width,draw.height) })
 
@@ -330,10 +341,11 @@ export default function InsideOutsideWS() {
 
     // init + loop
     fit(); layoutMainCircle(); newNumber()
+    // set initial UI state: Pen selected (highlighted)
+    setActiveTool(penBtn)
     rafId = requestAnimationFrame(tick)
 
     return () => {
-      // cleanup
       if (rafId != null) cancelAnimationFrame(rafId)
       ro.disconnect()
       window.removeEventListener('resize', () => { fit(); layoutMainCircle() })
@@ -383,7 +395,7 @@ export default function InsideOutsideWS() {
         <div style={{position:'absolute', top:10, right:10, zIndex:12, display:'flex', gap:8}}>
           <button ref={penBtnRef}
             className="success tool"
-            style={{...btnSuccess, ...(toolPressed)}}
+            style={btnSuccess}
             aria-pressed="true" title="Draw">✎ Pen</button>
           <button ref={eraserBtnRef}
             className="ghost tool"
@@ -403,7 +415,7 @@ export default function InsideOutsideWS() {
           }} />
         </div>
 
-        {/* Drawing canvas covers entire card (so students can write over sentence) */}
+        {/* Drawing canvas covers entire card */}
         <canvas id="draw" ref={drawRef} style={{ position:'absolute', inset:0, zIndex:5 }} />
 
         {/* Sentence strip */}
@@ -428,4 +440,3 @@ const baseBtn: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = { ...baseBtn, background:'#3b82f6', borderColor:'#3b82f6', color:'#fff', fontWeight:600 }
 const btnSuccess: React.CSSProperties = { ...baseBtn, background:'#22c55e', borderColor:'#22c55e', color:'#fff', fontWeight:600 }
 const btnGhost: React.CSSProperties = { ...baseBtn, background:'#fff' }
-const toolPressed: React.CSSProperties = { outline:'3px solid #3b82f6', boxShadow:'0 0 0 3px rgba(59,130,246,.2) inset' }
