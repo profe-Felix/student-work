@@ -240,6 +240,13 @@ export default function StudentAssignment(){
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
+  // --- Scrub / playback state ---
+  const [scrubMode, setScrubMode] = useState(false)
+  const [scrubIndex, setScrubIndex] = useState(0)
+  const [scrubMax, setScrubMax] = useState(0)
+  const fullStrokesRef = useRef<StrokesPayload>({ strokes: [] })
+  const originalBeforeScrubRef = useRef<StrokesPayload | null>(null)
+
   // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
 
@@ -268,8 +275,6 @@ export default function StudentAssignment(){
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
   // Persist assignment id from teacher (or DB fallback)
-  // IMPORTANT: start empty; we'll set it from class snapshot or teacher handoff.
-  // This avoids preloading a stale "last drag & drop" assignment.
   const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
 
   // flag to sequence boot: wait for class snapshot before using "latest"
@@ -367,7 +372,6 @@ export default function StudentAssignment(){
       snapToTeacherIfAvailable(nextAssignmentId)
       ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
-      // keep initialSnappedRef as-is (only set inside applyPresenceSnapshot)
     })
     return off
   }, [classCode])
@@ -384,7 +388,6 @@ export default function StudentAssignment(){
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, snap.assignment_id) } catch {}
 
         if (typeof snap.page_index === 'number') {
-          // We allow presence to override later; this is just a nicer first render.
           setPageIndex(snap.page_index)
         }
       } catch {
@@ -424,7 +427,6 @@ export default function StudentAssignment(){
         const p = JSON.parse(raw) as TeacherPresenceState
         applyPresenceSnapshot(p, { snap: true })
       } else {
-        // No cache? Pull from server now.
         ;(async () => {
           const p = await fetchPresenceSnapshot(rtAssignmentId)
           if (p) {
@@ -474,7 +476,6 @@ export default function StudentAssignment(){
     }
 
     if (!assignmentId) {
-      // No assignment found → clear UI
       currIds.current = {}
       setPdfStoragePath('')
       setHasTask(false)
@@ -483,21 +484,19 @@ export default function StudentAssignment(){
 
     // 2) Try to honor teacher presence (don’t bail early)
     snapToTeacherIfAvailable(assignmentId)
-    await ensurePresenceFromServer(assignmentId) // no-op if already cached
+    await ensurePresenceFromServer(assignmentId)
 
     // Decide the target index we want to display now
     let targetIndex = pageIndex
     const tpi = teacherPageIndexRef.current
     if (autoFollow && typeof tpi === 'number') {
       targetIndex = tpi
-      // keep UI page number in sync; but do NOT return early
       if (pageIndex !== tpi) setPageIndex(tpi)
     }
 
     // 3) Fetch pages for the resolved assignment
     let pages = await listPages(assignmentId).catch(() => [] as any[])
     if (!pages || pages.length === 0) {
-      // fallback: maybe class switched after we started; pick latest with pages
       const latest = await fetchLatestAssignmentIdWithPages()
       if (latest && latest !== assignmentId) {
         assignmentId = latest
@@ -516,18 +515,15 @@ export default function StudentAssignment(){
       return null
     }
 
-    // 4) Pick the page using the targetIndex (teacher if autoFollow) with sane fallbacks
     const curr =
       pages.find(p => p.page_index === targetIndex) ??
       pages.find(p => p.page_index === pageIndex) ??
       pages[0]
 
-    // If the chosen page differs from current UI index, sync it — but continue
     if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
       setPageIndex(curr.page_index)
     }
 
-    // 5) Finalize IDs and PDF path (this is what was missing on “snap”)
     currIds.current = { assignment_id: assignmentId, page_id: curr.id }
     setPdfStoragePath(curr.pdf_path || '')
     setHasTask(!!curr.pdf_path)
@@ -537,7 +533,6 @@ export default function StudentAssignment(){
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
-    // Gate until class snapshot resolution completes AND we know the assignment
     if (!classBootDone || !rtAssignmentId) return
 
     let cancelled=false
@@ -555,6 +550,9 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
           lastAppliedServerHash.current = ''
           localDirty.current = false
+          // reset scrub
+          fullStrokesRef.current = { strokes: [] }
+          setScrubIndex(0); setScrubMax(0)
         } catch {}
         return
       }
@@ -567,8 +565,14 @@ export default function StudentAssignment(){
           const norm = normalizeStrokes(draft.strokes)
           try { drawRef.current?.loadStrokes(norm) } catch {}
           try { lastLocalHash.current = await hashStrokes(norm) } catch {}
+          // seed scrub from draft
+          fullStrokesRef.current = norm
+          setScrubMax(norm.strokes.length)
+          setScrubIndex(norm.strokes.length)
         } else {
           lastLocalHash.current = ''
+          fullStrokesRef.current = { strokes: [] }
+          setScrubMax(0); setScrubIndex(0)
         }
 
         try {
@@ -582,6 +586,10 @@ export default function StudentAssignment(){
                 drawRef.current?.loadStrokes(norm)
                 lastAppliedServerHash.current = h
                 lastLocalHash.current = h
+                // seed scrub from server
+                fullStrokesRef.current = norm
+                setScrubMax(norm.strokes.length)
+                setScrubIndex(norm.strokes.length)
               }
             } else if (!draft?.strokes) {
               const cached = loadSubmittedCache(studentId, assignmentUid, pageUid)
@@ -589,6 +597,10 @@ export default function StudentAssignment(){
                 const normC = normalizeStrokes(cached.strokes)
                 drawRef.current?.loadStrokes(normC)
                 lastLocalHash.current = await hashStrokes(normC)
+                // seed scrub from cache
+                fullStrokesRef.current = normC
+                setScrubMax(normC.strokes.length)
+                setScrubIndex(normC.strokes.length)
               }
             }
           }
@@ -600,6 +612,9 @@ export default function StudentAssignment(){
         if (cached?.strokes) {
           const norm = normalizeStrokes(cached.strokes)
           try { drawRef.current?.loadStrokes(norm); lastLocalHash.current = await hashStrokes(norm) } catch {}
+          fullStrokesRef.current = norm
+          setScrubMax(norm.strokes.length)
+          setScrubIndex(norm.strokes.length)
         }
       }
     })()
@@ -612,6 +627,7 @@ export default function StudentAssignment(){
     let id: number | null = null
     const tick = async ()=>{
       try {
+        if (scrubMode) return // don't track partial frames
         const data = drawRef.current?.getStrokes()
         if (!data) return
         const h = await hashStrokes(data)
@@ -621,12 +637,16 @@ export default function StudentAssignment(){
           lastLocalHash.current = h
           const { assignmentUid, pageUid } = getCacheIds()
           saveDraft(studentId, assignmentUid, pageUid, data)
+          // keep scrub buffer in sync during drawing
+          fullStrokesRef.current = normalizeStrokes(data)
+          setScrubMax(fullStrokesRef.current.strokes.length)
+          setScrubIndex(fullStrokesRef.current.strokes.length)
         }
       } catch {}
     }
     id = window.setInterval(tick, 800)
     return ()=>{ if (id!=null) window.clearInterval(id) }
-  }, [pageIndex, studentId])
+  }, [pageIndex, studentId, scrubMode])
 
   /* ---------- Draft autosave (coarse) ---------- */
   useEffect(()=>{
@@ -635,7 +655,7 @@ export default function StudentAssignment(){
     let intervalId: number | null = null
     const tick = ()=>{
       try {
-        if (!running) return
+        if (!running || scrubMode) return
         const data = drawRef.current?.getStrokes()
         if (!data) return
         const s = JSON.stringify(data)
@@ -653,6 +673,7 @@ export default function StudentAssignment(){
     start()
     const onBeforeUnload = ()=>{
       try {
+        if (scrubMode) return
         const data = drawRef.current?.getStrokes()
         if (data) {
           const { assignmentUid, pageUid } = getCacheIds()
@@ -666,11 +687,12 @@ export default function StudentAssignment(){
       document.removeEventListener('visibilitychange', onVis)
       window.removeEventListener('beforeunload', onBeforeUnload as any)
     }
-  }, [pageIndex, studentId])
+  }, [pageIndex, studentId, scrubMode])
 
   /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async ()=>{
     if (!hasTask) return
+    if (scrubMode) { showToast('Exit scrub mode to submit', 'err', 1400); return }
     if (submitInFlight.current) return
     submitInFlight.current = true
     try{
@@ -692,7 +714,6 @@ export default function StudentAssignment(){
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       if (hasInk) {
-        // Save strokes with the canvas size so previews can scale correctly
         const strokesWithCanvas = { ...strokes, w: canvasSize.w, h: canvasSize.h }
         await saveStrokes(submission_id, strokesWithCanvas)
         localStorage.setItem(lastKey, encHash)
@@ -789,11 +810,10 @@ export default function StudentAssignment(){
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        // Snap once on join if not already snapped
         applyPresenceSnapshot({
           autoFollow: !!on,
           allowedPages: allowedPages ?? null,
-          focusOn, // leave focus state as-is here; focus events come via onFocus / onPresence
+          focusOn,
           lockNav: navLocked,
           teacherPageIndex: teacherPageIndexRef.current ?? undefined
         } as TeacherPresenceState, { snap: true })
@@ -826,104 +846,142 @@ export default function StudentAssignment(){
       const serverHash = await hashStrokes(normalized)
       if (serverHash === lastAppliedServerHash.current) return
 
-      if (!localDirty.current) {
+      if (!localDirty.current && !scrubMode) {
         drawRef.current?.loadStrokes(normalized)
         const { assignmentUid, pageUid } = getCacheIds(ids.page_id)
         saveSubmittedCache(studentId, assignmentUid, pageUid, normalized)
         lastAppliedServerHash.current = serverHash
         lastLocalHash.current = serverHash
+        // refresh scrub base
+        fullStrokesRef.current = normalized
+        setScrubMax(normalized.strokes.length)
+        setScrubIndex(normalized.strokes.length)
       }
     } catch {/* ignore */}
   }
 
-// subscribe to artifacts AND the student-scoped live ink channel
-useEffect(() => {
-  if (!classBootDone || !rtAssignmentId) return
+  // subscribe to artifacts AND the student-scoped live ink channel
+  useEffect(() => {
+    if (!classBootDone || !rtAssignmentId) return
 
-  let cleanupArtifacts: (() => void) | null = null
-  let pollId: number | null = null
-  let mounted = true
-  let inkSub: { unsubscribe?: () => void } | null = null
+    let cleanupArtifacts: (() => void) | null = null
+    let pollId: number | null = null
+    let mounted = true
+    let inkSub: { unsubscribe?: () => void } | null = null
 
-  ;(async () => {
-    const ids = await resolveIds()
-    if (!ids) return
+    ;(async () => {
+      const ids = await resolveIds()
+      if (!ids) return
 
-    // ---- artifacts realtime + polling
-    try {
-      const ch = supabase
-        .channel(`art-strokes-${ids.page_id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'artifacts',
-            filter: `page_id=eq.${ids.page_id},kind=eq.strokes`,
-          },
-          () => reloadFromServer()
-        )
-        .subscribe()
-      cleanupArtifacts = () => {
+      // ---- artifacts realtime + polling
+      try {
+        const ch = supabase
+          .channel(`art-strokes-${ids.page_id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'artifacts',
+              filter: `page_id=eq.${ids.page_id},kind=eq.strokes`,
+            },
+            () => reloadFromServer()
+          )
+          .subscribe()
+        cleanupArtifacts = () => {
+          try {
+            ch.unsubscribe()
+          } catch {}
+        }
+      } catch (e) {
+        console.error('realtime subscribe failed', e)
+      }
+
+      pollId = window.setInterval(() => {
+        if (mounted) reloadFromServer()
+      }, POLL_MS)
+
+      // ---- realtime ink (same student + same page only)
+      try {
+        inkSubRef.current?.unsubscribe?.()
+      } catch {}
+
+      const onInk = (u: any) => {
+        if (scrubMode) return // ignore live ink while scrubbing
+        if (u?.studentId !== studentId) return
+        if (u.tool !== 'pen' && u.tool !== 'highlighter') return
+        if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+        drawRef.current?.applyRemote({
+          id: u.id,
+          color: u.color!,
+          size: u.size!,
+          tool: u.tool as 'pen' | 'highlighter',
+          pts: (u.pts as any) || [],
+          done: !!u.done,
+        })
+        // best effort: bump scrub buffer to the end after remote updates
         try {
-          ch.unsubscribe()
+          const data = drawRef.current?.getStrokes()
+          if (data) {
+            fullStrokesRef.current = normalizeStrokes(data)
+            setScrubMax(fullStrokesRef.current.strokes.length)
+            setScrubIndex(fullStrokesRef.current.strokes.length)
+          }
         } catch {}
       }
-    } catch (e) {
-      console.error('realtime subscribe failed', e)
+
+      try {
+        // object-form subscribe so classCode is guaranteed in the room name
+        inkSub = (subscribeToInk as any)(
+          { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+          onInk
+        )
+      } catch (e) {
+        console.warn('ink subscribe failed', e)
+      }
+
+      inkSubRef.current = inkSub
+    })()
+
+    return () => {
+      mounted = false
+      if (cleanupArtifacts) cleanupArtifacts()
+      if (pollId != null) window.clearInterval(pollId)
+      try {
+        inkSubRef.current?.unsubscribe?.()
+      } catch {}
+      inkSubRef.current = null
     }
+  }, [classBootDone, classCode, studentId, pageIndex, rtAssignmentId, scrubMode])
 
-    pollId = window.setInterval(() => {
-      if (mounted) reloadFromServer()
-    }, POLL_MS)
-
-    // ---- realtime ink (same student + same page only)
+  /* ---------- SCRUB helpers ---------- */
+  const enterScrub = () => {
     try {
-      inkSubRef.current?.unsubscribe?.()
+      const snap = normalizeStrokes(drawRef.current?.getStrokes() || { strokes: [] })
+      originalBeforeScrubRef.current = snap
+      fullStrokesRef.current = snap
+      setScrubMax(snap.strokes.length)
+      setScrubIndex(snap.strokes.length)
+      setScrubMode(true)
+      setHandMode(true) // disable drawing gestures while scrubbing
     } catch {}
-
-    const onInk = (u: any) => {
-      // Only accept strokes for this same student page
-      if (u?.studentId !== studentId) return
-      if (u.tool !== 'pen' && u.tool !== 'highlighter') return
-      if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
-      drawRef.current?.applyRemote({
-        id: u.id,
-        color: u.color!,
-        size: u.size!,
-        tool: u.tool as 'pen' | 'highlighter',
-        pts: (u.pts as any) || [],
-        done: !!u.done,
-      })
-    }
-
-    try {
-// object-form subscribe so classCode is guaranteed in the room name
-inkSub = (subscribeToInk as any)(
-  { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-  onInk
-)
-
-    } catch (e) {
-      console.warn('ink subscribe failed', e)
-    }
-
-    inkSubRef.current = inkSub
-  })()
-
-  return () => {
-    mounted = false
-    if (cleanupArtifacts) cleanupArtifacts()
-    if (pollId != null) window.clearInterval(pollId)
-    try {
-      inkSubRef.current?.unsubscribe?.()
-    } catch {}
-    inkSubRef.current = null
   }
-}, [classBootDone, classCode, studentId, pageIndex, rtAssignmentId])
 
+  const exitScrub = () => {
+    setScrubMode(false)
+    // restore full drawing
+    const full = originalBeforeScrubRef.current || fullStrokesRef.current
+    try { drawRef.current?.loadStrokes(full) } catch {}
+    setScrubIndex(full.strokes.length)
+  }
 
-
+  const applyScrubTo = (n: number) => {
+    const base = fullStrokesRef.current
+    const clamped = Math.max(0, Math.min(n, base.strokes.length))
+    setScrubIndex(clamped)
+    const subset: StrokesPayload = { strokes: base.strokes.slice(0, clamped) as any }
+    try { drawRef.current?.loadStrokes(subset) } catch {}
+  }
 
   /* ---------- LIVE eraser overlay ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
@@ -1126,25 +1184,21 @@ inkSub = (subscribeToInk as any)(
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
               selfId={studentId}
-onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
-  const ids = currIds.current
-  if (!ids.assignment_id || !ids.page_id) return
-
-  // include studentId so only that student's page syncs
-  const payload = { ...u, studentId }
-
-  // publish using CLASS-SCOPED signature so all clients in same class/page see it
-try {
-  await publishInk(
-    { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-    payload
-  )
-} catch (e) {
-  console.warn('publishInk failed', e)
-}
-
-}}
-
+              onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
+                const ids = currIds.current
+                if (!ids.assignment_id || !ids.page_id) return
+                if (scrubMode) return // don't stream partial frames
+                // include studentId so only that student's page syncs
+                const payload = { ...u, studentId }
+                try {
+                  await publishInk(
+                    { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+                    payload
+                  )
+                } catch (e) {
+                  console.warn('publishInk failed', e)
+                }
+              }}
             />
           </div>
 
@@ -1163,6 +1217,51 @@ try {
             onPointerCancel={onErasePointerUp}
           />
         </div>
+      </div>
+
+      {/* Scrub controls */}
+      <div
+        style={{
+          position:'fixed', left:'50%', bottom:80, transform:'translateX(-50%)',
+          zIndex: 10025, display:'flex', gap:10, alignItems:'center',
+          background:'#fff', border:'1px solid #e5e7eb', borderRadius:999,
+          boxShadow:'0 6px 16px rgba(0,0,0,0.15)', padding:'8px 12px'
+        }}
+      >
+        {!scrubMode ? (
+          <button
+            onClick={enterScrub}
+            disabled={!hasTask || (scrubMax === 0)}
+            style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb', fontWeight:600 }}
+          >
+            ⏩ Scrub
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={exitScrub}
+              style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#fef2f2', fontWeight:700 }}
+            >
+              ✖ Exit
+            </button>
+            <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:260 }}>
+              <span style={{ fontSize:12, color:'#6b7280' }}>0</span>
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, scrubMax)}
+                step={1}
+                value={scrubIndex}
+                onChange={(e)=> applyScrubTo(parseInt(e.target.value, 10))}
+                style={{ width:220 }}
+              />
+              <span style={{ fontSize:12, color:'#6b7280' }}>{scrubMax}</span>
+            </div>
+            <span style={{ fontSize:12, color:'#111', fontWeight:600 }}>
+              {scrubIndex} / {scrubMax}
+            </span>
+          </>
+        )}
       </div>
 
       {/* Pager */}
