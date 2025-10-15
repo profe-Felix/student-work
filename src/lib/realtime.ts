@@ -327,23 +327,84 @@ export async function publishInk(
   if (temporary) { void ch.unsubscribe() }
 }
 
-/** subscribeToInk(classCode, assignmentId, pageId, onUpdate, studentCode?)
- *  Legacy: subscribeToInk(assignmentId, pageId, onUpdate, studentCode?)
+/** subscribeToInk — now supports object form (Option A) + legacy signatures.
+ *
+ * Object form:
+ *   subscribeToInk({ classCode?, assignmentId, pageId, studentCode? }, onUpdate)
+ *
+ * Class-scoped positional:
+ *   subscribeToInk(classCode, assignmentId, pageId, onUpdate)
+ *
+ * Legacy (no class in room name):
+ *   subscribeToInk(assignmentId, pageId, onUpdate, studentCode?)
  */
 export function subscribeToInk(
-  a: string,
-  b: string | ((u: InkUpdate) => void),
-  c: ((u: InkUpdate) => void) | string,
-  d?: string
-): RealtimeChannel {
-  const classCode = typeof b === 'string' && typeof c !== 'function' ? undefined
-    : (typeof b === 'string' ? undefined : a)
+  ids: { classCode?: string; assignmentId: string; pageId: string; studentCode?: string },
+  onUpdate: (u: InkUpdate) => void
+): RealtimeChannel
+export function subscribeToInk(
+  classCode: string,
+  assignmentId: string,
+  pageId: string,
+  onUpdate: (u: InkUpdate) => void
+): RealtimeChannel
+export function subscribeToInk(
+  assignmentId: string,
+  pageId: string,
+  onUpdate: (u: InkUpdate) => void,
+  studentCode?: string
+): RealtimeChannel
+export function subscribeToInk(a: any, b?: any, c?: any, d?: any): RealtimeChannel {
+  // ---- Object form (Option A)
+  if (typeof a === 'object' && a && 'assignmentId' in a) {
+    const { classCode, assignmentId, pageId, studentCode } =
+      a as { classCode?: string; assignmentId: string; pageId: string; studentCode?: string }
+    const onUpdate = b as (u: InkUpdate) => void
 
-  // Determine arg mapping
-  const assignmentId = classCode ? (b as string) : a
-  const pageId = classCode ? (c as any as string) : (b as string)
-  const onUpdate = (classCode ? d : c) as unknown as (u: InkUpdate) => void
-  const studentCode = (classCode ? undefined : d) as string | undefined
+    const roomKey = makeRoomKey(classCode, assignmentId, pageId, studentCode)
+    const ch = inkChannel(classCode, assignmentId, pageId, studentCode)
+      .on('broadcast', { event: 'ink' }, (msg: any) => {
+        const u = msg?.payload as InkUpdate
+        if (!u || !u.id || !u.tool) return
+        if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+        if (u.roomKey && u.roomKey !== roomKey) return
+        onUpdate(u)
+      })
+      .subscribe()
+    return ch
+  }
+
+  // ---- Positional handling (kept for compatibility)
+  let classCode: string | undefined
+  let assignmentId: string
+  let pageId: string
+  let onUpdate: (u: InkUpdate) => void
+  let studentCode: string | undefined
+
+  // 4 args => (classCode, assignmentId, pageId, onUpdate)
+  if (typeof d === 'function' && typeof a === 'string' && typeof b === 'string' && typeof c === 'string') {
+    classCode = a
+    assignmentId = b
+    pageId = c
+    onUpdate = d
+  } else if (typeof c === 'function' && typeof a === 'string' && typeof b === 'string') {
+    // 3 args => legacy (assignmentId, pageId, onUpdate) [no classCode]
+    classCode = undefined
+    assignmentId = a
+    pageId = b
+    onUpdate = c
+  } else if (typeof c === 'string' && typeof b === 'string' && typeof d !== 'string' && typeof d !== 'function') {
+    // defensive no-op path
+    throw new Error('subscribeToInk: invalid arguments')
+  } else {
+    // Fallback to previous heuristic (rare edge cases)
+    const isLegacy = typeof b === 'string' && typeof c === 'function'
+    classCode = isLegacy ? undefined : a
+    assignmentId = isLegacy ? a : b
+    pageId = isLegacy ? (c as any) : c
+    onUpdate = (isLegacy ? d : d) || (typeof c === 'function' ? c : (() => {}))
+    if (typeof onUpdate !== 'function') throw new Error('subscribeToInk: onUpdate must be a function')
+  }
 
   const roomKey = makeRoomKey(classCode, assignmentId, pageId, studentCode)
   const ch = inkChannel(classCode, assignmentId, pageId, studentCode)
