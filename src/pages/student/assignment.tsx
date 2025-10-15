@@ -367,7 +367,7 @@ export default function StudentAssignment(){
       snapToTeacherIfAvailable(nextAssignmentId)
       ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
-      // keep initialSnappedRef as-is
+      // keep initialSnappedRef as-is (only set inside applyPresenceSnapshot)
     })
     return off
   }, [classCode])
@@ -384,8 +384,9 @@ export default function StudentAssignment(){
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, snap.assignment_id) } catch {}
 
         if (typeof snap.page_index === 'number') {
+          // NOTE: Removed premature snap-blocker. We NO LONGER set initialSnappedRef here.
+          // We set the page for a nicer first render, but allow a later presence snapshot to override.
           setPageIndex(snap.page_index)
-          initialSnappedRef.current = true // prevent re-snap fights
         }
       } catch {
         // no class snapshot yet — harmless
