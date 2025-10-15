@@ -460,75 +460,82 @@ export default function StudentAssignment(){
     return () => { try { ch.unsubscribe() } catch {}; window.clearTimeout(t) }
   }, [classCode, rtAssignmentId])
 
-  // Resolve assignment/page with early “snap to teacher” if autoFollow is ON or presence says so
-  async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
-    let assignmentId = rtAssignmentId
-    if (!assignmentId) {
-      assignmentId = await fetchLatestAssignmentIdWithPages() || ''
-      if (assignmentId) {
-        setRtAssignmentId(assignmentId)
-        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignmentId) } catch {}
-        snapToTeacherIfAvailable(assignmentId)
-        await ensurePresenceFromServer(assignmentId)
-      }
-    }
-    if (!assignmentId) {
-      currIds.current = {}
-      setPdfStoragePath('')
-      setHasTask(false)
-      return null
-    }
-
-    // One more pre-fetch snap attempt (covers races), then fetch from server if still not snapped.
-    snapToTeacherIfAvailable(assignmentId)
-    if (!initialSnappedRef.current) {
+// Resolve assignment/page with early “snap to teacher” if autoFollow is ON or presence says so
+async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
+  // 1) Ensure we have an assignment id
+  let assignmentId = rtAssignmentId
+  if (!assignmentId) {
+    assignmentId = await fetchLatestAssignmentIdWithPages() || ''
+    if (assignmentId) {
+      setRtAssignmentId(assignmentId)
+      try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignmentId) } catch {}
+      snapToTeacherIfAvailable(assignmentId)
       await ensurePresenceFromServer(assignmentId)
-      if (initialSnappedRef.current) {
-        return null
-      }
     }
-
-    const tpi = teacherPageIndexRef.current
-    if (!initialSnappedRef.current && typeof tpi === 'number' && autoFollow && pageIndex !== tpi) {
-      setPageIndex(tpi)
-      initialSnappedRef.current = true
-      return null
-    }
-
-    let pages = await listPages(assignmentId).catch(() => [] as any[])
-    if (!pages || pages.length === 0) {
-      const latest = await fetchLatestAssignmentIdWithPages()
-      if (latest && latest !== assignmentId) {
-        assignmentId = latest
-        setRtAssignmentId(latest)
-        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
-        snapToTeacherIfAvailable(latest)
-        await ensurePresenceFromServer(latest)
-        pages = await listPages(latest).catch(() => [] as any[])
-      }
-    }
-
-    if (!pages || pages.length === 0) {
-      currIds.current = {}
-      setPdfStoragePath('')
-      setHasTask(false)
-      return null
-    }
-
-    const preferredIndex = (autoFollow && typeof tpi === 'number') ? tpi : pageIndex
-    const curr = pages.find(p => p.page_index === preferredIndex)
-             ?? pages.find(p => p.page_index === pageIndex)
-             ?? pages[0]
-
-    if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
-      setPageIndex(curr.page_index)
-      return null
-    }
-
-    currIds.current = { assignment_id: assignmentId, page_id: curr.id }
-    setPdfStoragePath(curr.pdf_path || '')
-    return { assignment_id: assignmentId, page_id: curr.id }
   }
+
+  if (!assignmentId) {
+    // No assignment found → clear UI
+    currIds.current = {}
+    setPdfStoragePath('')
+    setHasTask(false)
+    return null
+  }
+
+  // 2) Try to honor teacher presence (don’t bail early)
+  snapToTeacherIfAvailable(assignmentId)
+  await ensurePresenceFromServer(assignmentId) // no-op if already cached
+
+  // Decide the target index we want to display now
+  let targetIndex = pageIndex
+  const tpi = teacherPageIndexRef.current
+  if (autoFollow && typeof tpi === 'number') {
+    targetIndex = tpi
+    // keep UI page number in sync; but do NOT return early
+    if (pageIndex !== tpi) setPageIndex(tpi)
+  }
+
+  // 3) Fetch pages for the resolved assignment
+  let pages = await listPages(assignmentId).catch(() => [] as any[])
+  if (!pages || pages.length === 0) {
+    // fallback: maybe class switched after we started; pick latest with pages
+    const latest = await fetchLatestAssignmentIdWithPages()
+    if (latest && latest !== assignmentId) {
+      assignmentId = latest
+      setRtAssignmentId(latest)
+      try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
+      snapToTeacherIfAvailable(latest)
+      await ensurePresenceFromServer(latest)
+      pages = await listPages(latest).catch(() => [] as any[])
+    }
+  }
+
+  if (!pages || pages.length === 0) {
+    currIds.current = {}
+    setPdfStoragePath('')
+    setHasTask(false)
+    return null
+  }
+
+  // 4) Pick the page using the targetIndex (teacher if autoFollow) with sane fallbacks
+  const curr =
+    pages.find(p => p.page_index === targetIndex) ??
+    pages.find(p => p.page_index === pageIndex) ??
+    pages[0]
+
+  // If the chosen page differs from current UI index, sync it — but continue
+  if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
+    setPageIndex(curr.page_index)
+  }
+
+  // 5) Finalize IDs and PDF path (this is what was missing on “snap”)
+  currIds.current = { assignment_id: assignmentId, page_id: curr.id }
+  setPdfStoragePath(curr.pdf_path || '')
+  setHasTask(!!curr.pdf_path)
+
+  return { assignment_id: assignmentId, page_id: curr.id }
+}
+
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
