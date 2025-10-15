@@ -900,7 +900,6 @@ useEffect(() => {
     try {
       // class-scoped overload — matches what publishInk sends
       inkSub = (subscribeToInk as any)(
-        classCode,
         ids.assignment_id,
         ids.page_id,
         onInk
@@ -1127,24 +1126,21 @@ useEffect(() => {
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
               selfId={studentId}
-              onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
-                const ids = currIds.current
-                if (!ids.assignment_id || !ids.page_id) return
+onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
+  const ids = currIds.current
+  if (!ids.assignment_id || !ids.page_id) return
 
-                // Tag with studentId so only the same student page receives it
-                const payloadWithStudent = { ...u, studentId }
+  // include studentId so only that student's page syncs
+  const payload = { ...u, studentId }
 
-                // NEW class-scoped room
-                try {
-                  await publishInk({ classCode, assignmentId: ids.assignment_id, pageId: ids.page_id }, payloadWithStudent as any)
-                } catch {}
+  // publish using LEGACY signature so subscribeToInk() hears it
+  try {
+    await (publishInk as any)(ids.assignment_id, ids.page_id, payload)
+  } catch (e) {
+    console.warn('publishInk failed', e)
+  }
+}}
 
-                // LEGACY room (for older clients)
-                try {
-                  // @ts-ignore legacy overload
-                  await (publishInk as any)(ids.assignment_id, ids.page_id, payloadWithStudent)
-                } catch {}
-              }}
             />
           </div>
 
