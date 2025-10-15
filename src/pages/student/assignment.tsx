@@ -268,9 +268,9 @@ export default function StudentAssignment(){
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
   // Persist assignment id from teacher (or DB fallback)
-  const [rtAssignmentId, setRtAssignmentId] = useState<string>(() => {
-    try { return localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '' } catch { return '' }
-  })
+  // IMPORTANT: start empty; we'll set it from class snapshot or teacher handoff.
+  // This avoids preloading a stale "last drag & drop" assignment.
+  const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
 
   // flag to sequence boot: wait for class snapshot before using "latest"
   const [classBootDone, setClassBootDone] = useState(false)
@@ -384,8 +384,7 @@ export default function StudentAssignment(){
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, snap.assignment_id) } catch {}
 
         if (typeof snap.page_index === 'number') {
-          // NOTE: Removed premature snap-blocker. We NO LONGER set initialSnappedRef here.
-          // We set the page for a nicer first render, but allow a later presence snapshot to override.
+          // We allow presence to override later; this is just a nicer first render.
           setPageIndex(snap.page_index)
         }
       } catch {
@@ -460,85 +459,87 @@ export default function StudentAssignment(){
     return () => { try { ch.unsubscribe() } catch {}; window.clearTimeout(t) }
   }, [classCode, rtAssignmentId])
 
-// Resolve assignment/page with early “snap to teacher” if autoFollow is ON or presence says so
-async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
-  // 1) Ensure we have an assignment id
-  let assignmentId = rtAssignmentId
-  if (!assignmentId) {
-    assignmentId = await fetchLatestAssignmentIdWithPages() || ''
-    if (assignmentId) {
-      setRtAssignmentId(assignmentId)
-      try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignmentId) } catch {}
-      snapToTeacherIfAvailable(assignmentId)
-      await ensurePresenceFromServer(assignmentId)
+  // Resolve assignment/page with early “snap to teacher” if autoFollow is ON or presence says so
+  async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
+    // 1) Ensure we have an assignment id
+    let assignmentId = rtAssignmentId
+    if (!assignmentId) {
+      assignmentId = await fetchLatestAssignmentIdWithPages() || ''
+      if (assignmentId) {
+        setRtAssignmentId(assignmentId)
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignmentId) } catch {}
+        snapToTeacherIfAvailable(assignmentId)
+        await ensurePresenceFromServer(assignmentId)
+      }
     }
-  }
 
-  if (!assignmentId) {
-    // No assignment found → clear UI
-    currIds.current = {}
-    setPdfStoragePath('')
-    setHasTask(false)
-    return null
-  }
-
-  // 2) Try to honor teacher presence (don’t bail early)
-  snapToTeacherIfAvailable(assignmentId)
-  await ensurePresenceFromServer(assignmentId) // no-op if already cached
-
-  // Decide the target index we want to display now
-  let targetIndex = pageIndex
-  const tpi = teacherPageIndexRef.current
-  if (autoFollow && typeof tpi === 'number') {
-    targetIndex = tpi
-    // keep UI page number in sync; but do NOT return early
-    if (pageIndex !== tpi) setPageIndex(tpi)
-  }
-
-  // 3) Fetch pages for the resolved assignment
-  let pages = await listPages(assignmentId).catch(() => [] as any[])
-  if (!pages || pages.length === 0) {
-    // fallback: maybe class switched after we started; pick latest with pages
-    const latest = await fetchLatestAssignmentIdWithPages()
-    if (latest && latest !== assignmentId) {
-      assignmentId = latest
-      setRtAssignmentId(latest)
-      try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
-      snapToTeacherIfAvailable(latest)
-      await ensurePresenceFromServer(latest)
-      pages = await listPages(latest).catch(() => [] as any[])
+    if (!assignmentId) {
+      // No assignment found → clear UI
+      currIds.current = {}
+      setPdfStoragePath('')
+      setHasTask(false)
+      return null
     }
+
+    // 2) Try to honor teacher presence (don’t bail early)
+    snapToTeacherIfAvailable(assignmentId)
+    await ensurePresenceFromServer(assignmentId) // no-op if already cached
+
+    // Decide the target index we want to display now
+    let targetIndex = pageIndex
+    const tpi = teacherPageIndexRef.current
+    if (autoFollow && typeof tpi === 'number') {
+      targetIndex = tpi
+      // keep UI page number in sync; but do NOT return early
+      if (pageIndex !== tpi) setPageIndex(tpi)
+    }
+
+    // 3) Fetch pages for the resolved assignment
+    let pages = await listPages(assignmentId).catch(() => [] as any[])
+    if (!pages || pages.length === 0) {
+      // fallback: maybe class switched after we started; pick latest with pages
+      const latest = await fetchLatestAssignmentIdWithPages()
+      if (latest && latest !== assignmentId) {
+        assignmentId = latest
+        setRtAssignmentId(latest)
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
+        snapToTeacherIfAvailable(latest)
+        await ensurePresenceFromServer(latest)
+        pages = await listPages(latest).catch(() => [] as any[])
+      }
+    }
+
+    if (!pages || pages.length === 0) {
+      currIds.current = {}
+      setPdfStoragePath('')
+      setHasTask(false)
+      return null
+    }
+
+    // 4) Pick the page using the targetIndex (teacher if autoFollow) with sane fallbacks
+    const curr =
+      pages.find(p => p.page_index === targetIndex) ??
+      pages.find(p => p.page_index === pageIndex) ??
+      pages[0]
+
+    // If the chosen page differs from current UI index, sync it — but continue
+    if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
+      setPageIndex(curr.page_index)
+    }
+
+    // 5) Finalize IDs and PDF path (this is what was missing on “snap”)
+    currIds.current = { assignment_id: assignmentId, page_id: curr.id }
+    setPdfStoragePath(curr.pdf_path || '')
+    setHasTask(!!curr.pdf_path)
+
+    return { assignment_id: assignmentId, page_id: curr.id }
   }
-
-  if (!pages || pages.length === 0) {
-    currIds.current = {}
-    setPdfStoragePath('')
-    setHasTask(false)
-    return null
-  }
-
-  // 4) Pick the page using the targetIndex (teacher if autoFollow) with sane fallbacks
-  const curr =
-    pages.find(p => p.page_index === targetIndex) ??
-    pages.find(p => p.page_index === pageIndex) ??
-    pages[0]
-
-  // If the chosen page differs from current UI index, sync it — but continue
-  if (typeof curr.page_index === 'number' && curr.page_index !== pageIndex) {
-    setPageIndex(curr.page_index)
-  }
-
-  // 5) Finalize IDs and PDF path (this is what was missing on “snap”)
-  currIds.current = { assignment_id: assignmentId, page_id: curr.id }
-  setPdfStoragePath(curr.pdf_path || '')
-  setHasTask(!!curr.pdf_path)
-
-  return { assignment_id: assignmentId, page_id: curr.id }
-}
-
 
   /* ---------- Page load: clear, then draft → server → cache ---------- */
   useEffect(()=>{
+    // Gate until class snapshot resolution completes AND we know the assignment
+    if (!classBootDone || !rtAssignmentId) return
+
     let cancelled=false
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
 
@@ -604,7 +605,7 @@ async function resolveIds(): Promise<{ assignment_id: string, page_id: string } 
     })()
 
     return ()=>{ cancelled=true }
-  }, [pageIndex, studentId, rtAssignmentId, autoFollow])
+  }, [classBootDone, pageIndex, studentId, rtAssignmentId, autoFollow])
 
   /* ---------- Local dirty watcher ---------- */
   useEffect(()=>{
@@ -692,8 +693,8 @@ async function resolveIds(): Promise<{ assignment_id: string, page_id: string } 
 
       if (hasInk) {
         // Save strokes with the canvas size so previews can scale correctly
-const strokesWithCanvas = { ...strokes, w: canvasSize.w, h: canvasSize.h }
-await saveStrokes(submission_id, strokesWithCanvas)
+        const strokesWithCanvas = { ...strokes, w: canvasSize.w, h: canvasSize.h }
+        await saveStrokes(submission_id, strokesWithCanvas)
         localStorage.setItem(lastKey, encHash)
         saveSubmittedCache(studentId, assignmentUid, pageUid, strokes)
         lastAppliedServerHash.current = encHash
@@ -837,6 +838,9 @@ await saveStrokes(submission_id, strokesWithCanvas)
 
   // subscribe to artifacts AND the class-scoped live ink channel
   useEffect(()=>{
+    // Don't wire realtime for the wrong assignment. Wait for class snapshot & a known assignment id.
+    if (!classBootDone || !rtAssignmentId) return
+
     let cleanupArtifacts: (()=>void) | null = null
     let pollId: number | null = null
     let mounted = true
@@ -885,7 +889,7 @@ await saveStrokes(submission_id, strokesWithCanvas)
       try { inkSubRef.current?.unsubscribe?.() } catch {}
       inkSubRef.current = null
     }
-  }, [classCode, studentId, pageIndex, rtAssignmentId])
+  }, [classBootDone, classCode, studentId, pageIndex, rtAssignmentId])
 
   /* ---------- LIVE eraser overlay ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
