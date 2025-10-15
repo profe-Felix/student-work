@@ -836,86 +836,57 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-// subscribe to artifacts AND both ink channels (new class-scoped + legacy)
-useEffect(()=>{
-  // Don't wire realtime for the wrong assignment. Wait for class snapshot & a known assignment id.
-  if (!classBootDone || !rtAssignmentId) return
+// subscribe to artifacts AND the class-scoped live ink channel
+  useEffect(()=>{
+    let cleanupArtifacts: (()=>void) | null = null
+    let pollId: number | null = null
+    let mounted = true
 
-  let cleanupArtifacts: (()=>void) | null = null
-  let pollId: number | null = null
-  let mounted = true
+    ;(async ()=>{
+      const ids = await resolveIds()
+      if (!ids) return
 
-  // keep both ink channel handles so we can unsubscribe cleanly
-  let inkNewSub: { unsubscribe?: () => void } | null = null
-  let inkLegacySub: { unsubscribe?: () => void } | null = null
+      // live submissions polling
+      try{
+        const ch = supabase.channel(`art-strokes-${ids.page_id}`)
+          .on('postgres_changes', {
+            event: '*', schema: 'public', table: 'artifacts',
+            filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
+          }, ()=> reloadFromServer())
+          .subscribe()
+        cleanupArtifacts = ()=> { try { ch.unsubscribe() } catch {} }
+      }catch(e){
+        console.error('realtime subscribe failed', e)
+      }
+      pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
 
-  ;(async ()=>{
-    const ids = await resolveIds()
-    if (!ids) return
+      // CLASS-SCOPED realtime ink (class + assignment + page)
+      try { inkSubRef.current?.unsubscribe?.() } catch {}
+      const onInk = (u: any) => {
+        if (u.tool !== 'pen' && u.tool !== 'highlighter') return
+        if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
+        drawRef.current?.applyRemote({
+          id: u.id,
+          color: u.color!,
+          size: u.size!,
+          tool: u.tool as 'pen'|'highlighter',
+          pts: (u.pts as any) || [],
+          done: !!u.done,
+        })
+      }
+      // Use class-scoped overload; cast to any to satisfy TS overload
+      const chInk = (subscribeToInk as any)(classCode, ids.assignment_id, ids.page_id, onInk)
+      inkSubRef.current = chInk
+    })()
 
-    // live submissions polling for saved artifacts (server side)
-    try{
-      const ch = supabase.channel(`art-strokes-${ids.page_id}`)
-        .on('postgres_changes', {
-          event: '*', schema: 'public', table: 'artifacts',
-          filter: `page_id=eq.${ids.page_id},kind=eq.strokes`
-        }, ()=> reloadFromServer())
-        .subscribe()
-      cleanupArtifacts = ()=> { try { ch.unsubscribe() } catch {} }
-    }catch(e){
-      console.error('realtime subscribe failed', e)
+    return ()=> {
+      mounted = false
+      if (cleanupArtifacts) cleanupArtifacts()
+      if (pollId!=null) window.clearInterval(pollId)
+      try { inkSubRef.current?.unsubscribe?.() } catch {}
+      inkSubRef.current = null
     }
-    pollId = window.setInterval(()=> { if (mounted) reloadFromServer() }, POLL_MS)
-
-    // Ink realtime: subscribe to BOTH rooms
-    try { inkSubRef.current?.unsubscribe?.() } catch {}
-
-    const onInk = (u: any) => {
-      // >>> Only accept strokes for THIS student page
-      if (u?.studentId !== studentId) return
-
-      if (u.tool !== 'pen' && u.tool !== 'highlighter') return
-      if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
-      drawRef.current?.applyRemote({
-        id: u.id,
-        color: u.color!,
-        size: u.size!,
-        tool: u.tool as 'pen'|'highlighter',
-        pts: (u.pts as any) || [],
-        done: !!u.done,
-      })
-    }
-
-    // NEW (class-scoped) — { classCode, assignmentId, pageId }
-    try {
-      // @ts-ignore — class-scoped overload
-      inkNewSub = (subscribeToInk as any)(classCode, ids.assignment_id, ids.page_id, onInk)
-    } catch (e) {
-      console.warn('new ink subscribe failed', e)
-    }
-
-    // LEGACY (assignmentId, pageId)
-    try {
-      // @ts-ignore — legacy overload
-      inkLegacySub = (subscribeToInk as any)(ids.assignment_id, ids.page_id, onInk)
-    } catch (e) {
-      console.warn('legacy ink subscribe failed', e)
-    }
-
-    // Track one handle for existing cleanup logic; we still explicitly clean both below
-    inkSubRef.current = inkNewSub || inkLegacySub || null
-  })()
-
-  return ()=> {
-    mounted = false
-    if (cleanupArtifacts) cleanupArtifacts()
-    if (pollId!=null) window.clearInterval(pollId)
-    try { inkNewSub?.unsubscribe?.() } catch {}
-    try { inkLegacySub?.unsubscribe?.() } catch {}
-    try { inkSubRef.current?.unsubscribe?.() } catch {}
-    inkSubRef.current = null
-  }
-}, [classBootDone, classCode, studentId, pageIndex, rtAssignmentId])
+  }, [classCode, studentId, pageIndex, rtAssignmentId])
 
 
   /* ---------- LIVE eraser overlay ---------- */
