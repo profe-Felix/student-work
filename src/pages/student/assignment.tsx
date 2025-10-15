@@ -898,13 +898,12 @@ useEffect(() => {
     }
 
     try {
-      // class-scoped overload — matches what publishInk sends
-      inkSub = (subscribeToInk as any)(
-        classCode,
-        ids.assignment_id,
-        ids.page_id,
-        onInk
-      )
+// object-form subscribe so classCode is guaranteed in the room name
+inkSub = (subscribeToInk as any)(
+  { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+  onInk
+)
+
     } catch (e) {
       console.warn('ink subscribe failed', e)
     }
