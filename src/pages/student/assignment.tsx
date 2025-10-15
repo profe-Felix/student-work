@@ -871,6 +871,9 @@ useEffect(()=>{
     try { inkSubRef.current?.unsubscribe?.() } catch {}
 
     const onInk = (u: any) => {
+      // >>> Only accept strokes for THIS student page
+      if (u?.studentId !== studentId) return
+
       if (u.tool !== 'pen' && u.tool !== 'highlighter') return
       if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
       drawRef.current?.applyRemote({
@@ -1120,15 +1123,18 @@ useEffect(()=>{
                 const ids = currIds.current
                 if (!ids.assignment_id || !ids.page_id) return
 
+                // Tag with studentId so only the same student page receives it
+                const payloadWithStudent = { ...u, studentId }
+
                 // NEW class-scoped room
                 try {
-                  await publishInk({ classCode, assignmentId: ids.assignment_id, pageId: ids.page_id }, u)
+                  await publishInk({ classCode, assignmentId: ids.assignment_id, pageId: ids.page_id }, payloadWithStudent as any)
                 } catch {}
 
                 // LEGACY room (for older clients)
                 try {
                   // @ts-ignore legacy overload
-                  await (publishInk as any)(ids.assignment_id, ids.page_id, u)
+                  await (publishInk as any)(ids.assignment_id, ids.page_id, payloadWithStudent)
                 } catch {}
               }}
             />
