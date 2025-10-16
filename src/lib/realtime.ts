@@ -32,6 +32,16 @@ export type TeacherPresenceState = {
   [k: string]: any
 }
 
+/** NEW: Force submit payload (teacher-triggered or on teacher page-change) */
+export type ForceSubmitPayload = {
+  reason: 'teacher-button' | 'page-change'
+  /** optional: submit-before-switch target page index */
+  pageIndex?: number
+  /** optional: scope to one student; omit for whole class */
+  studentId?: string
+  ts?: number
+}
+
 /** ---------- Live ink updates ---------- */
 export type InkUpdate = {
   id: string
@@ -102,7 +112,7 @@ export function subscribeToGlobal(a: string | ((id: string) => void), b?: (id: s
 }
 
 /** =========================================================================================
- *  PER-ASSIGNMENT (page, focus, auto-follow, presence) — class scoped w/ legacy compatibility
+ *  PER-ASSIGNMENT (page, focus, auto-follow, presence, force-submit)
  *  ======================================================================================= */
 
 function assignmentChannel(classCode: string | undefined, assignmentId: string) {
@@ -120,6 +130,8 @@ export function subscribeToAssignment(
     onFocus?: (p: FocusPayload) => void
     onAutoFollow?: (p: AutoFollowPayload) => void
     onPresence?: (p: TeacherPresenceState) => void
+    /** NEW: receive force-submit broadcasts */
+    onForceSubmit?: (p: ForceSubmitPayload) => void
   }
 ) {
   const classCode = c ? a : undefined
@@ -129,6 +141,7 @@ export function subscribeToAssignment(
     onFocus?: (p: FocusPayload) => void
     onAutoFollow?: (p: AutoFollowPayload) => void
     onPresence?: (p: TeacherPresenceState) => void
+    onForceSubmit?: (p: ForceSubmitPayload) => void
   }
 
   const ch = assignmentChannel(classCode, assignmentId)
@@ -137,6 +150,8 @@ export function subscribeToAssignment(
     .on('broadcast', { event: 'auto-follow' }, (msg: any) => handlers.onAutoFollow?.(msg?.payload))
     .on('broadcast', { event: 'presence' }, (msg: any) => handlers.onPresence?.(msg?.payload))
     .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => handlers.onPresence?.(msg?.payload))
+    // NEW: force-submit listener
+    .on('broadcast', { event: 'force-submit' }, (msg: any) => handlers.onForceSubmit?.(msg?.payload))
     .subscribe()
 
   return ch
@@ -222,6 +237,24 @@ export async function publishAutoFollow(
   const ch = assignmentChannel(classCode, assignmentId)
   await ch.subscribe()
   await ch.send({ type: 'broadcast', event: 'auto-follow', payload: { ...payload, ts: Date.now() } })
+  void ch.unsubscribe()
+}
+
+/** NEW: broadcastForceSubmit(classCode, assignmentId, payload)
+ *  Legacy: broadcastForceSubmit(assignmentId, payload)
+ */
+export async function broadcastForceSubmit(
+  a: string,
+  b: any,
+  c?: ForceSubmitPayload
+) {
+  const classCode = c ? a : undefined
+  const assignmentId = c ? (b as string) : a
+  const payload = (c ?? b) as ForceSubmitPayload
+
+  const ch = assignmentChannel(classCode, assignmentId)
+  await ch.subscribe()
+  await ch.send({ type: 'broadcast', event: 'force-submit', payload: { ...payload, ts: Date.now() } })
   void ch.unsubscribe()
 }
 
