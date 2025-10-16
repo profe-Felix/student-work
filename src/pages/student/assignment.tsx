@@ -1118,7 +1118,7 @@ export default function StudentAssignment(){
         style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
           touchAction: handMode ? 'auto' : 'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-          background:'#fff', border:'1px solid '#eee', borderRadius:12, position:'relative' }}
+          background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
           {/* PDF layer */}
