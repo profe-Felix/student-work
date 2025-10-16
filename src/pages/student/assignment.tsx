@@ -862,7 +862,7 @@ export default function StudentAssignment(){
       },
 
       // NEW: force-submit → submit immediately (scoped or all)
-      onForceSubmit: async (p) => {
+      onForceSubmit: async (p: { studentId?: string; pageIndex?: number }) => {
         try {
           // if teacher targeted a specific student, ignore if it's not me
           if (p?.studentId && p.studentId !== studentId) return
