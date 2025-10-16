@@ -23,7 +23,7 @@ import {
   subscribeToInk,
   publishInk
 } from '../../lib/realtime'
-import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient' // <-- NEW
+import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient' // <-- SW close-save (kept)
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
@@ -653,7 +653,7 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeUnload as any)
+      window.removeEventListener('beforeunload', onBeforeunload as any)
     }
   }, [pageIndex, studentId])
 
@@ -708,9 +708,27 @@ export default function StudentAssignment(){
     }
   }
 
-  // ===== save-on-close (service worker) =====
+  // ===== helpers for forced / teacher-led saves =====
+  const hasInkOrAudio = () => {
+    const current = drawRef.current?.getStrokes() || { strokes: [] }
+    const hasInk   = Array.isArray(current.strokes) && current.strokes.length > 0
+    const hasAudio = !!audioBlob.current
+    return { hasInk, hasAudio, current }
+  }
 
-  // Build the payload the SW will POST if the tab closes while there is unsaved ink.
+  const submitIfNeeded = async (reason: string) => {
+    const { hasInk, hasAudio, current } = hasInkOrAudio()
+    if (!hasInk && !hasAudio) return
+    try {
+      await submit()
+    } catch {
+      // fallback to local draft so nothing is lost if network hiccups
+      const { assignmentUid, pageUid } = getCacheIds()
+      try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
+    }
+  }
+
+  // ===== save-on-close (service worker) =====
   function buildSavePayload() {
     try {
       const ids = currIds.current
@@ -726,7 +744,7 @@ export default function StudentAssignment(){
         pageId: ids.page_id,
         pageIndex,
         canvas: { w: canvasSize.w, h: canvasSize.h },
-        strokes, // raw strokes (server will upsert/create)
+        strokes,
         ts: Date.now()
       }
     } catch {
@@ -734,15 +752,26 @@ export default function StudentAssignment(){
     }
   }
 
-  // Register SW (idempotent) and attach a reliable beforeunload save using background sync/keepalive
   useEffect(() => {
     let detach: (() => void) | null = null
     ;(async () => {
       try { await ensureSaveWorker() } catch {}
-          detach = attachBeforeUnloadSave('student-close-save', async () => buildSavePayload())
+      detach = attachBeforeUnloadSave('student-close-save', async () => buildSavePayload())
     })()
     return () => { try { detach?.() } catch {} }
   }, [studentId, classCode, rtAssignmentId, pageIndex, canvasSize.w, canvasSize.h])
+
+  // ===== Teacher "Force Submit" command listener =====
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    const ch = supabase
+      .channel(`teacher-cmd:${classCode}:${rtAssignmentId}`, { config: { broadcast: { ack: true } } })
+      .on('broadcast', { event: 'force-submit' }, async () => {
+        await submitIfNeeded('teacher-force')
+      })
+      .subscribe()
+    return () => { try { ch.unsubscribe() } catch {} }
+  }, [classCode, rtAssignmentId])
 
   // ===========================================
 
@@ -802,9 +831,13 @@ export default function StudentAssignment(){
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(classCode, rtAssignmentId, {
-      onSetPage: ({ pageIndex: tpi }: SetPagePayload) => {
+      onSetPage: async ({ pageIndex: tpi }: SetPagePayload) => {
         teacherPageIndexRef.current = tpi
         if (autoFollow && typeof tpi === 'number') {
+          // If teacher moves page, submit before switching
+          if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
+            await submitIfNeeded('teacher-page-change')
+          }
           setPageIndex(prev => (prev !== tpi ? tpi : prev))
         }
       },
@@ -820,7 +853,7 @@ export default function StudentAssignment(){
         applyPresenceSnapshot({
           autoFollow: !!on,
           allowedPages: allowedPages ?? null,
-          focusOn, // leave focus state as-is here; focus events come via onFocus / onPresence
+          focusOn,
           lockNav: navLocked,
           teacherPageIndex: teacherPageIndexRef.current ?? undefined
         } as TeacherPresenceState, { snap: true })
