@@ -739,7 +739,7 @@ export default function StudentAssignment(){
     let detach: (() => void) | null = null
     ;(async () => {
       try { await ensureSaveWorker() } catch {}
-          detach = attachBeforeUnloadSave(async () => buildSavePayload(), {})
+          detach = attachBeforeUnloadSave('student-close-save', async () => buildSavePayload())
     })()
     return () => { try { detach?.() } catch {} }
   }, [studentId, classCode, rtAssignmentId, pageIndex, canvasSize.w, canvasSize.h])
