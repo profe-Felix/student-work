@@ -653,9 +653,11 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('beforeunload', onBeforeunload as any)
+      // FIX: correct function name here
+      window.removeEventListener('beforeunload', onBeforeUnload as any)
     }
   }, [pageIndex, studentId])
+
 
   /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async ()=>{
