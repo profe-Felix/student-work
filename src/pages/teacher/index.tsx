@@ -16,7 +16,9 @@ import {
   publishSetAssignment,
   publishSetPage,
   setTeacherPresence,
-  teacherPresenceResponder
+  teacherPresenceResponder,
+  // NEW: teacher can broadcast a force submit to students
+  broadcastForceSubmit,
 } from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer'
 
@@ -58,6 +60,10 @@ export default function TeacherDashboard() {
 
   const [loading, setLoading] = useState(false)
   const [grid, setGrid] = useState<Record<string, LatestCell>>({})
+
+  // NEW: UI busy flags
+  const [forcing, setForcing] = useState(false)
+  const [changingPage, setChangingPage] = useState(false)
 
   // PREVIEW STATE
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -405,7 +411,7 @@ export default function TeacherDashboard() {
         />
       </div>
 
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px' }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 8px', flexWrap:'wrap' }}>
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
           <span style={{ marginBottom: 4, color: '#555' }}>Assignment</span>
           <select
@@ -439,16 +445,27 @@ export default function TeacherDashboard() {
           <select
             value={pageId}
             onChange={async (e) => {
+              if (!assignmentId) return
               const nextPageId = e.target.value
-              setPageId(nextPageId)
+              const nextIndex = pages.find(p => p.id === nextPageId)?.page_index ?? pageIndex
 
-              // upsert immediately with the selected page's index
+              setChangingPage(true)
               try {
-                const nextIndex = pages.find(p => p.id === nextPageId)?.page_index ?? pageIndex
-                if (classCode && assignmentId) {
+                // NEW: ask all students to submit *before* switching pages
+                await broadcastForceSubmit(classCode, assignmentId, {
+                  reason: 'page-change',
+                  pageIndex: nextIndex
+                })
+
+                // switch selection locally
+                setPageId(nextPageId)
+
+                // keep DB snapshot up-to-date for cold start
+                if (classCode) {
                   await upsertClassState(classCode, assignmentId, nextPageId, nextIndex)
                 }
-                // rebroadcast page for this class (snappy)
+
+                // broadcast page + presence
                 await publishSetPage(classCode, assignmentId, { pageIndex: nextIndex })
                 await setTeacherPresence(classCode, assignmentId, {
                   autoFollow: true,
@@ -458,11 +475,13 @@ export default function TeacherDashboard() {
                   allowedPages: null
                 })
               } catch (err) {
-                console.error('upsert/publish on page change failed', err)
+                console.error('submit-before-switch failed', err)
+              } finally {
+                setChangingPage(false)
               }
             }}
             style={{ padding: '6px 8px', minWidth: 120 }}
-            disabled={!assignmentId}
+            disabled={!assignmentId || changingPage}
           >
             {pages.map(p => (
               <option key={p.id} value={p.id}>
@@ -480,18 +499,38 @@ export default function TeacherDashboard() {
         >
           Refresh
         </button>
+
+        {/* NEW: Force submit button (all students on current assignment/page) */}
+        <button
+          onClick={async () => {
+            if (!assignmentId) return
+            setForcing(true)
+            try {
+              await broadcastForceSubmit(classCode, assignmentId, { reason: 'teacher-button' })
+            } catch (err) {
+              console.error('force submit broadcast failed', err)
+              alert('Failed to force submit.')
+            } finally {
+              setForcing(false)
+            }
+          }}
+          disabled={!assignmentId || forcing}
+          style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
+          title="Ask every student to immediately submit what they have"
+        >
+          {forcing ? 'Submitting…' : 'Force submit all'}
+        </button>
       </div>
 
       {assignmentId && pageId && (
         <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
-{/* IMPORTANT: scope teacher controls to this class */}
-<TeacherSyncBar
-  classCode={classCode}
-  assignmentId={assignmentId}
-  pageId={pageId}
-  pageIndex={pageIndex}
-/>
-
+          {/* IMPORTANT: scope teacher controls to this class */}
+          <TeacherSyncBar
+            classCode={classCode}
+            assignmentId={assignmentId}
+            pageId={pageId}
+            pageIndex={pageIndex}
+          />
         </div>
       )}
 
