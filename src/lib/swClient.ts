@@ -9,7 +9,7 @@
 const SW_URL = '/sw-save.js';
 
 let registered = false;
-let registerPromise: Promise<ServiceWorkerRegistration> | null = null;
+let registerPromise: Promise<ServiceWorkerRegistration | null> | null = null;
 
 /** Call once at app/page load (safe to call multiple times). */
 export function ensureSaveWorker(): Promise<ServiceWorkerRegistration | null> {
@@ -40,7 +40,6 @@ export function ensureSaveWorker(): Promise<ServiceWorkerRegistration | null> {
  * @param payload  JSON-serializable body.
  */
 export async function queueSave(endpoint: string, payload: unknown): Promise<void> {
-  // Try to send to SW first
   const reg = await ensureSaveWorker();
   const sw = navigator.serviceWorker;
 
@@ -53,7 +52,6 @@ export async function queueSave(endpoint: string, payload: unknown): Promise<voi
     }
   }
 
-  // Fallback: keepalive (works during page unload on Chromium/Safari)
   try {
     await fetch(endpoint, {
       method: 'POST',
@@ -62,7 +60,7 @@ export async function queueSave(endpoint: string, payload: unknown): Promise<voi
       keepalive: true,
     });
   } catch {
-    // ignore – nothing else we can do without SW control
+    // ignore
   }
 }
 
@@ -87,7 +85,6 @@ export function attachBeforeUnloadSave(
     }
   };
 
-  // Use both events to maximize coverage
   window.addEventListener('pagehide', handler);
   window.addEventListener('beforeunload', handler);
 
