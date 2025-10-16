@@ -23,6 +23,7 @@ import {
   subscribeToInk,
   publishInk
 } from '../../lib/realtime'
+import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient' // <-- NEW
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
@@ -707,6 +708,44 @@ export default function StudentAssignment(){
     }
   }
 
+  // ===== save-on-close (service worker) =====
+
+  // Build the payload the SW will POST if the tab closes while there is unsaved ink.
+  function buildSavePayload() {
+    try {
+      const ids = currIds.current
+      if (!ids.assignment_id || !ids.page_id) return null
+      const strokes = drawRef.current?.getStrokes() || { strokes: [] }
+      const hasInk = Array.isArray(strokes?.strokes) && strokes.strokes.length > 0
+      if (!hasInk) return null
+      return {
+        type: 'close-save-v1',
+        classCode,
+        studentId,
+        assignmentId: ids.assignment_id,
+        pageId: ids.page_id,
+        pageIndex,
+        canvas: { w: canvasSize.w, h: canvasSize.h },
+        strokes, // raw strokes (server will upsert/create)
+        ts: Date.now()
+      }
+    } catch {
+      return null
+    }
+  }
+
+  // Register SW (idempotent) and attach a reliable beforeunload save using background sync/keepalive
+  useEffect(() => {
+    let detach: (() => void) | null = null
+    ;(async () => {
+      try { await ensureSaveWorker() } catch {}
+      detach = attachBeforeUnloadSave(async () => buildSavePayload())
+    })()
+    return () => { try { detach?.() } catch {} }
+  }, [studentId, classCode, rtAssignmentId, pageIndex, canvasSize.w, canvasSize.h])
+
+  // ===========================================
+
   const blockedBySync = (idx: number) => {
     if (!autoFollow) return false
     if (allowedPages && allowedPages.length > 0) return !allowedPages.includes(idx)
@@ -1079,7 +1118,7 @@ export default function StudentAssignment(){
         style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
           touchAction: handMode ? 'auto' : 'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
-          background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
+          background:'#fff', border:'1px solid '#eee', borderRadius:12, position:'relative' }}
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
           {/* PDF layer */}
