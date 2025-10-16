@@ -829,17 +829,13 @@ export default function StudentAssignment(){
 
   /* ---------- Realtime + polling (defensive) ---------- */
 
-  // subscribe to teacher broadcast once we know the assignment id — CLASS-SCOPED
+    // subscribe to teacher broadcast once we know the assignment id — CLASS-SCOPED
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(classCode, rtAssignmentId, {
-      onSetPage: async ({ pageIndex: tpi }: SetPagePayload) => {
+      onSetPage: ({ pageIndex: tpi }: SetPagePayload) => {
         teacherPageIndexRef.current = tpi
         if (autoFollow && typeof tpi === 'number') {
-          // If teacher moves page, submit before switching
-          if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
-            await submitIfNeeded('teacher-page-change')
-          }
           setPageIndex(prev => (prev !== tpi ? tpi : prev))
         }
       },
@@ -855,7 +851,7 @@ export default function StudentAssignment(){
         applyPresenceSnapshot({
           autoFollow: !!on,
           allowedPages: allowedPages ?? null,
-          focusOn,
+          focusOn, // leave focus state as-is here; focus events come via onFocus / onPresence
           lockNav: navLocked,
           teacherPageIndex: teacherPageIndexRef.current ?? undefined
         } as TeacherPresenceState, { snap: true })
@@ -863,6 +859,29 @@ export default function StudentAssignment(){
       onPresence: (p: TeacherPresenceState) => {
         try { localStorage.setItem(presenceKey(classCode, rtAssignmentId), JSON.stringify(p)) } catch {}
         applyPresenceSnapshot(p, { snap: true })
+      },
+
+      // NEW: force-submit → submit immediately (scoped or all)
+      onForceSubmit: async (p) => {
+        try {
+          // if teacher targeted a specific student, ignore if it's not me
+          if (p?.studentId && p.studentId !== studentId) return
+
+          // stop any ongoing recording to flush audio into the blob we submit
+          try { await audioRef.current?.stop() } catch {}
+
+          // submit current page work
+          await submit()
+
+          // if teacher provided a pageIndex (e.g., submit-before-switch), follow it immediately
+          if (typeof p?.pageIndex === 'number') {
+            // avoid nav lock blocking a teacher-driven move
+            setNavLocked(false)
+            setPageIndex(p.pageIndex)
+          }
+        } catch (e) {
+          console.warn('force-submit handler failed', e)
+        }
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
