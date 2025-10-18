@@ -43,12 +43,14 @@ export type ForceSubmitPayload = {
 }
 
 /** ---------- Live ink updates ---------- */
+export type InkPoint = { x: number; y: number; t?: number }
+
 export type InkUpdate = {
   id: string
   color?: string
   size?: number
   tool: 'pen' | 'highlighter' | 'eraser' | 'eraserObject'
-  pts?: Array<{ x: number; y: number; t?: number }>
+  pts?: InkPoint[]
   done?: boolean
   from?: string
   roomKey?: string
@@ -69,6 +71,42 @@ function isRealtimeChannel(x: any): x is RealtimeChannel {
     && typeof x.subscribe === 'function'
     && typeof x.send === 'function'
     && typeof x.unsubscribe === 'function'
+}
+
+const N = (v: any) => {
+  const x = typeof v === 'string' ? parseFloat(v) : v
+  return Number.isFinite(x) ? x : 0
+}
+
+/** Normalize tool names (keep compatibility but unify internally). */
+function normalizeTool(tool: InkUpdate['tool']): 'pen' | 'highlighter' | 'eraser' {
+  if (tool === 'eraser' || tool === 'eraserObject' || (tool as any) === 'erase') return 'eraser'
+  if (tool === 'highlighter') return 'highlighter'
+  return 'pen'
+}
+
+/** Normalize points: ensure numeric x/y; **preserve t** if provided. */
+function normalizePts(pts?: InkPoint[]): InkPoint[] | undefined {
+  if (!Array.isArray(pts)) return undefined
+  const out: InkPoint[] = []
+  for (const p of pts) {
+    if (!p || (typeof p !== 'object')) continue
+    const x = N((p as any).x)
+    const y = N((p as any).y)
+    const tRaw = (p as any).t
+    const hasT = typeof tRaw === 'number' && Number.isFinite(tRaw)
+    out.push(hasT ? { x, y, t: tRaw } : { x, y })
+  }
+  return out.length ? out : undefined
+}
+
+/** Normalize an InkUpdate for transport/subscription. */
+function normalizeInkUpdate(u: InkUpdate): InkUpdate {
+  return {
+    ...u,
+    tool: normalizeTool(u.tool),
+    pts: normalizePts(u.pts),
+  }
 }
 
 /** =========================================================================================
@@ -345,6 +383,9 @@ export async function publishInk(
   let temporary = false
   let roomKey: string | undefined
 
+  // **Normalize before sending** so receivers get consistent data (and keep t)
+  const norm = normalizeInkUpdate(update)
+
   if (isRealtimeChannel(inkChOrIds)) {
     ch = inkChOrIds
   } else {
@@ -355,7 +396,7 @@ export async function publishInk(
     await ch.subscribe()
   }
 
-  const payload = roomKey ? { ...update, roomKey } : { ...update }
+  const payload = roomKey ? { ...norm, roomKey } : { ...norm }
   await ch.send({ type: 'broadcast', event: 'ink', payload })
   if (temporary) { void ch.unsubscribe() }
 }
@@ -397,11 +438,12 @@ export function subscribeToInk(a: any, b?: any, c?: any, d?: any): RealtimeChann
     const roomKey = makeRoomKey(classCode, assignmentId, pageId, studentCode)
     const ch = inkChannel(classCode, assignmentId, pageId, studentCode)
       .on('broadcast', { event: 'ink' }, (msg: any) => {
-        const u = msg?.payload as InkUpdate
-        if (!u || !u.id || !u.tool) return
-        if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
-        if (u.roomKey && u.roomKey !== roomKey) return
-        onUpdate(u)
+        const raw = msg?.payload as InkUpdate
+        if (!raw || !raw.id || !raw.tool) return
+        if ((!Array.isArray(raw.pts) || raw.pts.length === 0) && !raw.done) return
+        if (raw.roomKey && raw.roomKey !== roomKey) return
+        // **Normalize on receive** to preserve t and unify tool
+        onUpdate(normalizeInkUpdate(raw))
       })
       .subscribe()
     return ch
@@ -442,11 +484,11 @@ export function subscribeToInk(a: any, b?: any, c?: any, d?: any): RealtimeChann
   const roomKey = makeRoomKey(classCode, assignmentId, pageId, studentCode)
   const ch = inkChannel(classCode, assignmentId, pageId, studentCode)
     .on('broadcast', { event: 'ink' }, (msg: any) => {
-      const u = msg?.payload as InkUpdate
-      if (!u || !u.id || !u.tool) return
-      if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
-      if (u.roomKey && u.roomKey !== roomKey) return
-      onUpdate(u)
+      const raw = msg?.payload as InkUpdate
+      if (!raw || !raw.id || !raw.tool) return
+      if ((!Array.isArray(raw.pts) || raw.pts.length === 0) && !raw.done) return
+      if (raw.roomKey && raw.roomKey !== roomKey) return
+      onUpdate(normalizeInkUpdate(raw)) // **preserve t**, unify tool
     })
     .subscribe()
   return ch
