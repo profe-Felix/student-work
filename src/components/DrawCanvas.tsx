@@ -99,6 +99,9 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ctxRef    = useRef<CanvasRenderingContext2D|null>(null)
 
+  // timeline base so all points have small ms
+  const sessionStartRef = useRef<number|null>(null)
+
   // Local finished strokes + in-progress local stroke
   const strokes   = useRef<Stroke[]>([])
   const current   = useRef<Stroke|null>(null)
@@ -243,7 +246,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
         return
       }
       const p = getPos(e)
-      ;(p as any).t = Date.now()
+      ;(p as any).t = stampNow()
       current.current.pts.push(p)
       // broadcast delta (single point)
       onStrokeUpdate?.({

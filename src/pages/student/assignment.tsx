@@ -23,33 +23,14 @@ import {
   subscribeToInk,
   publishInk
 } from '../../lib/realtime'
-import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient'
-import type { RealtimeChannel } from '@supabase/supabase-js'
+import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient' // <-- SW close-save (kept)
+import type { RealtimeChannel } from '@supabase/supabase-js' // ✅ typed channel
+// 🔎 realtime meter
+import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
 import { objectErase, softErase } from '../../lib/erase'
-
-/** ===== Replay Op types (new) ===== */
-type DrawOp = {
-  type: 'draw'
-  id: string
-  color: string
-  size: number
-  tool: 'pen' | 'highlighter'
-  pts: Array<{ x: number; y: number; t: number }>
-  t0: number
-  t1: number
-}
-type EraseOp = {
-  type: 'erase'
-  mode: 'soft' | 'object'
-  path: Array<{ x: number; y: number; t: number }>
-  radius: number
-  t0: number
-  t1: number
-}
-type ReplayOp = DrawOp | EraseOp
 
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily' // legacy purge helper
@@ -86,6 +67,7 @@ type Tool = 'pen'|'highlighter'|'eraser'|'eraserObject'
 
 /* ---------- Keys & helpers (now namespaced by CLASS + assignmentId + pageId) ---------- */
 const ASSIGNMENT_CACHE_KEY = 'currentAssignmentId'
+// CLASS-SCOPED presence cache
 const presenceKey = (classCode: string, assignmentId:string)=> `presence:${classCode}:${assignmentId}`
 
 const draftKey      = (student:string, assignmentUid:string, pageUid:string)=> `draft:${student}:${assignmentUid}:${pageUid}`
@@ -152,7 +134,7 @@ async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
       try {
         const pages = await listPages(row.id)
         if (pages && pages.length > 0) return row.id
-      } catch {}
+      } catch {/* skip if pages lookup fails */}
     }
     return null
   } catch {
@@ -171,7 +153,7 @@ function initialPageIndexFromPresence(classCode: string): number {
     if (p && p.autoFollow && typeof p.teacherPageIndex === 'number') {
       return p.teacherPageIndex
     }
-  } catch {}
+  } catch {/* ignore */}
   return 0
 }
 
@@ -204,6 +186,9 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
 }
 
 export default function StudentAssignment(){
+  // 🔎 enable realtime meter once
+  useEffect(() => { enableRealtimeMeter() }, [])
+
   const location = useLocation()
   const nav = useNavigate()
 
@@ -283,7 +268,7 @@ export default function StudentAssignment(){
       const cssW = Math.round(parseFloat(getComputedStyle(canvas).width))
       const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
       setCanvasSize({ w: cssW, h: cssH })
-    } catch {}
+    } catch {/* ignore */}
   }
 
   // assignment/page ids for realtime
@@ -338,16 +323,6 @@ export default function StudentAssignment(){
   // ink subscription handle
   const inkSubRef = useRef<RealtimeChannel | null>(null)
 
-  // ===== NEW: replay operation log =====
-  const opsRef = useRef<ReplayOp[]>([])
-  const inFlightStrokeRef = useRef<Record<string, {
-    color: string
-    size: number
-    tool: 'pen' | 'highlighter'
-    t0: number
-    pts: Array<{ x: number; y: number; t: number }>
-  }>>({})
-
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
     if (!p) return
@@ -365,17 +340,17 @@ export default function StudentAssignment(){
     }
   }
 
-  // --- helper: snap using local presence if available
+  // --- helper: snap to teacher using local presence if available (CLASS-SCOPED)
   const snapToTeacherIfAvailable = (assignmentId: string) => {
     try {
       const raw = localStorage.getItem(presenceKey(classCode, assignmentId))
       if (!raw) return
       const p = JSON.parse(raw) as TeacherPresenceState
       applyPresenceSnapshot(p, { snap: true })
-    } catch {}
+    } catch {/* ignore */}
   }
 
-  // --- ensure presence from server if cache missing
+  // --- ensure we also fetch presence from server if cache is missing/stale (store CLASS-SCOPED)
   const ensurePresenceFromServer = async (assignmentId: string) => {
     const cached = localStorage.getItem(presenceKey(classCode, assignmentId))
     if (!cached) {
@@ -387,23 +362,21 @@ export default function StudentAssignment(){
     }
   }
 
-  // assignment handoff listener
+  // assignment handoff listener (teacher broadcast) — CLASS-SCOPED
   useEffect(() => {
     if (!classCode) return
     const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
+      // Best effort: use cache quickly, then fetch from server to be sure
       snapToTeacherIfAvailable(nextAssignmentId)
       ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
-      // reset op log on assignment switch
-      opsRef.current = []
-      inFlightStrokeRef.current = {}
     })
     return off
   }, [classCode])
 
-  // Snap to DB class state on boot
+  // Snap to DB class state on boot (cold start) — then mark boot done
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -418,6 +391,7 @@ export default function StudentAssignment(){
           setPageIndex(snap.page_index)
         }
       } catch {
+        // no class snapshot yet — harmless
       } finally {
         if (!cancelled) setClassBootDone(true)
       }
@@ -425,7 +399,7 @@ export default function StudentAssignment(){
     return () => { cancelled = true }
   }, [classCode])
 
-  // Fallback after boot
+  // On first mount fallback: only after class boot finished and we still have no id
   useEffect(() => {
     if (!classBootDone) return
     if (rtAssignmentId) {
@@ -444,7 +418,7 @@ export default function StudentAssignment(){
     })()
   }, [classBootDone, rtAssignmentId])
 
-  // hydrate presence on refresh
+  // hydrate presence on refresh (if cached) — CLASS-SCOPED
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
@@ -464,7 +438,7 @@ export default function StudentAssignment(){
     } catch {}
   }, [classCode, rtAssignmentId])
 
-  /* ---------- Hello → presence-snapshot handshake ---------- */
+  /* ---------- Hello → presence-snapshot handshake (CLASS-SCOPED channel) ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = supabase
@@ -480,15 +454,16 @@ export default function StudentAssignment(){
     ;(async () => {
       try {
         await ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } })
-      } catch {}
+      } catch {/* ignore */}
     })()
 
     const t = window.setTimeout(() => { try { ch.unsubscribe() } catch {} }, 4000)
     return () => { try { ch.unsubscribe() } catch {}; window.clearTimeout(t) }
   }, [classCode, rtAssignmentId])
 
-  // Resolve ids, respect auto-follow if present
+  // Resolve assignment/page with early “snap to teacher” if autoFollow is ON or presence says so
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
+    // 1) Ensure we have an assignment id
     let assignmentId = rtAssignmentId
     if (!assignmentId) {
       assignmentId = await fetchLatestAssignmentIdWithPages() || ''
@@ -507,9 +482,11 @@ export default function StudentAssignment(){
       return null
     }
 
+    // 2) Try to honor teacher presence
     snapToTeacherIfAvailable(assignmentId)
     await ensurePresenceFromServer(assignmentId)
 
+    // Decide the target index we want to display now
     let targetIndex = pageIndex
     const tpi = teacherPageIndexRef.current
     if (autoFollow && typeof tpi === 'number') {
@@ -517,6 +494,7 @@ export default function StudentAssignment(){
       if (pageIndex !== tpi) setPageIndex(tpi)
     }
 
+    // 3) Fetch pages for the resolved assignment
     let pages = await listPages(assignmentId).catch(() => [] as any[])
     if (!pages || pages.length === 0) {
       const latest = await fetchLatestAssignmentIdWithPages()
@@ -560,10 +538,6 @@ export default function StudentAssignment(){
     let cancelled=false
     try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
 
-    // reset replay ops anytime we load a page fresh
-    opsRef.current = []
-    inFlightStrokeRef.current = {}
-
     ;(async ()=>{
       const ids = await resolveIds()
 
@@ -576,8 +550,6 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
           lastAppliedServerHash.current = ''
           localDirty.current = false
-          opsRef.current = []
-          inFlightStrokeRef.current = {}
         } catch {}
         return
       }
@@ -615,7 +587,7 @@ export default function StudentAssignment(){
               }
             }
           }
-        } catch {}
+        } catch {/* ignore */}
       }catch(e){
         console.error('init load failed', e)
         const { assignmentUid, pageUid } = getCacheIds(ids?.page_id)
@@ -687,6 +659,7 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
+      // FIX: correct function name here
       window.removeEventListener('beforeunload', onBeforeUnload as any)
     }
   }, [pageIndex, studentId])
@@ -716,17 +689,14 @@ export default function StudentAssignment(){
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       if (hasInk) {
-        // Save strokes + canvas size + replay ops
-        const strokesWithCanvas = { ...strokes, w: canvasSize.w, h: canvasSize.h, ops: opsRef.current }
+        // Save strokes with the canvas size so previews can scale correctly
+        const strokesWithCanvas = { ...strokes, w: canvasSize.w, h: canvasSize.h }
         await saveStrokes(submission_id, strokesWithCanvas)
         localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentUid, pageUid, strokesWithCanvas)
+        saveSubmittedCache(studentId, assignmentUid, pageUid, strokes)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
         localDirty.current = false
-        // reset log after successful submit
-        opsRef.current = []
-        inFlightStrokeRef.current = {}
       }
       if (hasAudio) {
         await saveAudio(submission_id, audioBlob.current!)
@@ -760,6 +730,7 @@ export default function StudentAssignment(){
     try {
       await submit()
     } catch {
+      // fallback to local draft so nothing is lost if network hiccups
       const { assignmentUid, pageUid } = getCacheIds()
       try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
     }
@@ -840,10 +811,6 @@ export default function StudentAssignment(){
       try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
     }
 
-    // Reset replay ops when navigating
-    opsRef.current = []
-    inFlightStrokeRef.current = {}
-
     setPageIndex(nextIndex)
   }
 
@@ -868,7 +835,7 @@ export default function StudentAssignment(){
 
   /* ---------- Realtime + polling (defensive) ---------- */
 
-  // subscribe to teacher broadcast once we know the assignment id
+  // subscribe to teacher broadcast once we know the assignment id — CLASS-SCOPED
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(classCode, rtAssignmentId, {
@@ -886,10 +853,11 @@ export default function StudentAssignment(){
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
+        // Snap once on join if not already snapped
         applyPresenceSnapshot({
           autoFollow: !!on,
           allowedPages: allowedPages ?? null,
-          focusOn,
+          focusOn, // leave focus state as-is here; focus events come via onFocus / onPresence
           lockNav: navLocked,
           teacherPageIndex: teacherPageIndexRef.current ?? undefined
         } as TeacherPresenceState, { snap: true })
@@ -898,6 +866,8 @@ export default function StudentAssignment(){
         try { localStorage.setItem(presenceKey(classCode, rtAssignmentId), JSON.stringify(p)) } catch {}
         applyPresenceSnapshot(p, { snap: true })
       },
+
+      // NEW: force-submit → submit immediately (scoped or all)
       onForceSubmit: async (p: { studentId?: string; pageIndex?: number }) => {
         try {
           if (p?.studentId && p.studentId !== studentId) return
@@ -906,8 +876,6 @@ export default function StudentAssignment(){
           if (typeof p?.pageIndex === 'number') {
             setNavLocked(false)
             setPageIndex(p.pageIndex)
-            opsRef.current = []
-            inFlightStrokeRef.current = {}
           }
         } catch (e) {
           console.warn('force-submit handler failed', e)
@@ -915,6 +883,7 @@ export default function StudentAssignment(){
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classCode, rtAssignmentId, autoFollow, focusOn, navLocked])
 
   const reloadFromServer = async ()=>{
@@ -943,7 +912,7 @@ export default function StudentAssignment(){
         lastAppliedServerHash.current = serverHash
         lastLocalHash.current = serverHash
       }
-    } catch {}
+    } catch {/* ignore */}
   }
 
   // subscribe to artifacts AND the student-scoped live ink channel
@@ -1029,14 +998,13 @@ export default function StudentAssignment(){
     }
   }, [classBootDone, classCode, studentId, pageIndex, rtAssignmentId])
 
-  /* ---------- LIVE eraser overlay (now also logs ops) ---------- */
+  /* ---------- LIVE eraser overlay ---------- */
   const eraserActive = hasTask && !handMode && (tool === 'eraser' || tool === 'eraserObject')
   const erasingRef = useRef(false)
   const erasePathRef = useRef<Pt[]>([])
   const eraseBaseRef = useRef<StrokesPayload>({ strokes: [] })
   const rafScheduled = useRef(false)
   const dynamicRadius = Math.max(ERASE_RADIUS_BASE, Math.round(size * 0.9))
-  const eraseStartRef = useRef<number>(0)
 
   const addPoint = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
@@ -1077,7 +1045,6 @@ export default function StudentAssignment(){
     erasePathRef.current = []
     const current = drawRef.current?.getStrokes() || { strokes: [] }
     eraseBaseRef.current = normalizeStrokes(current)
-    eraseStartRef.current = Date.now()
     try { (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId) } catch {}
     addPoint(e)
     schedulePreview()
@@ -1092,7 +1059,6 @@ export default function StudentAssignment(){
     erasingRef.current = false
     addPoint(e)
     const final = computePreview()
-    const path = erasePathRef.current.slice()
     erasePathRef.current = []
     if (!final) return
     drawRef.current?.loadStrokes(final)
@@ -1100,18 +1066,6 @@ export default function StudentAssignment(){
     try { lastLocalHash.current = await hashStrokes(final) } catch {}
     const { assignmentUid, pageUid } = getCacheIds()
     saveDraft(studentId, assignmentUid, pageUid, final)
-
-    // === NEW: log an erase op so playback can show the action ===
-    const t0 = eraseStartRef.current || (path[0]?.t ?? Date.now())
-    const t1 = path[path.length - 1]?.t ?? Date.now()
-    opsRef.current.push({
-      type: 'erase',
-      mode: (tool === 'eraserObject' ? 'object' : 'soft'),
-      path: path.map(p => ({ x: p.x, y: p.y, t: p.t ?? Date.now() })),
-      radius: dynamicRadius,
-      t0,
-      t1,
-    })
   }
 
   /* ---------- UI ---------- */
@@ -1200,6 +1154,16 @@ export default function StudentAssignment(){
           <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
             Student: <strong>{studentId}</strong>
           </div>
+          {/* 🔎 small debug button */}
+          <button
+            onClick={() => {
+              const rows = logRealtimeUsage(`RT usage — student ${studentId}`)
+              alert(`Realtime events counted: ${rows.length}. See console for details.`)
+            }}
+            style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
+          >
+            RT usage
+          </button>
           <button
             onClick={()=> nav(`/start?class=${encodeURIComponent(classCode)}`)}
             style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
@@ -1249,48 +1213,14 @@ export default function StudentAssignment(){
                 const ids = currIds.current
                 if (!ids.assignment_id || !ids.page_id) return
 
-                // === NEW: accumulate this draw into a 'draw' op ===
-                if (u) {
-                  const rec =
-                    inFlightStrokeRef.current[u.id] ||
-                    (inFlightStrokeRef.current[u.id] = {
-                      color: u.color!,
-                      size: u.size!,
-                      tool: u.tool as 'pen' | 'highlighter',
-                      t0: Date.now(),
-                      pts: [],
-                    })
-
-                  if (Array.isArray(u.pts) && u.pts.length) {
-                    const now = Date.now()
-                    for (const p of u.pts as any[]) {
-                      if (p && typeof p.x === 'number' && typeof p.y === 'number') {
-                        rec.pts.push({ x: p.x, y: p.y, t: now })
-                      }
-                    }
-                  }
-                  if (u.done) {
-                    const last = rec.pts[rec.pts.length - 1]
-                    const t1: number = (last?.t ?? Date.now())
-                    opsRef.current.push({
-                      type: 'draw',
-                      id: u.id,
-                      color: rec.color,
-                      size: rec.size,
-                      tool: rec.tool,
-                      pts: rec.pts.slice(),
-                      t0: rec.t0,
-                      t1,
-                    })
-                    delete inFlightStrokeRef.current[u.id]
-                  }
-                }
-
                 const payload = { ...u, studentId }
+
                 try {
+                  // ✅ Use the existing subscribed channel if available (zero extra subscribe traffic)
                   if (inkSubRef.current) {
                     await publishInk(inkSubRef.current, payload)
                   } else {
+                    // Fallback only during very early boot (should be rare)
                     await publishInk(
                       { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
                       payload
@@ -1339,13 +1269,14 @@ export default function StudentAssignment(){
         <span style={{ minWidth:90, textAlign:'center', fontWeight:600 }}>
           Page {pageIndex+1}
         </span>
-        <button
-          onClick={()=>goToPage(pageIndex+1)}
-          disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
-          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
-        >
-          Next ▶
-        </button>
+<button
+  onClick={()=>goToPage(pageIndex+1)}
+  disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
+  style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+>
+  Next ▶
+</button>
+
       </div>
 
       {/* Toolbar & toasts */}

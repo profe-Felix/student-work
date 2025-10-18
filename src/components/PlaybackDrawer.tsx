@@ -122,56 +122,55 @@ function hasAnyTimestamps(strokes: Stroke[]): boolean {
 function buildPointTimeline(strokes: Stroke[]): PointTimeline {
   if (!strokes.length) return { strokes: [], t0: 0, t1: 0 }
 
-  if (hasAnyTimestamps(strokes)) {
-    // Use recorded times; normalize to start at 0
-    let minT = Infinity, maxT = 0
-    const tl: TLStroke[] = strokes.map(s => {
+  // Flatten points and detect if any have 't'
+  let anyT = false
+  for (const s of strokes) { for (const p of (s.points||[])) if (typeof p.t === 'number') { anyT = true; break } }
+
+  const tl: TLStroke[] = []
+  let globalMin = Infinity
+  let globalMax = 0
+
+  if (anyT) {
+    for (const s of strokes) {
       const pts: TLPoint[] = []
       let last = -Infinity
       for (const p of (s.points || [])) {
-        if (typeof p.t === 'number') {
-          const tt = Math.max(0, p.t)
-          // keep non-decreasing within stroke
-          const t = Math.max(tt, last <= 0 ? tt : last)
-          last = t
-          pts.push({ x:N(p.x), y:N(p.y), t })
-          if (t < minT) minT = t
-          if (t > maxT) maxT = t
-        } else {
-          // If some points miss t but at least one has, space missing ones by 10ms
-          const t = (last > 0 ? last + 10 : 0)
-          last = t
-          pts.push({ x:N(p.x), y:N(p.y), t })
-          if (t < minT) minT = t
-          if (t > maxT) maxT = t
-        }
+        let t = typeof p.t === 'number' ? p.t : (last > 0 ? last + 10 : 0)
+        // handle absolute epoch values by collapsing to relative ranges (~< 1 day assumed relative)
+        if (t > 24*60*60*1000) { /* epoch-like; leave as-is for min-subtract below */ }
+        // keep non-decreasing
+        t = Math.max(t, last>0? last : t)
+        last = t
+        pts.push({ x: Math.round(p.x), y: Math.round(p.y), t })
+        if (t < globalMin) globalMin = t
+        if (t > globalMax) globalMax = t
       }
-      return { color:s.color, size:s.size, tool:s.tool, pts }
-    })
-    if (!isFinite(minT)) minT = 0
-    const shift = minT
-    const shifted = tl.map(s => ({ ...s, pts: s.pts.map(p => ({ ...p, t: p.t - shift })) }))
-    return { strokes: shifted, t0: 0, t1: Math.max(0, maxT - shift) }
+      if (pts.length) tl.push({ color: s.color, size: s.size, tool: s.tool, pts })
+    }
+    // Rebase to 0
+    if (!Number.isFinite(globalMin)) globalMin = 0
+    for (const s of tl) for (const p of s.pts) p.t = Math.max(0, p.t - globalMin)
+  } else {
+    // Synthesize timings: 10ms per segment; 150ms between strokes
+    const SEG_MS = 10, GAP_MS = 150
+    let t = 0
+    for (const s of strokes) {
+      const pts = s.points || []
+      if (!pts.length) { t += GAP_MS; continue }
+      const out: TLPoint[] = []
+      out.push({ x: Math.round(pts[0].x), y: Math.round(pts[0].y), t })
+      for (let i = 1; i < pts.length; i++) { t += SEG_MS; out.push({ x: Math.round(pts[i].x), y: Math.round(pts[i].y), t }) }
+      tl.push({ color: s.color, size: s.size, tool: s.tool, pts: out })
+      t += GAP_MS
+    }
+    globalMin = 0
+    globalMax = Math.max(0, ...tl.map(s => s.pts.length ? s.pts[s.pts.length-1].t : 0))
   }
 
-  // Synthesize: sequential, like your replay timeline, but in ms
-  const tl: TLStroke[] = []
-  const SEG_MS = 10
-  const GAP_MS = 150
-  let t = 0
-  for (const s of strokes) {
-    const pts = s.points || []
-    if (!pts.length) { t += GAP_MS; continue }
-    const out: TLPoint[] = []
-    out.push({ x:N(pts[0].x), y:N(pts[0].y), t })
-    for (let i = 1; i < pts.length; i++) {
-      t += SEG_MS
-      out.push({ x:N(pts[i].x), y:N(pts[i].y), t })
-    }
-    tl.push({ color:s.color, size:s.size, tool:s.tool, pts: out })
-    t += GAP_MS
-  }
-  return { strokes: tl, t0: 0, t1: Math.max(0, t) }
+  // Sort strokes by first point time so scrub order is consistent
+  tl.sort((a,b)=>(a.pts[0]?.t ?? 0) - (b.pts[0]?.t ?? 0))
+
+  return { strokes: tl, t0: 0, t1: Math.max(0, globalMax - (Number.isFinite(globalMin)? globalMin: 0)) }
 }
 
 /* ------------ source space inference ------------ */
@@ -569,7 +568,7 @@ export default function PlaybackDrawer({
               disabled={!scrubbing || durationMs <= 0}
             />
             <span style={{ width: 40, fontSize:12, color:'#6b7280' }}>
-              {Math.max(0, Math.round(durationMs / 1000))}s
+              {(Math.max(0, Math.round(durationMs / 100) / 10)).toFixed(1)}s
             </span>
           </div>
           {!scrubbing && (
