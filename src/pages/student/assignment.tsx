@@ -1262,61 +1262,66 @@ export default function StudentAssignment(){
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
               selfId={studentId}
-              onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
-                const ids = currIds.current
-                if (!ids.assignment_id || !ids.page_id) return
+onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
+  const ids = currIds.current
+  if (!ids.assignment_id || !ids.page_id) return
 
-                // === Accumulate this stroke for a 'draw' op ===
-                if (u) {
-                  const rec = inFlightStrokeRef.current[u.id] ||
-                    (inFlightStrokeRef.current[u.id] = {
-                      color: u.color!,
-                      size: u.size!,
-                      tool: u.tool as 'pen'|'highlighter',
-                      t0: (u.pts && u.pts.length ? u.pts[0].t : Date.now()),
-                      pts: []
-                    })
-                  if (Array.isArray(u.pts) && u.pts.length) {
-                    // coerce to Pt
-                    for (const p of u.pts as any[]) {
-                      if (p && typeof p.x==='number' && typeof p.y==='number') {
-                        rec.pts.push({ x:p.x, y:p.y, t: typeof p.t==='number' ? p.t : Date.now() })
-                      }
-                    }
-                  }
-                  if (u.done) {
-                    const t1 = (rec.pts.length ? rec.pts[rec.pts.length-1].t : Date.now())
-                    opsRef.current.push({
-                      type: 'draw',
-                      id: u.id,
-                      color: rec.color,
-                      size: rec.size,
-                      tool: rec.tool,
-                      pts: rec.pts.slice(),
-                      t0: rec.t0,
-                      t1
-                    })
-                    delete inFlightStrokeRef.current[u.id]
-                  }
-                }
+  // === Accumulate this stroke for a 'draw' op ===
+  if (u) {
+    const rec =
+      inFlightStrokeRef.current[u.id] ||
+      (inFlightStrokeRef.current[u.id] = {
+        color: u.color!,
+        size: u.size!,
+        tool: u.tool as 'pen' | 'highlighter',
+        // don't read t from incoming points; just timestamp locally
+        t0: Date.now(),
+        pts: [],
+      })
 
-                const payload = { ...u, studentId }
+    if (Array.isArray(u.pts) && u.pts.length) {
+      // coerce to Pt but set a definite numeric timestamp
+      const now = Date.now()
+      for (const p of u.pts as any[]) {
+        if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+          rec.pts.push({ x: p.x, y: p.y, t: now })
+        }
+      }
+    }
 
-                try {
-                  // ✅ Use the existing subscribed channel if available (zero extra subscribe traffic)
-                  if (inkSubRef.current) {
-                    await publishInk(inkSubRef.current, payload)
-                  } else {
-                    // Fallback only during very early boot (should be rare)
-                    await publishInk(
-                      { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-                      payload
-                    )
-                  }
-                } catch (e) {
-                  console.warn('publishInk failed', e)
-                }
-              }}
+    if (u.done) {
+      const last = rec.pts[rec.pts.length - 1]
+      const t1: number = (last?.t ?? Date.now())
+
+      opsRef.current.push({
+        type: 'draw',
+        id: u.id,
+        color: rec.color,
+        size: rec.size,
+        tool: rec.tool,
+        pts: rec.pts.slice(),
+        t0: rec.t0,
+        t1,
+      })
+      delete inFlightStrokeRef.current[u.id]
+    }
+  }
+
+  const payload = { ...u, studentId }
+
+  try {
+    if (inkSubRef.current) {
+      await publishInk(inkSubRef.current, payload)
+    } else {
+      await publishInk(
+        { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+        payload
+      )
+    }
+  } catch (e) {
+    console.warn('publishInk failed', e)
+  }
+}}
             />
           </div>
 
