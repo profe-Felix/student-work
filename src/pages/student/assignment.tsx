@@ -280,7 +280,8 @@ export default function StudentAssignment(){
 
   const [color, setColor] = useState('#1F75FE')
   const [size,  setSize]  = useState(6)
-  const [handMode, setHandMode] = useState(true)
+  // ⬇️ Start in DRAW mode to avoid “can’t draw” on first load
+  const [handMode, setHandMode] = useState(false)
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
@@ -301,56 +302,16 @@ export default function StudentAssignment(){
   }
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
-  // === NEW: track the live PDF canvas size with RO so overlay never clips ===
-  const pdfHostRef = useRef<HTMLDivElement | null>(null)
   const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement)=>{
     try {
-      const rect = canvas.getBoundingClientRect()
-      const cssW = Math.max(1, Math.round(rect.width))
-      const cssH = Math.max(1, Math.round(rect.height))
-      setCanvasSize({ w: cssW, h: cssH })
+      const cssW = Math.round(parseFloat(getComputedStyle(canvas).width))
+      const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
+      // ⬇️ Ignore transient 0×0 reads that would collapse the draw canvas
+      if (cssW > 0 && cssH > 0) {
+        setCanvasSize({ w: cssW, h: cssH })
+      }
     } catch {/* ignore */}
   }
-
-  useEffect(() => {
-    const host = pdfHostRef.current
-    if (!host) return
-
-    const findPdfCanvas = () => {
-      const canvases = Array.from(host.querySelectorAll('canvas')) as HTMLCanvasElement[]
-      // The overlay is a different canvas; pick the first PDF canvas
-      return canvases.find(c => c.getContext('2d') && c.style.pointerEvents !== 'none') || canvases[0] || null
-    }
-
-    const syncSize = () => {
-      const c = findPdfCanvas()
-      if (!c) return
-      const rect = c.getBoundingClientRect()
-      const cssW = Math.max(1, Math.round(rect.width))
-      const cssH = Math.max(1, Math.round(rect.height))
-      setCanvasSize(prev => (prev.w === cssW && prev.h === cssH) ? prev : { w: cssW, h: cssH })
-    }
-
-    syncSize()
-    const c = findPdfCanvas()
-    let ro: ResizeObserver | null = null
-    if (c && 'ResizeObserver' in window) {
-      ro = new ResizeObserver(syncSize)
-      ro.observe(c)
-    }
-    const onResize = () => syncSize()
-    window.addEventListener('resize', onResize)
-    const poll = window.setInterval(syncSize, 200)
-    const stopPoll = window.setTimeout(() => window.clearInterval(poll), 3000)
-
-    return () => {
-      ro?.disconnect()
-      window.removeEventListener('resize', onResize)
-      window.clearInterval(poll)
-      window.clearTimeout(stopPoll)
-    }
-  }, [pdfUrl, pageIndex])
-  // === END NEW ===
 
   // assignment/page ids for realtime
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
@@ -1112,7 +1073,7 @@ export default function StudentAssignment(){
           {label:'Erase',icon:'🧽', val:'eraser'},
           {label:'Obj',  icon:'🗑️', val:'eraserObject'},
         ].map(t=>(
-          <button key={t.val} onClick={()=>setTool(t.val as Tool)}
+          <button key={t.val} onClick={() => { setTool(t.val as Tool); setHandMode(false) }}
             style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
               background: tool===t.val ? '#111' : '#fff', color: tool===t.val ? '#fff' : '#111' }}
             title={t.label}>{t.icon}</button>
@@ -1135,14 +1096,14 @@ export default function StudentAssignment(){
         <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
           {CRAYOLA_24.map(c=>(
-            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex); setHandMode(false) }}
               style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
           ))}
         </div>
         <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
           {SKIN_TONES.map(c=>(
-            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex); setHandMode(false) }}
               style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
           ))}
         </div>
@@ -1195,23 +1156,22 @@ export default function StudentAssignment(){
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
-        {/* ⬇️ Wrapper no longer forces a fixed height; it just matches the PDF */}
-        <div ref={pdfHostRef} style={{ position:'relative' }}>
+        <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
           {/* PDF layer */}
           {hasTask && pdfUrl ? (
-            <div style={{ position:'relative', zIndex:0 }}>
+            <div style={{ position:'absolute', inset:0, zIndex:0 }}>
               <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
             </div>
           ) : (
             <div style={{
-              position:'relative', zIndex:0, display:'grid', placeItems:'center',
-              color:'#6b7280', fontWeight:700, fontSize:22, minHeight: 200
+              position:'absolute', inset:0, zIndex:0, display:'grid', placeItems:'center',
+              color:'#6b7280', fontWeight:700, fontSize:22
             }}>
               No hay tareas.
             </div>
           )}
 
-          {/* Draw layer — stretched over the PDF via absolute inset */}
+          {/* Draw layer */}
           <div style={{
               position:'absolute', inset:0, zIndex:10,
               pointerEvents: (hasTask && !handMode) ? 'auto' : 'none'
