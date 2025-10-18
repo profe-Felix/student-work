@@ -20,16 +20,15 @@ type TLPoint = { x:number; y:number; t:number }                 // ms
 type TLStroke = { color?:string; size?:number; tool?:string; pts: TLPoint[] }
 type Timeline = { strokes: TLStroke[]; t0:number; t1:number }   // ms
 
-// Single merged draw event (one tiny line segment)
 type DrawEvent = {
-  t: number // ms when this segment becomes visible (use end-point time)
+  t: number
   tool: 'pen'|'highlighter'|'eraser'|'other'
   color: string
   size: number
   x0: number; y0: number; x1: number; y1: number
 }
 
-/* ------------ tiny utils ------------ */
+/* ------------ utils ------------ */
 const N = (v:any) => {
   const x = typeof v === 'string' ? parseFloat(v) : v
   return Number.isFinite(x) ? x : 0
@@ -42,7 +41,7 @@ const toolOf = (s: any): 'pen'|'highlighter'|'eraser'|'other' => {
   return 'other'
 }
 
-/* ------------ parse strokes (supports {strokes:[{pts:[]}]}) ------------ */
+/* ------------ parse strokes ------------ */
 function asPoints(maybe:any): TimedPoint[] {
   if (!maybe) return []
   if (Array.isArray(maybe) && maybe.length && typeof maybe[0] === 'object' && 'x' in maybe[0]) {
@@ -101,51 +100,79 @@ function parseStrokes(payload:any): Parsed {
 }
 
 /* ------------ build a per-point timeline (ms) ------------ */
-function hasAnyTimestamps(strokes: Stroke[]): boolean {
-  for (const s of strokes) for (const p of (s.points||[])) if (typeof p.t === 'number') return true
-  return false
-}
+/** Core fix: assign global times to *no-t* strokes so their order is preserved across tools. */
 function buildPointTimeline(strokes: Stroke[]): Timeline {
   if (!strokes.length) return { strokes: [], t0:0, t1:0 }
 
-  if (hasAnyTimestamps(strokes)) {
-    // normalize so earliest point is t=0
-    let minT = Infinity; let maxT = 0
-    const out: TLStroke[] = strokes.map((s) => {
-      const pts: TLPoint[] = []
-      let last = -Infinity
-      for (const p of (s.points||[])) {
-        const tt = (typeof p.t === 'number') ? Math.max(0, p.t) : (last > 0 ? last + 10 : 0)
-        const t  = Math.max(tt, last <= 0 ? tt : last)
-        last = t
-        pts.push({ x:N(p.x), y:N(p.y), t })
-        if (t < minT) minT = t
-        if (t > maxT) maxT = t
-      }
-      return { color: s.color, size: s.size, tool: toolOf(s), pts }
-    })
-    if (!isFinite(minT)) minT = 0
-    const shift = minT
-    const shifted = out.map(s => ({ ...s, pts: s.pts.map(p => ({ ...p, t: p.t - shift })) }))
-    return { strokes: shifted, t0:0, t1: Math.max(0, maxT - shift) }
-  }
+  // Pass 1: check coverage of timestamps
+  const strokeHasAnyT = strokes.map(s => (s.points||[]).some(p => typeof p.t === 'number'))
 
-  // synthesize sequential times in original stroke order
-  const SEG = 10, GAP = 150
-  const out: TLStroke[] = []
-  let t = 0
-  for (const s of strokes) {
+  // We'll build TLStroke[] in input order, but compute a GLOBAL running time
+  const SEG = 10;     // 10ms between points
+  const GAP = 150;    // 150ms between strokes when we must synthesize
+  let globalClock = 0;
+  let minT = Infinity, maxT = 0
+
+  const out: TLStroke[] = strokes.map((s, idx) => {
     const pts = s.points || []
-    if (!pts.length) { t += GAP; continue }
-    const a: TLPoint[] = [{ x:N(pts[0].x), y:N(pts[0].y), t }]
-    for (let i = 1; i < pts.length; i++) { t += SEG; a.push({ x:N(pts[i].x), y:N(pts[i].y), t }) }
-    out.push({ color:s.color, size:s.size, tool: toolOf(s), pts: a })
-    t += GAP
-  }
-  return { strokes: out, t0:0, t1: Math.max(0, t) }
+    const tool = toolOf(s)
+    const color = s.color
+    const size = s.size
+
+    // If this stroke has *any* timestamps, we keep them and fill gaps relative to last-in-stroke.
+    // If it has *none*, we synthesize from the GLOBAL clock (this is the key change).
+    const hasT = strokeHasAnyT[idx]
+    const tlPts: TLPoint[] = []
+    let lastInStroke = hasT ? -Infinity : (globalClock += 0) // no bump yet
+
+    if (!pts.length) {
+      // empty stroke: if no pts, still advance global clock slightly to keep ordering
+      if (!hasT) globalClock += GAP
+      return { color, size, tool, pts: tlPts }
+    }
+
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i]
+      let t: number
+
+      if (hasT && typeof p.t === 'number') {
+        // keep recorded t, enforce non-decreasing within stroke
+        const tt = Math.max(0, p.t as number)
+        t = (lastInStroke <= 0) ? tt : Math.max(tt, lastInStroke)
+        lastInStroke = t
+      } else if (hasT && typeof p.t !== 'number') {
+        // stroke has some t's but this point doesn't: fill locally
+        t = (lastInStroke > 0) ? lastInStroke + SEG : (globalClock > 0 ? globalClock : 0)
+        lastInStroke = t
+      } else {
+        // stroke has NO timestamps at all -> synthesize from GLOBAL clock
+        if (i === 0) {
+          // ensure this stroke starts strictly after previous stroke
+          globalClock += GAP
+          t = globalClock
+        } else {
+          globalClock += SEG
+          t = globalClock
+        }
+        lastInStroke = t
+      }
+
+      tlPts.push({ x: N(p.x), y: N(p.y), t })
+      if (t < minT) minT = t
+      if (t > maxT) maxT = t
+    }
+
+    // if stroke had timestamps, don't modify globalClock based on it; if it didn't, we've already advanced it
+    return { color, size, tool, pts: tlPts }
+  })
+
+  if (!isFinite(minT)) minT = 0
+  const shift = minT
+  const shifted = out.map(s => ({ ...s, pts: s.pts.map(p => ({ ...p, t: p.t - shift })) }))
+  return { strokes: shifted, t0: 0, t1: Math.max(0, maxT - shift) }
 }
 
-/* ------------ merge to one chronological event stream ------------ */
+/* ------------ flatten to chronological events ------------ */
 function buildEventTimeline(tl: Timeline): { events: DrawEvent[]; t1:number } {
   const evs: DrawEvent[] = []
   for (const s of tl.strokes) {
@@ -156,7 +183,6 @@ function buildEventTimeline(tl: Timeline): { events: DrawEvent[]; t1:number } {
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1]
       const b = pts[i]
-      // Use the END timestamp for reveal order, so the segment appears when the user reaches its end
       evs.push({
         t: b.t,
         tool,
@@ -166,18 +192,18 @@ function buildEventTimeline(tl: Timeline): { events: DrawEvent[]; t1:number } {
       })
     }
   }
-  // Sort by time; if equal, draw ink first THEN eraser to avoid premature holes
+  // Tie-break: same t => ink first, eraser second
   evs.sort((A, B) => {
     if (A.t !== B.t) return A.t - B.t
     const ae = A.tool === 'eraser', be = B.tool === 'eraser'
-    if (ae && !be) return 1   // eraser after ink at the same time
+    if (ae && !be) return 1
     if (!ae && be) return -1
     return 0
   })
   return { events: evs, t1: tl.t1 }
 }
 
-/* ------------ source space inference ------------ */
+/* ------------ source dims ------------ */
 function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
   if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
   return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
@@ -211,7 +237,7 @@ export default function PlaybackDrawer({
   const [strokesPlaying, setStrokesPlaying] = useState(false)
 
   const [scrubbing, setScrubbing] = useState(false)
-  const [scrubMs, setScrubMs] = useState<number>(0) // start at 0 so erasing happens when it should
+  const [scrubMs, setScrubMs] = useState<number>(0) // start at 0
 
   /* ---- Size/DPR sync ---- */
   useEffect(() => {
@@ -293,7 +319,7 @@ export default function PlaybackDrawer({
     ctx.lineJoin = 'round'
   }
 
-  /* ---- Draw helpers (event-based, single pass in chrono order) ---- */
+  /* ---- Draw helpers ---- */
   function drawEventsUpTo(ms:number) {
     const ctx = ensureCtx()
     if (!ctx) return
@@ -317,44 +343,25 @@ export default function PlaybackDrawer({
     })
   }
 
-  // Find last index with event.t <= ms
-  function binarySearchLastLE(arr: DrawEvent[], ms:number): number {
-    let lo = 0, hi = arr.length - 1, ans = -1
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (arr[mid].t <= ms) { ans = mid; lo = mid + 1 } else { hi = mid - 1 }
-    }
-    return ans
-  }
-
-  function drawAllStatic() {
-    drawEventsUpTo(durationMs)
-  }
+  function drawAllStatic() { drawEventsUpTo(durationMs) }
 
   /* ---- Effects ---- */
   useEffect(() => { drawAllStatic() }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload, durationMs])
 
-  // Audio sync -> event timeline
   useEffect(() => {
     if (!syncToAudio) { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null } ; return }
     const el = audioRef.current; if (!el) return
-
-    const loop = () => {
-      drawEventsUpTo(el.currentTime * 1000)
-      rafRef.current = requestAnimationFrame(loop)
-    }
+    const loop = () => { drawEventsUpTo(el.currentTime * 1000); rafRef.current = requestAnimationFrame(loop) }
     const onPlay = () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); rafRef.current = requestAnimationFrame(loop) }
     const onPause = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }; drawEventsUpTo(el.currentTime * 1000) }
     const onSeeked = () => { drawEventsUpTo(el.currentTime * 1000) }
     const onTimeUpdate = () => { if (!rafRef.current) drawEventsUpTo(el.currentTime * 1000) }
     const onEnded = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }; drawAllStatic() }
-
     el.addEventListener('play', onPlay)
     el.addEventListener('pause', onPause)
     el.addEventListener('seeked', onSeeked)
     el.addEventListener('timeupdate', onTimeUpdate)
     el.addEventListener('ended', onEnded)
-
     drawEventsUpTo(el.currentTime * 1000)
     return () => {
       el.removeEventListener('play', onPlay)
@@ -366,7 +373,6 @@ export default function PlaybackDrawer({
     }
   }, [syncToAudio, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, durationMs])
 
-  // “Replay Strokes” uses same ms timeline
   useEffect(() => {
     if (!strokesPlaying) return
     const start = performance.now()
@@ -381,7 +387,6 @@ export default function PlaybackDrawer({
     return () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null } }
   }, [strokesPlaying, durationMs, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh])
 
-  // Keep scrub slider in sync when data changes
   useEffect(() => { setScrubMs(0) }, [durationMs])
 
   const hasAudio = !!audioUrl
@@ -393,22 +398,12 @@ export default function PlaybackDrawer({
         <div style={{ display:'flex', alignItems:'center', gap:12, padding:12, borderBottom:'1px solid #e5e7eb', background:'#f9fafb' }}>
           <strong style={{ fontSize:14 }}>Preview — {student || 'Student'}</strong>
           <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
-            <button
-              onClick={() => { setSyncToAudio(false); setScrubbing(false); setStrokesPlaying(p => !p) }}
-              style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
-              title="Replay without audio"
-            >
+            <button onClick={() => { setSyncToAudio(false); setScrubbing(false); setStrokesPlaying(p => !p) }} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}>
               {strokesPlaying ? 'Stop Replay' : 'Replay Strokes'}
             </button>
-            <button
-              onClick={() => { setStrokesPlaying(false); setScrubbing(false); setSyncToAudio(s => !s) }}
-              disabled={!hasAudio}
-              style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: hasAudio ? '#fff' : '#f3f4f6' }}
-              title={hasAudio ? 'Tie ink to audio playback' : 'No audio available'}
-            >
+            <button onClick={() => { setStrokesPlaying(false); setScrubbing(false); setSyncToAudio(s => !s) }} disabled={!hasAudio} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: hasAudio ? '#fff' : '#f3f4f6' }}>
               {syncToAudio ? 'Sync: ON' : 'Sync: OFF'}
             </button>
-            {/* Scrub toggle (start at 0 for correct action order) */}
             <button
               onClick={() => {
                 setStrokesPlaying(false)
@@ -419,7 +414,7 @@ export default function PlaybackDrawer({
                 drawEventsUpTo(target)
               }}
               style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: scrubbing ? '#fee2e2' : '#fff' }}
-              title="Scrub through the timeline (chronological, erases included)"
+              title="Scrub (chronological; erases included)"
             >
               {scrubbing ? 'Exit Scrub' : 'Scrub'}
             </button>
@@ -435,7 +430,7 @@ export default function PlaybackDrawer({
           <span style={{ marginLeft:'auto', fontSize:12, color:'#6b7280' }}>Page {pageIndex + 1}</span>
         </div>
 
-        {/* Content: PDF underlay + overlay */}
+        {/* Content */}
         <div style={{ flex:1, minHeight:0, overflow:'auto', background:'#fafafa' }}>
           <div ref={pdfHostRef} style={{ position:'relative', width:`${overlay.cssW}px`, margin:'12px auto' }}>
             <div style={{ position:'relative' }}>
@@ -452,10 +447,7 @@ export default function PlaybackDrawer({
                   })
                 }}
               />
-              <canvas
-                ref={overlayRef}
-                style={{ position:'absolute', inset:0, width:`${overlay.cssW}px`, height:`${overlay.cssH}px`, pointerEvents:'none' }}
-              />
+              <canvas ref={overlayRef} style={{ position:'absolute', inset:0, width:`${overlay.cssW}px`, height:`${overlay.cssH}px`, pointerEvents:'none' }} />
             </div>
           </div>
         </div>
@@ -463,9 +455,7 @@ export default function PlaybackDrawer({
         {/* Scrubber */}
         <div style={{ padding: 12, borderTop: '1px solid #e5e7eb', background: '#fff' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10, opacity: scrubbing ? 1 : 0.6 }}>
-            <span style={{ width: 40, textAlign:'right', fontSize:12, color:'#6b7280' }}>
-              {Math.max(0, Math.round((scrubMs) / 1000))}s
-            </span>
+            <span style={{ width: 40, textAlign:'right', fontSize:12, color:'#6b7280' }}>{Math.max(0, Math.round((scrubMs) / 1000))}s</span>
             <input
               type="range"
               min={0}
@@ -480,9 +470,7 @@ export default function PlaybackDrawer({
               style={{ flex:1 }}
               disabled={!scrubbing || durationMs <= 0}
             />
-            <span style={{ width: 40, fontSize:12, color:'#6b7280' }}>
-              {Math.max(0, Math.round(durationMs / 1000))}s
-            </span>
+            <span style={{ width: 40, fontSize:12, color:'#6b7280' }}>{Math.max(0, Math.round(durationMs / 1000))}s</span>
           </div>
           {!scrubbing && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
