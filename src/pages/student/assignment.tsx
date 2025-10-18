@@ -24,6 +24,7 @@ import {
   publishInk
 } from '../../lib/realtime'
 import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient' // <-- SW close-save (kept)
+import type { RealtimeChannel } from '@supabase/supabase-js' // ✅ ADD
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
@@ -315,7 +316,7 @@ export default function StudentAssignment(){
   const justSavedAt = useRef<number>(0)
 
   // ink subscription handle
-  const inkSubRef = useRef<{ unsubscribe?: () => void } | null>(null)
+  const inkSubRef = useRef<RealtimeChannel | null>(null) // ✅ TYPE AS CHANNEL
 
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
@@ -924,7 +925,7 @@ export default function StudentAssignment(){
     let cleanupArtifacts: (() => void) | null = null
     let pollId: number | null = null
     let mounted = true
-    let inkSub: { unsubscribe?: () => void } | null = null
+    let inkSub: RealtimeChannel | null = null // ✅ TYPE AS CHANNEL
 
     ;(async () => {
       const ids = await resolveIds()
@@ -1203,28 +1204,27 @@ export default function StudentAssignment(){
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
               selfId={studentId}
-onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
-  const ids = currIds.current
-  if (!ids.assignment_id || !ids.page_id) return
+              onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
+                const ids = currIds.current
+                if (!ids.assignment_id || !ids.page_id) return
 
-  const payload = { ...u, studentId }
+                const payload = { ...u, studentId }
 
-  try {
-    // ✅ Use the existing subscribed channel if available (zero extra subscribe traffic)
-    if (inkSubRef.current) {
-      await publishInk(inkSubRef.current, payload)
-    } else {
-      // Fallback only during very early boot (should be rare)
-      await publishInk(
-        { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-        payload
-      )
-    }
-  } catch (e) {
-    console.warn('publishInk failed', e)
-  }
-}}
-
+                try {
+                  // ✅ Use the existing subscribed channel if available (zero extra subscribe traffic)
+                  if (inkSubRef.current) {
+                    await publishInk(inkSubRef.current, payload)
+                  } else {
+                    // Fallback only during very early boot (should be rare)
+                    await publishInk(
+                      { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+                      payload
+                    )
+                  }
+                } catch (e) {
+                  console.warn('publishInk failed', e)
+                }
+              }}
             />
           </div>
 
