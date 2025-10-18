@@ -3,7 +3,7 @@ import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
-import DrawCanvas, { DrawCanvasHandle, StrokesPayload } from '../../components/DrawCanvas'
+import DrawCanvas, { DrawCanvasHandle, StrokesPayload, type Stroke } from '../../components/DrawCanvas'
 import type { RemoteStrokeUpdate } from '../../components/DrawCanvas'
 import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
@@ -71,14 +71,24 @@ const submittedKey  = (student:string, assignmentUid:string, pageUid:string)=> `
 /** Normalize any payload to {strokes:[{color,size,tool,pts:[{x,y,t?}]}]} */
 function normalizeStrokes(data: unknown): StrokesPayload {
   const safePts = (arr: any[] | undefined) =>
-    Array.isArray(arr) ? arr
-      .filter(p => p && typeof p === 'object' && Number.isFinite((p as any).x) && Number.isFinite((p as any).y))
-      .map(p => ({
-        x: Number((p as any).x),
-        y: Number((p as any).y),
-        t: (typeof (p as any).t === 'number') ? Number((p as any).t) : undefined
-      }))
-    : []
+    Array.isArray(arr)
+      ? arr
+          .filter(
+            (p) =>
+              p &&
+              typeof p === 'object' &&
+              Number.isFinite((p as any).x) &&
+              Number.isFinite((p as any).y)
+          )
+          .map((p) => {
+            const tVal = (p as any).t
+            return {
+              x: Number((p as any).x),
+              y: Number((p as any).y),
+              t: typeof tVal === 'number' ? Number(tVal) : undefined,
+            }
+          })
+      : []
 
   try { if (typeof data === 'string') data = JSON.parse(data) } catch {}
   if (!data || typeof data !== 'object') return { strokes: [] }
@@ -86,17 +96,24 @@ function normalizeStrokes(data: unknown): StrokesPayload {
   const raw = (data as any).strokes
   if (!Array.isArray(raw)) return { strokes: [] }
 
-  const strokes = raw.map((s: any) => {
-    const tool = (s?.tool === 'highlighter') ? 'highlighter' :
-                 (s?.tool === 'eraser' || s?.tool === 'eraserObject' || s?.tool === 'erase') ? 'eraser' : 'pen'
-    const pts = Array.isArray(s?.pts) ? s.pts : (Array.isArray(s?.points) ? s.points : [])
-    return {
-      color: s?.color,
-      size: Number.isFinite(s?.size) ? s.size : 4,
-      tool,
-      pts: safePts(pts)
-    }
-  }).filter(Boolean)
+  const strokes: Stroke[] = raw
+    .map((s: any): Stroke | null => {
+      const tool: Stroke['tool'] =
+        s?.tool === 'highlighter'
+          ? 'highlighter'
+          : s?.tool === 'eraser' || s?.tool === 'eraserObject' || s?.tool === 'erase'
+          ? 'eraser'
+          : 'pen'
+
+      const ptsSrc = Array.isArray(s?.pts) ? s.pts : Array.isArray(s?.points) ? s.points : []
+      const pts = safePts(ptsSrc)
+
+      const size = Number.isFinite(s?.size) ? Number(s.size) : 4
+      const color = typeof s?.color === 'string' ? (s.color as string) : '#000000'
+
+      return { color, size, tool, pts }
+    })
+    .filter((x): x is Stroke => !!x)
 
   return { strokes }
 }
