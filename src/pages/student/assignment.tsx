@@ -292,6 +292,17 @@ export default function StudentAssignment(){
   const audioRef = useRef<AudioRecorderHandle>(null)
   const audioBlob = useRef<Blob|null>(null)
 
+  // 🔧 Track the real PDF canvas element and keep overlay in sync with its CSS size
+  const pdfCanvasEl = useRef<HTMLCanvasElement | null>(null)
+  const syncFromPdfCanvas = () => {
+    const el = pdfCanvasEl.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const cssW = Math.max(1, Math.round(rect.width))
+    const cssH = Math.max(1, Math.round(rect.height))
+    setCanvasSize(prev => (prev.w === cssW && prev.h === cssH) ? prev : { w: cssW, h: cssH })
+  }
+
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
   const showToast = (msg:string, kind:'ok'|'err'='ok', ms=1500)=>{
@@ -301,13 +312,36 @@ export default function StudentAssignment(){
   }
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
+  // When PDF is ready, remember its canvas and sync size immediately
   const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement)=>{
-    try {
-      const cssW = Math.round(parseFloat(getComputedStyle(canvas).width))
-      const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
-      setCanvasSize({ w: cssW, h: cssH })
-    } catch {/* ignore */}
+    pdfCanvasEl.current = canvas
+    syncFromPdfCanvas()
   }
+
+  // Keep overlay size synced to PDF canvas size changes (and window resizes)
+  useEffect(() => {
+    const el = pdfCanvasEl.current
+    if (!el) return
+
+    let ro: ResizeObserver | null = null
+    if ('ResizeObserver' in window) {
+      ro = new ResizeObserver(() => syncFromPdfCanvas())
+      ro.observe(el)
+    }
+    const onWinResize = () => syncFromPdfCanvas()
+    window.addEventListener('resize', onWinResize)
+
+    // short polling during initial layout settle
+    const poll = window.setInterval(syncFromPdfCanvas, 200)
+    const stopPoll = window.setTimeout(() => window.clearInterval(poll), 3000)
+
+    return () => {
+      if (ro) ro.disconnect()
+      window.removeEventListener('resize', onWinResize)
+      window.clearInterval(poll)
+      window.clearTimeout(stopPoll)
+    }
+  }, [pdfUrl, pageIndex])
 
   // assignment/page ids for realtime
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
