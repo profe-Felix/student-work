@@ -1,11 +1,28 @@
 // src/lib/db.ts
 import { createClient } from '@supabase/supabase-js'
 
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL!,
-  import.meta.env.VITE_SUPABASE_ANON_KEY!,
-  { auth: { persistSession: false } }
-)
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL!
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY!
+
+// HMR-safe singleton + unique storage key to avoid "Multiple GoTrueClient instances"
+function makeClient() {
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      storageKey: 'sb-student-work', // unique to this app
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+    },
+    realtime: {
+      // Gentle throttle so we don't burst during joins
+      params: { eventsPerSecond: 10 },
+    },
+  })
+}
+
+// Use globalThis so it's stable across Vite HMR in browser
+export const supabase =
+  (globalThis as any).__sb_client__ ?? ((globalThis as any).__sb_client__ = makeClient())
 
 // === Types (teacher page imports some of these) ===
 export type AssignmentRow = { id: string; title: string }
@@ -68,9 +85,9 @@ export async function saveStrokes(submission_id: string, strokes_json: any) {
   if (error) throw error
 }
 
-// ===== CHANGED: audio bucket hard-coded to "student-audio" + signed URL support =====
+// ===== audio bucket hard-coded to "student-audio" + signed URL support =====
 export async function saveAudio(submission_id: string, blob: Blob) {
-  const bucket = 'student-audio' // <— your bucket
+  const bucket = 'student-audio' // your bucket
   const key = `${submission_id}/${Date.now()}.webm`
 
   const { error: upErr } = await supabase.storage.from(bucket).upload(key, blob, {
@@ -199,5 +216,3 @@ export async function fetchClassState(classCode: string) {
       }
     | null
 }
-
-
