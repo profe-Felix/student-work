@@ -325,11 +325,9 @@ export default function StudentAssignment(){
       const r = el.getBoundingClientRect()
       const w = Math.max(1, Math.round(r.width))
       const h = Math.max(1, Math.round(r.height))
-      // Avoid flicker on transient zeros, and only set when changed
       setCanvasSize(prev => (prev.w === w && prev.h === h) ? prev : { w, h })
     }
 
-    // Kick once and then observe
     sync()
     let ro: ResizeObserver | null = null
     if ('ResizeObserver' in window) {
@@ -337,7 +335,7 @@ export default function StudentAssignment(){
       ro.observe(el)
     }
 
-    // Fallback: quick poll while PDF settles
+    // Fallback: quick poll while PDF settles after page changes/zoom
     const pollId = window.setInterval(sync, 150)
     const stopPollId = window.setTimeout(() => window.clearInterval(pollId), 3000)
 
@@ -449,7 +447,6 @@ export default function StudentAssignment(){
     const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      // Best effort: use cache quickly, then fetch from server to be sure
       snapToTeacherIfAvailable(nextAssignmentId)
       ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
@@ -688,8 +685,8 @@ export default function StudentAssignment(){
     let id: number | null = null
     const tick = async ()=>{
       try {
-        const data = drawRef.current?.getStrokes()
-        if (!data) return
+        const raw = drawRef.current?.getStrokes() || { strokes: [] }
+        const data = normalizeStrokes(raw)
         const h = await hashStrokes(data)
         if (h !== lastLocalHash.current) {
           localDirty.current = true
@@ -712,8 +709,8 @@ export default function StudentAssignment(){
     const tick = ()=>{
       try {
         if (!running) return
-        const data = drawRef.current?.getStrokes()
-        if (!data) return
+        const raw = drawRef.current?.getStrokes() || { strokes: [] }
+        const data = normalizeStrokes(raw)
         const s = JSON.stringify(data)
         if (s !== lastSerialized) {
           const { assignmentUid, pageUid } = getCacheIds()
@@ -729,11 +726,10 @@ export default function StudentAssignment(){
     start()
     const onBeforeUnload = ()=>{
       try {
-        const data = drawRef.current?.getStrokes()
-        if (data) {
-          const { assignmentUid, pageUid } = getCacheIds()
-          saveDraft(studentId, assignmentUid, pageUid, data)
-        }
+        const raw = drawRef.current?.getStrokes() || { strokes: [] }
+        const data = normalizeStrokes(raw)
+        const { assignmentUid, pageUid } = getCacheIds()
+        saveDraft(studentId, assignmentUid, pageUid, data)
       } catch {}
     }
     window.addEventListener('beforeunload', onBeforeUnload)
