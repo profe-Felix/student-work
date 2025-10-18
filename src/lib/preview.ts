@@ -1,12 +1,21 @@
 // src/lib/preview.ts
-import { supabase } from './db';
-import { getAudioUrl } from './db';
+import { supabase, getAudioUrl } from './db'
 
 export type LatestFullForStudent = {
-  submissionId: string;
-  strokes: any | null;
-  audioUrl: string | null;
-} | null;
+  submissionId: string
+  strokes: any | null
+  audioUrl: string | null
+} | null
+
+// Minimal shapes for what we read from Supabase
+type SubmissionLite = { id: string; created_at?: string | null }
+type ArtifactLite = {
+  id: string
+  kind: string
+  strokes_json?: unknown
+  storage_path?: string | null
+  created_at?: string | null
+}
 
 /**
  * Fetch the latest submission + artifacts (strokes + audio) for a given student/page.
@@ -26,39 +35,45 @@ export async function fetchLatestFullForStudent(
     .eq('page_id', pageId)
     .eq('student_id', studentId)
     .order('created_at', { ascending: false })
-    .limit(1);
+    .limit(1)
 
   if (subErr) {
-    console.error('[fetchLatestFullForStudent] submissions error:', subErr);
-    throw subErr;
+    console.error('[fetchLatestFullForStudent] submissions error:', subErr)
+    throw subErr
   }
-  const submission = submissions?.[0];
-  if (!submission) return null;
+
+  const submission = (submissions as SubmissionLite[] | null | undefined)?.[0]
+  if (!submission) return null
 
   // 2) Artifacts (strokes + audio)
   const { data: artifacts, error: artErr } = await supabase
     .from('artifacts')
     .select('id, kind, strokes_json, storage_path, created_at')
     .eq('submission_id', submission.id)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
 
   if (artErr) {
-    console.error('[fetchLatestFullForStudent] artifacts error:', artErr);
-    throw artErr;
+    console.error('[fetchLatestFullForStudent] artifacts error:', artErr)
+    throw artErr
   }
 
-  const strokes = artifacts?.find(a => a.kind === 'strokes')?.strokes_json ?? null;
-  const audioArtifact = artifacts?.find(a => a.kind === 'audio') ?? null;
+  const arts = (artifacts as ArtifactLite[] | null | undefined) ?? []
 
-  let audioUrl: string | null = null;
+  const strokes =
+    arts.find((a: ArtifactLite) => a.kind === 'strokes')?.strokes_json ?? null
+
+  const audioArtifact =
+    arts.find((a: ArtifactLite) => a.kind === 'audio') ?? null
+
+  let audioUrl: string | null = null
   if (audioArtifact?.storage_path) {
     try {
-      audioUrl = await getAudioUrl(audioArtifact.storage_path);
+      audioUrl = await getAudioUrl(audioArtifact.storage_path)
     } catch (e) {
-      console.warn('[fetchLatestFullForStudent] getAudioUrl failed:', e);
-      audioUrl = null;
+      console.warn('[fetchLatestFullForStudent] getAudioUrl failed:', e)
+      audioUrl = null
     }
   }
 
-  return { submissionId: submission.id, strokes, audioUrl };
+  return { submissionId: submission.id, strokes, audioUrl }
 }
