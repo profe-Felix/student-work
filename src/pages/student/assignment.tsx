@@ -1203,20 +1203,28 @@ export default function StudentAssignment(){
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
               selfId={studentId}
-              onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
-                const ids = currIds.current
-                if (!ids.assignment_id || !ids.page_id) return
-                // include studentId so only that student's page syncs
-                const payload = { ...u, studentId }
-                try {
-                  await publishInk(
-                    { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-                    payload
-                  )
-                } catch (e) {
-                  console.warn('publishInk failed', e)
-                }
-              }}
+onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
+  const ids = currIds.current
+  if (!ids.assignment_id || !ids.page_id) return
+
+  const payload = { ...u, studentId }
+
+  try {
+    // ✅ Use the existing subscribed channel if available (zero extra subscribe traffic)
+    if (inkSubRef.current) {
+      await publishInk(inkSubRef.current, payload)
+    } else {
+      // Fallback only during very early boot (should be rare)
+      await publishInk(
+        { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+        payload
+      )
+    }
+  } catch (e) {
+    console.warn('publishInk failed', e)
+  }
+}}
+
             />
           </div>
 
