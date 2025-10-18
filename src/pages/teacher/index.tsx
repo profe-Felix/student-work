@@ -22,6 +22,9 @@ import {
 } from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer'
 
+// 🔎 realtime meter
+import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
+
 type LatestCell = {
   submission_id: string
   hasStrokes: boolean
@@ -29,6 +32,9 @@ type LatestCell = {
 } | null
 
 export default function TeacherDashboard() {
+  // enable RT meter once per page load
+  useEffect(() => { enableRealtimeMeter() }, [])
+
   // --- class code from URL (?class=A); default 'A'
   const location = useLocation()
   const params = new URLSearchParams(location.search)
@@ -498,6 +504,18 @@ export default function TeacherDashboard() {
           title="Force refresh"
         >
           Refresh
+        </button>
+
+        {/* 🔎 NEW: Show realtime usage table in console */}
+        <button
+          onClick={() => {
+            const rows = logRealtimeUsage(`RT usage — class ${classCode}`)
+            alert(`Realtime events counted: ${rows.length}. Open the console to view the table.`)
+          }}
+          style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
+          title="Print a per-channel/event send/recv table to the console"
+        >
+          Show RT usage
         </button>
 
         {/* NEW: Force submit button (all students on current assignment/page) */}
