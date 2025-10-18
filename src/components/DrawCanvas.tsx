@@ -124,6 +124,10 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ctxRef    = useRef<CanvasRenderingContext2D|null>(null)
 
+  // current CSS size + DPR used by the context (kept in refs so redraw doesn't rely on window)
+  const cssSizeRef = useRef<{w:number; h:number}>({ w: Math.max(1, Math.round(width)), h: Math.max(1, Math.round(height)) })
+  const dprRef     = useRef<number>(typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1)
+
   // timeline base so all points have small, relative ms
   const sessionStartRef = useRef<number | null>(null)
   function stampNow(): number {
@@ -155,6 +159,9 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     const cssH = Math.max(1, Math.round(rect.height))
     const dpr  = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1
 
+    cssSizeRef.current = { w: cssW, h: cssH }
+    dprRef.current = dpr
+
     // bitmap size
     const bw = Math.max(1, Math.round(cssW * dpr))
     const bh = Math.max(1, Math.round(cssH * dpr))
@@ -162,7 +169,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     if (c.width !== bw) c.width = bw
     if (c.height !== bh) c.height = bh
 
-    // style should reflect CSS size (avoid unexpected stretching)
+    // style reflects CSS size (avoid unexpected stretching)
     c.style.width  = `${cssW}px`
     c.style.height = `${cssH}px`
 
@@ -178,9 +185,9 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const redraw = ()=>{
     const ctx = ctxRef.current
     if (!ctx) return
-    const c = ctx.canvas
+    const { w, h } = cssSizeRef.current
     // clear in CSS space (context already scaled)
-    ctx.clearRect(0,0, c.width / (window.devicePixelRatio || 1), c.height / (window.devicePixelRatio || 1))
+    ctx.clearRect(0, 0, w, h)
 
     // Order: finished remote, finished local, active remote, active local
     for (const s of remoteFinished.current) drawStroke(ctx, s)
@@ -206,7 +213,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     window.addEventListener('resize', onWinResize)
 
     // DPR change (pinch-zoom on some devices) → listen via media query
-    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    const mq = window.matchMedia?.(`(resolution: ${window.devicePixelRatio}dppx)`)
     const onDprChange = ()=>{ setupCanvas(); redraw() }
     if (mq && typeof mq.addEventListener === 'function') {
       mq.addEventListener('change', onDprChange)
@@ -234,7 +241,8 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       c.style.touchAction   = 'auto'
     } else {
       c.style.pointerEvents = 'auto'
-      c.style.touchAction   = 'pan-y pinch-zoom'
+      // important: prevent scroll from stealing single-touch draws
+      c.style.touchAction   = 'none'
     }
   }, [mode])
 
@@ -406,8 +414,9 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       // width/height attributes are controlled by setupCanvas() using CSS rect × DPR
       style={{
         position:'absolute', inset:0, zIndex:10,
-        display:'block', width:'100%', height:'100%',
-        touchAction:'pan-y pinch-zoom', background:'transparent'
+        display:'block',
+        // IMPORTANT: do NOT set width/height here; setupCanvas writes exact CSS px.
+        background:'transparent'
       }}
     />
   )
