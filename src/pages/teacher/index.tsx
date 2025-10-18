@@ -31,6 +31,29 @@ type LatestCell = {
   audioUrl?: string
 } | null
 
+// ──────────────────────────────────────────────────────────────────────────────
+// ONE-TIME SAFETY: normalize stroke payloads to { strokes:[{ pts:[{x,y,t?}] }] }
+// Accepts strings or objects; prefers s.pts, falls back to s.points.
+// ──────────────────────────────────────────────────────────────────────────────
+function normalizeStrokeShape(payload: any) {
+  try {
+    if (typeof payload === 'string') payload = JSON.parse(payload)
+  } catch {
+    // malformed JSON → return empty structure
+    return { strokes: [] }
+  }
+  if (!payload || !Array.isArray(payload.strokes)) return { strokes: [] }
+  return {
+    strokes: payload.strokes.map((s: any) => ({
+      color: s?.color,
+      size: s?.size,
+      tool: s?.tool,
+      // prefer pts, fall back to points
+      pts: Array.isArray(s?.pts) ? s.pts : (Array.isArray(s?.points) ? s.points : [])
+    }))
+  }
+}
+
 export default function TeacherDashboard() {
   // enable RT meter once per page load
   useEffect(() => { enableRealtimeMeter() }, [])
@@ -334,6 +357,7 @@ export default function TeacherDashboard() {
 
       setPreview({
         studentId: sid,
+        // keep raw for now; we'll normalize right before rendering the drawer
         strokes: strokesArt?.strokes_json ?? null,
         audioUrl
       })
@@ -613,7 +637,8 @@ export default function TeacherDashboard() {
           student={preview?.studentId ?? ''}
           pdfUrl={previewPdfUrl}
           pageIndex={currentPage?.page_index ?? 0}
-          strokesPayload={(preview?.strokes as any) ?? {}}
+          // 👇 Normalize here so PlaybackDrawer always gets {strokes:[{pts:...}]}
+          strokesPayload={preview?.strokes ? normalizeStrokeShape(preview.strokes) : { strokes: [] }}
           audioUrl={preview?.audioUrl}
         />
       )}
