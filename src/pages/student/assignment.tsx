@@ -24,13 +24,31 @@ import {
   publishInk
 } from '../../lib/realtime'
 import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient' // <-- SW close-save (kept)
-import type { RealtimeChannel } from '@supabase/supabase-js' // ✅ typed channel
-// 🔎 realtime meter
-import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
 import { objectErase, softErase } from '../../lib/erase'
+
+/** ---- New: lightweight ops model to capture draw + erase timeline ---- */
+type DrawOp = {
+  type: 'draw'
+  id: string
+  color: string
+  size: number
+  tool: 'pen' | 'highlighter'
+  pts: Pt[]
+  t0: number
+  t1: number
+}
+type EraseOp = {
+  type: 'erase'
+  mode: 'soft' | 'object'
+  path: Pt[]
+  radius: number
+  t: number
+}
+type StrokeOp = DrawOp | EraseOp
 
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily' // legacy purge helper
@@ -74,14 +92,16 @@ const draftKey      = (student:string, assignmentUid:string, pageUid:string)=> `
 const lastHashKey   = (student:string, assignmentUid:string, pageUid:string)=> `lastHash:${student}:${assignmentUid}:${pageUid}`
 const submittedKey  = (student:string, assignmentUid:string, pageUid:string)=> `submitted:${student}:${assignmentUid}:${pageUid}`
 
-function normalizeStrokes(data: unknown): StrokesPayload {
+function normalizeStrokes(data: unknown): StrokesPayload & { ops?: StrokeOp[] } {
   if (!data || typeof data !== 'object') return { strokes: [] }
-  const arr = Array.isArray((data as any).strokes) ? (data as any).strokes : []
-  return { strokes: arr }
+  const obj = data as any
+  const arr = Array.isArray(obj.strokes) ? obj.strokes : []
+  const ops = Array.isArray(obj.ops) ? (obj.ops as StrokeOp[]) : undefined
+  return { strokes: arr, ...(ops ? { ops } : {}) }
 }
 
-function saveDraft(student:string, assignmentUid:string, pageUid:string, strokes:any){
-  try { localStorage.setItem(draftKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function saveDraft(student:string, assignmentUid:string, pageUid:string, payload:any){
+  try { localStorage.setItem(draftKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), ...payload })) } catch {}
 }
 function loadDraft(student:string, assignmentUid:string, pageUid:string){
   try { const raw = localStorage.getItem(draftKey(student, assignmentUid, pageUid)); return raw ? JSON.parse(raw) : null } catch { return null }
@@ -89,8 +109,8 @@ function loadDraft(student:string, assignmentUid:string, pageUid:string){
 function clearDraft(student:string, assignmentUid:string, pageUid:string){
   try { localStorage.removeItem(draftKey(student, assignmentUid, pageUid)) } catch {}
 }
-function saveSubmittedCache(student:string, assignmentUid:string, pageUid:string, strokes:any){
-  try { localStorage.setItem(submittedKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function saveSubmittedCache(student:string, assignmentUid:string, pageUid:string, payload:any){
+  try { localStorage.setItem(submittedKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), ...payload })) } catch {}
 }
 function loadSubmittedCache(student:string, assignmentUid:string, pageUid:string){
   try { const raw = localStorage.getItem(submittedKey(student, assignmentUid, pageUid)); return raw ? JSON.parse(raw) : null } catch { return null }
@@ -186,9 +206,6 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
 }
 
 export default function StudentAssignment(){
-  // 🔎 enable realtime meter once
-  useEffect(() => { enableRealtimeMeter() }, [])
-
   const location = useLocation()
   const nav = useNavigate()
 
@@ -253,6 +270,13 @@ export default function StudentAssignment(){
   const drawRef = useRef<DrawCanvasHandle>(null)
   const audioRef = useRef<AudioRecorderHandle>(null)
   const audioBlob = useRef<Blob|null>(null)
+
+  // ---- New: ops accumulation ----
+  const opsRef = useRef<StrokeOp[]>([])
+  const inFlightStrokeRef = useRef<Record<
+    string,
+    { color:string; size:number; tool:'pen'|'highlighter'; t0:number; pts:Pt[] }
+  >>({})
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
@@ -372,6 +396,9 @@ export default function StudentAssignment(){
       snapToTeacherIfAvailable(nextAssignmentId)
       ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
+      // reset op history for new assignment until we resolve the page
+      opsRef.current = []
+      inFlightStrokeRef.current = {}
     })
     return off
   }, [classCode])
@@ -541,6 +568,10 @@ export default function StudentAssignment(){
     ;(async ()=>{
       const ids = await resolveIds()
 
+      // fresh page → reset local history accumulators
+      opsRef.current = []
+      inFlightStrokeRef.current = {}
+
       if (!ids) {
         const { assignmentUid, pageUid } = getCacheIds()
         try {
@@ -558,10 +589,11 @@ export default function StudentAssignment(){
 
       try{
         const draft = loadDraft(studentId, assignmentUid, pageUid)
-        if (draft?.strokes) {
-          const norm = normalizeStrokes(draft.strokes)
+        if (draft) {
+          const norm = normalizeStrokes(draft)
           try { drawRef.current?.loadStrokes(norm) } catch {}
           try { lastLocalHash.current = await hashStrokes(norm) } catch {}
+          if (Array.isArray(norm.ops)) opsRef.current = norm.ops.slice()
         } else {
           lastLocalHash.current = ''
         }
@@ -577,13 +609,15 @@ export default function StudentAssignment(){
                 drawRef.current?.loadStrokes(norm)
                 lastAppliedServerHash.current = h
                 lastLocalHash.current = h
+                if (Array.isArray((norm as any).ops)) opsRef.current = (norm as any).ops.slice()
               }
             } else if (!draft?.strokes) {
               const cached = loadSubmittedCache(studentId, assignmentUid, pageUid)
-              if (cached?.strokes) {
-                const normC = normalizeStrokes(cached.strokes)
+              if (cached) {
+                const normC = normalizeStrokes(cached)
                 drawRef.current?.loadStrokes(normC)
                 lastLocalHash.current = await hashStrokes(normC)
+                if (Array.isArray(normC.ops)) opsRef.current = normC.ops.slice()
               }
             }
           }
@@ -592,9 +626,10 @@ export default function StudentAssignment(){
         console.error('init load failed', e)
         const { assignmentUid, pageUid } = getCacheIds(ids?.page_id)
         const cached = loadSubmittedCache(studentId, assignmentUid, pageUid)
-        if (cached?.strokes) {
-          const norm = normalizeStrokes(cached.strokes)
+        if (cached) {
+          const norm = normalizeStrokes(cached)
           try { drawRef.current?.loadStrokes(norm); lastLocalHash.current = await hashStrokes(norm) } catch {}
+          if (Array.isArray(norm.ops)) opsRef.current = norm.ops.slice()
         }
       }
     })()
@@ -609,13 +644,15 @@ export default function StudentAssignment(){
       try {
         const data = drawRef.current?.getStrokes()
         if (!data) return
-        const h = await hashStrokes(data)
+        // include ops in the hashed payload so erase history is tracked
+        const payload = { ...data, ops: opsRef.current }
+        const h = await hashStrokes(payload)
         if (h !== lastLocalHash.current) {
           localDirty.current = true
           dirtySince.current = Date.now()
           lastLocalHash.current = h
           const { assignmentUid, pageUid } = getCacheIds()
-          saveDraft(studentId, assignmentUid, pageUid, data)
+          saveDraft(studentId, assignmentUid, pageUid, payload)
         }
       } catch {}
     }
@@ -633,10 +670,11 @@ export default function StudentAssignment(){
         if (!running) return
         const data = drawRef.current?.getStrokes()
         if (!data) return
-        const s = JSON.stringify(data)
+        const payload = { ...data, ops: opsRef.current }
+        const s = JSON.stringify(payload)
         if (s !== lastSerialized) {
           const { assignmentUid, pageUid } = getCacheIds()
-          saveDraft(studentId, assignmentUid, pageUid, data)
+          saveDraft(studentId, assignmentUid, pageUid, payload)
           lastSerialized = s
         }
       } catch {}
@@ -651,7 +689,7 @@ export default function StudentAssignment(){
         const data = drawRef.current?.getStrokes()
         if (data) {
           const { assignmentUid, pageUid } = getCacheIds()
-          saveDraft(studentId, assignmentUid, pageUid, data)
+          saveDraft(studentId, assignmentUid, pageUid, { ...data, ops: opsRef.current })
         }
       } catch {}
     }
@@ -659,7 +697,6 @@ export default function StudentAssignment(){
     return ()=>{
       stop()
       document.removeEventListener('visibilitychange', onVis)
-      // FIX: correct function name here
       window.removeEventListener('beforeunload', onBeforeUnload as any)
     }
   }, [pageIndex, studentId])
@@ -677,7 +714,8 @@ export default function StudentAssignment(){
       const hasAudio = !!audioBlob.current
       if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
 
-      const encHash = await hashStrokes(strokes)
+      const payloadForHash = { ...strokes, ops: opsRef.current }
+      const encHash = await hashStrokes(payloadForHash)
       const ids = currIds.current
       if (!ids.assignment_id || !ids.page_id) { setSaving(false); submitInFlight.current=false; return }
 
@@ -689,11 +727,11 @@ export default function StudentAssignment(){
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       if (hasInk) {
-        // Save strokes with the canvas size so previews can scale correctly
-        const strokesWithCanvas = { ...strokes, w: canvasSize.w, h: canvasSize.h }
+        // Save strokes with the canvas size and ops so playback can reconstruct
+        const strokesWithCanvas = { ...strokes, w: canvasSize.w, h: canvasSize.h, ops: opsRef.current }
         await saveStrokes(submission_id, strokesWithCanvas)
         localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentUid, pageUid, strokes)
+        saveSubmittedCache(studentId, assignmentUid, pageUid, strokesWithCanvas)
         lastAppliedServerHash.current = encHash
         lastLocalHash.current = encHash
         localDirty.current = false
@@ -732,7 +770,7 @@ export default function StudentAssignment(){
     } catch {
       // fallback to local draft so nothing is lost if network hiccups
       const { assignmentUid, pageUid } = getCacheIds()
-      try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
+      try { saveDraft(studentId, assignmentUid, pageUid, { ...current, ops: opsRef.current }) } catch {}
     }
   }
 
@@ -752,7 +790,7 @@ export default function StudentAssignment(){
         pageId: ids.page_id,
         pageIndex,
         canvas: { w: canvasSize.w, h: canvasSize.h },
-        strokes,
+        strokes: { ...strokes, ops: opsRef.current },
         ts: Date.now()
       }
     } catch {
@@ -804,11 +842,11 @@ export default function StudentAssignment(){
     if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasAudio)) {
       try { await submit() } catch {
         const { assignmentUid, pageUid } = getCacheIds()
-        try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
+        try { saveDraft(studentId, assignmentUid, pageUid, { ...current, ops: opsRef.current }) } catch {}
       }
     } else {
       const { assignmentUid, pageUid } = getCacheIds()
-      try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
+      try { saveDraft(studentId, assignmentUid, pageUid, { ...current, ops: opsRef.current }) } catch {}
     }
 
     setPageIndex(nextIndex)
@@ -835,7 +873,7 @@ export default function StudentAssignment(){
 
   /* ---------- Realtime + polling (defensive) ---------- */
 
-  // subscribe to teacher broadcast once we know the assignment id — CLASS-SCOPED
+    // subscribe to teacher broadcast once we know the assignment id — CLASS-SCOPED
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(classCode, rtAssignmentId, {
@@ -870,10 +908,18 @@ export default function StudentAssignment(){
       // NEW: force-submit → submit immediately (scoped or all)
       onForceSubmit: async (p: { studentId?: string; pageIndex?: number }) => {
         try {
+          // if teacher targeted a specific student, ignore if it's not me
           if (p?.studentId && p.studentId !== studentId) return
+
+          // stop any ongoing recording to flush audio into the blob we submit
           try { await audioRef.current?.stop() } catch {}
+
+          // submit current page work
           await submit()
+
+          // if teacher provided a pageIndex (e.g., submit-before-switch), follow it immediately
           if (typeof p?.pageIndex === 'number') {
+            // avoid nav lock blocking a teacher-driven move
             setNavLocked(false)
             setPageIndex(p.pageIndex)
           }
@@ -911,6 +957,7 @@ export default function StudentAssignment(){
         saveSubmittedCache(studentId, assignmentUid, pageUid, normalized)
         lastAppliedServerHash.current = serverHash
         lastLocalHash.current = serverHash
+        if (Array.isArray((normalized as any).ops)) opsRef.current = (normalized as any).ops.slice()
       }
     } catch {/* ignore */}
   }
@@ -962,6 +1009,7 @@ export default function StudentAssignment(){
       } catch {}
 
       const onInk = (u: any) => {
+        // Only accept strokes for this same student page
         if (u?.studentId !== studentId) return
         if (u.tool !== 'pen' && u.tool !== 'highlighter') return
         if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
@@ -976,6 +1024,7 @@ export default function StudentAssignment(){
       }
 
       try {
+        // object-form subscribe so classCode is guaranteed in the room name
         inkSub = (subscribeToInk as any)(
           { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
           onInk
@@ -1058,14 +1107,28 @@ export default function StudentAssignment(){
     if (!erasingRef.current) return
     erasingRef.current = false
     addPoint(e)
+
+    // snapshot path before we clear
+    const erasePath = erasePathRef.current.slice()
     const final = computePreview()
     erasePathRef.current = []
     if (!final) return
     drawRef.current?.loadStrokes(final)
+
+    // ---- record erase op for playback
+    const mode: 'soft' | 'object' = (tool === 'eraserObject') ? 'object' : 'soft'
+    opsRef.current.push({
+      type: 'erase',
+      mode,
+      path: erasePath,
+      radius: dynamicRadius,
+      t: Date.now()
+    })
+
     localDirty.current = true
-    try { lastLocalHash.current = await hashStrokes(final) } catch {}
+    try { lastLocalHash.current = await hashStrokes({ ...final, ops: opsRef.current }) } catch {}
     const { assignmentUid, pageUid } = getCacheIds()
-    saveDraft(studentId, assignmentUid, pageUid, final)
+    saveDraft(studentId, assignmentUid, pageUid, { ...final, ops: opsRef.current })
   }
 
   /* ---------- UI ---------- */
@@ -1154,16 +1217,6 @@ export default function StudentAssignment(){
           <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
             Student: <strong>{studentId}</strong>
           </div>
-          {/* 🔎 small debug button */}
-          <button
-            onClick={() => {
-              const rows = logRealtimeUsage(`RT usage — student ${studentId}`)
-              alert(`Realtime events counted: ${rows.length}. See console for details.`)
-            }}
-            style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
-          >
-            RT usage
-          </button>
           <button
             onClick={()=> nav(`/start?class=${encodeURIComponent(classCode)}`)}
             style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
@@ -1212,6 +1265,40 @@ export default function StudentAssignment(){
               onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
                 const ids = currIds.current
                 if (!ids.assignment_id || !ids.page_id) return
+
+                // === Accumulate this stroke for a 'draw' op ===
+                if (u) {
+                  const rec = inFlightStrokeRef.current[u.id] ||
+                    (inFlightStrokeRef.current[u.id] = {
+                      color: u.color!,
+                      size: u.size!,
+                      tool: u.tool as 'pen'|'highlighter',
+                      t0: (u.pts && u.pts.length ? u.pts[0].t : Date.now()),
+                      pts: []
+                    })
+                  if (Array.isArray(u.pts) && u.pts.length) {
+                    // coerce to Pt
+                    for (const p of u.pts as any[]) {
+                      if (p && typeof p.x==='number' && typeof p.y==='number') {
+                        rec.pts.push({ x:p.x, y:p.y, t: typeof p.t==='number' ? p.t : Date.now() })
+                      }
+                    }
+                  }
+                  if (u.done) {
+                    const t1 = (rec.pts.length ? rec.pts[rec.pts.length-1].t : Date.now())
+                    opsRef.current.push({
+                      type: 'draw',
+                      id: u.id,
+                      color: rec.color,
+                      size: rec.size,
+                      tool: rec.tool,
+                      pts: rec.pts.slice(),
+                      t0: rec.t0,
+                      t1
+                    })
+                    delete inFlightStrokeRef.current[u.id]
+                  }
+                }
 
                 const payload = { ...u, studentId }
 
@@ -1269,14 +1356,13 @@ export default function StudentAssignment(){
         <span style={{ minWidth:90, textAlign:'center', fontWeight:600 }}>
           Page {pageIndex+1}
         </span>
-<button
-  onClick={()=>goToPage(pageIndex+1)}
-  disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
-  style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
->
-  Next ▶
-</button>
-
+        <button
+          onClick={()=>goToPage(pageIndex+1)}
+          disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
+          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+        >
+          Next ▶
+        </button>
       </div>
 
       {/* Toolbar & toasts */}
