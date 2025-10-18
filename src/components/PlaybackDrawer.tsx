@@ -289,15 +289,11 @@ export default function PlaybackDrawer({
     ctx.restore()
   }
 
-  // ✅ Modified: treat erasers as special ink using destination-out
   function applyStyleForTool(ctx: CanvasRenderingContext2D, color: string, size: number, tool?: string) {
-    const isEraser = tool === 'eraser' || tool === 'eraserObject'
+    ctx.strokeStyle = color
     const isHi = tool === 'highlighter'
-
-    ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over'
     ctx.globalAlpha = isHi ? 0.35 : 1.0
-    ctx.strokeStyle = isEraser ? '#000' : (color || '#111') // color doesn’t matter for erase
-    ctx.lineWidth = Math.max(1, isHi ? size * 1.5 : size)
+    ctx.lineWidth = Math.max(1, (isHi ? size * 1.5 : size))
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
   }
@@ -306,7 +302,6 @@ export default function PlaybackDrawer({
     const ctx = ensureCtx()
     if (!ctx) return
     const { cssW, cssH } = overlay
-    ctx.globalCompositeOperation = 'source-over' // reset per frame
     ctx.clearRect(0, 0, cssW, cssH)
     withScale(ctx, () => {
       for (const s of strokes) {
@@ -315,7 +310,6 @@ export default function PlaybackDrawer({
         applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
         if (pts.length === 1) {
           const p = pts[0]
-          // For eraser dots, destination-out + fill erases a small circle
           ctx.beginPath()
           ctx.arc(p.x, p.y, (s.size || 4) * 0.5, 0, Math.PI * 2)
           ctx.fillStyle = s.color || '#111'
@@ -328,7 +322,6 @@ export default function PlaybackDrawer({
         }
       }
       ctx.globalAlpha = 1
-      ctx.globalCompositeOperation = 'source-over'
     })
   }
 
@@ -337,7 +330,6 @@ export default function PlaybackDrawer({
     const ctx = ensureCtx()
     if (!ctx) return
     const { cssW, cssH } = overlay
-    ctx.globalCompositeOperation = 'source-over' // reset per frame
     ctx.clearRect(0, 0, cssW, cssH)
     if (!segs.length) { drawAllStatic(); return }
     withScale(ctx, () => {
@@ -359,7 +351,6 @@ export default function PlaybackDrawer({
         ctx.stroke()
       }
       ctx.globalAlpha = 1
-      ctx.globalCompositeOperation = 'source-over'
     })
   }
 
@@ -368,7 +359,6 @@ export default function PlaybackDrawer({
     const ctx = ensureCtx()
     if (!ctx) return
     const { cssW, cssH } = overlay
-    ctx.globalCompositeOperation = 'source-over' // reset per frame
     ctx.clearRect(0, 0, cssW, cssH)
 
     if (!pointTL.strokes.length) { drawAllStatic(); return }
@@ -418,7 +408,6 @@ export default function PlaybackDrawer({
         }
       }
       ctx.globalAlpha = 1
-      ctx.globalCompositeOperation = 'source-over'
     })
   }
 
