@@ -24,7 +24,9 @@ import {
   publishInk
 } from '../../lib/realtime'
 import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient' // <-- SW close-save (kept)
-import type { RealtimeChannel } from '@supabase/supabase-js' // ✅ ADD
+import type { RealtimeChannel } from '@supabase/supabase-js' // ✅ typed channel
+// 🔎 realtime meter
+import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
 
 // Eraser utils
 import type { Pt } from '../../lib/geometry'
@@ -184,6 +186,9 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
 }
 
 export default function StudentAssignment(){
+  // 🔎 enable realtime meter once
+  useEffect(() => { enableRealtimeMeter() }, [])
+
   const location = useLocation()
   const nav = useNavigate()
 
@@ -316,7 +321,7 @@ export default function StudentAssignment(){
   const justSavedAt = useRef<number>(0)
 
   // ink subscription handle
-  const inkSubRef = useRef<RealtimeChannel | null>(null) // ✅ TYPE AS CHANNEL
+  const inkSubRef = useRef<RealtimeChannel | null>(null)
 
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
@@ -719,7 +724,7 @@ export default function StudentAssignment(){
     return { hasInk, hasAudio, current }
   }
 
-  const submitIfNeeded = async (reason: string) => {
+  const submitIfNeeded = async (_reason: string) => {
     const { hasInk, hasAudio, current } = hasInkOrAudio()
     if (!hasInk && !hasAudio) return
     try {
@@ -830,7 +835,7 @@ export default function StudentAssignment(){
 
   /* ---------- Realtime + polling (defensive) ---------- */
 
-    // subscribe to teacher broadcast once we know the assignment id — CLASS-SCOPED
+  // subscribe to teacher broadcast once we know the assignment id — CLASS-SCOPED
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(classCode, rtAssignmentId, {
@@ -865,18 +870,10 @@ export default function StudentAssignment(){
       // NEW: force-submit → submit immediately (scoped or all)
       onForceSubmit: async (p: { studentId?: string; pageIndex?: number }) => {
         try {
-          // if teacher targeted a specific student, ignore if it's not me
           if (p?.studentId && p.studentId !== studentId) return
-
-          // stop any ongoing recording to flush audio into the blob we submit
           try { await audioRef.current?.stop() } catch {}
-
-          // submit current page work
           await submit()
-
-          // if teacher provided a pageIndex (e.g., submit-before-switch), follow it immediately
           if (typeof p?.pageIndex === 'number') {
-            // avoid nav lock blocking a teacher-driven move
             setNavLocked(false)
             setPageIndex(p.pageIndex)
           }
@@ -925,7 +922,7 @@ export default function StudentAssignment(){
     let cleanupArtifacts: (() => void) | null = null
     let pollId: number | null = null
     let mounted = true
-    let inkSub: RealtimeChannel | null = null // ✅ TYPE AS CHANNEL
+    let inkSub: RealtimeChannel | null = null
 
     ;(async () => {
       const ids = await resolveIds()
@@ -965,7 +962,6 @@ export default function StudentAssignment(){
       } catch {}
 
       const onInk = (u: any) => {
-        // Only accept strokes for this same student page
         if (u?.studentId !== studentId) return
         if (u.tool !== 'pen' && u.tool !== 'highlighter') return
         if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
@@ -980,7 +976,6 @@ export default function StudentAssignment(){
       }
 
       try {
-        // object-form subscribe so classCode is guaranteed in the room name
         inkSub = (subscribeToInk as any)(
           { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
           onInk
@@ -1159,6 +1154,16 @@ export default function StudentAssignment(){
           <div style={{ padding:'6px 10px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
             Student: <strong>{studentId}</strong>
           </div>
+          {/* 🔎 small debug button */}
+          <button
+            onClick={() => {
+              const rows = logRealtimeUsage(`RT usage — student ${studentId}`)
+              alert(`Realtime events counted: ${rows.length}. See console for details.`)
+            }}
+            style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
+          >
+            RT usage
+          </button>
           <button
             onClick={()=> nav(`/start?class=${encodeURIComponent(classCode)}`)}
             style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
@@ -1267,7 +1272,7 @@ export default function StudentAssignment(){
         <button
           onClick={()=>goToPage(pageIndex+1)}
           disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
-          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid '#ddd', background:'#f9fafb' }}
         >
           Next ▶
         </button>
