@@ -13,35 +13,17 @@ export type Props = {
 
 /* ========================= Types ========================= */
 type TimedPoint = { x: number; y: number; t?: number }
-type Stroke = { color?: string; size?: number; points: TimedPoint[]; tool?: string }
+type Stroke = { color?: string; size?: number; points: TimedPoint[]; tool?: 'pen'|'highlighter'|'eraser'|string }
+type Seg = { x0:number; y0:number; x1:number; y1:number; color:string; size:number; t:number; tool?: string }
 type OverlaySize = { cssW: number; cssH: number; dpr: number }
 
-type TLPoint = { x:number; y:number; t:number }                 // ms
-type TLStroke = { color?:string; size?:number; tool?:string; pts: TLPoint[] }
-type Timeline = { strokes: TLStroke[]; t0:number; t1:number }   // ms
-
-type DrawEvent = {
-  t: number
-  tool: 'pen'|'highlighter'|'eraser'|'other'
-  color: string
-  size: number
-  x0: number; y0: number; x1: number; y1: number
-}
-
-/* ------------ utils ------------ */
+/* ------------ tiny utils ------------ */
 const N = (v:any) => {
   const x = typeof v === 'string' ? parseFloat(v) : v
   return Number.isFinite(x) ? x : 0
 }
-const toolOf = (s: any): 'pen'|'highlighter'|'eraser'|'other' => {
-  const t = (s?.tool ?? s?.mode ?? s?.type ?? '').toString()
-  if (t === 'pen') return 'pen'
-  if (t === 'highlighter') return 'highlighter'
-  if (t === 'eraser' || t === 'eraserObject') return 'eraser'
-  return 'other'
-}
 
-/* ------------ parse strokes ------------ */
+/* ------------ parse strokes (supports your {strokes:[{pts:[]}]}) ------------ */
 function asPoints(maybe:any): TimedPoint[] {
   if (!maybe) return []
   if (Array.isArray(maybe) && maybe.length && typeof maybe[0] === 'object' && 'x' in maybe[0]) {
@@ -49,27 +31,29 @@ function asPoints(maybe:any): TimedPoint[] {
   }
   return []
 }
+
 function toStroke(obj:any): Stroke | null {
   if (!obj) return null
-  const t = toolOf(obj)
-  const color = obj.color ?? '#111'
-  const size  = Number.isFinite(obj.size) ? obj.size : 4
-  if (Array.isArray(obj.pts))    return { color, size, points: asPoints(obj.pts), tool: t }
-  if (Array.isArray(obj.points)) return { color, size, points: asPoints(obj.points), tool: t }
-  if (Array.isArray(obj.path))   return { color, size, points: asPoints(obj.path), tool: t }
+  const tool = obj.tool ?? obj.mode ?? obj.type
+  if (Array.isArray(obj.pts))    return { color: obj.color, size: obj.size, points: asPoints(obj.pts), tool }
+  if (Array.isArray(obj.points)) return { color: obj.color, size: obj.size, points: asPoints(obj.points), tool }
+  if (Array.isArray(obj.path))   return { color: obj.color, size: obj.size, points: asPoints(obj.path), tool }
   if (Array.isArray(obj) && obj.length && typeof obj[0] === 'object' && 'x' in obj[0]) {
-    return { color: (obj as any).color ?? color, size: (obj as any).size ?? size, points: asPoints(obj), tool: t }
+    return { color: (obj as any).color, size: (obj as any).size, points: asPoints(obj), tool }
   }
   return null
 }
+
 type Parsed = { strokes: Stroke[]; metaW: number; metaH: number }
+
 function parseStrokes(payload:any): Parsed {
   let raw = payload
   try { if (typeof raw === 'string') raw = JSON.parse(raw) } catch {}
   if (!raw) return { strokes: [], metaW: 0, metaH: 0 }
 
-  const metaW = N(raw.canvasWidth ?? raw.canvas_w ?? raw.canvasW ?? raw.width ?? raw.w ?? raw.pageWidth ?? raw.page?.width)
-  const metaH = N(raw.canvasHeight ?? raw.canvas_h ?? raw.canvasH ?? raw.height ?? raw.h ?? raw.pageHeight ?? raw.page?.height)
+  // Try to read capture canvas size if present (student save writes w/h)
+  let metaW = N(raw.canvasWidth ?? raw.canvas_w ?? raw.canvasW ?? raw.width ?? raw.w ?? raw.pageWidth ?? raw.page?.width)
+  let metaH = N(raw.canvasHeight ?? raw.canvas_h ?? raw.canvasH ?? raw.height ?? raw.h ?? raw.pageHeight ?? raw.page?.height)
 
   if (raw && raw.data) raw = raw.data
 
@@ -99,111 +83,98 @@ function parseStrokes(payload:any): Parsed {
   return { strokes: [], metaW, metaH }
 }
 
-/* ------------ build a per-point timeline (ms) ------------ */
-/** Core fix: assign global times to *no-t* strokes so their order is preserved across tools. */
-function buildPointTimeline(strokes: Stroke[]): Timeline {
-  if (!strokes.length) return { strokes: [], t0:0, t1:0 }
-
-  // Pass 1: check coverage of timestamps
-  const strokeHasAnyT = strokes.map(s => (s.points||[]).some(p => typeof p.t === 'number'))
-
-  // We'll build TLStroke[] in input order, but compute a GLOBAL running time
-  const SEG = 10;     // 10ms between points
-  const GAP = 150;    // 150ms between strokes when we must synthesize
-  let globalClock = 0;
-  let minT = Infinity, maxT = 0
-
-  const out: TLStroke[] = strokes.map((s, idx) => {
+/* ------------ ORIGINAL: synthesized sequential timeline (strokes replay) ------------ */
+function buildSequentialSegments(strokes: Stroke[]): { segs: Seg[]; duration: number } {
+  const segs: Seg[] = []
+  const SEG_DT = 0.010   // 10ms per segment → ~100 fps reveal
+  const GAP_DT = 0.150   // 150ms between strokes (visible pause)
+  let t = 0
+  for (const s of strokes) {
     const pts = s.points || []
-    const tool = toolOf(s)
-    const color = s.color
-    const size = s.size
-
-    // If this stroke has *any* timestamps, we keep them and fill gaps relative to last-in-stroke.
-    // If it has *none*, we synthesize from the GLOBAL clock (this is the key change).
-    const hasT = strokeHasAnyT[idx]
-    const tlPts: TLPoint[] = []
-    let lastInStroke = hasT ? -Infinity : (globalClock += 0) // no bump yet
-
-    if (!pts.length) {
-      // empty stroke: if no pts, still advance global clock slightly to keep ordering
-      if (!hasT) globalClock += GAP
-      return { color, size, tool, pts: tlPts }
-    }
-
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i]
-      let t: number
-
-      if (hasT && typeof p.t === 'number') {
-        // keep recorded t, enforce non-decreasing within stroke
-        const tt = Math.max(0, p.t as number)
-        t = (lastInStroke <= 0) ? tt : Math.max(tt, lastInStroke)
-        lastInStroke = t
-      } else if (hasT && typeof p.t !== 'number') {
-        // stroke has some t's but this point doesn't: fill locally
-        t = (lastInStroke > 0) ? lastInStroke + SEG : (globalClock > 0 ? globalClock : 0)
-        lastInStroke = t
-      } else {
-        // stroke has NO timestamps at all -> synthesize from GLOBAL clock
-        if (i === 0) {
-          // ensure this stroke starts strictly after previous stroke
-          globalClock += GAP
-          t = globalClock
-        } else {
-          globalClock += SEG
-          t = globalClock
-        }
-        lastInStroke = t
-      }
-
-      tlPts.push({ x: N(p.x), y: N(p.y), t })
-      if (t < minT) minT = t
-      if (t > maxT) maxT = t
-    }
-
-    // if stroke had timestamps, don't modify globalClock based on it; if it didn't, we've already advanced it
-    return { color, size, tool, pts: tlPts }
-  })
-
-  if (!isFinite(minT)) minT = 0
-  const shift = minT
-  const shifted = out.map(s => ({ ...s, pts: s.pts.map(p => ({ ...p, t: p.t - shift })) }))
-  return { strokes: shifted, t0: 0, t1: Math.max(0, maxT - shift) }
-}
-
-/* ------------ flatten to chronological events ------------ */
-function buildEventTimeline(tl: Timeline): { events: DrawEvent[]; t1:number } {
-  const evs: DrawEvent[] = []
-  for (const s of tl.strokes) {
-    const color = (s.color ?? '#111').toString()
-    const size  = Number.isFinite(s.size) ? (s.size as number) : 4
-    const tool  = toolOf(s)
-    const pts   = s.pts || []
+    if (pts.length < 2) { t += GAP_DT; continue }
     for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1]
-      const b = pts[i]
-      evs.push({
-        t: b.t,
-        tool,
-        color,
-        size: tool === 'highlighter' ? size * 1.5 : size,
-        x0: a.x, y0: a.y, x1: b.x, y1: b.y,
+      const p0 = pts[i - 1], p1 = pts[i]
+      segs.push({
+        x0: N(p0.x), y0: N(p0.y), x1: N(p1.x), y1: N(p1.y),
+        color: s.color || '#111', size: s.size || 4, t, tool: s.tool
       })
+      t += SEG_DT
     }
+    t += GAP_DT
   }
-  // Tie-break: same t => ink first, eraser second
-  evs.sort((A, B) => {
-    if (A.t !== B.t) return A.t - B.t
-    const ae = A.tool === 'eraser', be = B.tool === 'eraser'
-    if (ae && !be) return 1
-    if (!ae && be) return -1
-    return 0
-  })
-  return { events: evs, t1: tl.t1 }
+  return { segs, duration: t }
 }
 
-/* ------------ source dims ------------ */
+/* ------------ NEW: point-timestamp timeline for smooth scrubbing ------------ */
+type TLPoint = { x:number; y:number; t:number }
+type TLStroke = { color?:string; size?:number; tool?:string; pts: TLPoint[] }
+type PointTimeline = { strokes: TLStroke[]; t0:number; t1:number } // ms
+
+function hasAnyTimestamps(strokes: Stroke[]): boolean {
+  for (const s of strokes) {
+    for (const p of s.points || []) if (typeof p.t === 'number') return true
+  }
+  return false
+}
+
+/** Normalize timestamps to a single global ms axis starting at 0.
+ *  If there are no timestamps, synthesize per-point times (10ms) with 150ms gaps (like replay). */
+function buildPointTimeline(strokes: Stroke[]): PointTimeline {
+  if (!strokes.length) return { strokes: [], t0: 0, t1: 0 }
+
+  if (hasAnyTimestamps(strokes)) {
+    // Use recorded times; normalize to start at 0
+    let minT = Infinity, maxT = 0
+    const tl: TLStroke[] = strokes.map(s => {
+      const pts: TLPoint[] = []
+      let last = -Infinity
+      for (const p of (s.points || [])) {
+        if (typeof p.t === 'number') {
+          const tt = Math.max(0, p.t)
+          // keep non-decreasing within stroke
+          const t = Math.max(tt, last <= 0 ? tt : last)
+          last = t
+          pts.push({ x:N(p.x), y:N(p.y), t })
+          if (t < minT) minT = t
+          if (t > maxT) maxT = t
+        } else {
+          // If some points miss t but at least one has, space missing ones by 10ms
+          const t = (last > 0 ? last + 10 : 0)
+          last = t
+          pts.push({ x:N(p.x), y:N(p.y), t })
+          if (t < minT) minT = t
+          if (t > maxT) maxT = t
+        }
+      }
+      return { color:s.color, size:s.size, tool:s.tool, pts }
+    })
+    if (!isFinite(minT)) minT = 0
+    const shift = minT
+    const shifted = tl.map(s => ({ ...s, pts: s.pts.map(p => ({ ...p, t: p.t - shift })) }))
+    return { strokes: shifted, t0: 0, t1: Math.max(0, maxT - shift) }
+  }
+
+  // Synthesize: sequential, like your replay timeline, but in ms
+  const tl: TLStroke[] = []
+  const SEG_MS = 10
+  const GAP_MS = 150
+  let t = 0
+  for (const s of strokes) {
+    const pts = s.points || []
+    if (!pts.length) { t += GAP_MS; continue }
+    const out: TLPoint[] = []
+    out.push({ x:N(pts[0].x), y:N(pts[0].y), t })
+    for (let i = 1; i < pts.length; i++) {
+      t += SEG_MS
+      out.push({ x:N(pts[i].x), y:N(pts[i].y), t })
+    }
+    tl.push({ color:s.color, size:s.size, tool:s.tool, pts: out })
+    t += GAP_MS
+  }
+  return { strokes: tl, t0: 0, t1: Math.max(0, t) }
+}
+
+/* ------------ source space inference ------------ */
 function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
   if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
   return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
@@ -213,16 +184,25 @@ function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number
 export default function PlaybackDrawer({
   onClose, student, pdfUrl, pageIndex, strokesPayload, audioUrl,
 }: Props) {
+  // PDF CSS size (what the user sees), plus DPR for crispness
   const [overlay, setOverlay] = useState<OverlaySize>({
     cssW: 800, cssH: 600, dpr: window.devicePixelRatio || 1
   })
+
+  // PDF CSS size at render time (from PdfCanvas onReady)
   const pdfCssRef = useRef<{ w:number; h:number }>({ w: 800, h: 600 })
 
-  const parsed   = useMemo(() => parseStrokes(strokesPayload), [strokesPayload])
-  const tl       = useMemo(() => buildPointTimeline(parsed.strokes), [parsed.strokes])
-  const merged   = useMemo(() => buildEventTimeline(tl), [tl])
-  const durationMs = merged.t1
+  const parsed = useMemo(() => parseStrokes(strokesPayload), [strokesPayload])
+  const strokes = parsed.strokes
 
+  // ORIGINAL: Build a single global timeline across all strokes (for "Replay Strokes")
+  const { segs, duration } = useMemo(() => buildSequentialSegments(strokes), [strokes])
+
+  // NEW: Time-based point timeline (ms) for smooth scrubbing and audio sync
+  const pointTL = useMemo(() => buildPointTimeline(strokes), [strokes])
+  const durationMs = pointTL.t1 // total length in ms
+
+  // Decide the stroke coordinate space to scale from
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
     [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH]
@@ -230,16 +210,17 @@ export default function PlaybackDrawer({
 
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const pdfHostRef = useRef<HTMLDivElement | null>(null)
-  const audioRef   = useRef<HTMLAudioElement | null>(null)
-  const rafRef     = useRef<number | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const rafRef = useRef<number | null>(null)
 
   const [syncToAudio, setSyncToAudio] = useState<boolean>(!!audioUrl)
   const [strokesPlaying, setStrokesPlaying] = useState(false)
 
+  // NEW: Scrubbing state
   const [scrubbing, setScrubbing] = useState(false)
-  const [scrubMs, setScrubMs] = useState<number>(0) // start at 0
+  const [scrubMs, setScrubMs] = useState<number>(durationMs)
 
-  /* ---- Size/DPR sync ---- */
+  /* ---- Bind overlay size to PDF canvas CSS size, and track DPR ---- */
   useEffect(() => {
     const host = pdfHostRef.current
     if (!host) return
@@ -269,8 +250,10 @@ export default function PlaybackDrawer({
     }
     const onResize = () => syncSize()
     window.addEventListener('resize', onResize)
+
     const poll = window.setInterval(syncSize, 200)
     const stopPoll = window.setTimeout(() => window.clearInterval(poll), 3000)
+
     return () => {
       window.removeEventListener('resize', onResize)
       if (ro) ro.disconnect()
@@ -279,7 +262,7 @@ export default function PlaybackDrawer({
     }
   }, [pdfUrl, pageIndex])
 
-  /* ---- Canvas helpers ---- */
+  /* ---- Drawing helpers (DPR-aware, scales from stroke space sw×sh to current CSS space) ---- */
   function ensureCtx(): CanvasRenderingContext2D | null {
     const c = overlayRef.current
     if (!c) return null
@@ -292,10 +275,11 @@ export default function PlaybackDrawer({
     if (c.height !== bh) c.height = bh
     const ctx = c.getContext('2d')
     if (!ctx) return null
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.scale(dpr, dpr)
+    ctx.setTransform(1, 0, 0, 1, 0, 0) // reset
+    ctx.scale(dpr, dpr) // map drawing units → CSS pixels
     return ctx
   }
+
   function withScale(ctx: CanvasRenderingContext2D, draw: () => void) {
     const sx = overlay.cssW / Math.max(1, sw)
     const sy = overlay.cssH / Math.max(1, sh)
@@ -304,90 +288,187 @@ export default function PlaybackDrawer({
     draw()
     ctx.restore()
   }
-  function applyStyle(ctx: CanvasRenderingContext2D, ev: DrawEvent) {
-    if (ev.tool === 'eraser') {
-      ctx.globalCompositeOperation = 'destination-out'
-      ctx.globalAlpha = 1
-      ctx.strokeStyle = '#000'
-    } else {
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.globalAlpha = ev.tool === 'highlighter' ? 0.35 : 1
-      ctx.strokeStyle = ev.color
-    }
-    ctx.lineWidth = Math.max(1, ev.size)
+
+  function applyStyleForTool(ctx: CanvasRenderingContext2D, color: string, size: number, tool?: string) {
+    ctx.strokeStyle = color
+    const isHi = tool === 'highlighter'
+    ctx.globalAlpha = isHi ? 0.35 : 1.0
+    ctx.lineWidth = Math.max(1, (isHi ? size * 1.5 : size))
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
   }
 
-  /* ---- Draw helpers ---- */
-  function drawEventsUpTo(ms:number) {
+  function drawAllStatic() {
+    const ctx = ensureCtx()
+    if (!ctx) return
+    const { cssW, cssH } = overlay
+    ctx.clearRect(0, 0, cssW, cssH)
+    withScale(ctx, () => {
+      for (const s of strokes) {
+        const pts = s.points || []
+        if (!pts.length) continue
+        applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
+        if (pts.length === 1) {
+          const p = pts[0]
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, (s.size || 4) * 0.5, 0, Math.PI * 2)
+          ctx.fillStyle = s.color || '#111'
+          ctx.fill()
+        } else {
+          ctx.beginPath()
+          ctx.moveTo(pts[0].x, pts[0].y)
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
+          ctx.stroke()
+        }
+      }
+      ctx.globalAlpha = 1
+    })
+  }
+
+  /* ---- ORIGINAL: draw by synthesized stroke segments (seconds) ---- */
+  function drawUpTo(timeSec:number) {
+    const ctx = ensureCtx()
+    if (!ctx) return
+    const { cssW, cssH } = overlay
+    ctx.clearRect(0, 0, cssW, cssH)
+    if (!segs.length) { drawAllStatic(); return }
+    withScale(ctx, () => {
+      let lastColor = ''
+      let lastSize = -1
+      let lastTool = ''
+      for (let i = 0; i < segs.length; i++) {
+        const s = segs[i]
+        if (s.t > timeSec) break
+        if (s.color !== lastColor || s.size !== lastSize || (s.tool || '') !== lastTool) {
+          applyStyleForTool(ctx, s.color, s.size, s.tool)
+          lastColor = s.color
+          lastSize = s.size
+          lastTool = s.tool || ''
+        }
+        ctx.beginPath()
+        ctx.moveTo(s.x0, s.y0)
+        ctx.lineTo(s.x1, s.y1)
+        ctx.stroke()
+      }
+      ctx.globalAlpha = 1
+    })
+  }
+
+  /* ---- NEW: draw by real/synthesized point timestamps (milliseconds) with interpolation ---- */
+  function drawAtMs(ms:number) {
     const ctx = ensureCtx()
     if (!ctx) return
     const { cssW, cssH } = overlay
     ctx.clearRect(0, 0, cssW, cssH)
 
+    if (!pointTL.strokes.length) { drawAllStatic(); return }
+
     withScale(ctx, () => {
-      let lastKey = ''
-      for (let i = 0; i < merged.events.length; i++) {
-        const ev = merged.events[i]
-        if (ev.t > ms) break
-        const key = `${ev.tool}|${ev.color}|${ev.size}`
-        if (key !== lastKey) { applyStyle(ctx, ev); lastKey = key }
-        ctx.beginPath()
-        ctx.moveTo(ev.x0, ev.y0)
-        ctx.lineTo(ev.x1, ev.y1)
-        ctx.stroke()
+      for (const s of pointTL.strokes) {
+        const pts = s.pts
+        if (!pts || pts.length === 0) continue
+
+        // find last index with t <= ms
+        let i = 0
+        while (i < pts.length && pts[i].t <= ms) i++
+        const lastIdx = i - 1
+        if (lastIdx < 0) continue
+
+        applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
+
+        // draw all segments fully up to lastIdx
+        if (lastIdx >= 1) {
+          ctx.beginPath()
+          ctx.moveTo(pts[0].x, pts[0].y)
+          for (let k = 1; k <= lastIdx; k++) ctx.lineTo(pts[k].x, pts[k].y)
+          ctx.stroke()
+        } else {
+          // single point (dot) visible
+          const p = pts[0]
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, (s.size || 4) * 0.5, 0, Math.PI * 2)
+          ctx.fillStyle = s.color || '#111'
+          ctx.fill()
+        }
+
+        // interpolate the next segment endpoint (smooth “live” stroke head)
+        if (lastIdx < pts.length - 1) {
+          const a = pts[lastIdx]
+          const b = pts[lastIdx + 1]
+          const dt = Math.max(1, b.t - a.t)
+          const u = Math.min(1, Math.max(0, (ms - a.t) / dt))
+          const x = a.x + (b.x - a.x) * u
+          const y = a.y + (b.y - a.y) * u
+          if (u > 0) {
+            ctx.beginPath()
+            ctx.moveTo(a.x, a.y)
+            ctx.lineTo(x, y)
+            ctx.stroke()
+          }
+        }
       }
       ctx.globalAlpha = 1
-      ctx.globalCompositeOperation = 'source-over'
     })
   }
 
-  function drawAllStatic() { drawEventsUpTo(durationMs) }
+  function stopRAF() {
+    if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+  }
 
-  /* ---- Effects ---- */
-  useEffect(() => { drawAllStatic() }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload, durationMs])
+  /* ---- Always draw static ink when sizes or payload change ---- */
+  useEffect(() => { drawAllStatic() }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload])
 
+  /* ---- Audio-synced mode (now uses real ms timeline for smoothness) ---- */
   useEffect(() => {
-    if (!syncToAudio) { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null } ; return }
+    if (!syncToAudio) { stopRAF(); return }
     const el = audioRef.current; if (!el) return
-    const loop = () => { drawEventsUpTo(el.currentTime * 1000); rafRef.current = requestAnimationFrame(loop) }
-    const onPlay = () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); rafRef.current = requestAnimationFrame(loop) }
-    const onPause = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }; drawEventsUpTo(el.currentTime * 1000) }
-    const onSeeked = () => { drawEventsUpTo(el.currentTime * 1000) }
-    const onTimeUpdate = () => { if (!rafRef.current) drawEventsUpTo(el.currentTime * 1000) }
-    const onEnded = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }; drawAllStatic() }
+
+    const onPlay = () => {
+      stopRAF()
+      const loop = () => { drawAtMs(el.currentTime * 1000); rafRef.current = requestAnimationFrame(loop) }
+      rafRef.current = requestAnimationFrame(loop)
+    }
+    const onPause = () => { stopRAF(); drawAtMs(el.currentTime * 1000) }
+    const onSeeked = () => { drawAtMs(el.currentTime * 1000) }
+    const onTimeUpdate = () => { if (!rafRef.current) drawAtMs(el.currentTime * 1000) }
+    const onEnded = () => { stopRAF(); drawAllStatic() }
+
     el.addEventListener('play', onPlay)
     el.addEventListener('pause', onPause)
     el.addEventListener('seeked', onSeeked)
     el.addEventListener('timeupdate', onTimeUpdate)
     el.addEventListener('ended', onEnded)
-    drawEventsUpTo(el.currentTime * 1000)
+
+    drawAtMs(el.currentTime * 1000)
     return () => {
       el.removeEventListener('play', onPlay)
       el.removeEventListener('pause', onPause)
       el.removeEventListener('seeked', onSeeked)
       el.removeEventListener('timeupdate', onTimeUpdate)
       el.removeEventListener('ended', onEnded)
-      if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+      stopRAF()
     }
-  }, [syncToAudio, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, durationMs])
+  }, [syncToAudio, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, pointTL.t1])
 
+  /* ---- Strokes-only replay (kept exactly as before, seconds-based) ---- */
   useEffect(() => {
     if (!strokesPlaying) return
     const start = performance.now()
     const tick = () => {
-      const t = (performance.now() - start)
-      drawEventsUpTo(Math.min(t, durationMs))
-      if (t >= durationMs) { setStrokesPlaying(false); return }
+      const t = (performance.now() - start) / 1000
+      drawUpTo(Math.min(t, duration))
+      if (t >= duration) { setStrokesPlaying(false); return }
       rafRef.current = requestAnimationFrame(tick)
     }
-    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    stopRAF()
     rafRef.current = requestAnimationFrame(tick)
-    return () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null } }
-  }, [strokesPlaying, durationMs, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh])
+    return () => stopRAF()
+  }, [strokesPlaying, duration, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh])
 
-  useEffect(() => { setScrubMs(0) }, [durationMs])
+  // Keep scrub range in sync if new data arrives
+  useEffect(() => {
+    setScrubMs(pointTL.t1)
+  }, [pointTL.t1])
 
   const hasAudio = !!audioUrl
 
@@ -398,23 +479,33 @@ export default function PlaybackDrawer({
         <div style={{ display:'flex', alignItems:'center', gap:12, padding:12, borderBottom:'1px solid #e5e7eb', background:'#f9fafb' }}>
           <strong style={{ fontSize:14 }}>Preview — {student || 'Student'}</strong>
           <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
-            <button onClick={() => { setSyncToAudio(false); setScrubbing(false); setStrokesPlaying(p => !p) }} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}>
+            <button
+              onClick={() => { setSyncToAudio(false); setScrubbing(false); setStrokesPlaying(p => !p) }}
+              style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
+              title="Replay without audio"
+            >
               {strokesPlaying ? 'Stop Replay' : 'Replay Strokes'}
             </button>
-            <button onClick={() => { setStrokesPlaying(false); setScrubbing(false); setSyncToAudio(s => !s) }} disabled={!hasAudio} style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: hasAudio ? '#fff' : '#f3f4f6' }}>
+            <button
+              onClick={() => { setStrokesPlaying(false); setScrubbing(false); setSyncToAudio(s => !s) }}
+              disabled={!hasAudio}
+              style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: hasAudio ? '#fff' : '#f3f4f6' }}
+              title={hasAudio ? 'Tie ink to audio playback' : 'No audio available'}
+            >
               {syncToAudio ? 'Sync: ON' : 'Sync: OFF'}
             </button>
+            {/* NEW: Scrub toggle */}
             <button
               onClick={() => {
                 setStrokesPlaying(false)
                 setSyncToAudio(false)
                 setScrubbing(s => !s)
-                const target = !scrubbing ? 0 : scrubMs
-                setScrubMs(target)
-                drawEventsUpTo(target)
+                // jump to end on enter for a nice start point
+                if (!scrubbing) { setScrubMs(pointTL.t1); drawAtMs(pointTL.t1) }
+                else { drawAllStatic() }
               }}
               style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: scrubbing ? '#fee2e2' : '#fff' }}
-              title="Scrub (chronological; erases included)"
+              title="Scrub smoothly through ink"
             >
               {scrubbing ? 'Exit Scrub' : 'Scrub'}
             </button>
@@ -430,16 +521,18 @@ export default function PlaybackDrawer({
           <span style={{ marginLeft:'auto', fontSize:12, color:'#6b7280' }}>Page {pageIndex + 1}</span>
         </div>
 
-        {/* Content */}
+        {/* Content: PDF underlay + overlay */}
         <div style={{ flex:1, minHeight:0, overflow:'auto', background:'#fafafa' }}>
           <div ref={pdfHostRef} style={{ position:'relative', width:`${overlay.cssW}px`, margin:'12px auto' }}>
             <div style={{ position:'relative' }}>
+              {/* IMPORTANT: capture the PDF CSS size right when it’s ready */}
               <PdfCanvas
                 url={pdfUrl}
                 pageIndex={pageIndex}
                 onReady={(_pdf:any, canvas:HTMLCanvasElement) => {
                   const rect = canvas.getBoundingClientRect()
                   pdfCssRef.current = { w: Math.max(1, Math.round(rect.width)), h: Math.max(1, Math.round(rect.height)) }
+                  // Also sync overlay immediately
                   const dpr = window.devicePixelRatio || 1
                   setOverlay(prev => {
                     const cssW = pdfCssRef.current.w, cssH = pdfCssRef.current.h
@@ -447,15 +540,20 @@ export default function PlaybackDrawer({
                   })
                 }}
               />
-              <canvas ref={overlayRef} style={{ position:'absolute', inset:0, width:`${overlay.cssW}px`, height:`${overlay.cssH}px`, pointerEvents:'none' }} />
+              <canvas
+                ref={overlayRef}
+                style={{ position:'absolute', inset:0, width:`${overlay.cssW}px`, height:`${overlay.cssH}px`, pointerEvents:'none' }}
+              />
             </div>
           </div>
         </div>
 
-        {/* Scrubber */}
+        {/* NEW: Scrubber bar */}
         <div style={{ padding: 12, borderTop: '1px solid #e5e7eb', background: '#fff' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10, opacity: scrubbing ? 1 : 0.6 }}>
-            <span style={{ width: 40, textAlign:'right', fontSize:12, color:'#6b7280' }}>{Math.max(0, Math.round((scrubMs) / 1000))}s</span>
+            <span style={{ width: 40, textAlign:'right', fontSize:12, color:'#6b7280' }}>
+              {Math.max(0, Math.round((scrubMs) / 1000))}s
+            </span>
             <input
               type="range"
               min={0}
@@ -465,16 +563,18 @@ export default function PlaybackDrawer({
               onChange={(e) => {
                 const v = Math.min(durationMs, Math.max(0, parseInt(e.target.value, 10)))
                 setScrubMs(v)
-                if (scrubbing) drawEventsUpTo(v)
+                if (scrubbing) drawAtMs(v)
               }}
               style={{ flex:1 }}
               disabled={!scrubbing || durationMs <= 0}
             />
-            <span style={{ width: 40, fontSize:12, color:'#6b7280' }}>{Math.max(0, Math.round(durationMs / 1000))}s</span>
+            <span style={{ width: 40, fontSize:12, color:'#6b7280' }}>
+              {Math.max(0, Math.round(durationMs / 1000))}s
+            </span>
           </div>
           {!scrubbing && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
-              Tip: Click <strong>Scrub</strong> to enable the slider. Draw & erase render strictly in chronological order.
+              Tip: Click <strong>Scrub</strong> to enable the slider. Drag to “fast-forward” smoothly through the drawing.
             </div>
           )}
         </div>
