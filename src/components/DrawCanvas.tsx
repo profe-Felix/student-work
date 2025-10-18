@@ -67,7 +67,7 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
     .map((s) => {
       if (isStroke(s)) return s
       if (isRecord(s)) {
-        const color = typeof s.color === 'string' ? s.color as string : '#000000'
+        const color = typeof s.color === 'string' ? (s as any).color as string : '#000000'
         const size  = Number.isFinite((s as any).size) ? (s as any).size as number : 4
         const tRaw  = (s as any).tool
         const tool  : Stroke['tool'] =
@@ -146,10 +146,41 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const drawingPointerId = useRef<number|null>(null)
   const localStrokeId = useRef<string|null>(null) // id for broadcasting
 
+  // DPR-aware canvas setup: always draw in CSS space, scale bitmap by DPR
+  const setupCanvas = ()=>{
+    const c = canvasRef.current
+    if (!c) return
+    const rect = c.getBoundingClientRect()
+    const cssW = Math.max(1, Math.round(rect.width))
+    const cssH = Math.max(1, Math.round(rect.height))
+    const dpr  = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1
+
+    // bitmap size
+    const bw = Math.max(1, Math.round(cssW * dpr))
+    const bh = Math.max(1, Math.round(cssH * dpr))
+
+    if (c.width !== bw) c.width = bw
+    if (c.height !== bh) c.height = bh
+
+    // style should reflect CSS size (avoid unexpected stretching)
+    c.style.width  = `${cssW}px`
+    c.style.height = `${cssH}px`
+
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+    ctxRef.current = ctx
+
+    // reset then scale so all drawing uses CSS units
+    ctx.setTransform(1,0,0,1,0,0)
+    ctx.scale(dpr, dpr)
+  }
+
   const redraw = ()=>{
     const ctx = ctxRef.current
     if (!ctx) return
-    ctx.clearRect(0,0, ctx.canvas.width, ctx.canvas.height)
+    const c = ctx.canvas
+    // clear in CSS space (context already scaled)
+    ctx.clearRect(0,0, c.width / (window.devicePixelRatio || 1), c.height / (window.devicePixelRatio || 1))
 
     // Order: finished remote, finished local, active remote, active local
     for (const s of remoteFinished.current) drawStroke(ctx, s)
@@ -158,13 +189,40 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     if (current.current) drawStroke(ctx, current.current)
   }
 
+  // Initialize + respond to size changes
   useEffect(()=>{
+    setupCanvas()
+    redraw()
+    // keep canvas in sync with CSS size changes (parent resizes, DPR changes)
     const c = canvasRef.current
     if (!c) return
-    c.width = width; c.height = height
-    const ctx = c.getContext('2d')
-    if (!ctx) return
-    ctxRef.current = ctx
+
+    let ro: ResizeObserver | null = null
+    if ('ResizeObserver' in window) {
+      ro = new ResizeObserver(()=>{ setupCanvas(); redraw() })
+      ro.observe(c)
+    }
+    const onWinResize = ()=>{ setupCanvas(); redraw() }
+    window.addEventListener('resize', onWinResize)
+
+    // DPR change (pinch-zoom on some devices) → listen via media query
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    const onDprChange = ()=>{ setupCanvas(); redraw() }
+    if (mq && typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', onDprChange)
+    }
+
+    return ()=>{
+      window.removeEventListener('resize', onWinResize)
+      if (ro) ro.disconnect()
+      if (mq && typeof mq.removeEventListener === 'function') mq.removeEventListener('change', onDprChange)
+    }
+    // NOTE: using actual element size via ResizeObserver, so we don't depend on width/height props here
+  }, [])
+
+  useEffect(()=>{
+    // If parent code changes container size via props, a re-setup helps
+    setupCanvas()
     redraw()
   }, [width, height])
 
@@ -230,6 +288,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const getPos = (e: PointerEvent)=>{
     const c = canvasRef.current!
     const r = c.getBoundingClientRect()
+    // CSS-space coordinates (match our scaled context)
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
 
@@ -240,7 +299,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     const shouldDraw = (e: PointerEvent) => {
       if (mode !== 'draw') return false
       // Draw/broadcast for pen/highlighter/eraser (eraser uses destination-out).
-      const allowed = (tool === 'pen' || tool === 'highlighter' || tool === 'eraser')
+      const allowed = (tool === 'pen' || tool === 'highlighter' || tool === 'eraser' || tool === 'eraserObject')
       if (!allowed) return false
       if (e.pointerType === 'pen') return true // allow Apple Pencil even with palm
       // fingers/mouse: draw only if a single non-pen pointer is down
@@ -258,7 +317,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
 
       const t: Stroke['tool'] =
         tool === 'highlighter' ? 'highlighter' :
-        tool === 'eraser'      ? 'eraser'      : 'pen'
+        (tool === 'eraser' || tool === 'eraserObject') ? 'eraser' : 'pen'
 
       current.current = { color, size, tool: t, pts: [p] }
       localStrokeId.current = `${Date.now()}-${Math.random().toString(36).slice(2)}-${e.pointerId}`
@@ -344,8 +403,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   return (
     <canvas
       ref={canvasRef}
-      width={width}
-      height={height}
+      // width/height attributes are controlled by setupCanvas() using CSS rect × DPR
       style={{
         position:'absolute', inset:0, zIndex:10,
         display:'block', width:'100%', height:'100%',
