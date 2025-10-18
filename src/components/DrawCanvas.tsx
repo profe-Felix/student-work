@@ -2,7 +2,7 @@
 import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 
 export type StrokePoint = { x: number; y: number; t?: number }
-export type Stroke = { color: string; size: number; tool: 'pen'|'highlighter'|'eraser'; pts: StrokePoint[] }
+export type Stroke = { color: string; size: number; tool: 'pen'|'highlighter'|'eraser'|'eraser'; pts: Array<{ x:number; y:number; t?: number }> }
 export type StrokesPayload = { strokes: Stroke[] }
 
 /** Realtime delta payload */
@@ -63,8 +63,7 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
       if (isRecord(s)) {
         const color = typeof s.color === 'string' ? s.color as string : '#000000'
         const size  = Number.isFinite((s as any).size) ? (s as any).size as number : 4
-        const t0    = (s as any).tool
-        const tool  = t0 === 'highlighter' ? 'highlighter' : (t0 === 'eraser' ? 'eraser' : 'pen')
+        const tool  = (s as any).tool === 'highlighter' ? 'highlighter' : 'pen'
         const pts   = Array.isArray((s as any).pts) ? (s as any).pts.filter(isPoint) : []
         return { color, size, tool, pts }
       }
@@ -78,18 +77,11 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
 function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
   if (!s.pts || s.pts.length === 0) return
   ctx.save()
-  if (s.tool === 'eraser') {
-    ctx.globalCompositeOperation = 'destination-out'
-    ctx.globalAlpha = 1
-    ctx.strokeStyle = '#000'
-  } else {
-    ctx.globalCompositeOperation = 'source-over'
-    ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
-    ctx.strokeStyle = s.color
-  }
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  ctx.lineWidth = s.tool === 'highlighter' ? Math.max(1, s.size * 1.5) : s.size
+  ctx.lineWidth = s.size
+  ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
+  ctx.strokeStyle = s.color
   ctx.beginPath()
   for (let i = 0; i < s.pts.length; i++) {
     const p = s.pts[i]
@@ -120,9 +112,6 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const activePointers = useRef<Set<number>>(new Set())
   const drawingPointerId = useRef<number|null>(null)
   const localStrokeId = useRef<string|null>(null) // id for broadcasting
-
-  // Absolute timestamping (ms since epoch) — never reset
-  const nowMs = () => Date.now()
 
   const redraw = ()=>{
     const ctx = ctxRef.current
@@ -167,7 +156,6 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       // clear remote layers only when explicitly reloading base strokes
       remoteActive.current.clear()
       remoteFinished.current = []
-      // NOTE: no timestamp resets — absolute time keeps chronology stable
       redraw()
     },
     clearStrokes: (): void => {
@@ -175,7 +163,6 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       current.current = null
       remoteActive.current.clear()
       remoteFinished.current = []
-      // NOTE: no timestamp resets
       redraw()
     },
     undo: (): void => {
@@ -188,19 +175,11 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       // accumulate deltas into a single active stroke per remote id
       let s = remoteActive.current.get(u.id)
       if (!s) {
-        // accept eraser from remote too
-        const tool: Stroke['tool'] =
-          u.tool === 'highlighter' ? 'highlighter' :
-          u.tool === 'eraser' ? 'eraser' : 'pen'
-        s = { color: u.color, size: u.size, tool, pts: [] }
+        s = { color: u.color, size: u.size, tool: u.tool, pts: [] }
         remoteActive.current.set(u.id, s)
       }
       if (Array.isArray(u.pts) && u.pts.length > 0) {
-        // keep remote timestamps if provided; otherwise stamp them now
-        const stamped = u.pts.map(p => ({
-          x: p.x, y: p.y, t: Number.isFinite((p as any).t) ? (p as any).t : nowMs()
-        }))
-        s.pts.push(...stamped)
+        s.pts.push(...u.pts)
       }
       if (u.done) {
         remoteActive.current.delete(u.id)
@@ -213,21 +192,19 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const getPos = (e: PointerEvent)=>{
     const c = canvasRef.current!
     const r = c.getBoundingClientRect()
-    return { x: e.clientX - r.left, y: e.clientY - r.top, t: nowMs() }
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
 
   useEffect(()=>{
     const c = canvasRef.current
     if (!c) return
 
-    // draw/broadcast for all drawable tools including eraser
-    const isDrawableTool = (tool: Props['tool']) =>
-      tool === 'pen' || tool === 'highlighter' || tool === 'eraser' || tool === 'eraserObject'
-
     const shouldDraw = (e: PointerEvent) => {
       if (mode !== 'draw') return false
-      if (!isDrawableTool(tool)) return false
+      // Draw/broadcast for pen/highlighter/eraser (eraser uses destination-out).
+      if (!(tool === 'pen' || tool === 'highlighter' || tool === 'eraser')) return false
       if (e.pointerType === 'pen') return true // allow Apple Pencil even with palm
+      // fingers/mouse: draw only if a single non-pen pointer is down
       return activePointers.current.size <= 1
     }
 
@@ -237,24 +214,13 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       drawingPointerId.current = e.pointerId
       c.setPointerCapture(e.pointerId)
       const p = getPos(e)
-
-      let ttool: Stroke['tool'] =
-        tool === 'highlighter' ? 'highlighter'
-        : tool === 'eraser' || tool === 'eraserObject' ? 'eraser'
-        : 'pen'
-
-      current.current = {
-        color,
-        size,
-        tool: ttool,
-        pts: [p]
-      }
+      const t: Stroke['tool'] = tool === 'highlighter' ? 'highlighter' : 'pen'
+      current.current = { color, size, tool: t, pts: [p] }
       localStrokeId.current = `${Date.now()}-${Math.random().toString(36).slice(2)}-${e.pointerId}`
-
       // broadcast initial point
       onStrokeUpdate?.({
         id: localStrokeId.current,
-        color, size, tool: ttool, pts: [p], done: false, from: selfId
+        color, size, tool: t, pts: [p], done: false, from: selfId
       })
       redraw()
       ;(e as any).preventDefault?.()
@@ -277,6 +243,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
         return
       }
       const p = getPos(e)
+      ;(p as any).t = Date.now()
       current.current.pts.push(p)
       // broadcast delta (single point)
       onStrokeUpdate?.({
