@@ -1269,13 +1269,14 @@ export default function StudentAssignment(){
         <span style={{ minWidth:90, textAlign:'center', fontWeight:600 }}>
           Page {pageIndex+1}
         </span>
-        <button
-          onClick={()=>goToPage(pageIndex+1)}
-          disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
-          style={{ padding:'8px 12px', borderRadius:999, border:'1px solid '#ddd', background:'#f9fafb' }}
-        >
-          Next ▶
-        </button>
+<button
+  onClick={()=>goToPage(pageIndex+1)}
+  disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
+  style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
+>
+  Next ▶
+</button>
+
       </div>
 
       {/* Toolbar & toasts */}
