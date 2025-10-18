@@ -1,8 +1,13 @@
 // src/components/DrawCanvas.tsx
 import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 
-export type StrokePoint = { x: number; y: number }
-export type Stroke = { color: string; size: number; tool: 'pen'|'highlighter'; pts: StrokePoint[] }
+export type StrokePoint = { x: number; y: number; t?: number } // <-- add t (ms)
+export type Stroke = {
+  color: string
+  size: number
+  tool: 'pen'|'highlighter'|'eraser' // <-- include eraser as a stroke tool
+  pts: StrokePoint[]
+}
 export type StrokesPayload = { strokes: Stroke[] }
 
 /** Realtime delta payload */
@@ -10,8 +15,8 @@ export type RemoteStrokeUpdate = {
   id: string                 // stable id per in-progress stroke from a peer
   color: string
   size: number
-  tool: 'pen'|'highlighter'
-  pts: StrokePoint[]         // new points since last update (can be length 1+)
+  tool: 'pen'|'highlighter'|'eraser' // <-- allow eraser in RT too
+  pts: StrokePoint[]         // new points since last update (can be length 1+), each with t
   done?: boolean             // true when the peer lifted the pencil
   /** NEW: echo guard */
   from?: string
@@ -48,7 +53,7 @@ function isStroke(v: unknown): v is Stroke {
   if (!isRecord(v)) return false
   const color = typeof v.color === 'string'
   const size  = Number.isFinite((v as any).size)
-  const tool  = v.tool === 'pen' || v.tool === 'highlighter'
+  const tool  = v.tool === 'pen' || v.tool === 'highlighter' || v.tool === 'eraser'
   const pts   = Array.isArray((v as any).pts) && (v as any).pts.every(isPoint)
   return color && size && tool && pts
 }
@@ -61,10 +66,16 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
     .map((s) => {
       if (isStroke(s)) return s
       if (isRecord(s)) {
-        const color = typeof s.color === 'string' ? s.color as string : '#000000'
+        const color = typeof s.color === 'string' ? (s as any).color as string : '#000000'
         const size  = Number.isFinite((s as any).size) ? (s as any).size as number : 4
-        const tool  = (s as any).tool === 'highlighter' ? 'highlighter' : 'pen'
-        const pts   = Array.isArray((s as any).pts) ? (s as any).pts.filter(isPoint) : []
+        const toolRaw = (s as any).tool
+        const tool: Stroke['tool'] =
+          toolRaw === 'highlighter' ? 'highlighter'
+          : toolRaw === 'eraser' ? 'eraser'
+          : 'pen'
+        const pts   = Array.isArray((s as any).pts)
+          ? (s as any).pts.filter(isPoint)
+          : []
         return { color, size, tool, pts }
       }
       return null
@@ -77,11 +88,19 @@ function normalize(input: StrokesPayload | null | undefined): StrokesPayload {
 function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
   if (!s.pts || s.pts.length === 0) return
   ctx.save()
+  // Eraser uses destination-out compositing so it "cuts" previous ink
+  if (s.tool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out'
+    ctx.globalAlpha = 1
+    ctx.strokeStyle = '#000' // color irrelevant in destination-out
+  } else {
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
+    ctx.strokeStyle = s.color
+  }
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   ctx.lineWidth = s.size
-  ctx.globalAlpha = s.tool === 'highlighter' ? 0.35 : 1
-  ctx.strokeStyle = s.color
   ctx.beginPath()
   for (let i = 0; i < s.pts.length; i++) {
     const p = s.pts[i]
@@ -112,6 +131,10 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const activePointers = useRef<Set<number>>(new Set())
   const drawingPointerId = useRef<number|null>(null)
   const localStrokeId = useRef<string|null>(null) // id for broadcasting
+
+  // Monotonic timestamp base so every point (ink/eraser) gets t in ms
+  const sessionStartRef = useRef<number>(performance.now())
+  const nowMs = () => Math.round(performance.now() - sessionStartRef.current)
 
   const redraw = ()=>{
     const ctx = ctxRef.current
@@ -156,6 +179,8 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       // clear remote layers only when explicitly reloading base strokes
       remoteActive.current.clear()
       remoteFinished.current = []
+      // reset session start so new points have reasonable t relative to newly loaded content
+      sessionStartRef.current = performance.now()
       redraw()
     },
     clearStrokes: (): void => {
@@ -163,6 +188,8 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       current.current = null
       remoteActive.current.clear()
       remoteFinished.current = []
+      // reset base time
+      sessionStartRef.current = performance.now()
       redraw()
     },
     undo: (): void => {
@@ -175,11 +202,19 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       // accumulate deltas into a single active stroke per remote id
       let s = remoteActive.current.get(u.id)
       if (!s) {
-        s = { color: u.color, size: u.size, tool: u.tool, pts: [] }
+        const toolNorm: Stroke['tool'] =
+          u.tool === 'highlighter' ? 'highlighter'
+          : u.tool === 'eraser' ? 'eraser'
+          : 'pen'
+        s = { color: u.color, size: u.size, tool: toolNorm, pts: [] }
         remoteActive.current.set(u.id, s)
       }
       if (Array.isArray(u.pts) && u.pts.length > 0) {
-        s.pts.push(...u.pts)
+        // keep any provided t; if missing, stamp now
+        for (const p of u.pts) {
+          if (typeof p.t !== 'number') p.t = nowMs()
+          s.pts.push(p)
+        }
       }
       if (u.done) {
         remoteActive.current.delete(u.id)
@@ -199,13 +234,21 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     const c = canvasRef.current
     if (!c) return
 
+    const isDrawingTool = (tool: Props['tool']) =>
+      tool === 'pen' || tool === 'highlighter' || tool === 'eraser' || tool === 'eraserObject'
+
     const shouldDraw = (e: PointerEvent) => {
       if (mode !== 'draw') return false
-      // Only draw/broadcast when tool is pen/highlighter; erasers handled elsewhere.
-      if (!(tool === 'pen' || tool === 'highlighter')) return false
+      if (!isDrawingTool(tool)) return false
       if (e.pointerType === 'pen') return true // allow Apple Pencil even with palm
       // fingers/mouse: draw only if a single non-pen pointer is down
       return activePointers.current.size <= 1
+    }
+
+    const normalizeTool = (t: Props['tool']): Stroke['tool'] => {
+      if (t === 'highlighter') return 'highlighter'
+      if (t === 'eraser' || t === 'eraserObject') return 'eraser'
+      return 'pen'
     }
 
     const onPointerDown = (e: PointerEvent)=>{
@@ -213,14 +256,15 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       if (!shouldDraw(e)) return
       drawingPointerId.current = e.pointerId
       c.setPointerCapture(e.pointerId)
-      const p = getPos(e)
-      const t: Stroke['tool'] = tool === 'highlighter' ? 'highlighter' : 'pen'
-      current.current = { color, size, tool: t, pts: [p] }
+      const p0 = getPos(e)
+      const t0 = nowMs()
+      const toolNorm = normalizeTool(tool)
+      current.current = { color, size, tool: toolNorm, pts: [{ x: p0.x, y: p0.y, t: t0 }] }
       localStrokeId.current = `${Date.now()}-${Math.random().toString(36).slice(2)}-${e.pointerId}`
-      // broadcast initial point
+      // broadcast initial point (with t)
       onStrokeUpdate?.({
         id: localStrokeId.current,
-        color, size, tool: t, pts: [p], done: false, from: selfId
+        color, size, tool: toolNorm, pts: [{ x: p0.x, y: p0.y, t: t0 }], done: false, from: selfId
       })
       redraw()
       ;(e as any).preventDefault?.()
@@ -243,11 +287,12 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
         return
       }
       const p = getPos(e)
-      current.current.pts.push(p)
-      // broadcast delta (single point)
+      const tNow = nowMs()
+      current.current.pts.push({ x: p.x, y: p.y, t: tNow })
+      // broadcast delta (single point, with t)
       onStrokeUpdate?.({
         id: localStrokeId.current!, color, size,
-        tool: current.current.tool, pts: [p], done: false, from: selfId
+        tool: current.current.tool, pts: [{ x: p.x, y: p.y, t: tNow }], done: false, from: selfId
       })
       redraw()
       ;(e as any).preventDefault?.()
