@@ -22,7 +22,7 @@ type Timeline = { strokes: TLStroke[]; t0:number; t1:number }   // ms
 
 // Single merged draw event (one tiny line segment)
 type DrawEvent = {
-  t: number // ms when this segment becomes visible
+  t: number // ms when this segment becomes visible (use end-point time)
   tool: 'pen'|'highlighter'|'eraser'|'other'
   color: string
   size: number
@@ -166,8 +166,14 @@ function buildEventTimeline(tl: Timeline): { events: DrawEvent[]; t1:number } {
       })
     }
   }
-  // Sort by time to preserve interleaving (ink vs eraser vs color switches)
-  evs.sort((A, B) => A.t - B.t)
+  // Sort by time; if equal, draw ink first THEN eraser to avoid premature holes
+  evs.sort((A, B) => {
+    if (A.t !== B.t) return A.t - B.t
+    const ae = A.tool === 'eraser', be = B.tool === 'eraser'
+    if (ae && !be) return 1   // eraser after ink at the same time
+    if (!ae && be) return -1
+    return 0
+  })
   return { events: evs, t1: tl.t1 }
 }
 
@@ -205,7 +211,7 @@ export default function PlaybackDrawer({
   const [strokesPlaying, setStrokesPlaying] = useState(false)
 
   const [scrubbing, setScrubbing] = useState(false)
-  const [scrubMs, setScrubMs] = useState<number>(durationMs)
+  const [scrubMs, setScrubMs] = useState<number>(0) // start at 0 so erasing happens when it should
 
   /* ---- Size/DPR sync ---- */
   useEffect(() => {
@@ -306,16 +312,6 @@ export default function PlaybackDrawer({
         ctx.lineTo(ev.x1, ev.y1)
         ctx.stroke()
       }
-
-      // Optional: draw a partial head for the next event (smoothed scrub)
-      const nextIdx = binarySearchLastLE(merged.events, ms) + 1
-      if (nextIdx >= 0 && nextIdx < merged.events.length) {
-        const ev = merged.events[nextIdx]
-        // We don't know sub-segment fraction without point times here,
-        // so just omit head to keep it simple and correct temporally.
-        // (Ink and erase heads still look fine without interpolation.)
-      }
-
       ctx.globalAlpha = 1
       ctx.globalCompositeOperation = 'source-over'
     })
@@ -370,7 +366,7 @@ export default function PlaybackDrawer({
     }
   }, [syncToAudio, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, durationMs])
 
-  // “Replay Strokes” (seconds) — reuse event timeline, just map sec->ms
+  // “Replay Strokes” uses same ms timeline
   useEffect(() => {
     if (!strokesPlaying) return
     const start = performance.now()
@@ -386,7 +382,7 @@ export default function PlaybackDrawer({
   }, [strokesPlaying, durationMs, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh])
 
   // Keep scrub slider in sync when data changes
-  useEffect(() => { setScrubMs(durationMs) }, [durationMs])
+  useEffect(() => { setScrubMs(0) }, [durationMs])
 
   const hasAudio = !!audioUrl
 
@@ -412,13 +408,13 @@ export default function PlaybackDrawer({
             >
               {syncToAudio ? 'Sync: ON' : 'Sync: OFF'}
             </button>
-            {/* Scrub toggle */}
+            {/* Scrub toggle (start at 0 for correct action order) */}
             <button
               onClick={() => {
                 setStrokesPlaying(false)
                 setSyncToAudio(false)
                 setScrubbing(s => !s)
-                const target = !scrubbing ? durationMs : durationMs
+                const target = !scrubbing ? 0 : scrubMs
                 setScrubMs(target)
                 drawEventsUpTo(target)
               }}
