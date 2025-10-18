@@ -14,7 +14,7 @@ export type Props = {
 /* ========================= Types ========================= */
 type TimedPoint = { x: number; y: number; t?: number }
 type Stroke = { color?: string; size?: number; points: TimedPoint[]; tool?: string }
-type Seg = { x:number; y0:number; x1:number; y1:number; color:string; size:number; t:number; tool?: string } & { x0:number }
+type Seg = { x0:number; y0:number; x1:number; y1:number; color:string; size:number; t:number; tool?: string }
 type OverlaySize = { cssW: number; cssH: number; dpr: number }
 
 /* ------------ tiny utils ------------ */
@@ -27,7 +27,7 @@ const N = (v:any) => {
 function asPoints(maybe:any): TimedPoint[] {
   if (!maybe) return []
   if (Array.isArray(maybe) && maybe.length && typeof maybe[0] === 'object' && 'x' in maybe[0]) {
-    return maybe.map((p: any) => ({ x: N(p.x), y: N(p.y), t: p.t != null ? N(p.t) : undefined }))
+    return maybe.map((p:any) => ({ x: N(p.x), y: N(p.y), t: p.t != null ? N(p.t) : undefined }))
   }
   return []
 }
@@ -97,7 +97,7 @@ function buildSequentialSegments(strokes: Stroke[]): { segs: Seg[]; duration: nu
       segs.push({
         x0: N(p0.x), y0: N(p0.y), x1: N(p1.x), y1: N(p1.y),
         color: s.color || '#111', size: s.size || 4, t, tool: s.tool
-      } as Seg)
+      })
       t += SEG_DT
     }
     t += GAP_DT
@@ -125,13 +125,14 @@ function buildPointTimeline(strokes: Stroke[]): PointTimeline {
   if (hasAnyTimestamps(strokes)) {
     // Use recorded times; normalize to start at 0
     let minT = Infinity, maxT = 0
-    const tl: TLStroke[] = strokes.map((s: Stroke) => {
+    const tl: TLStroke[] = strokes.map(s => {
       const pts: TLPoint[] = []
       let last = -Infinity
       for (const p of (s.points || [])) {
         if (typeof p.t === 'number') {
           const tt = Math.max(0, p.t)
-          const t = Math.max(tt, last <= 0 ? tt : last) // non-decreasing
+          // keep non-decreasing within stroke
+          const t = Math.max(tt, last <= 0 ? tt : last)
           last = t
           pts.push({ x:N(p.x), y:N(p.y), t })
           if (t < minT) minT = t
@@ -149,10 +150,7 @@ function buildPointTimeline(strokes: Stroke[]): PointTimeline {
     })
     if (!isFinite(minT)) minT = 0
     const shift = minT
-    const shifted = tl.map((s: TLStroke) => ({
-      ...s,
-      pts: s.pts.map((p: TLPoint) => ({ ...p, t: p.t - shift }))
-    }))
+    const shifted = tl.map(s => ({ ...s, pts: s.pts.map(p => ({ ...p, t: p.t - shift })) }))
     return { strokes: shifted, t0: 0, t1: Math.max(0, maxT - shift) }
   }
 
@@ -174,66 +172,6 @@ function buildPointTimeline(strokes: Stroke[]): PointTimeline {
     t += GAP_MS
   }
   return { strokes: tl, t0: 0, t1: Math.max(0, t) }
-}
-
-/* ------------ ERASE timeline from payload.ops (optional) ------------ */
-type EraseTL = { path: TLPoint[]; radius: number; t0:number; t1:number; mode?: 'soft'|'object' }
-type EraseBuild = { erases: EraseTL[]; t0:number; t1:number }
-
-function buildEraseTimelineFromOps(opsAny:any): EraseBuild {
-  const out: EraseTL[] = []
-  if (!Array.isArray(opsAny)) return { erases: out, t0: 0, t1: 0 }
-
-  let minT = Infinity
-  let maxT = 0
-
-  // Gather raw, then normalize to start at 0
-  const raw: EraseTL[] = []
-
-  for (const op of opsAny) {
-    const isErase = !!op && (op.type === 'erase' || op.mode === 'erase' || op.tool === 'eraser' || op.tool === 'eraserObject')
-    if (!isErase) continue
-
-    const pathRaw = op.path || op.pts || []
-    if (!Array.isArray(pathRaw) || pathRaw.length === 0) continue
-
-    const pts: TLPoint[] = []
-    let last = typeof op.t0 === 'number' ? N(op.t0) : -Infinity
-    for (let i = 0; i < pathRaw.length; i++) {
-      const p = pathRaw[i] || {}
-      let t: number
-      if (typeof p.t === 'number') {
-        t = N(p.t)
-        t = Math.max(t, last > 0 ? last : t)
-      } else if (typeof op.t0 === 'number' && typeof op.t1 === 'number') {
-        // distribute across [t0, t1]
-        const span = Math.max(1, N(op.t1) - N(op.t0))
-        t = N(op.t0) + Math.round((i / Math.max(1, pathRaw.length - 1)) * span)
-      } else {
-        t = last > 0 ? last + 10 : 0
-      }
-      last = t
-      pts.push({ x: N(p.x), y: N(p.y), t })
-      if (t < minT) minT = t
-      if (t > maxT) maxT = t
-    }
-
-    let t0 = typeof op.t0 === 'number' ? N(op.t0) : pts[0].t
-    let t1 = typeof op.t1 === 'number' ? N(op.t1) : pts[pts.length - 1].t
-    if (t0 < minT) minT = t0
-    if (t1 > maxT) maxT = t1
-
-    raw.push({ path: pts, radius: N(op.radius ?? op.size ?? 10), t0, t1, mode: op.mode || op.eraseMode })
-  }
-
-  if (!isFinite(minT)) minT = 0
-  const shift = minT
-  for (const e of raw) {
-    const path = e.path.map((p: TLPoint) => ({ ...p, t: p.t - shift }))
-    out.push({ ...e, path, t0: e.t0 - shift, t1: e.t1 - shift })
-  }
-
-  return { erases: out, t0: 0, t1: Math.max(0, maxT - shift) }
 }
 
 /* ------------ source space inference ------------ */
@@ -262,26 +200,12 @@ export default function PlaybackDrawer({
 
   // NEW: Time-based point timeline (ms) for smooth scrubbing and audio sync
   const pointTL = useMemo(() => buildPointTimeline(strokes), [strokes])
-
-  // NEW: Optional erase timeline (from payload.ops), normalized to 0
-  const eraseTL = useMemo(() => {
-    const ops = (strokesPayload && typeof strokesPayload === 'object') ? (strokesPayload.ops || []) : []
-    return buildEraseTimelineFromOps(ops)
-  }, [strokesPayload])
-
-  // total length in ms: combined ink+erase
-  const durationMs = Math.max(pointTL.t1, eraseTL.t1)
+  const durationMs = pointTL.t1 // total length in ms
 
   // Decide the stroke coordinate space to scale from
   const { sw, sh } = useMemo(
-    () => inferSourceDimsFromMetaOrPdf(
-      // Prefer explicit w/h if present in the payload for best scaling
-      N(strokesPayload?.w ?? parsed.metaW),
-      N(strokesPayload?.h ?? parsed.metaH),
-      pdfCssRef.current.w,
-      pdfCssRef.current.h
-    ),
-    [strokesPayload?.w, strokesPayload?.h, parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH]
+    () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
+    [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH]
   )
 
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
@@ -292,9 +216,9 @@ export default function PlaybackDrawer({
   const [syncToAudio, setSyncToAudio] = useState<boolean>(!!audioUrl)
   const [strokesPlaying, setStrokesPlaying] = useState(false)
 
-  // Scrubbing state (start at 0 to avoid “final image then un-erase” feel)
+  // NEW: Scrubbing state
   const [scrubbing, setScrubbing] = useState(false)
-  const [scrubMs, setScrubMs] = useState<number>(0)
+  const [scrubMs, setScrubMs] = useState<number>(durationMs)
 
   /* ---- Bind overlay size to PDF canvas CSS size, and track DPR ---- */
   useEffect(() => {
@@ -365,11 +289,15 @@ export default function PlaybackDrawer({
     ctx.restore()
   }
 
+  // ✅ Modified: treat erasers as special ink using destination-out
   function applyStyleForTool(ctx: CanvasRenderingContext2D, color: string, size: number, tool?: string) {
-    ctx.strokeStyle = color
+    const isEraser = tool === 'eraser' || tool === 'eraserObject'
     const isHi = tool === 'highlighter'
+
+    ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over'
     ctx.globalAlpha = isHi ? 0.35 : 1.0
-    ctx.lineWidth = Math.max(1, (isHi ? size * 1.5 : size))
+    ctx.strokeStyle = isEraser ? '#000' : (color || '#111') // color doesn’t matter for erase
+    ctx.lineWidth = Math.max(1, isHi ? size * 1.5 : size)
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
   }
@@ -378,6 +306,7 @@ export default function PlaybackDrawer({
     const ctx = ensureCtx()
     if (!ctx) return
     const { cssW, cssH } = overlay
+    ctx.globalCompositeOperation = 'source-over' // reset per frame
     ctx.clearRect(0, 0, cssW, cssH)
     withScale(ctx, () => {
       for (const s of strokes) {
@@ -386,6 +315,7 @@ export default function PlaybackDrawer({
         applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
         if (pts.length === 1) {
           const p = pts[0]
+          // For eraser dots, destination-out + fill erases a small circle
           ctx.beginPath()
           ctx.arc(p.x, p.y, (s.size || 4) * 0.5, 0, Math.PI * 2)
           ctx.fillStyle = s.color || '#111'
@@ -398,6 +328,7 @@ export default function PlaybackDrawer({
         }
       }
       ctx.globalAlpha = 1
+      ctx.globalCompositeOperation = 'source-over'
     })
   }
 
@@ -406,6 +337,7 @@ export default function PlaybackDrawer({
     const ctx = ensureCtx()
     if (!ctx) return
     const { cssW, cssH } = overlay
+    ctx.globalCompositeOperation = 'source-over' // reset per frame
     ctx.clearRect(0, 0, cssW, cssH)
     if (!segs.length) { drawAllStatic(); return }
     withScale(ctx, () => {
@@ -427,103 +359,66 @@ export default function PlaybackDrawer({
         ctx.stroke()
       }
       ctx.globalAlpha = 1
+      ctx.globalCompositeOperation = 'source-over'
     })
   }
 
-  /* ---- ERASE helpers ---- */
-  function eraseAlong(ctx: CanvasRenderingContext2D, path: TLPoint[], radius:number) {
-    if (!path.length) return
-    ctx.save()
-    ctx.globalCompositeOperation = 'destination-out'
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.lineWidth = Math.max(1, radius)
-    ctx.beginPath()
-    ctx.moveTo(path[0].x, path[0].y)
-    for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y)
-    ctx.stroke()
-    ctx.restore()
-  }
-
-  /* ---- NEW: draw by real/synthesized point timestamps (ms) with interpolation + ERASES ---- */
+  /* ---- NEW: draw by real/synthesized point timestamps (milliseconds) with interpolation ---- */
   function drawAtMs(ms:number) {
     const ctx = ensureCtx()
     if (!ctx) return
     const { cssW, cssH } = overlay
+    ctx.globalCompositeOperation = 'source-over' // reset per frame
     ctx.clearRect(0, 0, cssW, cssH)
 
+    if (!pointTL.strokes.length) { drawAllStatic(); return }
+
     withScale(ctx, () => {
-      // 1) DRAW ink up to ms
-      if (!pointTL.strokes.length) {
-        for (const s of strokes) {
-          const pts = s.points || []
-          if (!pts.length) continue
-          applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
+      for (const s of pointTL.strokes) {
+        const pts = s.pts
+        if (!pts || pts.length === 0) continue
+
+        // find last index with t <= ms
+        let i = 0
+        while (i < pts.length && pts[i].t <= ms) i++
+        const lastIdx = i - 1
+        if (lastIdx < 0) continue
+
+        applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
+
+        // draw all segments fully up to lastIdx
+        if (lastIdx >= 1) {
           ctx.beginPath()
           ctx.moveTo(pts[0].x, pts[0].y)
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
+          for (let k = 1; k <= lastIdx; k++) ctx.lineTo(pts[k].x, pts[k].y)
           ctx.stroke()
+        } else {
+          // single point (dot) visible
+          const p = pts[0]
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, (s.size || 4) * 0.5, 0, Math.PI * 2)
+          ctx.fillStyle = s.color || '#111'
+          ctx.fill()
         }
-      } else {
-        for (const s of pointTL.strokes) {
-          const pts = s.pts
-          if (!pts || pts.length === 0) continue
 
-          // find last index with t <= ms
-          let i = 0
-          while (i < pts.length && pts[i].t <= ms) i++
-          const lastIdx = i - 1
-          if (lastIdx < 0) continue
-
-          applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
-
-          // draw all segments fully up to lastIdx
-          if (lastIdx >= 1) {
+        // interpolate the next segment endpoint (smooth “live” stroke head)
+        if (lastIdx < pts.length - 1) {
+          const a = pts[lastIdx]
+          const b = pts[lastIdx + 1]
+          const dt = Math.max(1, b.t - a.t)
+          const u = Math.min(1, Math.max(0, (ms - a.t) / dt))
+          const x = a.x + (b.x - a.x) * u
+          const y = a.y + (b.y - a.y) * u
+          if (u > 0) {
             ctx.beginPath()
-            ctx.moveTo(pts[0].x, pts[0].y)
-            for (let k = 1; k <= lastIdx; k++) ctx.lineTo(pts[k].x, pts[k].y)
+            ctx.moveTo(a.x, a.y)
+            ctx.lineTo(x, y)
             ctx.stroke()
-          } else {
-            // single point (dot) visible
-            const p = pts[0]
-            ctx.beginPath()
-            ctx.arc(p.x, p.y, (s.size || 4) * 0.5, 0, Math.PI * 2)
-            ctx.fillStyle = s.color || '#111'
-            ctx.fill()
-          }
-
-          // interpolate the next segment endpoint (smooth “live” stroke head)
-          if (lastIdx < pts.length - 1) {
-            const a = pts[lastIdx]
-            const b = pts[lastIdx + 1]
-            const dt = Math.max(1, b.t - a.t)
-            const u = Math.min(1, Math.max(0, (ms - a.t) / dt))
-            const x = a.x + (b.x - a.x) * u
-            const y = a.y + (b.y - a.y) * u
-            if (u > 0) {
-              ctx.beginPath()
-              ctx.moveTo(a.x, a.y)
-              ctx.lineTo(x, y)
-              ctx.stroke()
-            }
           }
         }
       }
-
-      // 2) ERASE up to ms (from payload.ops), path is partially revealed by time
-      if (eraseTL.erases.length) {
-        for (const e of eraseTL.erases) {
-          if (ms <= e.t0) continue
-          const cut = e.path.filter((p: TLPoint) => p.t <= ms)
-          if (cut.length >= 2) {
-            eraseAlong(ctx, cut, e.radius)
-          } else if (cut.length === 1) {
-            eraseAlong(ctx, [cut[0], { ...cut[0], x: cut[0].x + 0.01, y: cut[0].y + 0.01 }], e.radius)
-          }
-        }
-      }
-
       ctx.globalAlpha = 1
+      ctx.globalCompositeOperation = 'source-over'
     })
   }
 
@@ -534,7 +429,7 @@ export default function PlaybackDrawer({
   /* ---- Always draw static ink when sizes or payload change ---- */
   useEffect(() => { drawAllStatic() }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload])
 
-  /* ---- Audio-synced mode (uses real ms timeline for smoothness + erase) ---- */
+  /* ---- Audio-synced mode (now uses real ms timeline for smoothness) ---- */
   useEffect(() => {
     if (!syncToAudio) { stopRAF(); return }
     const el = audioRef.current; if (!el) return
@@ -564,9 +459,9 @@ export default function PlaybackDrawer({
       el.removeEventListener('ended', onEnded)
       stopRAF()
     }
-  }, [syncToAudio, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, pointTL.t1, eraseTL.t1])
+  }, [syncToAudio, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, pointTL.t1])
 
-  /* ---- Strokes-only replay (old path; seconds-based; no erase) ---- */
+  /* ---- Strokes-only replay (kept exactly as before, seconds-based) ---- */
   useEffect(() => {
     if (!strokesPlaying) return
     const start = performance.now()
@@ -581,10 +476,10 @@ export default function PlaybackDrawer({
     return () => stopRAF()
   }, [strokesPlaying, duration, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh])
 
-  // Keep scrub range in sync if new data arrives; keep head at 0 when enabling scrub
+  // Keep scrub range in sync if new data arrives
   useEffect(() => {
-    setScrubMs(0)
-  }, [durationMs])
+    setScrubMs(pointTL.t1)
+  }, [pointTL.t1])
 
   const hasAudio = !!audioUrl
 
@@ -610,18 +505,18 @@ export default function PlaybackDrawer({
             >
               {syncToAudio ? 'Sync: ON' : 'Sync: OFF'}
             </button>
-            {/* Scrub toggle (starts at 0) */}
+            {/* NEW: Scrub toggle */}
             <button
               onClick={() => {
                 setStrokesPlaying(false)
                 setSyncToAudio(false)
                 setScrubbing(s => !s)
-                const startAt = 0
-                setScrubMs(startAt)
-                drawAtMs(startAt)
+                // jump to end on enter for a nice start point
+                if (!scrubbing) { setScrubMs(pointTL.t1); drawAtMs(pointTL.t1) }
+                else { drawAllStatic() }
               }}
               style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: scrubbing ? '#fee2e2' : '#fff' }}
-              title="Scrub smoothly through ink (includes erasing)"
+              title="Scrub smoothly through ink"
             >
               {scrubbing ? 'Exit Scrub' : 'Scrub'}
             </button>
@@ -664,7 +559,7 @@ export default function PlaybackDrawer({
           </div>
         </div>
 
-        {/* Scrubber bar */}
+        {/* NEW: Scrubber bar */}
         <div style={{ padding: 12, borderTop: '1px solid #e5e7eb', background: '#fff' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10, opacity: scrubbing ? 1 : 0.6 }}>
             <span style={{ width: 40, textAlign:'right', fontSize:12, color:'#6b7280' }}>
@@ -690,7 +585,7 @@ export default function PlaybackDrawer({
           </div>
           {!scrubbing && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
-              Tip: Click <strong>Scrub</strong> to enable the slider. It starts at the beginning and includes erasing.
+              Tip: Click <strong>Scrub</strong> to enable the slider. Drag to “fast-forward” smoothly through the drawing.
             </div>
           )}
         </div>
