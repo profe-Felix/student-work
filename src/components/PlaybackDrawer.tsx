@@ -175,18 +175,25 @@ function buildPointTimeline(strokes: Stroke[]): PointTimeline {
 
 /* ------------ ERASE timeline from payload.ops (optional) ------------ */
 type EraseTL = { path: TLPoint[]; radius: number; t0:number; t1:number; mode?: 'soft'|'object' }
+type EraseBuild = { erases: EraseTL[]; t0:number; t1:number }
 
-function buildEraseTimelineFromOps(opsAny:any): { erases: EraseTL[]; t1:number } {
+function buildEraseTimelineFromOps(opsAny:any): EraseBuild {
   const out: EraseTL[] = []
+  if (!Array.isArray(opsAny)) return { erases: out, t0: 0, t1: 0 }
+
+  let minT = Infinity
   let maxT = 0
-  if (!Array.isArray(opsAny)) return { erases: out, t1: 0 }
+
+  // Gather raw, then normalize to start at 0
+  const raw: EraseTL[] = []
 
   for (const op of opsAny) {
-    if (!op || (op.type !== 'erase' && op.mode !== 'erase')) continue
+    const isErase = !!op && (op.type === 'erase' || op.mode === 'erase' || op.tool === 'eraser' || op.tool === 'eraserObject')
+    if (!isErase) continue
+
     const pathRaw = op.path || op.pts || []
     if (!Array.isArray(pathRaw) || pathRaw.length === 0) continue
 
-    // Normalize points, synth times if missing
     const pts: TLPoint[] = []
     let last = typeof op.t0 === 'number' ? N(op.t0) : -Infinity
     for (let i = 0; i < pathRaw.length; i++) {
@@ -204,16 +211,26 @@ function buildEraseTimelineFromOps(opsAny:any): { erases: EraseTL[]; t1:number }
       }
       last = t
       pts.push({ x: N(p.x), y: N(p.y), t })
+      if (t < minT) minT = t
       if (t > maxT) maxT = t
     }
 
     let t0 = typeof op.t0 === 'number' ? N(op.t0) : pts[0].t
     let t1 = typeof op.t1 === 'number' ? N(op.t1) : pts[pts.length - 1].t
+    if (t0 < minT) minT = t0
     if (t1 > maxT) maxT = t1
 
-    out.push({ path: pts, radius: N(op.radius ?? op.size ?? 10), t0, t1, mode: op.mode || op.eraseMode })
+    raw.push({ path: pts, radius: N(op.radius ?? op.size ?? 10), t0, t1, mode: op.mode || op.eraseMode })
   }
-  return { erases: out, t1: maxT }
+
+  if (!isFinite(minT)) minT = 0
+  const shift = minT
+  for (const e of raw) {
+    const path = e.path.map(p => ({ ...p, t: p.t - shift }))
+    out.push({ ...e, path, t0: e.t0 - shift, t1: e.t1 - shift })
+  }
+
+  return { erases: out, t0: 0, t1: Math.max(0, maxT - shift) }
 }
 
 /* ------------ source space inference ------------ */
@@ -243,13 +260,13 @@ export default function PlaybackDrawer({
   // NEW: Time-based point timeline (ms) for smooth scrubbing and audio sync
   const pointTL = useMemo(() => buildPointTimeline(strokes), [strokes])
 
-  // NEW: Optional erase timeline (from payload.ops)
+  // NEW: Optional erase timeline (from payload.ops), normalized to 0
   const eraseTL = useMemo(() => {
     const ops = (strokesPayload && typeof strokesPayload === 'object') ? (strokesPayload.ops || []) : []
     return buildEraseTimelineFromOps(ops)
   }, [strokesPayload])
 
-  // total length in ms now considers erases too
+  // total length in ms: combined ink+erase
   const durationMs = Math.max(pointTL.t1, eraseTL.t1)
 
   // Decide the stroke coordinate space to scale from
@@ -272,9 +289,9 @@ export default function PlaybackDrawer({
   const [syncToAudio, setSyncToAudio] = useState<boolean>(!!audioUrl)
   const [strokesPlaying, setStrokesPlaying] = useState(false)
 
-  // NEW: Scrubbing state
+  // Scrubbing state (start at 0 to avoid “final image then un-erase” feel)
   const [scrubbing, setScrubbing] = useState(false)
-  const [scrubMs, setScrubMs] = useState<number>(durationMs)
+  const [scrubMs, setScrubMs] = useState<number>(0)
 
   /* ---- Bind overlay size to PDF canvas CSS size, and track DPR ---- */
   useEffect(() => {
@@ -435,7 +452,6 @@ export default function PlaybackDrawer({
     withScale(ctx, () => {
       // 1) DRAW ink up to ms (existing point timeline)
       if (!pointTL.strokes.length) {
-        // fall back to static if no timeline
         for (const s of strokes) {
           const pts = s.points || []
           if (!pts.length) continue
@@ -495,17 +511,11 @@ export default function PlaybackDrawer({
       if (eraseTL.erases.length) {
         for (const e of eraseTL.erases) {
           if (ms <= e.t0) continue
-          // include only the portion of the path with t <= ms
           const cut = e.path.filter(p => p.t <= ms)
           if (cut.length >= 2) {
             eraseAlong(ctx, cut, e.radius)
           } else if (cut.length === 1) {
-            // single-point tap erase
             eraseAlong(ctx, [cut[0], { ...cut[0], x: cut[0].x + 0.01, y: cut[0].y + 0.01 }], e.radius)
-          } else if (e.t0 < ms && e.path.length) {
-            // interpolate first bit if we’re between t0 and first point
-            const first = e.path[0]
-            eraseAlong(ctx, [first, { ...first, x: first.x + 0.01, y: first.y + 0.01 }], e.radius)
           }
         }
       }
@@ -521,7 +531,7 @@ export default function PlaybackDrawer({
   /* ---- Always draw static ink when sizes or payload change ---- */
   useEffect(() => { drawAllStatic() }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload])
 
-  /* ---- Audio-synced mode (now uses real ms timeline for smoothness + erase) ---- */
+  /* ---- Audio-synced mode (uses real ms timeline for smoothness + erase) ---- */
   useEffect(() => {
     if (!syncToAudio) { stopRAF(); return }
     const el = audioRef.current; if (!el) return
@@ -553,8 +563,7 @@ export default function PlaybackDrawer({
     }
   }, [syncToAudio, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, pointTL.t1, eraseTL.t1])
 
-  /* ---- Strokes-only replay (kept exactly as before, seconds-based)
-     NOTE: this path does NOT include erase ops — use Scrub or Audio modes to see erases. ---- */
+  /* ---- Strokes-only replay (old path; seconds-based; no erase) ---- */
   useEffect(() => {
     if (!strokesPlaying) return
     const start = performance.now()
@@ -569,9 +578,9 @@ export default function PlaybackDrawer({
     return () => stopRAF()
   }, [strokesPlaying, duration, overlay.cssW, overlay.cssH, overlay.dpr, sw, sh])
 
-  // Keep scrub range in sync if new data arrives
+  // Keep scrub range in sync if new data arrives; keep head at 0 when enabling scrub
   useEffect(() => {
-    setScrubMs(durationMs)
+    setScrubMs(0)
   }, [durationMs])
 
   const hasAudio = !!audioUrl
@@ -598,15 +607,15 @@ export default function PlaybackDrawer({
             >
               {syncToAudio ? 'Sync: ON' : 'Sync: OFF'}
             </button>
-            {/* NEW: Scrub toggle */}
+            {/* Scrub toggle (starts at 0) */}
             <button
               onClick={() => {
                 setStrokesPlaying(false)
                 setSyncToAudio(false)
                 setScrubbing(s => !s)
-                // jump to end on enter for a nice start point
-                if (!scrubbing) { setScrubMs(durationMs); drawAtMs(durationMs) }
-                else { drawAllStatic() }
+                const startAt = 0
+                setScrubMs(startAt)
+                drawAtMs(startAt)
               }}
               style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: scrubbing ? '#fee2e2' : '#fff' }}
               title="Scrub smoothly through ink (includes erasing)"
@@ -652,7 +661,7 @@ export default function PlaybackDrawer({
           </div>
         </div>
 
-        {/* NEW: Scrubber bar */}
+        {/* Scrubber bar */}
         <div style={{ padding: 12, borderTop: '1px solid #e5e7eb', background: '#fff' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10, opacity: scrubbing ? 1 : 0.6 }}>
             <span style={{ width: 40, textAlign:'right', fontSize:12, color:'#6b7280' }}>
@@ -678,7 +687,7 @@ export default function PlaybackDrawer({
           </div>
           {!scrubbing && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
-              Tip: Click <strong>Scrub</strong> to enable the slider. Drag to “fast-forward” smoothly through the drawing (now includes erasing).
+              Tip: Click <strong>Scrub</strong> to enable the slider. It starts at the beginning and includes erasing.
             </div>
           )}
         </div>
