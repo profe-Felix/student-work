@@ -1206,43 +1206,40 @@ export default function StudentAssignment(){
             </div>
           )}
 
-          {/* Draw layer */}
-          <div style={{
-              position:'absolute', inset:0, zIndex:10,
-              pointerEvents: (hasTask && !handMode) ? 'auto' : 'none'
-            }}>
-            <DrawCanvas
-              ref={drawRef}
-              width={canvasSize.w}
-              height={canvasSize.h}
-              color={color}
-              size={size}
-              mode={handMode || !hasTask ? 'scroll' : 'draw'}
-              tool={tool}
-              selfId={studentId}
-              onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
-                const ids = currIds.current
-                if (!ids.assignment_id || !ids.page_id) return
+{/* Draw layer */}
+<div style={{ position:'absolute', inset:0, zIndex:10 }}>
+  <DrawCanvas
+    ref={drawRef}
+    width={canvasSize.w}
+    height={canvasSize.h}
+    color={color}
+    size={size}
+    // ✅ Only handMode controls draw vs scroll. You can now draw even if no PDF is loaded.
+    mode={handMode ? 'scroll' : 'draw'}
+    tool={tool}
+    selfId={studentId}
+    onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
+      const ids = currIds.current
+      if (!ids.assignment_id || !ids.page_id) return
 
-                const payload = { ...u, studentId }
+      const payload = { ...u, studentId }
 
-                try {
-                  // ✅ Use the existing subscribed channel if available
-                  if (inkSubRef.current) {
-                    await publishInk(inkSubRef.current, payload)
-                  } else {
-                    // Fallback only during very early boot (should be rare)
-                    await publishInk(
-                      { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-                      payload
-                    )
-                  }
-                } catch (e) {
-                  console.warn('publishInk failed', e)
-                }
-              }}
-            />
-          </div>
+      try {
+        if (inkSubRef.current) {
+          await publishInk(inkSubRef.current, payload)
+        } else {
+          await publishInk(
+            { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+            payload
+          )
+        }
+      } catch (e) {
+        console.warn('publishInk failed', e)
+      }
+    }}
+  />
+</div>
+
         </div>
       </div>
 
