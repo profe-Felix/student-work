@@ -292,17 +292,6 @@ export default function StudentAssignment(){
   const audioRef = useRef<AudioRecorderHandle>(null)
   const audioBlob = useRef<Blob|null>(null)
 
-  // 🔧 Track the real PDF canvas element and keep overlay in sync with its CSS size
-  const pdfCanvasEl = useRef<HTMLCanvasElement | null>(null)
-  const syncFromPdfCanvas = () => {
-    const el = pdfCanvasEl.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const cssW = Math.max(1, Math.round(rect.width))
-    const cssH = Math.max(1, Math.round(rect.height))
-    setCanvasSize(prev => (prev.w === cssW && prev.h === cssH) ? prev : { w: cssW, h: cssH })
-  }
-
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
   const toastTimer = useRef<number|null>(null)
   const showToast = (msg:string, kind:'ok'|'err'='ok', ms=1500)=>{
@@ -312,36 +301,56 @@ export default function StudentAssignment(){
   }
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
-  // When PDF is ready, remember its canvas and sync size immediately
+  // === NEW: track the live PDF canvas size with RO so overlay never clips ===
+  const pdfHostRef = useRef<HTMLDivElement | null>(null)
   const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement)=>{
-    pdfCanvasEl.current = canvas
-    syncFromPdfCanvas()
+    try {
+      const rect = canvas.getBoundingClientRect()
+      const cssW = Math.max(1, Math.round(rect.width))
+      const cssH = Math.max(1, Math.round(rect.height))
+      setCanvasSize({ w: cssW, h: cssH })
+    } catch {/* ignore */}
   }
 
-  // Keep overlay size synced to PDF canvas size changes (and window resizes)
   useEffect(() => {
-    const el = pdfCanvasEl.current
-    if (!el) return
+    const host = pdfHostRef.current
+    if (!host) return
 
-    let ro: ResizeObserver | null = null
-    if ('ResizeObserver' in window) {
-      ro = new ResizeObserver(() => syncFromPdfCanvas())
-      ro.observe(el)
+    const findPdfCanvas = () => {
+      const canvases = Array.from(host.querySelectorAll('canvas')) as HTMLCanvasElement[]
+      // The overlay is a different canvas; pick the first PDF canvas
+      return canvases.find(c => c.getContext('2d') && c.style.pointerEvents !== 'none') || canvases[0] || null
     }
-    const onWinResize = () => syncFromPdfCanvas()
-    window.addEventListener('resize', onWinResize)
 
-    // short polling during initial layout settle
-    const poll = window.setInterval(syncFromPdfCanvas, 200)
+    const syncSize = () => {
+      const c = findPdfCanvas()
+      if (!c) return
+      const rect = c.getBoundingClientRect()
+      const cssW = Math.max(1, Math.round(rect.width))
+      const cssH = Math.max(1, Math.round(rect.height))
+      setCanvasSize(prev => (prev.w === cssW && prev.h === cssH) ? prev : { w: cssW, h: cssH })
+    }
+
+    syncSize()
+    const c = findPdfCanvas()
+    let ro: ResizeObserver | null = null
+    if (c && 'ResizeObserver' in window) {
+      ro = new ResizeObserver(syncSize)
+      ro.observe(c)
+    }
+    const onResize = () => syncSize()
+    window.addEventListener('resize', onResize)
+    const poll = window.setInterval(syncSize, 200)
     const stopPoll = window.setTimeout(() => window.clearInterval(poll), 3000)
 
     return () => {
-      if (ro) ro.disconnect()
-      window.removeEventListener('resize', onWinResize)
+      ro?.disconnect()
+      window.removeEventListener('resize', onResize)
       window.clearInterval(poll)
       window.clearTimeout(stopPoll)
     }
   }, [pdfUrl, pageIndex])
+  // === END NEW ===
 
   // assignment/page ids for realtime
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
@@ -1186,22 +1195,23 @@ export default function StudentAssignment(){
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
-        <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
+        {/* ⬇️ Wrapper no longer forces a fixed height; it just matches the PDF */}
+        <div ref={pdfHostRef} style={{ position:'relative' }}>
           {/* PDF layer */}
           {hasTask && pdfUrl ? (
-            <div style={{ position:'absolute', inset:0, zIndex:0 }}>
+            <div style={{ position:'relative', zIndex:0 }}>
               <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
             </div>
           ) : (
             <div style={{
-              position:'absolute', inset:0, zIndex:0, display:'grid', placeItems:'center',
-              color:'#6b7280', fontWeight:700, fontSize:22
+              position:'relative', zIndex:0, display:'grid', placeItems:'center',
+              color:'#6b7280', fontWeight:700, fontSize:22, minHeight: 200
             }}>
               No hay tareas.
             </div>
           )}
 
-          {/* Draw layer */}
+          {/* Draw layer — stretched over the PDF via absolute inset */}
           <div style={{
               position:'absolute', inset:0, zIndex:10,
               pointerEvents: (hasTask && !handMode) ? 'auto' : 'none'
