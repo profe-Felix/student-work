@@ -121,9 +121,8 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const drawingPointerId = useRef<number|null>(null)
   const localStrokeId = useRef<string|null>(null) // id for broadcasting
 
-  // Session-relative timestamping (ms)
-  const sessionStartRef = useRef<number>(performance.now())
-  const nowMs = () => Math.max(0, Math.round(performance.now() - sessionStartRef.current))
+  // Absolute timestamping (ms since epoch) — never reset
+  const nowMs = () => Date.now()
 
   const redraw = ()=>{
     const ctx = ctxRef.current
@@ -168,8 +167,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       // clear remote layers only when explicitly reloading base strokes
       remoteActive.current.clear()
       remoteFinished.current = []
-      // reset session start to keep new timestamps monotonically increasing
-      sessionStartRef.current = performance.now()
+      // NOTE: no timestamp resets — absolute time keeps chronology stable
       redraw()
     },
     clearStrokes: (): void => {
@@ -177,7 +175,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       current.current = null
       remoteActive.current.clear()
       remoteFinished.current = []
-      sessionStartRef.current = performance.now()
+      // NOTE: no timestamp resets
       redraw()
     },
     undo: (): void => {
