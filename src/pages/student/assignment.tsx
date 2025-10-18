@@ -276,11 +276,14 @@ export default function StudentAssignment(){
 
   /* ---------- start page using cached teacher presence if any ---------- */
   const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence(classCode))
+
+  // Live size of the PDF canvas (CSS pixels)
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
+  const pdfCanvasEl = useRef<HTMLCanvasElement | null>(null)
 
   const [color, setColor] = useState('#1F75FE')
   const [size,  setSize]  = useState(6)
-  // ⬇️ Start in DRAW mode to avoid “can’t draw” on first load
+  // Start in draw mode; we auto-flip to draw when a tool/color is chosen
   const [handMode, setHandMode] = useState(false)
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
@@ -302,16 +305,52 @@ export default function StudentAssignment(){
   }
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
+  // Initial size read + keep a reference to the actual PDF canvas element
   const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement)=>{
     try {
-      const cssW = Math.round(parseFloat(getComputedStyle(canvas).width))
-      const cssH = Math.round(parseFloat(getComputedStyle(canvas).height))
-      // ⬇️ Ignore transient 0×0 reads that would collapse the draw canvas
-      if (cssW > 0 && cssH > 0) {
-        setCanvasSize({ w: cssW, h: cssH })
-      }
+      pdfCanvasEl.current = canvas
+      const rect = canvas.getBoundingClientRect()
+      const cssW = Math.max(1, Math.round(rect.width))
+      const cssH = Math.max(1, Math.round(rect.height))
+      setCanvasSize({ w: cssW, h: cssH })
     } catch {/* ignore */}
   }
+
+  // ⬇️ Keep draw canvas size in lockstep with the PDF canvas (prevents “cut off”)
+  useEffect(() => {
+    const el = pdfCanvasEl.current
+    if (!el) return
+
+    const sync = () => {
+      const r = el.getBoundingClientRect()
+      const w = Math.max(1, Math.round(r.width))
+      const h = Math.max(1, Math.round(r.height))
+      // Avoid flicker on transient zeros, and only set when changed
+      setCanvasSize(prev => (prev.w === w && prev.h === h) ? prev : { w, h })
+    }
+
+    // Kick once and then observe
+    sync()
+    let ro: ResizeObserver | null = null
+    if ('ResizeObserver' in window) {
+      ro = new ResizeObserver(sync)
+      ro.observe(el)
+    }
+
+    // Fallback: quick poll while PDF settles
+    const pollId = window.setInterval(sync, 150)
+    const stopPollId = window.setTimeout(() => window.clearInterval(pollId), 3000)
+
+    const onWin = () => sync()
+    window.addEventListener('resize', onWin)
+
+    return () => {
+      window.removeEventListener('resize', onWin)
+      if (ro) try { ro.disconnect() } catch {}
+      window.clearInterval(pollId)
+      window.clearTimeout(stopPollId)
+    }
+  }, [pdfUrl, pageIndex])
 
   // assignment/page ids for realtime
   const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
