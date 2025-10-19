@@ -213,7 +213,7 @@ export default function PlaybackDrawer({
 // If the very first event is a recording (audio starts before any ink),
 // use the legacy bias of 1600 ms. Otherwise keep the small auto offset.
 // Also allow an explicit payload override: { timing: { audioOffsetMs } }.
-const AUDIO_FIRST_BIAS_MS = 1600
+const AUDIO_FIRST_BIAS_MS = 1000
 
 const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
 const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
