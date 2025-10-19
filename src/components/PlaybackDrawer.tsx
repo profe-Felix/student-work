@@ -209,6 +209,17 @@ export default function PlaybackDrawer({
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
+  // ---- First-clip-only auto offset (only if audio starts before any stroke) ----
+  const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
+  const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
+  const OFFSET_THRESH_MS = 250
+  const autoOffsetMs =
+    (Number.isFinite(firstAudioStartMs) && Number.isFinite(firstInkT) && firstAudioStartMs + OFFSET_THRESH_MS < firstInkT)
+      ? (firstInkT - firstAudioStartMs)
+      : 0
+  // allow payload override via { timing: { audioOffsetMs } }
+  const effectiveOffsetMs: number = (parsed as any)?.timing?.audioOffsetMs ?? autoOffsetMs
+
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
     [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH]
@@ -417,9 +428,9 @@ export default function PlaybackDrawer({
       // draw
       drawAtRelMs(next)
 
-      // audio follow
+      // audio follow (map visual relMs -> audio absSec WITH offset)
       if (syncToAudio && audioRef.current) {
-        const absSec = (timelineZero + next) / 1000
+        const absSec = (timelineZero + next - effectiveOffsetMs) / 1000
         const hit = findSegByAbsSec(absSec)
         const a = audioRef.current
         if (hit) {
@@ -586,7 +597,8 @@ export default function PlaybackDrawer({
                   clockMsRef.current = v
                   drawAtRelMs(v)
                   if (syncToAudio && audioRef.current) {
-                    const absSec = (timelineZero + v) / 1000
+                    // map visual time -> audio time WITH offset
+                    const absSec = (timelineZero + v - effectiveOffsetMs) / 1000
                     const hit = findSegByAbsSec(absSec)
                     const a = audioRef.current
                     if (hit) {
