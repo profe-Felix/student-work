@@ -1,3 +1,4 @@
+// src/components/PdfCanvas.tsx
 import { useEffect, useRef } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
 import 'pdfjs-dist/build/pdf.worker.min.mjs' // Vite-friendly worker import
@@ -14,98 +15,63 @@ export default function PdfCanvas({
 }:{
   url: string
   pageIndex: number
-  onReady?: (pdf:any, canvas:HTMLCanvasElement)=>void
-}){
+  /** onReady(pdf, canvas, { cssW, cssH }) — EXACT CSS size of the page */
+  onReady?: (pdf:any, canvas:HTMLCanvasElement, dims:{cssW:number; cssH:number}) => void
+}) {
   const canvasRef = useRef<HTMLCanvasElement|null>(null)
-  const pdfRef    = useRef<any>(null)
-  const renderTaskRef = useRef<any>(null)
+  const pdfRef = useRef<any>(null)
 
-  useEffect(()=>{
+  useEffect(() => {
     let cancelled = false
-    let localPdf: any = null
 
-    const load = async ()=>{
-      try{
-        // Cancel any prior render
-        if (renderTaskRef.current && renderTaskRef.current.cancel) {
-          try { await renderTaskRef.current.cancel() } catch {}
-        }
-        renderTaskRef.current = null
-
-        // Destroy old doc
-        if (pdfRef.current && pdfRef.current.destroy) {
-          try { await pdfRef.current.destroy() } catch {}
-          pdfRef.current = null
-        }
-
-        const loadingTask = pdfjsLib.getDocument(url)
-        localPdf = await loadingTask.promise
+    async function load() {
+      try {
+        const loadingTask = (pdfjsLib as any).getDocument(url)
+        const localPdf = await loadingTask.promise
         if (cancelled) return
         pdfRef.current = localPdf
 
         const page = await localPdf.getPage(pageIndex + 1)
         if (cancelled) return
 
+        // Base viewport at scale 1
         const viewport = page.getViewport({ scale: 1 })
-        const containerWidth = Math.min(900, window.innerWidth - 160) // keep it readable with toolbar
+
+        // Decide CSS width for readability (your existing 900/viewport logic kept)
+        const containerWidth = Math.min(900, window.innerWidth - 160)
         const scale = containerWidth / viewport.width
         const scaledViewport = page.getViewport({ scale })
 
-        const canvas = canvasRef.current!
-        const ctx = canvas.getContext('2d')!
-        canvas.width  = Math.floor(scaledViewport.width * window.devicePixelRatio)
-        canvas.height = Math.floor(scaledViewport.height * window.devicePixelRatio)
-        canvas.style.width  = `${scaledViewport.width}px`
-        canvas.style.height = `${scaledViewport.height}px`
+        // Bind canvas EXACT sizes:
+        const c = canvasRef.current!
+        const ctx = c.getContext('2d')!
 
-        // Reset transform to dpr
-        ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0)
+        const dpr = window.devicePixelRatio || 1
+        const cssW = Math.floor(scaledViewport.width)
+        const cssH = Math.floor(scaledViewport.height)
+        c.width  = Math.floor(cssW * dpr)
+        c.height = Math.floor(cssH * dpr)
+        c.style.width  = `${cssW}px`
+        c.style.height = `${cssH}px`
+
+        // Reset transform to DPR for crisp PDF rendering
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
         const renderContext = { canvasContext: ctx, viewport: scaledViewport }
-        const task = page.render(renderContext)
-        renderTaskRef.current = task
-        await task.promise
+        await page.render(renderContext).promise
         if (cancelled) return
 
-        onReady?.(localPdf, canvas)
-      } catch(e){
-        // swallow errors when unmounted/cancelled
-        // console.warn('PDF render error', e)
+        // Tell parent the TRUE CSS size so overlay can match it 1:1
+        onReady?.(localPdf, c, { cssW, cssH })
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[PdfCanvas] load error', e)
       }
     }
 
     load()
+    return () => { cancelled = true }
+  }, [url, pageIndex, onReady])
 
-    const onResize = ()=>{
-      // Re-render on resize
-      load()
-    }
-    window.addEventListener('resize', onResize)
-
-    return ()=>{
-      cancelled = true
-      window.removeEventListener('resize', onResize)
-      if (renderTaskRef.current && renderTaskRef.current.cancel) {
-        try { renderTaskRef.current.cancel() } catch {}
-      }
-      // Let pdf.js clean up
-      if (pdfRef.current && pdfRef.current.destroy) {
-        try { pdfRef.current.destroy() } catch {}
-      }
-      pdfRef.current = null
-      renderTaskRef.current = null
-    }
-  }, [url, pageIndex])
-
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        display:'block',
-        width:'100%',
-        height:'auto',
-        background:'#fff',
-        borderRadius: 8
-      }}
-    />
-  )
+  return <canvas ref={canvasRef} style={{ display:'block', background:'#fff' }} />
 }
