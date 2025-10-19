@@ -210,13 +210,13 @@ export default function PlaybackDrawer({
   }, [pointTL.tMax, segments, timelineZero])
 
   // ---- First-clip-only offset logic ----
-  const FIRST_AUDIO_SHIFT_MS = -1900 // negative = audio earlier
+  // TUNE THIS in ±100–200ms steps until it feels right
+  const FIRST_AUDIO_SHIFT_MS = -1400 // negative => play audio earlier
 
   const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
   const firstInkAbsSec = Number.isFinite(firstInkT) ? firstInkT / 1000 : Infinity
   const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
   const firstSegEndSec = segments.length ? segments[0].endSec : Infinity
-
 
   // small auto offset if audio precedes ink slightly
   const OFFSET_THRESH_MS = 250
@@ -234,9 +234,34 @@ export default function PlaybackDrawer({
     (parsed as any)?.timing?.audioOffsetMs ??
     (audioFirst ? FIRST_AUDIO_SHIFT_MS : autoOffsetMs)
 
-  // apply only until a bit after first ink so later segments remain unaffected
+  // Apply only through the entire first clip (not just a blip after first ink)
   const offsetFor = (visualAbsSec: number) =>
-  visualAbsSec < firstSegEndSec ? baseBiasMs : 0
+    visualAbsSec < firstSegEndSec ? baseBiasMs : 0
+
+  // --- Helper: find segment for a target absolute time, with clamp into first seg if biased before start ---
+  function findSegByAbsSecWithClamp(absSec:number, visualAbsSec:number): { idx:number, seg:Seg, within:number } | null {
+    if (!segments.length) return null
+
+    // If we are in the first-clip bias window and our biased time is before its start,
+    // clamp to the first clip at t=0 (avoid silent gap that felt like "late audio").
+    if (visualAbsSec < firstSegEndSec && absSec < segments[0].startSec) {
+      return { idx: 0, seg: segments[0], within: 0 }
+    }
+
+    // Normal binary search
+    let lo = 0, hi = segments.length - 1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      const s = segments[mid]
+      if (absSec < s.startSec) hi = mid - 1
+      else if (absSec > s.endSec) lo = mid + 1
+      else {
+        const within = Math.max(0, absSec - s.startSec)
+        return { idx: mid, seg: s, within }
+      }
+    }
+    return null
+  }
 
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
@@ -398,7 +423,7 @@ export default function PlaybackDrawer({
           applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
           ctx.beginPath()
           ctx.moveTo(pathPts[0].x, pathPts[0].y)
-          for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y)
+          for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pts[i]?.y ?? pathPts[i].y)
           ctx.stroke()
         }
       }
@@ -407,7 +432,7 @@ export default function PlaybackDrawer({
     })
   }
 
-  // Find segment containing absolute seconds
+  // Find segment containing absolute seconds (helper without clamp)
   function findSegByAbsSec(absSec:number): { idx:number, seg:Seg } | null {
     if (!segments.length) return null
     let lo = 0, hi = segments.length - 1
@@ -446,24 +471,23 @@ export default function PlaybackDrawer({
       // draw
       drawAtRelMs(next)
 
-      // audio follow (map visual relMs -> audio absSec; apply bias only before first ink)
+      // audio follow (map visual relMs -> audio absSec with bias & clamp)
       if (syncToAudio && audioRef.current) {
         const visualAbsSec = (timelineZero + next) / 1000
-        const absSec = visualAbsSec + (offsetFor(visualAbsSec) / 1000) // <-- FIXED SIGN
-        const hit = findSegByAbsSec(absSec)
+        const absSec = visualAbsSec + (offsetFor(visualAbsSec) / 1000)
+        const hit = findSegByAbsSecWithClamp(absSec, visualAbsSec)
         const a = audioRef.current
         if (hit) {
-          const { seg } = hit
-          const within = absSec - seg.startSec
+          const { seg, within } = hit
           if (!a.src || a.src !== seg.url) {
             try {
               a.src = seg.url
-              a.currentTime = Math.max(0, within)
+              a.currentTime = within
               a.play().catch(()=>{})
             } catch {}
           } else {
             const drift = Math.abs((a.currentTime || 0) - within)
-            if (drift > 0.1) { try { a.currentTime = Math.max(0, within) } catch {} }
+            if (drift > 0.1) { try { a.currentTime = within } catch {} }
             if (a.paused) { a.play().catch(()=>{}) }
           }
         } else {
@@ -616,15 +640,14 @@ export default function PlaybackDrawer({
                   drawAtRelMs(v)
                   if (syncToAudio && audioRef.current) {
                     const visualAbsSec = (timelineZero + v) / 1000
-                    const absSec = visualAbsSec + (offsetFor(visualAbsSec) / 1000) // <-- FIXED SIGN
-                    const hit = findSegByAbsSec(absSec)
+                    const absSec = visualAbsSec + (offsetFor(visualAbsSec) / 1000)
+                    const hit = findSegByAbsSecWithClamp(absSec, visualAbsSec)
                     const a = audioRef.current
                     if (hit) {
-                      const { seg } = hit
-                      const within = absSec - seg.startSec
+                      const { seg, within } = hit
                       try {
                         a.src = seg.url
-                        a.currentTime = Math.max(0, within)
+                        a.currentTime = within
                         if (playing) a.play().catch(()=>{})
                         else a.pause()
                       } catch {}
