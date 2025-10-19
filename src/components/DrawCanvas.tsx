@@ -180,7 +180,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     if (!ctx) return
     const c = ctx.canvas
     // clear in CSS space (context already scaled)
-    ctx.clearRect(0,0, c.width / (window.devicePixelRatio || 1), c.height / (window.devicePixelRatio || 1))
+    ctx.clearRect(0,0, c.width, c.height)
 
     // Order: finished remote, finished local, active remote, active local
     for (const s of remoteFinished.current) drawStroke(ctx, s)
@@ -217,7 +217,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       if (ro) ro.disconnect()
       if (mq && typeof mq.removeEventListener === 'function') mq.removeEventListener('change', onDprChange)
     }
-    // NOTE: using actual element size via ResizeObserver, so we don't depend on width/height props here
+   
   }, [])
 
   useEffect(()=>{
