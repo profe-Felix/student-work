@@ -211,7 +211,7 @@ export default function PlaybackDrawer({
 
   // ---- First-event-only bias: ONLY before the first ink point ----
   // Default bias (negative -> make audio earlier). Tweak in ±100–200ms steps.
-  const FIRST_AUDIO_SHIFT_MS = -1700
+  const FIRST_AUDIO_SHIFT_MS = -2806
 
   const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
   const firstInkAbsSec = Number.isFinite(firstInkT) ? firstInkT / 1000 : Infinity
