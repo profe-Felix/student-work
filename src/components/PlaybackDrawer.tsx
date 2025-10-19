@@ -92,7 +92,7 @@ function parseStrokes(payload:any): Parsed {
   if (vals.length && Array.isArray(vals[0])) {
     const s = toStroke(vals[0]); return { strokes: s ? [s] : [], metaW, metaH, media }
   }
-  return { strokes: [], metaW, metaH, media }
+  return { strokes: [], metaW: 0, metaH: 0, media }
 }
 
 /* ------------ UNIFIED, CHRONOLOGICAL POINT TIMELINE (ink + eraser) ------------ */
@@ -210,16 +210,13 @@ export default function PlaybackDrawer({
   }, [pointTL.tMax, segments, timelineZero])
 
   // ---- First-clip-only offset logic ----
-  // If the very first event is a recording (audio starts before any ink),
-  // apply a negative bias so audio starts earlier. Only apply this before the first ink.
-  // You can override via payload: { timing: { audioOffsetMs } }
-  const FIRST_AUDIO_SHIFT_MS = -1600 // <— tune here (negative = audio earlier)
+  const FIRST_AUDIO_SHIFT_MS = -1600 // negative = audio earlier
 
   const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
   const firstInkAbsSec = Number.isFinite(firstInkT) ? firstInkT / 1000 : Infinity
   const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
 
-  // small auto offset if audio precedes ink by a hair
+  // small auto offset if audio precedes ink slightly
   const OFFSET_THRESH_MS = 250
   const autoOffsetMs =
     (Number.isFinite(firstAudioStartMs) &&
@@ -228,7 +225,6 @@ export default function PlaybackDrawer({
       ? (firstInkT - firstAudioStartMs)
       : 0
 
-  // is audio first?
   const audioFirst = Number.isFinite(firstAudioStartMs) && (firstAudioStartMs <= firstInkT)
 
   // choose base bias: payload override > first-audio fixed bias > tiny auto offset
@@ -447,10 +443,10 @@ export default function PlaybackDrawer({
       // draw
       drawAtRelMs(next)
 
-      // audio follow (map visual relMs -> audio absSec, applying bias only before first ink)
+      // audio follow (map visual relMs -> audio absSec; apply bias only before first ink)
       if (syncToAudio && audioRef.current) {
         const visualAbsSec = (timelineZero + next) / 1000
-        const absSec = visualAbsSec - (offsetFor(visualAbsSec) / 1000) // subtract bias; bias is negative to advance audio
+        const absSec = visualAbsSec + (offsetFor(visualAbsSec) / 1000) // <-- FIXED SIGN
         const hit = findSegByAbsSec(absSec)
         const a = audioRef.current
         if (hit) {
@@ -548,7 +544,6 @@ export default function PlaybackDrawer({
           {!playing ? (
             <button
               onClick={() => {
-                // if we’re at the end, rewind to 0 before playing
                 if (clockMsRef.current >= totalMs) {
                   clockMsRef.current = 0
                   drawAtRelMs(0)
@@ -618,7 +613,7 @@ export default function PlaybackDrawer({
                   drawAtRelMs(v)
                   if (syncToAudio && audioRef.current) {
                     const visualAbsSec = (timelineZero + v) / 1000
-                    const absSec = visualAbsSec - (offsetFor(visualAbsSec) / 1000) // subtract bias here too
+                    const absSec = visualAbsSec + (offsetFor(visualAbsSec) / 1000) // <-- FIXED SIGN
                     const hit = findSegByAbsSec(absSec)
                     const a = audioRef.current
                     if (hit) {
