@@ -206,18 +206,18 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
       .limit(1)
       .maybeSingle()
 
-    if (error || !data) return null
-    const p = data as any
-    const snapshot: TeacherPresenceState = {
-      autoFollow: !!p.auto_follow || !!p.autofollow || !!p.autoFollow,
-      allowedPages: Array.isArray(p.allowed_pages) ? p.allowed_pages : (p.allowedPages ?? null),
-      focusOn: !!p.focus_on || !!p.focusOn,
-      lockNav: !!p.lock_nav || !!p.lockNav,
-      teacherPageIndex: typeof p.teacher_page_index === 'number'
-        ? p.teacher_page_index
-        : (typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : undefined),
-    }
-    return snapshot
+  if (error || !data) return null
+  const p = data as any
+  const snapshot: TeacherPresenceState = {
+    autoFollow: !!p.auto_follow || !!p.autofollow || !!p.autoFollow,
+    allowedPages: Array.isArray(p.allowed_pages) ? p.allowed_pages : (p.allowedPages ?? null),
+    focusOn: !!p.focus_on || !!p.focusOn,
+    lockNav: !!p.lock_nav || !!p.lockNav,
+    teacherPageIndex: typeof p.teacher_page_index === 'number'
+      ? p.teacher_page_index
+      : (typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : undefined),
+  }
+  return snapshot
   } catch {
     return null
   }
@@ -325,9 +325,11 @@ export default function StudentAssignment(){
       const r = el.getBoundingClientRect()
       const w = Math.max(1, Math.round(r.width))
       const h = Math.max(1, Math.round(r.height))
+      // Avoid flicker on transient zeros, and only set when changed
       setCanvasSize(prev => (prev.w === w && prev.h === h) ? prev : { w, h })
     }
 
+    // Kick once and then observe
     sync()
     let ro: ResizeObserver | null = null
     if ('ResizeObserver' in window) {
@@ -335,7 +337,7 @@ export default function StudentAssignment(){
       ro.observe(el)
     }
 
-    // Fallback: quick poll while PDF settles after page changes/zoom
+    // Fallback: quick poll while PDF settles
     const pollId = window.setInterval(sync, 150)
     const stopPollId = window.setTimeout(() => window.clearInterval(pollId), 3000)
 
@@ -447,6 +449,7 @@ export default function StudentAssignment(){
     const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
+      // Best effort: use cache quickly, then fetch from server to be sure
       snapToTeacherIfAvailable(nextAssignmentId)
       ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
@@ -471,7 +474,7 @@ export default function StudentAssignment(){
       } catch {
         // no class snapshot yet — harmless
       } finally {
-        if (!cancelled) setClassBootDone(true)
+               if (!cancelled) setClassBootDone(true)
       }
     })()
     return () => { cancelled = true }
@@ -685,8 +688,8 @@ export default function StudentAssignment(){
     let id: number | null = null
     const tick = async ()=>{
       try {
-        const raw = drawRef.current?.getStrokes() || { strokes: [] }
-        const data = normalizeStrokes(raw)
+        const data = drawRef.current?.getStrokes()
+        if (!data) return
         const h = await hashStrokes(data)
         if (h !== lastLocalHash.current) {
           localDirty.current = true
@@ -709,8 +712,8 @@ export default function StudentAssignment(){
     const tick = ()=>{
       try {
         if (!running) return
-        const raw = drawRef.current?.getStrokes() || { strokes: [] }
-        const data = normalizeStrokes(raw)
+        const data = drawRef.current?.getStrokes()
+        if (!data) return
         const s = JSON.stringify(data)
         if (s !== lastSerialized) {
           const { assignmentUid, pageUid } = getCacheIds()
@@ -726,10 +729,11 @@ export default function StudentAssignment(){
     start()
     const onBeforeUnload = ()=>{
       try {
-        const raw = drawRef.current?.getStrokes() || { strokes: [] }
-        const data = normalizeStrokes(raw)
-        const { assignmentUid, pageUid } = getCacheIds()
-        saveDraft(studentId, assignmentUid, pageUid, data)
+        const data = drawRef.current?.getStrokes()
+        if (data) {
+          const { assignmentUid, pageUid } = getCacheIds()
+          saveDraft(studentId, assignmentUid, pageUid, data)
+        }
       } catch {}
     }
     window.addEventListener('beforeunload', onBeforeUnload)
@@ -1192,54 +1196,54 @@ export default function StudentAssignment(){
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
-          {/* PDF layer */}
+          {/* PDF layer (NEVER catch input) */}
           {hasTask && pdfUrl ? (
-            <div style={{ position:'absolute', inset:0, zIndex:0 }}>
+            <div style={{ position:'absolute', inset:0, zIndex:0, pointerEvents:'none' }}>
               <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
             </div>
           ) : (
             <div style={{
               position:'absolute', inset:0, zIndex:0, display:'grid', placeItems:'center',
-              color:'#6b7280', fontWeight:700, fontSize:22
+              color:'#6b7280', fontWeight:700, fontSize:22, pointerEvents:'none'
             }}>
               No hay tareas.
             </div>
           )}
 
-{/* Draw layer */}
-<div style={{ position:'absolute', inset:0, zIndex:10 }}>
-  <DrawCanvas
-    ref={drawRef}
-    width={canvasSize.w}
-    height={canvasSize.h}
-    color={color}
-    size={size}
-    // ✅ Only handMode controls draw vs scroll. You can now draw even if no PDF is loaded.
-    mode={handMode ? 'scroll' : 'draw'}
-    tool={tool}
-    selfId={studentId}
-    onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
-      const ids = currIds.current
-      if (!ids.assignment_id || !ids.page_id) return
+          {/* Draw layer (ALWAYS on top) */}
+          <div style={{ position:'absolute', inset:0, zIndex:1000 }}>
+            <DrawCanvas
+              ref={drawRef}
+              width={canvasSize.w}
+              height={canvasSize.h}
+              color={color}
+              size={size}
+              mode={handMode ? 'scroll' : 'draw'}
+              tool={tool}
+              selfId={studentId}
+              onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
+                const ids = currIds.current
+                if (!ids.assignment_id || !ids.page_id) return
 
-      const payload = { ...u, studentId }
+                const payload = { ...u, studentId }
 
-      try {
-        if (inkSubRef.current) {
-          await publishInk(inkSubRef.current, payload)
-        } else {
-          await publishInk(
-            { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-            payload
-          )
-        }
-      } catch (e) {
-        console.warn('publishInk failed', e)
-      }
-    }}
-  />
-</div>
-
+                try {
+                  // ✅ Use the existing subscribed channel if available
+                  if (inkSubRef.current) {
+                    await publishInk(inkSubRef.current, payload)
+                  } else {
+                    // Fallback only during very early boot (should be rare)
+                    await publishInk(
+                      { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+                      payload
+                    )
+                  }
+                } catch (e) {
+                  console.warn('publishInk failed', e)
+                }
+              }}
+            />
+          </div>
         </div>
       </div>
 
