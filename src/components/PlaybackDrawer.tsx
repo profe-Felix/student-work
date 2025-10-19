@@ -211,7 +211,7 @@ export default function PlaybackDrawer({
 
   // ===== NEW: Delay INK before the first stroke so audio and ink line up =====
   // Positive = draw later. Adjust in ±100–200ms steps.
-  const PRE_INK_DRAW_DELAY_MS = 1600
+  const PRE_INK_DRAW_DELAY_MS = 1106
   const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
   const firstInkAbsSec = Number.isFinite(firstInkT) ? firstInkT / 1000 : Infinity
 
