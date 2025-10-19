@@ -209,56 +209,11 @@ export default function PlaybackDrawer({
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
-  // ---- First-event-only bias: ONLY before the first ink point ----
-  // Default bias (negative -> make audio earlier). Tweak in ±100–200ms steps.
-  const FIRST_AUDIO_SHIFT_MS = -5612
-
+  // ===== NEW: Delay INK before the first stroke so audio and ink line up =====
+  // Positive = draw later. Adjust in ±100–200ms steps.
+  const PRE_INK_DRAW_DELAY_MS = 1600
   const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
   const firstInkAbsSec = Number.isFinite(firstInkT) ? firstInkT / 1000 : Infinity
-  const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
-
-  // small auto offset if audio precedes ink slightly
-  const OFFSET_THRESH_MS = 250
-  const autoOffsetMs =
-    (Number.isFinite(firstAudioStartMs) &&
-     Number.isFinite(firstInkT) &&
-     firstAudioStartMs + OFFSET_THRESH_MS < firstInkT)
-      ? (firstInkT - firstAudioStartMs)
-      : 0
-
-  const audioFirst = Number.isFinite(firstAudioStartMs) && (firstAudioStartMs <= firstInkT)
-
-  // choose base bias: payload override > first-audio fixed bias > tiny auto offset
-  const baseBiasMs: number =
-    (parsed as any)?.timing?.audioOffsetMs ??
-    (audioFirst ? FIRST_AUDIO_SHIFT_MS : autoOffsetMs)
-
-  // Apply the bias ONLY until the very first ink moment.
-  const offsetFor = (visualAbsSec: number) =>
-    visualAbsSec < firstInkAbsSec ? baseBiasMs : 0
-
-  // --- Helper: find segment for target abs time; clamp to first clip@t=0 only before first ink ---
-  function findSegByAbsSecWithClamp(absSec:number, visualAbsSec:number): { idx:number, seg:Seg, within:number } | null {
-    if (!segments.length) return null
-
-    if (visualAbsSec < firstInkAbsSec && absSec < segments[0].startSec) {
-      return { idx: 0, seg: segments[0], within: 0 }
-    }
-
-    // Normal binary search
-    let lo = 0, hi = segments.length - 1
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      const s = segments[mid]
-      if (absSec < s.startSec) hi = mid - 1
-      else if (absSec > s.endSec) lo = mid + 1
-      else {
-        const within = Math.max(0, absSec - s.startSec)
-        return { idx: mid, seg: s, within }
-      }
-    }
-    return null
-  }
 
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
@@ -385,7 +340,22 @@ export default function PlaybackDrawer({
     ctx.lineJoin = 'round'
   }
 
+  // Find segment containing absolute seconds
+  function findSegByAbsSec(absSec:number): { idx:number, seg:Seg } | null {
+    if (!segments.length) return null
+    let lo = 0, hi = segments.length - 1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      const s = segments[mid]
+      if (absSec < s.startSec) hi = mid - 1
+      else if (absSec > s.endSec) lo = mid + 1
+      else return { idx: mid, seg: s }
+    }
+    return null
+  }
+
   // Draw strokes up to relative time ms (0..totalMs) — converts to absolute by +timelineZero
+  // NEW: apply PRE_INK_DRAW_DELAY_MS before the very first ink point
   function drawAtRelMs(relMs:number) {
     const ctx = ensureCtx()
     if (!ctx) return
@@ -394,7 +364,10 @@ export default function PlaybackDrawer({
     ctx.clearRect(0, 0, cssW, cssH)
 
     if (!pointTL.strokes.length) return
-    const cutoffAbs = timelineZero + relMs
+
+    const visualAbsSec = (timelineZero + relMs) / 1000
+    const extraDelay = visualAbsSec < firstInkAbsSec ? PRE_INK_DRAW_DELAY_MS : 0
+    const cutoffAbs = Math.max(timelineZero, timelineZero + relMs - extraDelay)
 
     withScale(ctx, () => {
       for (const s of pointTL.strokes) {
@@ -451,26 +424,26 @@ export default function PlaybackDrawer({
       const next = clamp(clockMsRef.current + dt, 0, totalMs)
       clockMsRef.current = next
 
-      // draw
+      // draw (with pre-ink delay)
       drawAtRelMs(next)
 
-      // audio follow (map visual relMs -> audio absSec with bias only before first ink)
+      // audio follow — NO artificial offset now
       if (syncToAudio && audioRef.current) {
-        const visualAbsSec = (timelineZero + next) / 1000
-        const absSec = visualAbsSec + (offsetFor(visualAbsSec) / 1000)
-        const hit = findSegByAbsSecWithClamp(absSec, visualAbsSec)
+        const absSec = (timelineZero + next) / 1000
+        const hit = findSegByAbsSec(absSec)
         const a = audioRef.current
         if (hit) {
-          const { seg, within } = hit
+          const { seg } = hit
+          const within = absSec - seg.startSec
           if (!a.src || a.src !== seg.url) {
             try {
               a.src = seg.url
-              a.currentTime = within
+              a.currentTime = Math.max(0, within)
               a.play().catch(()=>{})
             } catch {}
           } else {
             const drift = Math.abs((a.currentTime || 0) - within)
-            if (drift > 0.1) { try { a.currentTime = within } catch {} }
+            if (drift > 0.1) { try { a.currentTime = Math.max(0, within) } catch {} }
             if (a.paused) { a.play().catch(()=>{}) }
           }
         } else {
@@ -622,15 +595,15 @@ export default function PlaybackDrawer({
                   clockMsRef.current = v
                   drawAtRelMs(v)
                   if (syncToAudio && audioRef.current) {
-                    const visualAbsSec = (timelineZero + v) / 1000
-                    const absSec = visualAbsSec + (offsetFor(visualAbsSec) / 1000)
-                    const hit = findSegByAbsSecWithClamp(absSec, visualAbsSec)
+                    const absSec = (timelineZero + v) / 1000
+                    const hit = findSegByAbsSec(absSec)
                     const a = audioRef.current
                     if (hit) {
-                      const { seg, within } = hit
+                      const { seg } = hit
+                      const within = absSec - seg.startSec
                       try {
                         a.src = seg.url
-                        a.currentTime = within
+                        a.currentTime = Math.max(0, within)
                         if (playing) a.play().catch(()=>{})
                         else a.pause()
                       } catch {}
