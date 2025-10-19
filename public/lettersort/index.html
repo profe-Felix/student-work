@@ -37,26 +37,60 @@
     .letters{display:flex;flex-wrap:wrap;gap:6px}
     .letters button{min-width:36px;height:36px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
     .letters button.active{background:var(--brand);color:#fff;border-color:transparent}
+
     main{max-width:1100px;margin:14px auto;padding:0 12px}
-    .columns{display:grid;grid-template-columns: repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:16px}
-    .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px}
+
+    /* Always keep all columns in ONE row */
+    .columns{
+      display:grid;
+      gap:16px;
+      margin-top:16px;
+      overflow-x:auto;            /* allow gentle horizontal scroll if super tight */
+      scroll-snap-type:x proximity;
+    }
+    .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px;scroll-snap-align:start}
     .col header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
     .col h2{margin:0;font-size:18px}
-    .drop{min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start}
+
+    /* Bigger drops; cards should expand to fit column width */
+    .drop{
+      min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
+      padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;align-items:stretch
+    }
+
     .rackSection{margin-top:18px}
     .rack{margin-top:8px;background:#fff;border:1px dashed #e5e7eb;border-radius:12px;padding:10px;display:flex;flex-wrap:wrap;gap:8px;min-height:150px}
-    .card{user-select:none;touch-action:none;background:var(--card);border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.06);width:140px;overflow:hidden;cursor:grab;display:flex;flex-direction:column;align-items:center}
+
+    .card{
+      user-select:none;touch-action:none;background:var(--card);border:1px solid #e5e7eb;border-radius:12px;
+      box-shadow:0 2px 6px rgba(0,0,0,.06);width:150px;overflow:hidden;cursor:grab;display:flex;flex-direction:column;align-items:center
+    }
     .card:active{cursor:grabbing}
-    .card img{display:block;width:100%;height:100px;object-fit:contain;background:#fafafa}
+
+    /* Pictures: stretch nicely; keep aspect */
+    .card img{
+      display:block;width:100%;
+      aspect-ratio: 4/3;         /* consistent box; looks good in columns */
+      object-fit: contain;        /* don’t crop educational images */
+      background:#fafafa
+    }
     .card .cap{padding:6px 8px;width:100%;text-align:center;font-size:14px}
     .card.ok{outline:3px solid var(--ok)}
     .card.bad{outline:3px solid var(--bad)}
-    .locked{opacity:.85}
+    .locked{opacity:.9}
+
+    /* When card is inside a drop, take full column width for that “stretchy” look */
+    .drop .card{width:100%}
+
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
     /* Solo toolbar */
     .soloBar{position:sticky;top:56px;z-index:4;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 10px rgba(0,0,0,.04)}
+
+    /* Inline verify under the bank */
+    .bankActions{display:flex;gap:8px;align-items:center;margin-top:10px}
+    .celebrationCanvas{position:fixed;inset:0;pointer-events:none;z-index:50}
   </style>
 </head>
 <body>
@@ -128,6 +162,12 @@
     <section class="rackSection">
       <h3>Cartas</h3>
       <div id="rack" class="rack" aria-label="rack"></div>
+
+      <!-- New: inline verify below the bank so students can reach it -->
+      <div class="bankActions">
+        <button id="inlineVerify" class="btn outline">Verificar</button>
+        <button id="inlineReset" class="btn ghost">Reiniciar ronda</button>
+      </div>
     </section>
   </main>
 
@@ -145,7 +185,7 @@
     // URL params
     const qs = new URLSearchParams(location.search);
     const IB = qs.get('ib') || IMAGES_BUCKET;
-    const AB = qs.get('ab') || AUDIO_BUCKET;
+    theAB = qs.get('ab') || AUDIO_BUCKET;
     const IP = qs.get('ip') || IMAGES_PREFIX;
     const AP = qs.get('ap') || AUDIO_PREFIX;
 
@@ -183,6 +223,10 @@
     const soloVerifyBtn   = document.getElementById('soloVerify');
     const soloResetBtn    = document.getElementById('soloReset');
 
+    // Inline (under bank)
+    const inlineVerifyBtn = document.getElementById('inlineVerify');
+    const inlineResetBtn  = document.getElementById('inlineReset');
+
     /******** State ********/
     let ROOM = null;
     let channel = null;
@@ -199,8 +243,6 @@
       teacherPanel.classList.add('hidden');
       studentPanel.classList.add('hidden');
       document.querySelector('.switch').classList.add('hidden');
-
-      // apply drop limit from query
       if (SOLO_PER) cardsPerColEl.value = String(SOLO_PER);
 
       if (SOLO_MODE) {
@@ -211,7 +253,7 @@
         const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
         soloPill.style.display = 'inline-block';
         soloPill.textContent = `Modo individual: ${modeTxt} · ${per} por columna${wordsTxt}`;
-        soloBar.classList.remove('hidden'); // show solo controls
+        soloBar.classList.remove('hidden');
       }
     }
 
@@ -237,33 +279,22 @@
     }
     renderLetterPicker();
 
-    /******** Helpers (shared with Elkonin rules) ********/
-    // Marker <-> accents (copied from your Elkonin file)
+    /******** Helpers (markers/accent, syllables) ********/
     function markersToPretty(s){
       return (s||'')
         .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
         .replace(/n\.\./g,'ñ')
         .replace(/u,,/g,'ü');
     }
-    function prettyToMarkers(s){
-      return (s||'')
-        .replace(/á/g,'a..').replace(/é/g,'e..').replace(/í/g,'i..').replace(/ó/g,'o..').replace(/ú/g,'u..')
-        .replace(/ñ/g,'n..').replace(/ü/g,'u,,');
-    }
-
-    // Plain normalizer used for comparisons (strip accents, ñ->n, ü->u, non-letters)
     function normalizePlain(s){
       return (s||'').toLowerCase()
         .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
         .replace(/ñ/g,'n').replace(/ü/g,'u')
         .replace(/[^a-z]/g,'');
     }
-
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
-
     function normalizeMarkers(s){
-      // existing helper kept (used for cores), but keep in sync with normalizePlain spirit
       let t = (s || '').toLowerCase().trim();
       t = t.replace(/a\.\./g,'a').replace(/e\.\./g,'e').replace(/i\.\./g,'i').replace(/o\.\./g,'o').replace(/u\.\./g,'u');
       t = t.replace(/u,,/g,'u').replace(/n\.\./g,'n');
@@ -283,7 +314,6 @@
       return s[0] || '';
     }
 
-    /*** SYLLABIFIER — identical logic to Elkonin ***/
     function syllabifyEs(wordRaw){
       const word = (wordRaw || '').toLowerCase();
       const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
@@ -346,12 +376,10 @@
 
       return syl.filter(Boolean).map(s => s.trim());
     }
-
-    // First syllable (normalized to compare with ?syllables=)
     function firstSyllableNormalized(coreWord){
-      const pretty = markersToPretty(coreWord); // respect markers (e.g., tu..nel -> túnel)
+      const pretty = markersToPretty(coreWord);
       const first = syllabifyEs(pretty)[0] || '';
-      return normalizePlain(first); // strip accents/diacritics for comparison
+      return normalizePlain(first);
     }
 
     /******** Storage ********/
@@ -399,12 +427,12 @@
 
         audioMap = new Map();
         try {
-          const audList = await listAll(AB, AP);
+          const audList = await listAll(theAB, AP);
           for (const f of audList) {
             const base = f.fullpath.split('/').pop() || f.fullpath;
             const e = extOf(base);
             if (!['mp3','wav','m4a','ogg'].includes(e)) continue;
-            const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
+            const { data } = client.storage.from(theAB).getPublicUrl(f.fullpath);
             if (data?.publicUrl) {
               const stem = stemOf(base);
               audioMap.set(coreFromAudioStem(stem), data.publicUrl);
@@ -435,7 +463,7 @@
         setCards(d.cards);
         clearAllPlacements();
       });
-      channel.on('broadcast', { event:'VERIFY' }, ()=> verifyNow());
+      channel.on('broadcast', { event:'VERIFY' }, ()=> verifyNow(true));
       channel.on('broadcast', { event:'RESET' }, ()=> resetRoundPlacements());
 
       const { error } = await channel.subscribe();
@@ -454,14 +482,8 @@
 
     /******** Round building ********/
     function labelForKey(key){
-      if(key.startsWith('not-')){
-        const L = key.slice(4);
-        return `No empieza con /${L}/`;
-      }
-      if(key.startsWith('syll:')){
-        const s = key.slice(5);
-        return `Sílabas “${s}”`;
-      }
+      if(key.startsWith('not-')){ return `No empieza con /${key.slice(4)}/`; }
+      if(key.startsWith('syll:')){ return `Sílabas “${key.slice(5)}”`; }
       return `Empieza con /${key}/`;
     }
 
@@ -476,7 +498,6 @@
     const allImages = ()=> [...imageFiles];
     function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [a[i],a[j]]=[a[j],a[i]] } return a }
 
-    /** Columns for letter mode */
     function buildColumnsForLetters(activeLetters){
       const columns = [];
       if(activeLetters.length===1){
@@ -488,18 +509,12 @@
       }
       return columns;
     }
-
-    /** Columns for syllable mode */
     function buildColumnsForSyllables(sylls){
-      const columns = [];
-      sylls.forEach(s => columns.push({ label:`Sílabas “${normalizePlain(s)}”`, key:`syll:${normalizePlain(s)}` }));
-      return columns;
+      return sylls.map(s => ({ label:`Sílabas “${normalizePlain(s)}”`, key:`syll:${normalizePlain(s)}` }));
     }
 
-    /** Default (random) round for letters */
     function buildRoundFromLetters(activeLetters, perCol){
       const columns = buildColumnsForLetters(activeLetters);
-
       const initialMap = byInitial();
       const everything = allImages();
 
@@ -536,7 +551,6 @@
       return { columns, cards };
     }
 
-    /** Random round for syllables (when no words list is provided) */
     function buildRoundFromSyllables(sylls, perCol){
       const normSyl = sylls.map(s => normalizePlain(s));
       const columns = buildColumnsForSyllables(normSyl);
@@ -555,8 +569,7 @@
       };
 
       for(const col of columns){
-        const targetSyl = col.key.slice(5); // normalized
-        // pick images whose FIRST syllable (normalized) equals target
+        const targetSyl = col.key.slice(5);
         const list = imageFiles.filter(f => firstSyllableNormalized(f.core) === targetSyl);
         const picks = pickNoRepeat(list, perCol);
         for(const f of picks){ usedSet.add(`${f.path}`); }
@@ -568,13 +581,11 @@
       return { columns, cards };
     }
 
-    /** Word-list round: use ONLY the listed words, in that order */
     function buildRoundFromWordList(activeLetters, sylls, wordsList){
       const columns = (sylls && sylls.length)
-        ? buildColumnsForSyllables(sylls.map(s => normalizePlain(s)))
+        ? buildColumnsForSyllables(sylls)
         : buildColumnsForLetters(activeLetters);
 
-      // Map core -> first image file
       const coreIndex = new Map();
       for(const f of imageFiles){
         if(!coreIndex.has(f.core)) coreIndex.set(f.core, f);
@@ -582,46 +593,24 @@
 
       const cards = [];
       for(const wRaw of wordsList){
-        const wNorm = normalizeMarkers(wRaw); // match cores (markers stripped)
+        const wNorm = normalizeMarkers(wRaw);
         const f = coreIndex.get(wNorm);
-        if(!f) continue; // skip if not found
+        if(!f) continue;
         const audioUrl = audioMap.get(f.core) || null;
         cards.push({ id: crypto.randomUUID(), file: f.name, word: f.stem, imgUrl: f.url, audioUrl });
       }
       return { columns, cards };
     }
 
-    btnNewRound.addEventListener('click', async ()=>{
-      if(!isTeacher) return;
-      if(imageFiles.length===0){
-        await ensureStorageLoaded();
-        if(imageFiles.length===0){ alert('No hay imágenes disponibles en Storage.'); return; }
-      }
+    function setOneRowGrid(colsCount){
+      // Force single row; each column shares the width
+      columnsEl.style.gridTemplateColumns = `repeat(${colsCount}, minmax(140px, 1fr))`;
+    }
 
-      const hasSyll = SOLO_SYLLABLES.length > 0;
-      const activeLetters = hasSyll ? [] : [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
-      if(!hasSyll && activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
-
-      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
-      const useWords = SOLO_WORDS.length > 0;
-
-      const payload =
-        useWords
-          ? buildRoundFromWordList(activeLetters, SOLO_SYLLABLES, SOLO_WORDS)
-          : (hasSyll
-              ? buildRoundFromSyllables(SOLO_SYLLABLES, perCol)
-              : buildRoundFromLetters(activeLetters, perCol));
-
-      await channel.send({ type:'broadcast', event:'ROUND', payload });
-    });
-
-    btnVerify.addEventListener('click', async ()=>{ if(!isTeacher) return; await channel.send({ type:'broadcast', event:'VERIFY' }); });
-    btnReset.addEventListener('click', async ()=>{ if(!isTeacher) return; await channel.send({ type:'broadcast', event:'RESET' }); });
-
-    /******** Board & DnD ********/
     function buildColumns(columns){
       currentCols = columns;
       columnsEl.innerHTML='';
+      setOneRowGrid(columns.length);
       columns.forEach((c, idx)=>{
         const col = document.createElement('div');
         col.className='col';
@@ -637,9 +626,7 @@
     function setCards(cards){
       currentCards = [...cards];
       rackEl.innerHTML='';
-
-      // If words param is used, DO NOT shuffle. Otherwise, shuffle.
-      const ordered = SOLO_WORDS.length > 0 ? [...currentCards] : shuffle([...currentCards]);
+      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : shuffle([...currentCards]);
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
 
@@ -664,7 +651,7 @@
     function clearAllPlacements(){
       document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
       rackEl.innerHTML='';
-      const ordered = SOLO_WORDS.length > 0 ? [...currentCards] : shuffle([...currentCards]);
+      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : shuffle([...currentCards]);
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
     function resetRoundPlacements(){
@@ -672,10 +659,68 @@
       clearAllPlacements();
     }
 
-    function verifyNow(){
+    // ---- Confetti (lightweight canvas) ----
+    function celebrate(){
+      const cvs = document.createElement('canvas');
+      cvs.className = 'celebrationCanvas';
+      document.body.appendChild(cvs);
+      const ctx = cvs.getContext('2d');
+      let W, H, t0;
+      const N = 180;
+      const parts = [];
+      function resize(){ W=window.innerWidth; H=window.innerHeight; cvs.width=W; cvs.height=H; }
+      window.addEventListener('resize', resize); resize();
+      for(let i=0;i<N;i++){
+        parts.push({
+          x: Math.random()*W,
+          y: -20-Math.random()*H*0.3,
+          vx: -1 + Math.random()*2,
+          vy: 2 + Math.random()*3,
+          rot: Math.random()*Math.PI,
+          vr: -0.2 + Math.random()*0.4,
+          size: 4 + Math.random()*6,
+          hue: Math.floor(Math.random()*360)
+        });
+      }
+      function tick(ts){
+        if(!t0) t0=ts;
+        const dt = Math.min(32, ts - t0); t0 = ts;
+        ctx.clearRect(0,0,W,H);
+        parts.forEach(p=>{
+          p.vy += 0.02;                 // gravity
+          p.x += p.vx;
+          p.y += p.vy;
+          p.rot += p.vr;
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.rot);
+          ctx.fillStyle = `hsl(${p.hue} 80% 55%)`;
+          ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size*0.6);
+          ctx.restore();
+        });
+        if (parts.every(p=>p.y > H+30)) {
+          document.body.removeChild(cvs);
+          window.removeEventListener('resize', resize);
+        } else { requestAnimationFrame(tick); }
+      }
+      requestAnimationFrame(tick);
+    }
+
+    function everythingCorrect(){
+      // all cards placed (rack empty) and all placed are locked (marked ok)
+      const inRack = rackEl.querySelectorAll('.card').length;
+      if(inRack>0) return false;
+      const anyBad = document.querySelector('.drop .card.bad');
+      if(anyBad) return false;
+      const placed = document.querySelectorAll('.drop .card').length;
+      const locked = document.querySelectorAll('.drop .card.locked').length;
+      return placed>0 && placed===locked;
+    }
+
+    function verifyNow(fromBroadcast){
       const getTarget = key => {
         if (key.startsWith('not-')) return {type:'not', letter:key.slice(4)};
-        if (key.startsWith('syll:')) return {type:'syll', syll:key.slice(5)}; // already normalized
+        if (key.startsWith('syll:')) return {type:'syll', syll:key.slice(5)};
         return {type:'is', letter:key};
       };
 
@@ -690,7 +735,6 @@
 
           let ok = false;
           if (target.type === 'syll') {
-            // Compare normalized first syllable (Elkonin rules) with normalized target
             const firstSyl = firstSyllableNormalized(core);
             ok = (firstSyl === target.syll);
           } else {
@@ -702,6 +746,14 @@
           else { cardEl.classList.add('bad'); setTimeout(()=> ejectToRack(cardEl), 350); }
         });
       });
+
+      // celebrate if perfect
+      if (everythingCorrect()) celebrate();
+
+      // rebroadcast verify only from teacher controls
+      if (!fromBroadcast && isTeacher && channel){
+        channel.send({ type:'broadcast', event:'VERIFY' });
+      }
     }
 
     // ----- Robust drag & drop -----
@@ -801,10 +853,39 @@
       cardEl.replaceWith(clone);
     }
 
-    /******** SOLO MODE ********/
-    function startSoloRound(){
-      usedSet = new Set(); // fresh picks each round in solo
+    /******** Controls wiring (teacher/solo/inline) ********/
+    btnVerify.addEventListener('click', ()=> verifyNow(false));
+    btnReset.addEventListener('click', resetRoundPlacements);
+    soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
+    soloResetBtn.addEventListener('click', resetRoundPlacements);
+    inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
+    inlineResetBtn.addEventListener('click', resetRoundPlacements);
 
+    btnNewRound.addEventListener('click', async ()=>{
+      if(!isTeacher) return;
+      if(imageFiles.length===0){
+        await ensureStorageLoaded();
+        if(imageFiles.length===0){ alert('No hay imágenes disponibles en Storage.'); return; }
+      }
+      const hasSyll = SOLO_SYLLABLES.length > 0;
+      const activeLetters = hasSyll ? [] : [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
+      if(!hasSyll && activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
+      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
+      const useWords = SOLO_WORDS.length > 0;
+
+      const payload =
+        useWords
+          ? buildRoundFromWordList(activeLetters, SOLO_SYLLABLES, SOLO_WORDS)
+          : (hasSyll
+              ? buildRoundFromSyllables(SOLO_SYLLABLES, perCol)
+              : buildRoundFromLetters(activeLetters, perCol));
+
+      await channel.send({ type:'broadcast', event:'ROUND', payload });
+    });
+
+    // SOLO MODE
+    function startSoloRound(){
+      usedSet = new Set();
       const hasSyll = SOLO_SYLLABLES.length > 0;
       const per = SOLO_PER || 4;
 
@@ -830,8 +911,6 @@
 
         // wire solo buttons
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
-        soloVerifyBtn.addEventListener('click', ()=> verifyNow());
-        soloResetBtn.addEventListener('click', ()=> resetRoundPlacements());
 
         startSoloRound();
         return;
