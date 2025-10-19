@@ -5,9 +5,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload, type Stroke } from '../../components/DrawCanvas'
 import type { RemoteStrokeUpdate } from '../../components/DrawCanvas'
-import AudioRecorder, { AudioRecorderHandle } from '../../components/AudioRecorder'
 import {
-  createSubmission, saveStrokes, saveAudio, loadLatestSubmission,
+  createSubmission, saveStrokes, /* saveAudio, */ loadLatestSubmission,
   listPages,
   supabase,
   fetchClassState,
@@ -289,8 +288,6 @@ export default function StudentAssignment(){
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
 
   const drawRef = useRef<DrawCanvasHandle>(null)
-  const audioRef = useRef<AudioRecorderHandle>(null)
-  const audioBlob = useRef<Blob|null>(null)
 
   // 🔧 Track the real PDF canvas element and keep overlay in sync with its CSS size
   const pdfCanvasEl = useRef<HTMLCanvasElement | null>(null)
@@ -302,39 +299,21 @@ export default function StudentAssignment(){
 
     const dpr = (window.devicePixelRatio || 1)
 
-    // 1) Measured rect (can under-report on iPad/zoom, but useful fallback)
     const rect = el.getBoundingClientRect()
-
-    // 2) Computed style (preferred CSS pixel size when style.width/height are set)
     const cs = window.getComputedStyle(el)
     const cssWStyle = parseFloat(cs.width) || 0
     const cssHStyle = parseFloat(cs.height) || 0
-
-    // 3) Intrinsic bitmap size ÷ DPR (exact drawn size from pdf.js)
     const cssWIntrinsic = (el.width || 0) / dpr
     const cssHIntrinsic = (el.height || 0) / dpr
 
-    // 4) Parent scroll size (if PDF sits in a scroller)
     const parent = el.parentElement
     const parentW = parent ? Math.max(parent.scrollWidth, parent.clientWidth) : 0
     const parentH = parent ? Math.max(parent.scrollHeight, parent.clientHeight) : 0
 
-    const cssW = Math.max(
-      1,
-      Math.round(
-        Math.max(rect.width, cssWStyle, cssWIntrinsic, parentW)
-      )
-    )
-    const cssH = Math.max(
-      1,
-      Math.round(
-        Math.max(rect.height, cssHStyle, cssHIntrinsic, parentH)
-      )
-    )
+    const cssW = Math.max(1, Math.round(Math.max(rect.width, cssWStyle, cssWIntrinsic, parentW)))
+    const cssH = Math.max(1, Math.round(Math.max(rect.height, cssHStyle, cssHIntrinsic, parentH)))
 
-    setCanvasSize(prev =>
-      prev.w === cssW && prev.h === cssH ? prev : { w: cssW, h: cssH }
-    )
+    setCanvasSize(prev => prev.w === cssW && prev.h === cssH ? prev : { w: cssW, h: cssH })
   }
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
@@ -349,21 +328,15 @@ export default function StudentAssignment(){
   // When PDF is ready, remember its canvas and sync size immediately
   const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
     pdfCanvasEl.current = canvas
-    // Prefer exact CSS size from PdfCanvas if provided
     if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
       const w = Math.max(1, Math.round(dims.cssW))
       const h = Math.max(1, Math.round(dims.cssH))
       setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
     }
-    // Ensure the PDF canvas CSS size is explicit (prevents fractional rounding issues)
     try {
       const dpr = (window.devicePixelRatio || 1)
-      if (canvas.width && !canvas.style.width) {
-        canvas.style.width = `${Math.round(canvas.width / dpr)}px`
-      }
-      if (canvas.height && !canvas.style.height) {
-        canvas.style.height = `${Math.round(canvas.height / dpr)}px`
-      }
+      if (canvas.width && !canvas.style.width)  canvas.style.width  = `${Math.round(canvas.width / dpr)}px`
+      if (canvas.height && !canvas.style.height) canvas.style.height = `${Math.round(canvas.height / dpr)}px`
     } catch {}
     syncFromPdfCanvas()
   }
@@ -388,18 +361,13 @@ export default function StudentAssignment(){
     const onWinResize = () => syncFromPdfCanvas()
     window.addEventListener('resize', onWinResize)
 
-    // DPR/zoom change
     const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
     const onDprChange = () => syncFromPdfCanvas()
-    if (mq && typeof mq.addEventListener === 'function') {
-      mq.addEventListener('change', onDprChange)
-    }
+    if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', onDprChange)
 
-    // Orientation
     const onOrient = () => syncFromPdfCanvas()
     window.addEventListener('orientationchange', onOrient)
 
-    // Short initial poll during layout settle
     const poll = window.setInterval(syncFromPdfCanvas, 150)
     const stopPoll = window.setTimeout(() => window.clearInterval(poll), 2500)
 
@@ -457,8 +425,8 @@ export default function StudentAssignment(){
   const initialSnappedRef = useRef(false)
 
   // hashes/dirty tracking
-  const lastAppliedServerHash = useRef<string>('') // last payload actually applied to canvas
-  const lastLocalHash = useRef<string>('')         // current canvas hash
+  const lastAppliedServerHash = useRef<string>('')
+  const lastLocalHash = useRef<string>('')
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
@@ -483,7 +451,6 @@ export default function StudentAssignment(){
     }
   }
 
-  // --- helper: snap to teacher using local presence if available (CLASS-SCOPED)
   const snapToTeacherIfAvailable = (assignmentId: string) => {
     try {
       const raw = localStorage.getItem(presenceKey(classCode, assignmentId))
@@ -493,7 +460,6 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // --- ensure we also fetch presence from server if cache is missing/stale (store CLASS-SCOPED)
   const ensurePresenceFromServer = async (assignmentId: string) => {
     const cached = localStorage.getItem(presenceKey(classCode, assignmentId))
     if (!cached) {
@@ -505,13 +471,11 @@ export default function StudentAssignment(){
     }
   }
 
-  // assignment handoff listener (teacher broadcast) — CLASS-SCOPED
   useEffect(() => {
     if (!classCode) return
     const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
-      // Best effort: use cache quickly, then fetch from server to be sure
       snapToTeacherIfAvailable(nextAssignmentId)
       ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
@@ -519,7 +483,6 @@ export default function StudentAssignment(){
     return off
   }, [classCode])
 
-  // Snap to DB class state on boot (cold start) — then mark boot done
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -534,7 +497,6 @@ export default function StudentAssignment(){
           setPageIndex(snap.page_index)
         }
       } catch {
-        // no class snapshot yet — harmless
       } finally {
         if (!cancelled) setClassBootDone(true)
       }
@@ -542,7 +504,6 @@ export default function StudentAssignment(){
     return () => { cancelled = true }
   }, [classCode])
 
-  // On first mount fallback
   useEffect(() => {
     if (!classBootDone) return
     if (rtAssignmentId) {
@@ -561,7 +522,6 @@ export default function StudentAssignment(){
     })()
   }, [classBootDone, rtAssignmentId])
 
-  // hydrate presence on refresh (if cached) — CLASS-SCOPED
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
@@ -606,7 +566,6 @@ export default function StudentAssignment(){
 
   // Resolve assignment/page
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
-    // 1) Ensure we have an assignment id
     let assignmentId = rtAssignmentId
     if (!assignmentId) {
       assignmentId = await fetchLatestAssignmentIdWithPages() || ''
@@ -625,11 +584,9 @@ export default function StudentAssignment(){
       return null
     }
 
-    // 2) Try to honor teacher presence
     snapToTeacherIfAvailable(assignmentId)
     await ensurePresenceFromServer(assignmentId)
 
-    // Decide the target index we want to display now
     let targetIndex = pageIndex
     const tpi = teacherPageIndexRef.current
     if (autoFollow && typeof tpi === 'number') {
@@ -637,7 +594,6 @@ export default function StudentAssignment(){
       if (pageIndex !== tpi) setPageIndex(tpi)
     }
 
-    // 3) Fetch pages
     let pages = await listPages(assignmentId).catch(() => [] as any[])
     if (!pages || pages.length === 0) {
       const latest = await fetchLatestAssignmentIdWithPages()
@@ -679,7 +635,7 @@ export default function StudentAssignment(){
     if (!classBootDone || !rtAssignmentId) return
 
     let cancelled=false
-    try { drawRef.current?.clearStrokes(); audioRef.current?.stop() } catch {}
+    try { drawRef.current?.clearStrokes() } catch {}
 
     ;(async ()=>{
       const ids = await resolveIds()
@@ -806,7 +762,6 @@ export default function StudentAssignment(){
     }
   }, [pageIndex, studentId])
 
-
   /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async ()=>{
     if (!hasTask) return
@@ -817,8 +772,7 @@ export default function StudentAssignment(){
       const strokesRaw = drawRef.current?.getStrokes() || { strokes: [] }
       const normalized = normalizeStrokes(strokesRaw)
       const hasInk   = Array.isArray(normalized.strokes) && normalized.strokes.length > 0
-      const hasAudio = !!audioBlob.current
-      if (!hasInk && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
+      if (!hasInk) { setSaving(false); submitInFlight.current=false; return }
 
       const encHash = await hashStrokes(normalized)
       const ids = currIds.current
@@ -827,28 +781,22 @@ export default function StudentAssignment(){
       const { assignmentUid, pageUid } = getCacheIds(ids.page_id)
       const lastKey = lastHashKey(studentId, assignmentUid, pageUid)
       const last = localStorage.getItem(lastKey)
-      if (last && last === encHash && !hasAudio) { setSaving(false); submitInFlight.current=false; return }
+      if (last && last === encHash) { setSaving(false); submitInFlight.current=false; return }
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
-      if (hasInk) {
-        // Save strokes with the canvas size for correct teacher playback scale
-        const payloadForSave = {
-          canvasWidth: canvasSize.w,
-          canvasHeight: canvasSize.h,
-          strokes: normalized.strokes
-        }
-        await saveStrokes(submission_id, payloadForSave)
-        localStorage.setItem(lastKey, encHash)
-        saveSubmittedCache(studentId, assignmentUid, pageUid, payloadForSave)
-        lastAppliedServerHash.current = encHash
-        lastLocalHash.current = encHash
-        localDirty.current = false
+      // Save strokes with the canvas size for correct teacher playback scale
+      const payloadForSave = {
+        canvasWidth: canvasSize.w,
+        canvasHeight: canvasSize.h,
+        strokes: normalized.strokes
       }
-      if (hasAudio) {
-        await saveAudio(submission_id, audioBlob.current!)
-        audioBlob.current = null
-      }
+      await saveStrokes(submission_id, payloadForSave)
+      localStorage.setItem(lastKey, encHash)
+      saveSubmittedCache(studentId, assignmentUid, pageUid, payloadForSave)
+      lastAppliedServerHash.current = encHash
+      lastLocalHash.current = encHash
+      localDirty.current = false
 
       const ids2 = currIds.current
       const uid2 = getCacheIds(ids2.page_id)
@@ -863,17 +811,15 @@ export default function StudentAssignment(){
     }
   }
 
-  // ===== helpers for forced / teacher-led saves =====
   const hasInkOrAudio = () => {
     const current = normalizeStrokes(drawRef.current?.getStrokes() || { strokes: [] })
     const hasInk   = Array.isArray(current.strokes) && current.strokes.length > 0
-    const hasAudio = !!audioBlob.current
-    return { hasInk, hasAudio, current }
+    return { hasInk, current }
   }
 
   const submitIfNeeded = async (_reason: string) => {
-    const { hasInk, hasAudio, current } = hasInkOrAudio()
-    if (!hasInk && !hasAudio) return
+    const { hasInk, current } = hasInkOrAudio()
+    if (!hasInk) return
     try {
       await submit()
     } catch {
@@ -882,7 +828,6 @@ export default function StudentAssignment(){
     }
   }
 
-  // ===== save-on-close (service worker) =====
   function buildSavePayload() {
     try {
       const ids = currIds.current
@@ -915,73 +860,7 @@ export default function StudentAssignment(){
     return () => { try { detach?.() } catch {} }
   }, [studentId, classCode, rtAssignmentId, pageIndex, canvasSize.w, canvasSize.h])
 
-  // ===== Teacher "Force Submit" command listener =====
-  useEffect(() => {
-    if (!rtAssignmentId) return
-    const ch = supabase
-      .channel(`teacher-cmd:${classCode}:${rtAssignmentId}`, { config: { broadcast: { ack: true } } })
-      .on('broadcast', { event: 'force-submit' }, async () => {
-        await submitIfNeeded('teacher-force')
-      })
-      .subscribe()
-    return () => { try { ch.unsubscribe() } catch {} }
-  }, [classCode, rtAssignmentId])
-
-  // ===========================================
-
-  const blockedBySync = (idx: number) => {
-    if (!autoFollow) return false
-    if (allowedPages && allowedPages.length > 0) return !allowedPages.includes(idx)
-    const tpi = teacherPageIndexRef.current
-    if (typeof tpi === 'number') return idx !== tpi
-    return true
-  }
-
-  const goToPage = async (nextIndex:number)=>{
-    if (!hasTask) return
-    if (nextIndex < 0) return
-    if (navLocked || blockedBySync(nextIndex)) return
-    try { audioRef.current?.stop() } catch {}
-
-    const current = normalizeStrokes(drawRef.current?.getStrokes() || { strokes: [] })
-    const hasInk   = Array.isArray(current.strokes) && current.strokes.length > 0
-    const hasAudio = !!audioBlob.current
-
-    if (AUTO_SUBMIT_ON_PAGE_CHANGE && (hasInk || hasAudio)) {
-      try { await submit() } catch {
-        const { assignmentUid, pageUid } = getCacheIds()
-        try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
-      }
-    } else {
-      const { assignmentUid, pageUid } = getCacheIds()
-      try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
-    }
-
-    setPageIndex(nextIndex)
-  }
-
-  // two-finger pan host
-  const scrollHostRef = useRef<HTMLDivElement|null>(null)
-  useEffect(()=>{
-    const host=scrollHostRef.current; if(!host) return
-    let pan=false, startY=0, startX=0, startT=0, startL=0
-    const onTS=(e:TouchEvent)=>{ if(e.touches.length>=2 && !handMode){ pan=true; const [t1,t2]=[e.touches[0],e.touches[1]]; startY=(t1.clientY+t2.clientY)/2; startX=(t1.clientX+t2.clientX)/2; startT=host.scrollTop; startL=host.scrollLeft } }
-    const onTM=(e:TouchEvent)=>{ if(pan && e.touches.length>=2){ e.preventDefault(); const [t1,t2]=[e.touches[0],e.touches[1]]; const y=(t1.clientY+t2.clientY)/2, x=(t1.clientX+t2.clientX)/2; host.scrollTop=startT-(y-startY); host.scrollLeft=startL-(x-startX) } }
-    const end=()=>{ pan=false }
-    host.addEventListener('touchstart',onTS,{passive:true,capture:true})
-    host.addEventListener('touchmove', onTM,{passive:false,capture:true})
-    host.addEventListener('touchend',  end,{passive:true,capture:true})
-    host.addEventListener('touchcancel',end,{passive:true,capture:true})
-    return ()=>{ host.removeEventListener('touchstart',onTS as any,true); host.removeEventListener('touchmove',onTM as any,true); host.removeEventListener('touchend',end as any,true); host.removeEventListener('touchcancel',end,{capture:true} as any) }
-  }, [handMode])
-
-  const flipToolbarSide = ()=> {
-    setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })
-  }
-
   /* ---------- Realtime + polling (defensive) ---------- */
-
-  // subscribe to teacher broadcast once we know the assignment id — CLASS-SCOPED
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(classCode, rtAssignmentId, {
@@ -999,11 +878,10 @@ export default function StudentAssignment(){
         setAutoFollow(!!on)
         setAllowedPages(allowedPages ?? null)
         if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        // Snap once on join if not already snapped
         applyPresenceSnapshot({
           autoFollow: !!on,
           allowedPages: allowedPages ?? null,
-          focusOn, // leave focus state as-is here
+          focusOn,
           lockNav: navLocked,
           teacherPageIndex: teacherPageIndexRef.current ?? undefined
         } as TeacherPresenceState, { snap: true })
@@ -1017,7 +895,6 @@ export default function StudentAssignment(){
       onForceSubmit: async (p: { studentId?: string; pageIndex?: number }) => {
         try {
           if (p?.studentId && p.studentId !== studentId) return
-          try { await audioRef.current?.stop() } catch {}
           await submit()
           if (typeof p?.pageIndex === 'number') {
             setNavLocked(false)
@@ -1061,7 +938,6 @@ export default function StudentAssignment(){
     } catch {/* ignore */}
   }
 
-  // subscribe to artifacts AND the student-scoped live ink channel
   useEffect(() => {
     if (!classBootDone || !rtAssignmentId) return
 
@@ -1109,7 +985,6 @@ export default function StudentAssignment(){
 
       const onInk = (u: any) => {
         if (u?.studentId !== studentId) return
-        // ✅ accept pen, highlighter, **and eraser** (timestamps preserved by realtime.ts)
         if (u.tool !== 'pen' && u.tool !== 'highlighter' && u.tool !== 'eraser') return
         if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
         drawRef.current?.applyRemote({
@@ -1158,7 +1033,7 @@ export default function StudentAssignment(){
       onTouchStart={(e)=> e.stopPropagation()}
     >
       <div style={{ display:'flex', gap:6 }}>
-        <button onClick={flipToolbarSide} title="Flip toolbar side"
+        <button onClick={()=> setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })} title="Flip toolbar side"
           style={{ flex:1, background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0' }}>⇄</button>
         <button onClick={()=>setHandMode(m=>!m)}
           style={{ flex:1, background: handMode?'#f3f4f6':'#34d399', color: handMode?'#111827':'#064e3b',
@@ -1211,7 +1086,6 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-        <AudioRecorder ref={audioRef} maxSec={180} onBlob={(b)=>{ audioBlob.current = b }} />
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving || !hasTask}>
@@ -1289,15 +1163,11 @@ export default function StudentAssignment(){
               onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
                 const ids = currIds.current
                 if (!ids.assignment_id || !ids.page_id) return
-
                 const payload = { ...u, studentId }
-
                 try {
-                  // ✅ Use the existing subscribed channel if available
                   if (inkSubRef.current) {
                     await publishInk(inkSubRef.current, payload)
                   } else {
-                    // Fallback only during very early boot (should be rare)
                     await publishInk(
                       { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
                       payload
@@ -1322,8 +1192,8 @@ export default function StudentAssignment(){
         }}
       >
         <button
-          onClick={()=>goToPage(Math.max(0, pageIndex-1))}
-          disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(Math.max(0, pageIndex-1))}
+          onClick={()=>setPageIndex(Math.max(0, pageIndex-1))}
+          disabled={!hasTask || saving || submitInFlight.current || navLocked || (autoFollow && teacherPageIndexRef.current!==null && Math.max(0, pageIndex-1)!==teacherPageIndexRef.current)}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           ◀ Prev
@@ -1332,8 +1202,8 @@ export default function StudentAssignment(){
           Page {pageIndex+1}
         </span>
         <button
-          onClick={()=>goToPage(pageIndex+1)}
-          disabled={!hasTask || saving || submitInFlight.current || navLocked || blockedBySync(pageIndex+1)}
+          onClick={()=>setPageIndex(pageIndex+1)}
+          disabled={!hasTask || saving || submitInFlight.current || navLocked || (autoFollow && teacherPageIndexRef.current!==null && (pageIndex+1)!==teacherPageIndexRef.current)}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
           Next ▶
