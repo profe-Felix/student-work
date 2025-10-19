@@ -40,20 +40,23 @@ function normalizeStrokeShape(payload: any) {
   try {
     if (typeof payload === 'string') payload = JSON.parse(payload)
   } catch {
-    // malformed JSON → return empty structure
-    return { strokes: [] }
+    return { strokes: [], media: [] }
   }
-  if (!payload || !Array.isArray(payload.strokes)) return { strokes: [] }
+  if (!payload || !Array.isArray(payload.strokes)) {
+    return { strokes: [], media: Array.isArray(payload?.media) ? payload.media : [] }
+  }
   return {
     strokes: payload.strokes.map((s: any) => ({
       color: s?.color,
       size: s?.size,
       tool: s?.tool,
-      // prefer pts, fall back to points
       pts: Array.isArray(s?.pts) ? s.pts : (Array.isArray(s?.points) ? s.points : [])
-    }))
+    })),
+    // 👇 NEW: keep any embedded audio clips for the drawer
+    media: Array.isArray(payload.media) ? payload.media : []
   }
 }
+
 
 export default function TeacherDashboard() {
   // enable RT meter once per page load
