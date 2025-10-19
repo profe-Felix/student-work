@@ -211,7 +211,7 @@ export default function PlaybackDrawer({
 
 // ===== NEW: Delay INK until the first audio starts so ink doesn't lead =====
 // Positive = draw later. Adjust in ±100–200ms steps.
-const PRE_INK_DRAW_DELAY_MS = 1103
+const PRE_INK_DRAW_DELAY_MS = 4000
 const firstAudioStartSec = segments.length ? segments[0].startSec : Infinity
 
 
