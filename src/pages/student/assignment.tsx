@@ -288,6 +288,8 @@ export default function StudentAssignment(){
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
 
   const drawRef = useRef<DrawCanvasHandle>(null)
+  const scrollHostRef = useRef<HTMLDivElement | null>(null)
+
 
   // 🔧 Track the real PDF canvas element and keep overlay in sync with its CSS size
   const pdfCanvasEl = useRef<HTMLCanvasElement | null>(null)
