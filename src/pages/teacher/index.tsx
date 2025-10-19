@@ -42,8 +42,9 @@ function normalizeStrokeShape(payload: any) {
   } catch {
     return { strokes: [], media: [] }
   }
+  const media = Array.isArray(payload?.media) ? payload.media : []
   if (!payload || !Array.isArray(payload.strokes)) {
-    return { strokes: [], media: Array.isArray(payload?.media) ? payload.media : [] }
+    return { strokes: [], media }
   }
   return {
     strokes: payload.strokes.map((s: any) => ({
@@ -52,10 +53,10 @@ function normalizeStrokeShape(payload: any) {
       tool: s?.tool,
       pts: Array.isArray(s?.pts) ? s.pts : (Array.isArray(s?.points) ? s.points : [])
     })),
-    // 👇 NEW: keep any embedded audio clips for the drawer
-    media: Array.isArray(payload.media) ? payload.media : []
+    media
   }
 }
+
 
 
 export default function TeacherDashboard() {
