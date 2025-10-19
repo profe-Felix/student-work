@@ -51,24 +51,13 @@
     .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px;scroll-snap-align:start}
     .col header{display:flex;align-items:center;justify-content:center;margin-bottom:10px}
 
-    /* Syllable tile like your screenshot */
+    /* Syllable tile */
     .syllTile{
-      min-width:110px;
-      min-height:78px;
-      padding:10px 14px;
-      background:#6dd0ff;               /* bright sky blue */
-      color:#000;
-      font-size:38px;
-      line-height:1;
-      border-radius:18px;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      box-shadow:inset 0 0 0 2px rgba(0,0,0,.05);
+      min-width:110px;min-height:78px;padding:10px 14px;
+      background:#6dd0ff;color:#000;font-size:38px;line-height:1;border-radius:18px;
+      display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 2px rgba(0,0,0,.05);
       user-select:none;
     }
-
-    .col h2{margin:0;font-size:18px}
 
     .drop{
       min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
@@ -84,20 +73,20 @@
     }
     .card:active{cursor:grabbing}
 
-    /* Stretch pictures nicely in both rack and drops */
     .card img{
       display:block;width:100%;
-      aspect-ratio: 4/3;
-      object-fit: contain;
-      background:#fafafa
+      aspect-ratio: 4/3; object-fit: contain; background:#fafafa
     }
     .card .cap{padding:6px 8px;width:100%;text-align:center;font-size:14px}
     .card.ok{outline:3px solid var(--ok)}
     .card.bad{outline:3px solid var(--bad)}
     .locked{opacity:.9}
 
-    /* Card fills column width when placed */
-    .drop .card{width:100%}
+    /* Grow only after drop AND only when percategory=1 */
+    .one-per .drop .card{width:100%}
+
+    /* While dragging, keep a fixed size (no giant cards when moving) */
+    .card.dragging{width:150px !important; height:auto !important}
 
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
@@ -180,8 +169,6 @@
     <section class="rackSection">
       <h3>Cartas</h3>
       <div id="rack" class="rack" aria-label="rack"></div>
-
-      <!-- Verify under the bank -->
       <div class="bankActions">
         <button id="inlineVerify" class="btn outline">Verificar</button>
         <button id="inlineReset" class="btn ghost">Reiniciar ronda</button>
@@ -196,7 +183,7 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
     const IMAGES_BUCKET = "lettersort-images";
-    const AUDIO_BUCKET  = "lettersort-audio"; // opcional
+    const AUDIO_BUCKET  = "lettersort-audio";
     const IMAGES_PREFIX = "";
     const AUDIO_PREFIX  = "";
 
@@ -211,6 +198,7 @@
     const SOLO_SYLLABLES = (qs.get('syllables') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
     const SOLO_PER  = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
     const SOLO_WORDS= (qs.get('words') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const HIDE_TITLE = (qs.get('hidetitle') || '').toLowerCase() === 'true';
 
     const SOLO_MODE = (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0);
 
@@ -245,22 +233,18 @@
     const inlineResetBtn  = document.getElementById('inlineReset');
 
     /******** State ********/
-    let ROOM = null;
-    let channel = null;
-    let isTeacher = false;
-
+    let ROOM = null, channel = null, isTeacher = false;
     let imageFiles = []; // [{name, path, url, stem, core, initial}]
     let audioMap = new Map(); // core -> audio URL
-
-    let currentCols = [];
-    let currentCards = [];
-    let usedSet = new Set();
+    let currentCols = [], currentCards = [], usedSet = new Set();
 
     function setPanelsForSolo() {
       teacherPanel.classList.add('hidden');
       studentPanel.classList.add('hidden');
       document.querySelector('.switch').classList.add('hidden');
-      if (SOLO_PER) cardsPerColEl.value = String(SOLO_PER);
+
+      // Toggle stretch style based on percategory
+      document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
       if (SOLO_MODE) {
         const per = SOLO_PER || 4;
@@ -269,7 +253,7 @@
           : `letras=${SOLO_LETTERS.join(', ')}`;
         const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
         soloPill.style.display = 'inline-block';
-        soloPill.textContent = `Modo individual: ${modeTxt} · ${per} por columna${wordsTxt}`;
+        soloPill.textContent = `Modo individual: ${modeTxt} · ${per} por columna${wordsTxt}${HIDE_TITLE?' · sin título':''}`;
         soloBar.classList.remove('hidden');
       }
     }
@@ -300,14 +284,12 @@
     function markersToPretty(s){
       return (s||'')
         .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
-        .replace(/n\.\./g,'ñ')
-        .replace(/u,,/g,'ü');
+        .replace(/n\.\./g,'ñ').replace(/u,,/g,'ü');
     }
     function normalizePlain(s){
       return (s||'').toLowerCase()
         .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-        .replace(/ñ/g,'n').replace(/ü/g,'u')
-        .replace(/[^a-z]/g,'');
+        .replace(/ñ/g,'n').replace(/ü/g,'u').replace(/[^a-z]/g,'');
     }
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
@@ -331,6 +313,7 @@
       return s[0] || '';
     }
 
+    /* syllabify + first syllable (same rules as Elkonin app) */
     function syllabifyEs(wordRaw){
       const word = (wordRaw || '').toLowerCase();
       const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
@@ -347,9 +330,7 @@
         chars.push(word[i]);
       }
 
-      const syl = [];
-      let i = 0;
-
+      const syl = []; let i = 0;
       while (i < chars.length){
         let onset = [];
         while (i < chars.length && !isV(chars[i])) onset.push(chars[i++]);
@@ -390,7 +371,6 @@
         syl.push(onset.join('') + nuc.join('') + coda.join(''));
         if (nextOnset.length) i -= nextOnset.length;
       }
-
       return syl.filter(Boolean).map(s => s.trim());
     }
     function firstSyllableNormalized(coreWord){
@@ -431,12 +411,8 @@
           if (data?.publicUrl) {
             const stem = stemOf(base);
             pubImg.push({
-              name: base,
-              path: f.fullpath,
-              url: data.publicUrl,
-              stem,
-              core: coreFromImageStem(stem),
-              initial: initialFromStem(stem)
+              name: base, path: f.fullpath, url: data.publicUrl,
+              stem, core: coreFromImageStem(stem), initial: initialFromStem(stem)
             });
           }
         }
@@ -498,23 +474,6 @@
     });
 
     /******** Round building ********/
-    function labelForKey(key){
-      if(key.startsWith('not-')){ return `No empieza con /${key.slice(4)}/`; }
-      if(key.startsWith('syll:')){ return key.slice(5); } // plain syllable text
-      return `Empieza con /${key}/`;
-    }
-
-    const byInitial = ()=> {
-      const map = new Map();
-      for(const f of imageFiles){
-        const list = map.get(f.initial) || [];
-        list.push(f); map.set(f.initial, list);
-      }
-      return map;
-    };
-    const allImages = ()=> [...imageFiles];
-    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [a[i],a[j]]=[a[j],a[i]] } return a }
-
     function buildColumnsForLetters(activeLetters){
       const columns = [];
       if(activeLetters.length===1){
@@ -527,21 +486,22 @@
       return columns;
     }
     function buildColumnsForSyllables(sylls){
+      // keep display text exactly as provided (ta/te/ti/...)
       return sylls.map(s => ({ label: s, key:`syll:${normalizePlain(s)}`, display:s }));
     }
 
     function buildRoundFromLetters(activeLetters, perCol){
       const columns = buildColumnsForLetters(activeLetters);
-      const initialMap = byInitial();
-      const everything = allImages();
+      const initialMap = (()=>{const m=new Map(); for(const f of imageFiles){(m.get(f.initial)||m.set(f.initial,[]).get(f.initial)).push(f);} return m;})();
+      const everything = [...imageFiles];
 
       const pickNoRepeat = (arr, n) => {
         const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
-        shuffle(pool);
+        pool.sort(()=>Math.random()-0.5);
         const chosen = pool.slice(0,n);
         if(chosen.length < n){
           const more = arr.filter(x=>!chosen.includes(x));
-          shuffle(more);
+          more.sort(()=>Math.random()-0.5);
           chosen.push(...more.slice(0, n - chosen.length));
         }
         return chosen;
@@ -569,17 +529,16 @@
     }
 
     function buildRoundFromSyllables(sylls, perCol){
-      const normSyl = sylls.map(s => normalizePlain(s));
-      const columns = buildColumnsForSyllables(sylls); // keep pretty display
+      const columns = buildColumnsForSyllables(sylls);
       const cards = [];
 
       const pickNoRepeat = (arr, n) => {
         const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
-        shuffle(pool);
+        pool.sort(()=>Math.random()-0.5);
         const chosen = pool.slice(0,n);
         if(chosen.length < n){
           const more = arr.filter(x=>!chosen.includes(x));
-          shuffle(more);
+          more.sort(()=>Math.random()-0.5);
           chosen.push(...more.slice(0, n - chosen.length));
         }
         return chosen;
@@ -604,9 +563,7 @@
         : buildColumnsForLetters(activeLetters);
 
       const coreIndex = new Map();
-      for(const f of imageFiles){
-        if(!coreIndex.has(f.core)) coreIndex.set(f.core, f);
-      }
+      for(const f of imageFiles){ if(!coreIndex.has(f.core)) coreIndex.set(f.core, f); }
 
       const cards = [];
       for(const wRaw of wordsList){
@@ -624,13 +581,13 @@
     }
 
     function renderHeaderHTML(col){
-      // If it's a syllable column, show the big tile with the display text (e.g., "ta")
+      // Hide header entirely if hidetitle=true and this is a syllable column
       if (col.key.startsWith('syll:')) {
-        const text = (col.display || labelForKey(col.key)).toLowerCase();
+        if (HIDE_TITLE) return '';
+        const text = (col.display || '').toLowerCase();
         return `<div class="syllTile" aria-hidden="true">${text}</div>`;
       }
-      // Otherwise normal header text
-      return `<h2>${labelForKey(col.key)}</h2>`;
+      return `<h2>${col.label}</h2>`;
     }
 
     function buildColumns(columns){
@@ -645,12 +602,15 @@
           <div class="drop" data-col="${idx}"></div>`;
         columnsEl.appendChild(col);
       });
+      // update one-per class if teacher changed the per value
+      const per = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
+      document.body.classList.toggle('one-per', per === 1);
     }
 
     function setCards(cards){
       currentCards = [...cards];
       rackEl.innerHTML='';
-      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : shuffle([...currentCards]);
+      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
 
@@ -675,7 +635,7 @@
     function clearAllPlacements(){
       document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
       rackEl.innerHTML='';
-      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : shuffle([...currentCards]);
+      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
     function resetRoundPlacements(){
@@ -699,10 +659,10 @@
         parts.push({
           x: Math.random()*W,
           y: -20-Math.random()*H*0.2,
-          vx: (-0.6 + Math.random()*1.2),     // slower horizontal drift
-          vy: 1.2 + Math.random()*1.3,        // slower initial fall
+          vx: (-0.6 + Math.random()*1.2),
+          vy: 1.2 + Math.random()*1.3,
           rot: Math.random()*Math.PI,
-          vr: (-0.12 + Math.random()*0.24),   // slower spin
+          vr: (-0.12 + Math.random()*0.24),
           size: 5 + Math.random()*6,
           hue: Math.floor(Math.random()*360)
         });
@@ -714,8 +674,7 @@
 
         ctx.clearRect(0,0,W,H);
         parts.forEach(p=>{
-          const gravity = 0.006;              // gentler gravity
-          const drag    = 0.003;              // tiny air drag
+          const gravity = 0.006, drag = 0.003;
           p.vy += gravity * (dt/16);
           p.vx *= (1 - drag);
           p.vy *= (1 - drag*0.6);
@@ -780,13 +739,12 @@
       });
 
       if (everythingCorrect()) celebrate();
-
       if (!fromBroadcast && isTeacher && channel){
         channel.send({ type:'broadcast', event:'VERIFY' });
       }
     }
 
-    // ----- DnD -----
+    // ----- DnD (fixed-size during drag) -----
     let drag=null;
     function makeDraggable(el){
       el.style.touchAction='none';
@@ -803,6 +761,7 @@
         startX:e.clientX, startY:e.clientY,
         moved:false
       };
+      el.classList.add('dragging');            // fixed size while dragging
       el.setPointerCapture(e.pointerId);
       window.addEventListener('pointermove', onMove, {passive:false});
       window.addEventListener('pointerup', onDrop, {passive:false});
@@ -816,9 +775,10 @@
       if(!drag.moved && Math.hypot(dx,dy) < 4) return;
       if(!drag.moved){
         drag.moved = true;
+        // fixed size while dragging (no giant carry-over)
         drag.el.style.position='fixed';
-        drag.el.style.width = drag.el.offsetWidth + 'px';
-        drag.el.style.height = drag.el.offsetHeight + 'px';
+        drag.el.style.width = '150px';
+        drag.el.style.height = '';
         drag.el.style.zIndex=1000;
         drag.el.style.pointerEvents='none';
       }
@@ -840,6 +800,8 @@
 
       const drop = hitTestDrop(e.clientX, e.clientY);
       const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
+      document.body.classList.toggle('one-per', perCol === 1); // keep CSS in sync
+
       if(drop){
         if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
         else { drop.appendChild(el); }
@@ -857,11 +819,13 @@
     }
     function cleanupPointer(pointerId){
       try{ drag.el.releasePointerCapture(pointerId);}catch(_){}
+      drag.el.classList.remove('dragging');
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onDrop);
       window.removeEventListener('pointercancel', onCancel);
     }
     function resetDraggedStyles(el){
+      el.classList.remove('dragging');
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex=''; el.style.pointerEvents='';
       el.style.width=''; el.style.height='';
     }
@@ -884,8 +848,8 @@
     }
 
     /******** Controls wiring ********/
-    btnVerify.addEventListener('click', ()=> verifyNow(false));
-    btnReset.addEventListener('click', resetRoundPlacements);
+    document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
+    document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
     soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     soloResetBtn.addEventListener('click', resetRoundPlacements);
     inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
@@ -918,6 +882,7 @@
       usedSet = new Set();
       const hasSyll = SOLO_SYLLABLES.length > 0;
       const per = SOLO_PER || 4;
+      document.body.classList.toggle('one-per', per === 1);
 
       let payload;
       if (SOLO_WORDS.length > 0) {
@@ -939,9 +904,7 @@
         await ensureStorageLoaded();
         if(imageFiles.length===0) return;
 
-        // wire solo buttons
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
-
         startSoloRound();
         return;
       }
