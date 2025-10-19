@@ -444,7 +444,7 @@ const effectiveOffsetMs: number =
 
       // audio follow (map visual relMs -> audio absSec WITH offset)
       if (syncToAudio && audioRef.current) {
-        const absSec = (timelineZero + next - effectiveOffsetMs) / 1000
+        const absSec = (timelineZero + next + effectiveOffsetMs) / 1000
         const hit = findSegByAbsSec(absSec)
         const a = audioRef.current
         if (hit) {
@@ -612,7 +612,7 @@ const effectiveOffsetMs: number =
                   drawAtRelMs(v)
                   if (syncToAudio && audioRef.current) {
                     // map visual time -> audio time WITH offset
-                    const absSec = (timelineZero + v - effectiveOffsetMs) / 1000
+                    const absSec = (timelineZero + v + effectiveOffsetMs) / 1000
                     const hit = findSegByAbsSec(absSec)
                     const a = audioRef.current
                     if (hit) {
