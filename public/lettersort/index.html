@@ -149,10 +149,13 @@
     const IP = qs.get('ip') || IMAGES_PREFIX;
     const AP = qs.get('ap') || AUDIO_PREFIX;
 
-    const SOLO_LETTERS = (qs.get('letters') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-    const SOLO_PER = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
-    const SOLO_WORDS = (qs.get('words') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-    const SOLO_MODE = SOLO_LETTERS.length > 0;
+    const SOLO_LETTERS   = (qs.get('letters')   || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const SOLO_SYLLABLES = (qs.get('syllables') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const SOLO_PER  = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
+    const SOLO_WORDS= (qs.get('words') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+    // Solo mode triggers if letters or syllables are provided
+    const SOLO_MODE = (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -196,11 +199,18 @@
       teacherPanel.classList.add('hidden');
       studentPanel.classList.add('hidden');
       document.querySelector('.switch').classList.add('hidden');
+
+      // apply drop limit from query
+      if (SOLO_PER) cardsPerColEl.value = String(SOLO_PER);
+
       if (SOLO_MODE) {
         const per = SOLO_PER || 4;
+        const modeTxt = SOLO_SYLLABLES.length
+          ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
+          : `letras=${SOLO_LETTERS.join(', ')}`;
         const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
         soloPill.style.display = 'inline-block';
-        soloPill.textContent = `Modo individual: letras=${SOLO_LETTERS.join(', ')} · ${per} por columna${wordsTxt}`;
+        soloPill.textContent = `Modo individual: ${modeTxt} · ${per} por columna${wordsTxt}`;
         soloBar.classList.remove('hidden'); // show solo controls
       }
     }
@@ -227,16 +237,37 @@
     }
     renderLetterPicker();
 
-    /******** Helpers ********/
+    /******** Helpers (shared with Elkonin rules) ********/
+    // Marker <-> accents (copied from your Elkonin file)
+    function markersToPretty(s){
+      return (s||'')
+        .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
+        .replace(/n\.\./g,'ñ')
+        .replace(/u,,/g,'ü');
+    }
+    function prettyToMarkers(s){
+      return (s||'')
+        .replace(/á/g,'a..').replace(/é/g,'e..').replace(/í/g,'i..').replace(/ó/g,'o..').replace(/ú/g,'u..')
+        .replace(/ñ/g,'n..').replace(/ü/g,'u,,');
+    }
+
+    // Plain normalizer used for comparisons (strip accents, ñ->n, ü->u, non-letters)
+    function normalizePlain(s){
+      return (s||'').toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+        .replace(/ñ/g,'n').replace(/ü/g,'u')
+        .replace(/[^a-z]/g,'');
+    }
+
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
 
     function normalizeMarkers(s){
+      // existing helper kept (used for cores), but keep in sync with normalizePlain spirit
       let t = (s || '').toLowerCase().trim();
-      // AHK-style markers -> plain letters
       t = t.replace(/a\.\./g,'a').replace(/e\.\./g,'e').replace(/i\.\./g,'i').replace(/o\.\./g,'o').replace(/u\.\./g,'u');
       t = t.replace(/u,,/g,'u').replace(/n\.\./g,'n');
-      t = t.normalize('NFD').replace(/[\u0300-\u036f]/g,''); // strip accents to be safe
+      t = t.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
       return t;
     }
     function stripImageSuffix(t){ return t.replace(/_(pic|img|image|foto)$/i,''); }
@@ -250,6 +281,77 @@
       if(s.startsWith('ll')) return 'll';
       if(s.startsWith('rr')) return 'rr';
       return s[0] || '';
+    }
+
+    /*** SYLLABIFIER — identical logic to Elkonin ***/
+    function syllabifyEs(wordRaw){
+      const word = (wordRaw || '').toLowerCase();
+      const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
+      const isWeakUnaccented = ch => /^(i|u|ü)$/.test((ch||'')[0] || '');
+      const isAccWeak = ch => /[íú]/.test((ch||'')[0] || '');
+      const onsetPairs = ['pl','pr','bl','br','tr','dr','cl','cr','gl','gr','fl','fr','ch','ll','rr'];
+
+      const chars = [];
+      for (let i=0;i<word.length;i++){
+        const two = word.slice(i, i+2);
+        if (['ch','ll','rr'].includes(two)) { chars.push(two); i++; continue; }
+        if (word[i]==='q' && word[i+1]==='u' && /[eiéí]/.test(word[i+2]||'')) { chars.push('qu'); i++; continue; }
+        if (word[i]==='g' && word[i+1]==='u' && /[eiéí]/.test(word[i+2]||'') && word[i+1]!=='ü'){ chars.push('gu'); i++; continue; }
+        chars.push(word[i]);
+      }
+
+      const syl = [];
+      let i = 0;
+
+      while (i < chars.length){
+        let onset = [];
+        while (i < chars.length && !isV(chars[i])) onset.push(chars[i++]);
+
+        if (i >= chars.length){
+          if (syl.length) syl[syl.length-1] += onset.join('');
+          else syl.push(onset.join(''));
+          break;
+        }
+
+        let nuc = [chars[i++]];
+        for (let k = 0; k < 2 && i < chars.length && isV(chars[i]); k++){
+          const prev = nuc[nuc.length-1], next = chars[i];
+          const canJoin =
+            ((isWeakUnaccented(prev) && !isAccWeak(prev)) && !isAccWeak(next)) ||
+            ((isWeakUnaccented(next) && !isAccWeak(next)) && !isAccWeak(prev)) ||
+            (isWeakUnaccented(prev) && isWeakUnaccented(next));
+          if (canJoin) { nuc.push(next); i++; } else break;
+        }
+
+        let after = [];
+        while (i < chars.length && !isV(chars[i])) after.push(chars[i++]);
+
+        let coda = [], nextOnset = after.slice();
+        if (nextOnset.length){
+          let m = 0;
+          while (nextOnset.length - m >= 2){
+            const a = nextOnset[m], b = nextOnset[m+1];
+            const pair = (a + b).replace(/[^a-zñ]/g,'');
+            if (onsetPairs.includes(pair)) break;
+            m++;
+          }
+          coda = nextOnset.slice(0, m);
+          nextOnset = nextOnset.slice(m);
+          while (nextOnset.length > 2) coda.push(nextOnset.shift());
+        }
+
+        syl.push(onset.join('') + nuc.join('') + coda.join(''));
+        if (nextOnset.length) i -= nextOnset.length;
+      }
+
+      return syl.filter(Boolean).map(s => s.trim());
+    }
+
+    // First syllable (normalized to compare with ?syllables=)
+    function firstSyllableNormalized(coreWord){
+      const pretty = markersToPretty(coreWord); // respect markers (e.g., tu..nel -> túnel)
+      const first = syllabifyEs(pretty)[0] || '';
+      return normalizePlain(first); // strip accents/diacritics for comparison
     }
 
     /******** Storage ********/
@@ -356,6 +458,10 @@
         const L = key.slice(4);
         return `No empieza con /${L}/`;
       }
+      if(key.startsWith('syll:')){
+        const s = key.slice(5);
+        return `Sílabas “${s}”`;
+      }
       return `Empieza con /${key}/`;
     }
 
@@ -370,7 +476,7 @@
     const allImages = ()=> [...imageFiles];
     function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [a[i],a[j]]=[a[j],a[i]] } return a }
 
-    /** Build columns from letters */
+    /** Columns for letter mode */
     function buildColumnsForLetters(activeLetters){
       const columns = [];
       if(activeLetters.length===1){
@@ -383,7 +489,14 @@
       return columns;
     }
 
-    /** Default (random pick) round */
+    /** Columns for syllable mode */
+    function buildColumnsForSyllables(sylls){
+      const columns = [];
+      sylls.forEach(s => columns.push({ label:`Sílabas “${normalizePlain(s)}”`, key:`syll:${normalizePlain(s)}` }));
+      return columns;
+    }
+
+    /** Default (random) round for letters */
     function buildRoundFromLetters(activeLetters, perCol){
       const columns = buildColumnsForLetters(activeLetters);
 
@@ -423,11 +536,45 @@
       return { columns, cards };
     }
 
-    /** Word-list round: use ONLY the listed words, in that order */
-    function buildRoundFromWordList(activeLetters, wordsList){
-      const columns = buildColumnsForLetters(activeLetters);
+    /** Random round for syllables (when no words list is provided) */
+    function buildRoundFromSyllables(sylls, perCol){
+      const normSyl = sylls.map(s => normalizePlain(s));
+      const columns = buildColumnsForSyllables(normSyl);
+      const cards = [];
 
-      // Build a quick index: core -> first image file
+      const pickNoRepeat = (arr, n) => {
+        const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
+        shuffle(pool);
+        const chosen = pool.slice(0,n);
+        if(chosen.length < n){
+          const more = arr.filter(x=>!chosen.includes(x));
+          shuffle(more);
+          chosen.push(...more.slice(0, n - chosen.length));
+        }
+        return chosen;
+      };
+
+      for(const col of columns){
+        const targetSyl = col.key.slice(5); // normalized
+        // pick images whose FIRST syllable (normalized) equals target
+        const list = imageFiles.filter(f => firstSyllableNormalized(f.core) === targetSyl);
+        const picks = pickNoRepeat(list, perCol);
+        for(const f of picks){ usedSet.add(`${f.path}`); }
+        for(const f of picks){
+          const audioUrl = audioMap.get(f.core) || null;
+          cards.push({ id: crypto.randomUUID(), file: f.name, word: f.stem, imgUrl: f.url, audioUrl });
+        }
+      }
+      return { columns, cards };
+    }
+
+    /** Word-list round: use ONLY the listed words, in that order */
+    function buildRoundFromWordList(activeLetters, sylls, wordsList){
+      const columns = (sylls && sylls.length)
+        ? buildColumnsForSyllables(sylls.map(s => normalizePlain(s)))
+        : buildColumnsForLetters(activeLetters);
+
+      // Map core -> first image file
       const coreIndex = new Map();
       for(const f of imageFiles){
         if(!coreIndex.has(f.core)) coreIndex.set(f.core, f);
@@ -435,13 +582,12 @@
 
       const cards = [];
       for(const wRaw of wordsList){
-        const w = normalizeMarkers(wRaw);
-        const f = coreIndex.get(w);
-        if(!f) continue; // silently skip if not found
+        const wNorm = normalizeMarkers(wRaw); // match cores (markers stripped)
+        const f = coreIndex.get(wNorm);
+        if(!f) continue; // skip if not found
         const audioUrl = audioMap.get(f.core) || null;
         cards.push({ id: crypto.randomUUID(), file: f.name, word: f.stem, imgUrl: f.url, audioUrl });
       }
-
       return { columns, cards };
     }
 
@@ -451,15 +597,20 @@
         await ensureStorageLoaded();
         if(imageFiles.length===0){ alert('No hay imágenes disponibles en Storage.'); return; }
       }
-      const activeLetters = [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
-      if(activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
+
+      const hasSyll = SOLO_SYLLABLES.length > 0;
+      const activeLetters = hasSyll ? [] : [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
+      if(!hasSyll && activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
 
       const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
       const useWords = SOLO_WORDS.length > 0;
 
-      const payload = useWords
-        ? buildRoundFromWordList(activeLetters, SOLO_WORDS)
-        : buildRoundFromLetters(activeLetters, perCol);
+      const payload =
+        useWords
+          ? buildRoundFromWordList(activeLetters, SOLO_SYLLABLES, SOLO_WORDS)
+          : (hasSyll
+              ? buildRoundFromSyllables(SOLO_SYLLABLES, perCol)
+              : buildRoundFromLetters(activeLetters, perCol));
 
       await channel.send({ type:'broadcast', event:'ROUND', payload });
     });
@@ -522,14 +673,31 @@
     }
 
     function verifyNow(){
-      const getTarget = key => key.startsWith('not-') ? {type:'not', letter:key.slice(4)} : {type:'is', letter:key};
+      const getTarget = key => {
+        if (key.startsWith('not-')) return {type:'not', letter:key.slice(4)};
+        if (key.startsWith('syll:')) return {type:'syll', syll:key.slice(5)}; // already normalized
+        return {type:'is', letter:key};
+      };
+
       document.querySelectorAll('.drop').forEach((drop, idx)=>{
         const target = getTarget(currentCols[idx].key);
         [...drop.children].forEach(cardEl=>{
           const card = currentCards.find(c=>c.id===cardEl.dataset.id);
           if(!card) return;
-          const initial = initialFromStem((card.word||'').toLowerCase());
-          const ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
+
+          const core = card.word || '';
+          const coreNorm = normalizeMarkers(core);
+
+          let ok = false;
+          if (target.type === 'syll') {
+            // Compare normalized first syllable (Elkonin rules) with normalized target
+            const firstSyl = firstSyllableNormalized(core);
+            ok = (firstSyl === target.syll);
+          } else {
+            const initial = initialFromStem(coreNorm);
+            ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
+          }
+
           if(ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
           else { cardEl.classList.add('bad'); setTimeout(()=> ejectToRack(cardEl), 350); }
         });
@@ -636,14 +804,19 @@
     /******** SOLO MODE ********/
     function startSoloRound(){
       usedSet = new Set(); // fresh picks each round in solo
+
+      const hasSyll = SOLO_SYLLABLES.length > 0;
       const per = SOLO_PER || 4;
 
       let payload;
       if (SOLO_WORDS.length > 0) {
-        payload = buildRoundFromWordList(SOLO_LETTERS, SOLO_WORDS);
+        payload = buildRoundFromWordList(hasSyll ? [] : SOLO_LETTERS, SOLO_SYLLABLES, SOLO_WORDS);
+      } else if (hasSyll) {
+        payload = buildRoundFromSyllables(SOLO_SYLLABLES, per);
       } else {
         payload = buildRoundFromLetters(SOLO_LETTERS, per);
       }
+
       buildColumns(payload.columns);
       setCards(payload.cards);
       clearAllPlacements();
