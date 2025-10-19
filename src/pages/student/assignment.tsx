@@ -868,12 +868,13 @@ export default function StudentAssignment(){
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       // 5.4 — Save strokes + media with canvas size
-      const payloadForSave: PageArtifact = {
-        canvasWidth: canvasSize.w,
-        canvasHeight: canvasSize.h,
-        strokes: normalized.strokes,
-        media: media
-      }
+const payloadForSave: PageArtifact = {
+  canvasWidth: canvasSize.w,
+  canvasHeight: canvasSize.h,
+  strokes: toTimelineStrokes(normalized.strokes),  // ✅ coerce to timeline strokes (t always a number)
+  media: media
+}
+
       await saveStrokes(submission_id, payloadForSave)
       localStorage.setItem(lastKey, encHash)
       saveSubmittedCache(studentId, assignmentUid, pageUid, payloadForSave)
