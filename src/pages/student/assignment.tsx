@@ -294,15 +294,47 @@ export default function StudentAssignment(){
 
   // 🔧 Track the real PDF canvas element and keep overlay in sync with its CSS size
   const pdfCanvasEl = useRef<HTMLCanvasElement | null>(null)
+
+  /** Robustly compute the PDF canvas CSS size (avoids bottom clipping). */
   const syncFromPdfCanvas = () => {
     const el = pdfCanvasEl.current
     if (!el) return
-    const rect = el.getBoundingClientRect()
-    const dprW = (window.devicePixelRatio || 1)
-    const cssW = Math.max(1, Math.round(Math.max(rect.width, (el as HTMLCanvasElement).width / dprW)))
+
     const dpr = (window.devicePixelRatio || 1)
-    const cssH = Math.max(1, Math.round(Math.max(rect.height, (el as HTMLCanvasElement).height / dpr)))
-    setCanvasSize(prev => (prev.w === cssW && prev.h === cssH) ? prev : { w: cssW, h: cssH })
+
+    // 1) Measured rect (can under-report on iPad/zoom, but useful fallback)
+    const rect = el.getBoundingClientRect()
+
+    // 2) Computed style (preferred CSS pixel size when style.width/height are set)
+    const cs = window.getComputedStyle(el)
+    const cssWStyle = parseFloat(cs.width) || 0
+    const cssHStyle = parseFloat(cs.height) || 0
+
+    // 3) Intrinsic bitmap size ÷ DPR (exact drawn size from pdf.js)
+    const cssWIntrinsic = (el.width || 0) / dpr
+    const cssHIntrinsic = (el.height || 0) / dpr
+
+    // 4) Parent scroll size (if PDF sits in a scroller)
+    const parent = el.parentElement
+    const parentW = parent ? Math.max(parent.scrollWidth, parent.clientWidth) : 0
+    const parentH = parent ? Math.max(parent.scrollHeight, parent.clientHeight) : 0
+
+    const cssW = Math.max(
+      1,
+      Math.round(
+        Math.max(rect.width, cssWStyle, cssWIntrinsic, parentW)
+      )
+    )
+    const cssH = Math.max(
+      1,
+      Math.round(
+        Math.max(rect.height, cssHStyle, cssHIntrinsic, parentH)
+      )
+    )
+
+    setCanvasSize(prev =>
+      prev.w === cssW && prev.h === cssH ? prev : { w: cssW, h: cssH }
+    )
   }
 
   const [toast, setToast] = useState<{ msg:string; kind:'ok'|'err' }|null>(null)
@@ -317,29 +349,60 @@ export default function StudentAssignment(){
   // When PDF is ready, remember its canvas and sync size immediately
   const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement)=>{
     pdfCanvasEl.current = canvas
+    // Ensure the PDF canvas CSS size is explicit (prevents fractional rounding issues)
+    try {
+      const dpr = (window.devicePixelRatio || 1)
+      if (canvas.width && !canvas.style.width) {
+        canvas.style.width = `${Math.round(canvas.width / dpr)}px`
+      }
+      if (canvas.height && !canvas.style.height) {
+        canvas.style.height = `${Math.round(canvas.height / dpr)}px`
+      }
+    } catch {}
     syncFromPdfCanvas()
   }
 
-  // Keep overlay size synced to PDF canvas size changes (and window resizes)
+  // Keep overlay size synced to PDF canvas + parent size changes and zoom/orientation
   useEffect(() => {
     const el = pdfCanvasEl.current
     if (!el) return
 
-    let ro: ResizeObserver | null = null
+    let roCanvas: ResizeObserver | null = null
+    let roParent: ResizeObserver | null = null
+
     if ('ResizeObserver' in window) {
-      ro = new ResizeObserver(() => syncFromPdfCanvas())
-      ro.observe(el)
+      roCanvas = new ResizeObserver(() => syncFromPdfCanvas())
+      roCanvas.observe(el)
+      if (el.parentElement) {
+        roParent = new ResizeObserver(() => syncFromPdfCanvas())
+        roParent.observe(el.parentElement)
+      }
     }
+
     const onWinResize = () => syncFromPdfCanvas()
     window.addEventListener('resize', onWinResize)
 
-    // short polling during initial layout settle
-    const poll = window.setInterval(syncFromPdfCanvas, 200)
-    const stopPoll = window.setTimeout(() => window.clearInterval(poll), 3000)
+    // DPR/zoom change
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    const onDprChange = () => syncFromPdfCanvas()
+    if (mq && typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', onDprChange)
+    }
+
+    // Orientation
+    const onOrient = () => syncFromPdfCanvas()
+    window.addEventListener('orientationchange', onOrient)
+
+    // Short initial poll during layout settle
+    const poll = window.setInterval(syncFromPdfCanvas, 150)
+    const stopPoll = window.setTimeout(() => window.clearInterval(poll), 2500)
 
     return () => {
-      if (ro) ro.disconnect()
+      if (roCanvas) roCanvas.disconnect()
+      if (roParent) roParent.disconnect()
       window.removeEventListener('resize', onWinResize)
+      if (mq && typeof mq.removeEventListener === 'function') mq.removeEventListener('change', onDprChange)
+      window.removeEventListener('orientationchange', onOrient)
       window.clearInterval(poll)
       window.clearTimeout(stopPoll)
     }
