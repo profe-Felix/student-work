@@ -16,9 +16,8 @@ export type RemoteStrokeUpdate = {
   color: string
   size: number
   tool: 'pen' | 'highlighter' | 'eraser'
-  pts: Array<{ x: number; y: number; t?: number }>  // carry t in deltas
-  done?: boolean             // true when the peer lifted the pencil
-  /** echo guard */
+  pts: Array<{ x: number; y: number; t?: number }>
+  done?: boolean
   from?: string
 }
 
@@ -27,7 +26,6 @@ export type DrawCanvasHandle = {
   loadStrokes: (data: StrokesPayload | null | undefined) => void
   clearStrokes: () => void
   undo: () => void
-  /** apply remote stroke deltas (from other students) */
   applyRemote: (u: RemoteStrokeUpdate) => void
 }
 
@@ -35,15 +33,12 @@ type Props = {
   width:number; height:number
   color:string; size:number
   mode:'scroll'|'draw'
-  // we accept eraserObject in props, but we only DRAW for pen|highlighter|eraser
   tool:'pen'|'highlighter'|'eraser'|'eraserObject'
-  /** unique id for this client (e.g., studentCode or socket id) */
   selfId?: string
-  /** broadcast local stroke deltas as user draws */
   onStrokeUpdate?: (u: RemoteStrokeUpdate) => void
 }
 
-/* ---------- Type guards ---------- */
+/* ---------- Type guards & normalize ---------- */
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
@@ -136,90 +131,60 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const strokes   = useRef<Stroke[]>([])
   const current   = useRef<Stroke|null>(null)
 
-  // Realtime: in-progress strokes from peers (id -> stroke)
+  // Realtime
   const remoteActive = useRef<Map<string, Stroke>>(new Map())
-  // Realtime: finished strokes from peers (kept lightweight)
   const remoteFinished = useRef<Stroke[]>([])
 
-  // Pointer state for two-finger detection & pencil
   const activePointers = useRef<Set<number>>(new Set())
   const drawingPointerId = useRef<number|null>(null)
-  const localStrokeId = useRef<string|null>(null) // id for broadcasting
+  const localStrokeId = useRef<string|null>(null)
 
-  /** Canvas setup: size backing store from props (CSS px), no DPR transform */
+  /** DPR-aware canvas setup that TRUSTS props width/height (no rect re-measure). */
   const setupCanvas = ()=>{
     const c = canvasRef.current
     if (!c) return
-
     const cssW = Math.max(1, Math.round(width))
     const cssH = Math.max(1, Math.round(height))
+    const dpr  = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1
 
-    // Backing store equals CSS size (1:1 drawing in CSS pixel space)
-    if (c.width  !== cssW)  c.width  = cssW
-    if (c.height !== cssH)  c.height = cssH
+    const bw = Math.max(1, Math.round(cssW * dpr))
+    const bh = Math.max(1, Math.round(cssH * dpr))
 
-    // Keep CSS size explicit to avoid fractional rounding & stretching
+    if (c.width !== bw) c.width = bw
+    if (c.height !== bh) c.height = bh
+
+    // Style reflects CSS size exactly
     c.style.width  = `${cssW}px`
     c.style.height = `${cssH}px`
 
     const ctx = c.getContext('2d')
     if (!ctx) return
-    ctx.setTransform(1,0,0,1,0,0) // identity; no ctx.scale(dpr,dpr)
     ctxRef.current = ctx
+
+    // Reset then scale so all drawing uses CSS units
+    ctx.setTransform(1,0,0,1,0,0)
+    ctx.scale(dpr, dpr)
   }
 
   const redraw = ()=>{
     const ctx = ctxRef.current
     if (!ctx) return
     const c = ctx.canvas
-    // Clear the FULL backing store
-    ctx.clearRect(0, 0, c.width, c.height)
+    // clear in CSS space (context already scaled to DPR)
+    ctx.clearRect(0,0, c.width, c.height)
 
-    // Order: finished remote, finished local, active remote, active local
     for (const s of remoteFinished.current) drawStroke(ctx, s)
     for (const s of strokes.current) drawStroke(ctx, s)
     for (const s of remoteActive.current.values()) drawStroke(ctx, s)
     if (current.current) drawStroke(ctx, current.current)
   }
 
-  // Initialize + respond to size changes
-  useEffect(()=>{
-    setupCanvas()
-    redraw()
-    const c = canvasRef.current
-    if (!c) return
-
-    let ro: ResizeObserver | null = null
-    if ('ResizeObserver' in window) {
-      ro = new ResizeObserver(()=>{ setupCanvas(); redraw() })
-      // Observe parent so overlay follows PDF canvas changes
-      ro.observe(c.parentElement || c)
-    }
-    const onWinResize = ()=>{ setupCanvas(); redraw() }
-    window.addEventListener('resize', onWinResize)
-
-    // Optional DPR change listener (no scaling, but we still re-setup on zoom)
-    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
-    const onDprChange = ()=>{ setupCanvas(); redraw() }
-    if (mq && typeof mq.addEventListener === 'function') {
-      mq.addEventListener('change', onDprChange)
-    }
-
-    return ()=>{
-      window.removeEventListener('resize', onWinResize)
-      if (ro) ro.disconnect()
-      if (mq && typeof mq.removeEventListener === 'function') mq.removeEventListener('change', onDprChange)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Re-setup if parent-provided dimensions change
+  // Initialize + respond to prop-driven size changes ONLY
   useEffect(()=>{
     setupCanvas()
     redraw()
   }, [width, height])
 
-  // Switch between scroll/draw pointer behavior
   useEffect(()=>{
     const c = canvasRef.current
     if (!c) return
@@ -238,7 +203,6 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       const safe = normalize(data)
       strokes.current = safe.strokes
       current.current = null
-      // clear remote layers only when explicitly reloading base strokes
       remoteActive.current.clear()
       remoteFinished.current = []
       redraw()
@@ -255,9 +219,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       redraw()
     },
     applyRemote: (u) => {
-      // Ignore echoes from self
       if (u.from && selfId && u.from === selfId) return
-      // accumulate deltas into a single active stroke per remote id
       let s = remoteActive.current.get(u.id)
       if (!s) {
         const t: Stroke['tool'] =
@@ -268,7 +230,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       }
       if (Array.isArray(u.pts) && u.pts.length > 0) {
         for (const p of u.pts) {
-          s.pts.push({ x: p.x, y: p.y, t: typeof p.t === 'number' ? p.t : undefined }) // KEEP t
+          s.pts.push({ x: p.x, y: p.y, t: typeof p.t === 'number' ? p.t : undefined })
         }
       }
       if (u.done) {
@@ -279,16 +241,11 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     }
   }))
 
-  /** Pointer → canvas coords with CSS→backing scaling (prevents bottom cut line) */
   const getPos = (e: PointerEvent)=>{
     const c = canvasRef.current!
     const r = c.getBoundingClientRect()
-    const sx = c.width  / Math.max(1, r.width)
-    const sy = c.height / Math.max(1, r.height)
-    return {
-      x: (e.clientX - r.left) * sx,
-      y: (e.clientY - r.top)  * sy
-    }
+    // CSS-space coordinates (context scaled to DPR already)
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
 
   useEffect(()=>{
@@ -297,11 +254,9 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
 
     const shouldDraw = (e: PointerEvent) => {
       if (mode !== 'draw') return false
-      // Draw/broadcast for pen/highlighter/eraser (eraser uses destination-out).
       const allowed = (tool === 'pen' || tool === 'highlighter' || tool === 'eraser' || tool === 'eraserObject')
       if (!allowed) return false
-      if (e.pointerType === 'pen') return true // allow Apple Pencil even with palm
-      // fingers/mouse: draw only if a single non-pen pointer is down
+      if (e.pointerType === 'pen') return true
       return activePointers.current.size <= 1
     }
 
@@ -321,7 +276,6 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       current.current = { color, size, tool: t, pts: [p] }
       localStrokeId.current = `${Date.now()}-${Math.random().toString(36).slice(2)}-${e.pointerId}`
 
-      // broadcast initial point (INCLUDES t)
       onStrokeUpdate?.({
         id: localStrokeId.current!,
         color, size, tool: t, pts: [p], done: false, from: selfId
@@ -334,7 +288,6 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       if (drawingPointerId.current !== e.pointerId) return
       if (!current.current) return
       if (!shouldDraw(e)) {
-        // stroke cancelled; finish what we have
         if (current.current.pts.length > 1) strokes.current.push(current.current)
         onStrokeUpdate?.({
           id: localStrokeId.current!, color, size,
@@ -349,7 +302,6 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       const p = getPos(e) as StrokePoint
       p.t = stampNow()
       current.current.pts.push(p)
-      // broadcast delta (single point WITH t)
       onStrokeUpdate?.({
         id: localStrokeId.current!, color, size,
         tool: current.current.tool, pts: [p], done: false, from: selfId
@@ -361,7 +313,6 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     const endStroke = ()=>{
       if (current.current) {
         if (current.current.pts.length > 1) strokes.current.push(current.current)
-        // notify completion
         onStrokeUpdate?.({
           id: localStrokeId.current!, color, size,
           tool: current.current.tool, pts: [], done: true, from: selfId
@@ -402,11 +353,9 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   return (
     <canvas
       ref={canvasRef}
-      width={width}
-      height={height}
       style={{
         position:'absolute', inset:0, zIndex:10,
-        display:'block', width:'100%', height:'100%',
+        display:'block', width:`${Math.max(1, Math.round(width))}px`, height:`${Math.max(1, Math.round(height))}px`,
         touchAction:'pan-y pinch-zoom', background:'transparent'
       }}
     />
