@@ -209,30 +209,35 @@ export default function PlaybackDrawer({
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
-// ---- First-clip-only offset logic (legacy-compatible) ----
-// If the very first event is a recording (audio starts before any ink),
-// use the legacy bias of 1600 ms. Otherwise keep the small auto offset.
-// Also allow an explicit payload override: { timing: { audioOffsetMs } }.
-const AUDIO_FIRST_BIAS_MS = 1000
+  // ---- First-clip-only offset logic ----
+  // If the very first event is a recording (audio starts before any ink),
+  // apply a negative bias so audio starts earlier. Only apply this before the first ink.
+  // You can override via payload: { timing: { audioOffsetMs } }
+  const FIRST_AUDIO_SHIFT_MS = -1600 // <— tune here (negative = audio earlier)
 
-const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
-const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
+  const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
+  const firstInkAbsSec = Number.isFinite(firstInkT) ? firstInkT / 1000 : Infinity
+  const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
 
-// A) small auto offset if audio just slightly precedes ink
-const OFFSET_THRESH_MS = 250
-const autoOffsetMs =
-  (Number.isFinite(firstAudioStartMs) && Number.isFinite(firstInkT) && firstAudioStartMs + OFFSET_THRESH_MS < firstInkT)
-    ? (firstInkT - firstAudioStartMs)
-    : 0
+  // small auto offset if audio precedes ink by a hair
+  const OFFSET_THRESH_MS = 250
+  const autoOffsetMs =
+    (Number.isFinite(firstAudioStartMs) &&
+     Number.isFinite(firstInkT) &&
+     firstAudioStartMs + OFFSET_THRESH_MS < firstInkT)
+      ? (firstInkT - firstAudioStartMs)
+      : 0
 
-// B) audio-first session? (audio starts before any stroke)
-const audioFirst = Number.isFinite(firstAudioStartMs) && (firstAudioStartMs <= firstInkT)
+  // is audio first?
+  const audioFirst = Number.isFinite(firstAudioStartMs) && (firstAudioStartMs <= firstInkT)
 
-// C) choose effective offset: payload override > audio-first bias > small auto offset
-const effectiveOffsetMs: number =
-  (parsed as any)?.timing?.audioOffsetMs ??
-  (audioFirst ? AUDIO_FIRST_BIAS_MS : autoOffsetMs)
+  // choose base bias: payload override > first-audio fixed bias > tiny auto offset
+  const baseBiasMs: number =
+    (parsed as any)?.timing?.audioOffsetMs ??
+    (audioFirst ? FIRST_AUDIO_SHIFT_MS : autoOffsetMs)
 
+  // apply only until a bit after first ink so later segments remain unaffected
+  const offsetFor = (visualAbsSec: number) => (visualAbsSec < firstInkAbsSec + 0.15 ? baseBiasMs : 0)
 
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
@@ -249,7 +254,7 @@ const effectiveOffsetMs: number =
   const [playing, setPlaying] = useState(false)
   const clockMsRef = useRef<number>(totalMs)  // relative ms (0..totalMs)
 
-  // Timer engine (robust in all browsers)
+  // Timer engine
   const intervalRef = useRef<number | null>(null)
   const lastWallRef = useRef<number | null>(null)
 
@@ -442,9 +447,10 @@ const effectiveOffsetMs: number =
       // draw
       drawAtRelMs(next)
 
-      // audio follow (map visual relMs -> audio absSec WITH offset)
+      // audio follow (map visual relMs -> audio absSec, applying bias only before first ink)
       if (syncToAudio && audioRef.current) {
-        const absSec = (timelineZero + next + effectiveOffsetMs) / 1000
+        const visualAbsSec = (timelineZero + next) / 1000
+        const absSec = visualAbsSec - (offsetFor(visualAbsSec) / 1000) // subtract bias; bias is negative to advance audio
         const hit = findSegByAbsSec(absSec)
         const a = audioRef.current
         if (hit) {
@@ -611,8 +617,8 @@ const effectiveOffsetMs: number =
                   clockMsRef.current = v
                   drawAtRelMs(v)
                   if (syncToAudio && audioRef.current) {
-                    // map visual time -> audio time WITH offset
-                    const absSec = (timelineZero + v + effectiveOffsetMs) / 1000
+                    const visualAbsSec = (timelineZero + v) / 1000
+                    const absSec = visualAbsSec - (offsetFor(visualAbsSec) / 1000) // subtract bias here too
                     const hit = findSegByAbsSec(absSec)
                     const a = audioRef.current
                     if (hit) {
