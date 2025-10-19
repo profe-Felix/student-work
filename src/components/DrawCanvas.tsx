@@ -146,41 +146,34 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const drawingPointerId = useRef<number|null>(null)
   const localStrokeId = useRef<string|null>(null) // id for broadcasting
 
-  // DPR-aware canvas setup: always draw in CSS space, scale bitmap by DPR
+  /** Canvas setup: size backing store from props (CSS px), no DPR transform */
   const setupCanvas = ()=>{
     const c = canvasRef.current
     if (!c) return
-    const rect = c.getBoundingClientRect()
-    const cssW = Math.max(1, Math.round(rect.width))
-    const cssH = Math.max(1, Math.round(rect.height))
-    const dpr  = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1
 
-    // bitmap size
-    const bw = Math.max(1, Math.round(cssW * dpr))
-    const bh = Math.max(1, Math.round(cssH * dpr))
+    const cssW = Math.max(1, Math.round(width))
+    const cssH = Math.max(1, Math.round(height))
 
-    if (c.width !== bw) c.width = bw
-    if (c.height !== bh) c.height = bh
+    // Backing store equals CSS size (1:1 drawing in CSS pixel space)
+    if (c.width  !== cssW)  c.width  = cssW
+    if (c.height !== cssH)  c.height = cssH
 
-    // style should reflect CSS size (avoid unexpected stretching)
+    // Keep CSS size explicit to avoid fractional rounding & stretching
     c.style.width  = `${cssW}px`
     c.style.height = `${cssH}px`
 
     const ctx = c.getContext('2d')
     if (!ctx) return
+    ctx.setTransform(1,0,0,1,0,0) // identity; no ctx.scale(dpr,dpr)
     ctxRef.current = ctx
-
-    // reset then scale so all drawing uses CSS units
-    ctx.setTransform(1,0,0,1,0,0)
-    ctx.scale(dpr, dpr)
   }
 
   const redraw = ()=>{
     const ctx = ctxRef.current
     if (!ctx) return
     const c = ctx.canvas
-    // clear in CSS space (context already scaled)
-    ctx.clearRect(0,0, c.width, c.height)
+    // Clear the FULL backing store
+    ctx.clearRect(0, 0, c.width, c.height)
 
     // Order: finished remote, finished local, active remote, active local
     for (const s of remoteFinished.current) drawStroke(ctx, s)
@@ -193,19 +186,19 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   useEffect(()=>{
     setupCanvas()
     redraw()
-    // keep canvas in sync with CSS size changes (parent resizes, DPR changes)
     const c = canvasRef.current
     if (!c) return
 
     let ro: ResizeObserver | null = null
     if ('ResizeObserver' in window) {
       ro = new ResizeObserver(()=>{ setupCanvas(); redraw() })
+      // Observe parent so overlay follows PDF canvas changes
       ro.observe(c.parentElement || c)
     }
     const onWinResize = ()=>{ setupCanvas(); redraw() }
     window.addEventListener('resize', onWinResize)
 
-    // DPR change (pinch-zoom on some devices) → listen via media query
+    // Optional DPR change listener (no scaling, but we still re-setup on zoom)
     const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
     const onDprChange = ()=>{ setupCanvas(); redraw() }
     if (mq && typeof mq.addEventListener === 'function') {
@@ -217,15 +210,16 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       if (ro) ro.disconnect()
       if (mq && typeof mq.removeEventListener === 'function') mq.removeEventListener('change', onDprChange)
     }
-   
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Re-setup if parent-provided dimensions change
   useEffect(()=>{
-    // If parent code changes container size via props, a re-setup helps
     setupCanvas()
     redraw()
   }, [width, height])
 
+  // Switch between scroll/draw pointer behavior
   useEffect(()=>{
     const c = canvasRef.current
     if (!c) return
@@ -285,11 +279,16 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     }
   }))
 
+  /** Pointer → canvas coords with CSS→backing scaling (prevents bottom cut line) */
   const getPos = (e: PointerEvent)=>{
     const c = canvasRef.current!
     const r = c.getBoundingClientRect()
-    // CSS-space coordinates (match our scaled context)
-    return { x: e.clientX - r.left, y: e.clientY - r.top }
+    const sx = c.width  / Math.max(1, r.width)
+    const sy = c.height / Math.max(1, r.height)
+    return {
+      x: (e.clientX - r.left) * sx,
+      y: (e.clientY - r.top)  * sy
+    }
   }
 
   useEffect(()=>{
@@ -403,10 +402,12 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   return (
     <canvas
       ref={canvasRef}
-      // width/height attributes are controlled by setupCanvas() using CSS rect × DPR
       style={{
         position:'absolute', inset:0, zIndex:10,
-        display:'block', width:'100%', height:'100%',
+        display:'block',
+        // Explicit pixel size to match backing store 1:1 (prevents bottom clipping)
+        width:  `${Math.round(width)}px`,
+        height: `${Math.round(height)}px`,
         touchAction:'pan-y pinch-zoom', background:'transparent'
       }}
     />
