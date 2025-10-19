@@ -210,11 +210,13 @@ export default function PlaybackDrawer({
   }, [pointTL.tMax, segments, timelineZero])
 
   // ---- First-clip-only offset logic ----
-  const FIRST_AUDIO_SHIFT_MS = -1600 // negative = audio earlier
+  const FIRST_AUDIO_SHIFT_MS = -1900 // negative = audio earlier
 
   const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
   const firstInkAbsSec = Number.isFinite(firstInkT) ? firstInkT / 1000 : Infinity
   const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
+  const firstSegEndSec = segments.length ? segments[0].endSec : Infinity
+
 
   // small auto offset if audio precedes ink slightly
   const OFFSET_THRESH_MS = 250
@@ -233,7 +235,8 @@ export default function PlaybackDrawer({
     (audioFirst ? FIRST_AUDIO_SHIFT_MS : autoOffsetMs)
 
   // apply only until a bit after first ink so later segments remain unaffected
-  const offsetFor = (visualAbsSec: number) => (visualAbsSec < firstInkAbsSec + 0.15 ? baseBiasMs : 0)
+  const offsetFor = (visualAbsSec: number) =>
+  visualAbsSec < firstSegEndSec ? baseBiasMs : 0
 
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
