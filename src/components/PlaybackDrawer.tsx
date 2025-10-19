@@ -17,7 +17,6 @@ type TimedPoint = { x: number; y: number; t?: number }
 type Stroke = { color?: string; size?: number; points: TimedPoint[]; tool?: string }
 type OverlaySize = { cssW: number; cssH: number; dpr: number }
 
-// media segment saved in strokes_json.media[]
 type AudioSeg = {
   kind: 'audio'
   id: string
@@ -26,24 +25,23 @@ type AudioSeg = {
   mime?: string
   url: string
 }
-
 type Seg = AudioSeg & { startSec: number; endSec: number } // convenience
 
-const N = (v: any) => {
+const N = (v:any) => {
   const x = typeof v === 'string' ? parseFloat(v) : v
   return Number.isFinite(x) ? x : 0
 }
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+const clamp = (v:number, lo:number, hi:number) => Math.min(hi, Math.max(lo, v))
 
 /* ------------ parse strokes (supports your {strokes:[{pts:[]}]}, etc.) ------------ */
-function asPoints(maybe: any): TimedPoint[] {
+function asPoints(maybe:any): TimedPoint[] {
   if (!maybe) return []
   if (Array.isArray(maybe) && maybe.length && typeof maybe[0] === 'object' && 'x' in maybe[0]) {
-    return maybe.map((p: any) => ({ x: N(p.x), y: N(p.y), t: p.t != null ? N(p.t) : undefined }))
+    return maybe.map((p:any) => ({ x: N(p.x), y: N(p.y), t: p.t != null ? N(p.t) : undefined }))
   }
   return []
 }
-function toStroke(obj: any): Stroke | null {
+function toStroke(obj:any): Stroke | null {
   if (!obj) return null
   const tool = obj.tool ?? obj.mode ?? obj.type
   if (Array.isArray(obj.pts))    return { color: obj.color, size: obj.size, points: asPoints(obj.pts), tool }
@@ -55,37 +53,22 @@ function toStroke(obj: any): Stroke | null {
   return null
 }
 type Parsed = { strokes: Stroke[]; metaW: number; metaH: number; media: AudioSeg[] }
-function parseStrokes(payload: any): Parsed {
+function parseStrokes(payload:any): Parsed {
   let raw = payload
   try { if (typeof raw === 'string') raw = JSON.parse(raw) } catch {}
   if (!raw) return { strokes: [], metaW: 0, metaH: 0, media: [] }
 
-  const metaW = N(raw.canvasWidth ?? raw.canvas_w ?? raw.canvasW ?? raw.width ?? raw.w ?? raw.pageWidth ?? raw.page?.width)
-  const metaH = N(raw.canvasHeight ?? raw.canvas_h ?? raw.canvasH ?? raw.height ?? raw.h ?? raw.pageHeight ?? raw.page?.height)
+  let metaW = N(raw.canvasWidth ?? raw.canvas_w ?? raw.canvasW ?? raw.width ?? raw.w ?? raw.pageWidth ?? raw.page?.width)
+  let metaH = N(raw.canvasHeight ?? raw.canvas_h ?? raw.canvasH ?? raw.height ?? raw.h ?? raw.pageHeight ?? raw.page?.height)
 
   const media: AudioSeg[] = Array.isArray(raw?.media)
     ? raw.media
-        .filter((m: any) =>
-          m && m.kind === 'audio' &&
-          typeof m.startMs === 'number' &&
-          typeof m.durationMs === 'number' &&
-          typeof m.url === 'string'
-        )
-        .map((m: any): AudioSeg => ({
-          kind: 'audio',
-          id: String(m.id || `${m.startMs}`),
-          startMs: N(m.startMs),
-          durationMs: N(m.durationMs),
-          mime: m.mime,
-          url: String(m.url)
-        }))
+        .filter((m:any)=> m && m.kind==='audio' && typeof m.startMs==='number' && typeof m.durationMs==='number' && typeof m.url==='string')
+        .map((m:any)=>({ kind:'audio', id:String(m.id||`${m.startMs}`), startMs:N(m.startMs), durationMs:N(m.durationMs), mime:m.mime, url:String(m.url)}))
     : []
 
   if (raw && raw.data) raw = raw.data
-  const toParsed = (arr: any[]): Parsed => ({
-    strokes: (arr.map(toStroke).filter(Boolean) as Stroke[]),
-    metaW, metaH, media
-  })
+  const toParsed = (arr:any[]): Parsed => ({ strokes: (arr.map(toStroke).filter(Boolean) as Stroke[]), metaW, metaH, media })
 
   if (Array.isArray(raw)) {
     if (raw.length && typeof raw[0] === 'object' && ('x' in raw[0] || 'pts' in raw[0])) {
@@ -94,7 +77,7 @@ function parseStrokes(payload: any): Parsed {
     return toParsed(raw)
   }
 
-  const buckets: any[] = []
+  const buckets:any[] = []
   if (Array.isArray(raw.strokes)) buckets.push(...raw.strokes)
   if (Array.isArray(raw.lines))   buckets.push(...raw.lines)
   if (Array.isArray(raw.paths))   buckets.push(...raw.paths)
@@ -115,9 +98,9 @@ function parseStrokes(payload: any): Parsed {
 const isEraserTool = (tool?: string) =>
   tool === 'eraser' || tool === 'eraserObject' || tool === 'erase'
 
-type TLPoint = { x: number; y: number; t: number }        // absolute ms
-type TLStroke = { color?: string; size?: number; tool?: string; pts: TLPoint[] }
-type PointTimeline = { strokes: TLStroke[]; tMin: number; tMax: number } // ms absolute
+type TLPoint = { x:number; y:number; t:number }
+type TLStroke = { color?:string; size?:number; tool?:string; pts: TLPoint[] }
+type PointTimeline = { strokes: TLStroke[]; tMin:number; tMax:number } // ms absolute
 
 function buildUnifiedPointTimeline(strokes: Stroke[]): PointTimeline {
   if (!strokes.length) return { strokes: [], tMin: 0, tMax: 0 }
@@ -170,7 +153,7 @@ function buildUnifiedPointTimeline(strokes: Stroke[]): PointTimeline {
 }
 
 /* ------------ source space inference ------------ */
-function inferSourceDimsFromMetaOrPdf(metaW: number, metaH: number, pdfCssW: number, pdfCssH: number) {
+function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
   if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
   return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
 }
@@ -182,7 +165,7 @@ export default function PlaybackDrawer({
   const [overlay, setOverlay] = useState<OverlaySize>({
     cssW: 800, cssH: 600, dpr: window.devicePixelRatio || 1
   })
-  const pdfCssRef = useRef<{ w: number; h: number }>({ w: 800, h: 600 })
+  const pdfCssRef = useRef<{ w:number; h:number }>({ w: 800, h: 600 })
 
   const parsed = useMemo(() => parseStrokes(strokesPayload), [strokesPayload])
   const strokes = parsed.strokes
@@ -194,19 +177,18 @@ export default function PlaybackDrawer({
   const segments: Seg[] = useMemo<Seg[]>(() => {
     if (parsed.media.length) {
       return parsed.media
-        .map((m: AudioSeg): Seg => ({
+        .map(m => ({
           ...m,
           startSec: m.startMs / 1000,
           endSec: (m.startMs + m.durationMs) / 1000
         }))
-        .sort((a: Seg, b: Seg) => a.startSec - b.startSec)
+        .sort((a,b) => a.startSec - b.startSec)
     }
     if (audioUrl) {
-      const single: Seg = {
-        kind: 'audio', id: 'legacy-0', startMs: 0, durationMs: 0, mime: 'audio/*', url: audioUrl,
+      return [{
+        kind:'audio', id:'legacy-0', startMs:0, durationMs:0, mime: 'audio/*', url: audioUrl,
         startSec: 0, endSec: 0
-      }
-      return [single]
+      }]
     }
     return []
   }, [parsed.media, audioUrl])
@@ -217,7 +199,7 @@ export default function PlaybackDrawer({
     if (pointTL.strokes.length) t0 = Math.min(t0, pointTL.tMin)
     for (const s of segments) t0 = Math.min(t0, s.startMs)
     return Number.isFinite(t0) ? t0 : 0
-  }, [pointTL.strokes.length, pointTL.tMin, segments])
+  }, [pointTL.tMin, segments])
 
   // Total duration = latest among ink end and media end, minus zero
   const totalMs = useMemo(() => {
@@ -234,28 +216,30 @@ export default function PlaybackDrawer({
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const pdfHostRef = useRef<HTMLDivElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const rafRef = useRef<number | null>(null)
 
+  // Master playback state
   const [syncToAudio, setSyncToAudio] = useState<boolean>(segments.length > 0)
   const [scrubbing, setScrubbing] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const clockMsRef = useRef<number>(totalMs)  // relative ms (0..totalMs)
+
+  // For RAF
+  const rafRef = useRef<number | null>(null)
+  const lastTsRef = useRef<number | null>(null)
+
+  // Keep scrub range synced on payload/size changes
   const [scrubMs, setScrubMs] = useState<number>(totalMs)
+  useEffect(() => { setScrubMs(totalMs); clockMsRef.current = totalMs; drawAtRelMs(totalMs) }, [totalMs])
 
-  // clock (relative to timelineZero)
-  const clockMsRef = useRef<number>(totalMs)
-
-  // Active segment
-  const [segIdx, setSegIdx] = useState<number>(segments.length ? 0 : -1)
-  const currentSeg: Seg | null = segIdx >= 0 ? segments[segIdx] : null
-
-  // If legacy single audio, update end when metadata loads
+  // If legacy single audio, set its duration on metadata
   useEffect(() => {
     const a = audioRef.current
     if (!a || !segments.length || segments[0].id !== 'legacy-0') return
     const onMeta = () => {
       const dur = a.duration || 0
       if (dur > 0) {
-        const next = [...segments]
-        next[0] = { ...next[0], durationMs: dur * 1000, endSec: dur }
+        segments[0].durationMs = dur * 1000
+        segments[0].endSec = dur
       }
     }
     a.addEventListener('loadedmetadata', onMeta)
@@ -268,7 +252,7 @@ export default function PlaybackDrawer({
     const host = pdfHostRef.current
     if (!host) return
 
-    const findPdfCanvas = (): HTMLCanvasElement | null => {
+    const findPdfCanvas = () => {
       const canvases = Array.from(host.querySelectorAll('canvas')) as HTMLCanvasElement[]
       const overlayEl = overlayRef.current
       return canvases.find(c => c !== overlayEl) || null
@@ -350,7 +334,7 @@ export default function PlaybackDrawer({
   }
 
   // Draw strokes up to relative time ms (0..totalMs) — converts to absolute by +timelineZero
-  function drawAtRelMs(relMs: number) {
+  function drawAtRelMs(relMs:number) {
     const ctx = ensureCtx()
     if (!ctx) return
     const { cssW, cssH } = overlay
@@ -366,7 +350,7 @@ export default function PlaybackDrawer({
         if (!pts || pts.length === 0) continue
         if (pts[0].t > cutoffAbs) continue
 
-        const pathPts: { x: number; y: number }[] = []
+        const pathPts: {x:number;y:number}[] = []
         pathPts.push({ x: pts[0].x, y: pts[0].y })
 
         for (let i = 1; i < pts.length; i++) {
@@ -386,10 +370,35 @@ export default function PlaybackDrawer({
           applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
           ctx.beginPath()
           ctx.moveTo(pathPts[0].x, pathPts[0].y)
+          for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].y, pathPts[i].y) // BUG FIX in next line
+          // ^^^ replaced below (typo guard)
+        }
+      }
+      // second pass to actually stroke after fixing typo above
+      for (const s of pointTL.strokes) {
+        const pts = s.pts
+        if (!pts || pts.length === 0) continue
+        if (pts[0].t > cutoffAbs) continue
+
+        const pathPts: {x:number;y:number}[] = [{ x: pts[0].x, y: pts[0].y }]
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1], b = pts[i]
+          if (b.t <= cutoffAbs) pathPts.push({ x: b.x, y: b.y })
+          else if (a.t < cutoffAbs && cutoffAbs < b.t) {
+            const u = clamp((cutoffAbs - a.t) / Math.max(1, b.t - a.t), 0, 1)
+            pathPts.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u })
+            break
+          } else if (a.t >= cutoffAbs) break
+        }
+        if (pathPts.length >= 1) {
+          applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
+          ctx.beginPath()
+          ctx.moveTo(pathPts[0].x, pathPts[0].y)
           for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y)
           ctx.stroke()
         }
       }
+
       ctx.globalAlpha = 1
       ctx.globalCompositeOperation = 'source-over'
     })
@@ -397,81 +406,98 @@ export default function PlaybackDrawer({
 
   function stopRAF() {
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+    lastTsRef.current = null
   }
 
-  /* ---- Always draw final state when size/payload change ---- */
-  useEffect(() => {
-    clockMsRef.current = totalMs
-    drawAtRelMs(totalMs)
-  }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload, totalMs])
-
-  /* ---- AUDIO-SYNC CLOCK (multi-seg) ---- */
-  const playSegFromRelMs = (relMs: number) => {
-    if (!segments.length || !audioRef.current) return
-    const absSec = (timelineZero + relMs) / 1000
-    // pick the segment containing absSec (or closest)
-    let idx = segments.findIndex((s: Seg) => absSec >= s.startSec && absSec <= (s.endSec || s.startSec + 0.0001))
-    if (idx < 0) {
-      if (absSec < segments[0].startSec) idx = 0
-      else idx = segments.length - 1
+  // Pick segment by absolute seconds (if any)
+  function findSegByAbsSec(absSec:number): { idx:number, seg:Seg } | null {
+    if (!segments.length) return null
+    let lo = 0, hi = segments.length - 1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      const s = segments[mid]
+      if (absSec < s.startSec) hi = mid - 1
+      else if (absSec > s.endSec) lo = mid + 1
+      else return { idx: mid, seg: s }
     }
-    setSegIdx(idx)
-    const seg = segments[idx]
-    const within = clamp(absSec - seg.startSec, 0, Math.max(0, (seg.endSec - seg.startSec)))
-    try {
-      audioRef.current.src = seg.url
-      audioRef.current.currentTime = within
-      // start drawing immediately at this clock position
-      clockMsRef.current = relMs
-      drawAtRelMs(clockMsRef.current)
-      audioRef.current.play().catch(() => {})
-    } catch {}
+    // not within any clip
+    return null
   }
 
-  // Hook audio time updates to draw when syncing
-  useEffect(() => {
-    const a = audioRef.current
-    if (!a) return
-    if (!syncToAudio) { stopRAF(); return }
+  // Master clock tick → advances everywhere; audio follows the clock if syncToAudio
+  const tick = (ts:number) => {
+    if (!playing) { stopRAF(); return }
+    if (lastTsRef.current == null) lastTsRef.current = ts
+    const dt = ts - lastTsRef.current
+    lastTsRef.current = ts
 
-    const onTime = () => {
-      const seg = currentSeg
-      if (!seg) return
-      const absSec = seg.startSec + (a.currentTime || 0)
-      const relMs = clamp((absSec * 1000) - timelineZero, 0, totalMs)
-      clockMsRef.current = relMs
-      // Use RAF to smooth
-      if (!rafRef.current) {
-        const tick = () => { drawAtRelMs(clockMsRef.current); rafRef.current = requestAnimationFrame(tick) }
-        rafRef.current = requestAnimationFrame(tick)
-      }
-    }
-    const onEnded = () => {
-      stopRAF()
-      if (segIdx + 1 < segments.length) {
-        setSegIdx(segIdx + 1)
-        setTimeout(() => {
-          const nextStart = (segments[segIdx + 1].startSec * 1000) - timelineZero
-          playSegFromRelMs(nextStart)
-        }, 0)
+    // advance
+    const next = clamp(clockMsRef.current + dt, 0, totalMs)
+    clockMsRef.current = next
+
+    // draw
+    drawAtRelMs(clockMsRef.current)
+
+    // sync audio to clock (if enabled)
+    if (syncToAudio && audioRef.current) {
+      const absSec = (timelineZero + next) / 1000
+      const hit = findSegByAbsSec(absSec)
+      const a = audioRef.current
+      if (hit) {
+        const { seg } = hit
+        const wantWithin = absSec - seg.startSec
+        // if wrong src, switch & start at within
+        if (!a.src || !a.src.endsWith(seg.url)) {
+          try {
+            a.src = seg.url
+            a.currentTime = Math.max(0, wantWithin)
+            a.play().catch(()=>{})
+          } catch {}
+        } else {
+          // small drift correction
+          const drift = Math.abs((a.currentTime || 0) - wantWithin)
+          if (drift > 0.06) {
+            try { a.currentTime = Math.max(0, wantWithin) } catch {}
+          }
+          if (a.paused) { a.play().catch(()=>{}) }
+        }
       } else {
-        // finished
-        clockMsRef.current = totalMs
-        drawAtRelMs(totalMs)
+        // in a gap → make sure audio is paused
+        try { if (!a.paused) a.pause() } catch {}
       }
     }
-    a.addEventListener('timeupdate', onTime)
-    a.addEventListener('ended', onEnded)
-    return () => {
-      a.removeEventListener('timeupdate', onTime)
-      a.removeEventListener('ended', onEnded)
-      stopRAF()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncToAudio, segIdx, segments, timelineZero, totalMs, currentSeg])
 
-  // Keep scrub range synced
-  useEffect(() => { setScrubMs(totalMs); clockMsRef.current = totalMs }, [totalMs])
+    // stop at end
+    if (clockMsRef.current >= totalMs) {
+      setPlaying(false)
+      stopRAF()
+      return
+    }
+    rafRef.current = requestAnimationFrame(tick)
+  }
+
+  function start(fromRelMs?: number) {
+    if (typeof fromRelMs === 'number') {
+      clockMsRef.current = clamp(fromRelMs, 0, totalMs)
+      drawAtRelMs(clockMsRef.current)
+    }
+    if (playing) return
+    setPlaying(true)
+    stopRAF()
+    rafRef.current = requestAnimationFrame((t)=>{ lastTsRef.current = t; tick(t) })
+  }
+  function pause() {
+    setPlaying(false)
+    stopRAF()
+    // also pause audio
+    try { audioRef.current?.pause() } catch {}
+  }
+
+  // Always draw final state when size/payload change and not playing
+  useEffect(() => {
+    if (!playing) drawAtRelMs(clockMsRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload])
 
   const hasAnyAudio = segments.length > 0
 
@@ -483,7 +509,7 @@ export default function PlaybackDrawer({
           <strong style={{ fontSize:14 }}>Preview — {student || 'Student'}</strong>
           <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
             <button
-              onClick={() => { setSyncToAudio(s => !s); setScrubbing(false) }}
+              onClick={() => { setSyncToAudio(s => !s) }}
               disabled={!hasAnyAudio}
               style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: hasAnyAudio ? '#fff' : '#f3f4f6' }}
               title={hasAnyAudio ? 'Tie ink to audio segments' : 'No audio available'}
@@ -492,10 +518,12 @@ export default function PlaybackDrawer({
             </button>
             <button
               onClick={() => {
-                setSyncToAudio(false)
                 setScrubbing(s => !s)
-                if (!scrubbing) { setScrubMs(totalMs); clockMsRef.current = totalMs; drawAtRelMs(totalMs) }
-                else { drawAtRelMs(clockMsRef.current) }
+                if (!scrubbing) {
+                  setPlaying(false); stopRAF()
+                } else {
+                  drawAtRelMs(clockMsRef.current)
+                }
               }}
               style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background: scrubbing ? '#fee2e2' : '#fff' }}
               title="Scrub through the unified timeline (ink + eraser)"
@@ -510,30 +538,25 @@ export default function PlaybackDrawer({
 
         {/* Controls */}
         <div style={{ display:'flex', alignItems:'center', gap:12, padding:12, borderBottom:'1px solid #e5e7eb' }}>
-          {hasAnyAudio ? (
-            <>
-              {/* Hidden; we drive it via segments + Sync:ON */}
-              <audio ref={audioRef} preload="auto" style={{ display:'none' }} />
-              <span style={{ fontSize:12, color:'#374151' }}>
-                {segments.length} clip{segments.length===1 ? '' : 's'}
-              </span>
-              <button
-                onClick={() => {
-                  if (!syncToAudio) return
-                  // start from current clock
-                  playSegFromRelMs(clockMsRef.current)
-                }}
-                style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
-              >
-                Play
-              </button>
-              <button onClick={() => { try { audioRef.current?.pause() } catch {}; stopRAF() }}
-                      style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}>
-                Pause
-              </button>
-            </>
+          {/* Hidden; we drive it off the master clock */}
+          <audio ref={audioRef} preload="auto" style={{ display:'none' }} />
+          <span style={{ fontSize:12, color:'#374151' }}>
+            {hasAnyAudio ? `${segments.length} clip${segments.length===1 ? '' : 's'}` : 'No audio'}
+          </span>
+          {!playing ? (
+            <button
+              onClick={() => start(clockMsRef.current >= totalMs ? 0 : undefined)}
+              style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
+            >
+              Play
+            </button>
           ) : (
-            <span style={{ fontSize:12, color:'#6b7280' }}>No audio</span>
+            <button
+              onClick={pause}
+              style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#fff' }}
+            >
+              Pause
+            </button>
           )}
           <span style={{ marginLeft:'auto', fontSize:12, color:'#6b7280' }}>Page {pageIndex + 1}</span>
         </div>
@@ -545,7 +568,7 @@ export default function PlaybackDrawer({
               <PdfCanvas
                 url={pdfUrl}
                 pageIndex={pageIndex}
-                onReady={(_pdf: any, canvas: HTMLCanvasElement) => {
+                onReady={(_pdf:any, canvas:HTMLCanvasElement) => {
                   const rect = canvas.getBoundingClientRect()
                   pdfCssRef.current = { w: Math.max(1, Math.round(rect.width)), h: Math.max(1, Math.round(rect.height)) }
                   const dpr = window.devicePixelRatio || 1
@@ -565,7 +588,7 @@ export default function PlaybackDrawer({
 
         {/* Scrubber */}
         <div style={{ padding: 12, borderTop: '1px solid #e5e7eb', background: '#fff' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:10, opacity: scrubbing ? 1 : 0.6 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10, opacity: scrubbing ? 1 : 0.9 }}>
             <span style={{ width: 40, textAlign:'right', fontSize:12, color:'#6b7280' }}>
               {Math.max(0, Math.round((scrubbing ? scrubMs : clockMsRef.current) / 1000))}s
             </span>
@@ -582,13 +605,26 @@ export default function PlaybackDrawer({
                   clockMsRef.current = v
                   drawAtRelMs(v)
                 } else {
-                  // live seek while synced: align audio to this ms but don’t auto-play
+                  // live seek while playing or paused
                   clockMsRef.current = v
                   drawAtRelMs(v)
-                  if (syncToAudio && segments.length) {
-                    try { audioRef.current?.pause() } catch {}
-                    playSegFromRelMs(v)
-                    try { audioRef.current?.pause() } catch {}
+                  // keep audio aligned to the new clock position (will auto-play when playing)
+                  if (syncToAudio && audioRef.current) {
+                    const absSec = (timelineZero + v) / 1000
+                    const hit = findSegByAbsSec(absSec)
+                    const a = audioRef.current
+                    if (hit) {
+                      const { seg } = hit
+                      const within = absSec - seg.startSec
+                      try {
+                        a.src = seg.url
+                        a.currentTime = Math.max(0, within)
+                        if (playing) a.play().catch(()=>{})
+                        else a.pause()
+                      } catch {}
+                    } else {
+                      try { a.pause() } catch {}
+                    }
                   }
                 }
               }}
@@ -601,7 +637,7 @@ export default function PlaybackDrawer({
           </div>
           {!scrubbing && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
-              Tip: Click <strong>Scrub</strong> to enable the slider. The timeline includes erasing in chronological order.
+              Tip: <strong>Play</strong> advances even during silence; audio auto-joins during its clips.
             </div>
           )}
         </div>
