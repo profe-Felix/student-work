@@ -209,16 +209,30 @@ export default function PlaybackDrawer({
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
-  // ---- First-clip-only auto offset (only if audio starts before any stroke) ----
-  const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
-  const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
-  const OFFSET_THRESH_MS = 250
-  const autoOffsetMs =
-    (Number.isFinite(firstAudioStartMs) && Number.isFinite(firstInkT) && firstAudioStartMs + OFFSET_THRESH_MS < firstInkT)
-      ? (firstInkT - firstAudioStartMs)
-      : 0
-  // allow payload override via { timing: { audioOffsetMs } }
-  const effectiveOffsetMs: number = (parsed as any)?.timing?.audioOffsetMs ?? autoOffsetMs
+// ---- First-clip-only offset logic (legacy-compatible) ----
+// If the very first event is a recording (audio starts before any ink),
+// use the legacy bias of 1600 ms. Otherwise keep the small auto offset.
+// Also allow an explicit payload override: { timing: { audioOffsetMs } }.
+const AUDIO_FIRST_BIAS_MS = 1600
+
+const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
+const firstAudioStartMs = segments.length ? segments[0].startMs : Number.POSITIVE_INFINITY
+
+// A) small auto offset if audio just slightly precedes ink
+const OFFSET_THRESH_MS = 250
+const autoOffsetMs =
+  (Number.isFinite(firstAudioStartMs) && Number.isFinite(firstInkT) && firstAudioStartMs + OFFSET_THRESH_MS < firstInkT)
+    ? (firstInkT - firstAudioStartMs)
+    : 0
+
+// B) audio-first session? (audio starts before any stroke)
+const audioFirst = Number.isFinite(firstAudioStartMs) && (firstAudioStartMs <= firstInkT)
+
+// C) choose effective offset: payload override > audio-first bias > small auto offset
+const effectiveOffsetMs: number =
+  (parsed as any)?.timing?.audioOffsetMs ??
+  (audioFirst ? AUDIO_FIRST_BIAS_MS : autoOffsetMs)
+
 
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
