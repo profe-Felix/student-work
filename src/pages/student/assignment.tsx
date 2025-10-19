@@ -347,8 +347,14 @@ export default function StudentAssignment(){
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
   // When PDF is ready, remember its canvas and sync size immediately
-  const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement)=>{
+  const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
     pdfCanvasEl.current = canvas
+    // Prefer exact CSS size from PdfCanvas if provided
+    if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
+      const w = Math.max(1, Math.round(dims.cssW))
+      const h = Math.max(1, Math.round(dims.cssH))
+      setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
+    }
     // Ensure the PDF canvas CSS size is explicit (prevents fractional rounding issues)
     try {
       const dpr = (window.devicePixelRatio || 1)
