@@ -209,10 +209,18 @@ export default function PlaybackDrawer({
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
-// ===== NEW: Delay INK until the first audio starts so ink doesn't lead =====
-// Positive = draw later. Adjust in ±100–200ms steps.
-const PRE_INK_DRAW_DELAY_MS = 4000
-const firstAudioStartSec = segments.length ? segments[0].startSec : Infinity
+// ===== Delay INK only at the start if audio comes first =====
+// Positive = draw later. Start with 1600 and tweak ±100–200ms.
+const PRE_INK_DRAW_DELAY_MS = 1130
+
+const firstInkMs =
+  pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
+const firstAudioMs =
+  segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
+
+// true if the first recorded event is audio (not ink)
+const audioFirst = firstAudioMs <= firstInkMs
+
 
 
   const { sw, sh } = useMemo(
@@ -365,10 +373,10 @@ const firstAudioStartSec = segments.length ? segments[0].startSec : Infinity
 
     if (!pointTL.strokes.length) return
 
-const visualAbsSec = (timelineZero + relMs) / 1000
-// Delay ink only up until the first audio clip actually begins
-const extraDelay = visualAbsSec < firstAudioStartSec ? PRE_INK_DRAW_DELAY_MS : 0
-const cutoffAbs = Math.max(timelineZero, timelineZero + relMs - extraDelay)
+// Delay ink by a fixed amount only at the very beginning *if* audio starts first.
+// (If audio begins at timelineZero, the old "< firstAudioStartSec" check never fired.)
+const extraDelay = audioFirst ? PRE_INK_DRAW_DELAY_MS : 0
+const cutoffAbs = timelineZero + Math.max(0, relMs - extraDelay)
 
     withScale(ctx, () => {
       for (const s of pointTL.strokes) {
