@@ -29,6 +29,7 @@ type LatestCell = {
   submission_id: string
   hasStrokes: boolean
   audioUrl?: string
+  mediaCount?: number // 👈 NEW
 } | null
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -153,9 +154,12 @@ export default function TeacherDashboard() {
 
             // NEW: prefer audio from strokes_json.media[0]?.url (student now saves audio in the strokes artifact)
             let audioUrl: string | undefined
+            let mediaCount = 0 // 👈 NEW
             const mediaIn = (strokesArt?.strokes_json && Array.isArray(strokesArt.strokes_json.media))
               ? (strokesArt.strokes_json.media as Array<{ url?: string }>)
               : []
+
+            mediaCount = mediaIn.length // 👈 NEW
 
             if (mediaIn.length > 0 && typeof mediaIn[0]?.url === 'string' && mediaIn[0]!.url) {
               audioUrl = mediaIn[0]!.url
@@ -169,7 +173,7 @@ export default function TeacherDashboard() {
               }
             }
 
-            return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
+            return [sid, { submission_id: latest.id, hasStrokes, audioUrl, mediaCount }] as const
           })
         )
         for (const pair of results) {
@@ -630,7 +634,7 @@ export default function TeacherDashboard() {
                 <>
                   <div style={{ fontSize: 12, color: '#374151' }}>
                     {cell!.hasStrokes ? '✍️ Strokes' : '—'}
-                    {cell!.audioUrl ? ' • 🔊 Audio' : ''}
+                    {cell!.mediaCount ? ` • 🔊 ${cell!.mediaCount} audio${cell!.mediaCount > 1 ? 's' : ''}` : ''}
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     {cell!.audioUrl && (
