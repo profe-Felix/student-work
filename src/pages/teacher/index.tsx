@@ -143,16 +143,32 @@ export default function TeacherDashboard() {
           batch.map(async (sid: string) => {
             const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
             if (!latest) return [sid, null] as const
-            const hasStrokes = !!latest.artifacts?.some(
+
+            // Look for strokes artifact (new world: audio segments are inside strokes_json.media[])
+            const strokesArt = latest.artifacts?.find(
               (a: any) => a.kind === 'strokes' && a.strokes_json
-            )
-            const audioArt = latest.artifacts?.find(
-              (a: any) => a.kind === 'audio' && a.storage_path
-            )
+            ) as any | undefined
+
+            const hasStrokes = !!strokesArt
+
+            // NEW: prefer audio from strokes_json.media[0]?.url (student now saves audio in the strokes artifact)
             let audioUrl: string | undefined
-            if (audioArt?.storage_path) {
-              try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
+            const mediaIn = (strokesArt?.strokes_json && Array.isArray(strokesArt.strokes_json.media))
+              ? (strokesArt.strokes_json.media as Array<{ url?: string }>)
+              : []
+
+            if (mediaIn.length > 0 && typeof mediaIn[0]?.url === 'string' && mediaIn[0]!.url) {
+              audioUrl = mediaIn[0]!.url
+            } else {
+              // LEGACY FALLBACK: separate audio artifact (older submissions)
+              const audioArt = latest.artifacts?.find(
+                (a: any) => a.kind === 'audio' && a.storage_path
+              )
+              if (audioArt?.storage_path) {
+                try { audioUrl = await getAudioUrl(audioArt.storage_path) } catch {}
+              }
             }
+
             return [sid, { submission_id: latest.id, hasStrokes, audioUrl }] as const
           })
         )
@@ -325,7 +341,7 @@ export default function TeacherDashboard() {
       artifacts: Array<{
         id: string
         kind: string
-        strokes_json?: unknown
+        strokes_json?: any
         storage_path?: string
         created_at: string
       }>
@@ -343,15 +359,25 @@ export default function TeacherDashboard() {
         return
       }
       const strokesArt = latest.artifacts?.find(a => a.kind === 'strokes' && (a as any).strokes_json) as any | undefined
-      const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
 
+      // Prefer audio from strokes_json.media (new path)
       let audioUrl: string | undefined = undefined
-      if (audioArt?.storage_path) {
-        try {
-          audioUrl = await getAudioUrl(audioArt.storage_path)
-        } catch (e) {
-          console.warn('getAudioUrl failed', e)
-          audioUrl = undefined
+      const mediaIn = (strokesArt?.strokes_json && Array.isArray(strokesArt.strokes_json.media))
+        ? (strokesArt.strokes_json.media as Array<{ url?: string }>)
+        : []
+
+      if (mediaIn.length > 0 && typeof mediaIn[0]?.url === 'string' && mediaIn[0]!.url) {
+        audioUrl = mediaIn[0]!.url
+      } else {
+        // Legacy fallback: separate audio artifact
+        const audioArt = latest.artifacts?.find(a => a.kind === 'audio' && a.storage_path)
+        if (audioArt?.storage_path) {
+          try {
+            audioUrl = await getAudioUrl(audioArt.storage_path)
+          } catch (e) {
+            console.warn('getAudioUrl failed', e)
+            audioUrl = undefined
+          }
         }
       }
 
