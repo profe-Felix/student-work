@@ -27,6 +27,12 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 // 🔎 realtime meter
 import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
 
+// 5.1 — imports for timeline/audio/clock
+import { usePageClock } from '../../hooks/usePageClock'
+import AudioRecordButton from '../../components/AudioRecordButton'
+import TimelineBar from '../../components/TimelineBar'
+import type { AudioSeg, PageArtifact } from '../../types/timeline'
+
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily' // legacy purge helper
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
@@ -117,8 +123,8 @@ function normalizeStrokes(data: unknown): StrokesPayload {
   return { strokes }
 }
 
-function saveDraft(student:string, assignmentUid:string, pageUid:string, strokes:any){
-  try { localStorage.setItem(draftKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function saveDraft(student:string, assignmentUid:string, pageUid:string, payload:any){
+  try { localStorage.setItem(draftKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), ...payload })) } catch {}
 }
 function loadDraft(student:string, assignmentUid:string, pageUid:string){
   try { const raw = localStorage.getItem(draftKey(student, assignmentUid, pageUid)); return raw ? JSON.parse(raw) : null } catch { return null }
@@ -126,8 +132,8 @@ function loadDraft(student:string, assignmentUid:string, pageUid:string){
 function clearDraft(student:string, assignmentUid:string, pageUid:string){
   try { localStorage.removeItem(draftKey(student, assignmentUid, pageUid)) } catch {}
 }
-function saveSubmittedCache(student:string, assignmentUid:string, pageUid:string, strokes:any){
-  try { localStorage.setItem(submittedKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), strokes })) } catch {}
+function saveSubmittedCache(student:string, assignmentUid:string, pageUid:string, payload:any){
+  try { localStorage.setItem(submittedKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), ...payload })) } catch {}
 }
 function loadSubmittedCache(student:string, assignmentUid:string, pageUid:string){
   try { const raw = localStorage.getItem(submittedKey(student, assignmentUid, pageUid)); return raw ? JSON.parse(raw) : null } catch { return null }
@@ -290,6 +296,9 @@ export default function StudentAssignment(){
   const drawRef = useRef<DrawCanvasHandle>(null)
   const scrollHostRef = useRef<HTMLDivElement | null>(null)
 
+  // 5.2 — media + page clock
+  const [media, setMedia] = useState<AudioSeg[]>([])
+  const { nowMs, markFirstAction, absorbStrokePointT, absorbMediaEnd } = usePageClock()
 
   // 🔧 Track the real PDF canvas element and keep overlay in sync with its CSS size
   const pdfCanvasEl = useRef<HTMLCanvasElement | null>(null)
@@ -651,6 +660,7 @@ export default function StudentAssignment(){
           lastLocalHash.current = ''
           lastAppliedServerHash.current = ''
           localDirty.current = false
+          setMedia([])
         } catch {}
         return
       }
@@ -663,19 +673,41 @@ export default function StudentAssignment(){
           const norm = normalizeStrokes(draft.strokes)
           try { drawRef.current?.loadStrokes(norm) } catch {}
           try { lastLocalHash.current = await hashStrokes(norm) } catch {}
+          // 5.4 — load draft media
+          const draftMedia: AudioSeg[] = Array.isArray(draft?.media) ? draft.media : []
+          setMedia(draftMedia)
+          try {
+            const mx = draftMedia.reduce((m, seg)=> Math.max(m, seg.startMs + seg.durationMs), 0)
+            if (mx > 0) absorbMediaEnd(mx)
+          } catch {}
         } else {
           lastLocalHash.current = ''
+          setMedia([])
         }
 
         try {
           const latest = await loadLatestSubmission(ids.assignment_id, ids.page_id, studentId)
           if (!cancelled && latest) {
-            const strokes = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-            const norm = normalizeStrokes(strokes)
+            const payload: PageArtifact | any =
+              latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+            const norm = normalizeStrokes(payload)
             if (Array.isArray(norm.strokes) && norm.strokes.length > 0) {
               const h = await hashStrokes(norm)
               if (!localDirty.current) {
                 drawRef.current?.loadStrokes(norm)
+                // 5.3 — absorb last stroke times
+                try {
+                  for (const s of norm.strokes) {
+                    if (s.pts?.length) absorbStrokePointT(s.pts[s.pts.length-1]?.t)
+                  }
+                } catch {}
+                // 5.4 — media from server
+                const mediaIn: AudioSeg[] = Array.isArray(payload?.media) ? payload.media : []
+                setMedia(mediaIn)
+                try {
+                  const mx = mediaIn.reduce((m, seg)=> Math.max(m, seg.startMs + seg.durationMs), 0)
+                  if (mx > 0) absorbMediaEnd(mx)
+                } catch {}
                 lastAppliedServerHash.current = h
                 lastLocalHash.current = h
               }
@@ -685,6 +717,12 @@ export default function StudentAssignment(){
                 const normC = normalizeStrokes(cached.strokes)
                 drawRef.current?.loadStrokes(normC)
                 lastLocalHash.current = await hashStrokes(normC)
+                const cachedMedia: AudioSeg[] = Array.isArray(cached?.media) ? cached.media : []
+                setMedia(cachedMedia)
+                try {
+                  const mx = cachedMedia.reduce((m, seg)=> Math.max(m, seg.startMs + seg.durationMs), 0)
+                  if (mx > 0) absorbMediaEnd(mx)
+                } catch {}
               }
             }
           }
@@ -696,6 +734,14 @@ export default function StudentAssignment(){
         if (cached?.strokes) {
           const norm = normalizeStrokes(cached.strokes)
           try { drawRef.current?.loadStrokes(norm); lastLocalHash.current = await hashStrokes(norm) } catch {}
+          const cachedMedia: AudioSeg[] = Array.isArray(cached?.media) ? cached.media : []
+          setMedia(cachedMedia)
+          try {
+            const mx = cachedMedia.reduce((m, seg)=> Math.max(m, seg.startMs + seg.durationMs), 0)
+            if (mx > 0) absorbMediaEnd(mx)
+          } catch {}
+        } else {
+          setMedia([])
         }
       }
     })()
@@ -716,13 +762,20 @@ export default function StudentAssignment(){
           dirtySince.current = Date.now()
           lastLocalHash.current = h
           const { assignmentUid, pageUid } = getCacheIds()
-          saveDraft(studentId, assignmentUid, pageUid, data)
+          // 5.4 — save full draft payload
+          const draftPayload = {
+            canvasWidth: canvasSize.w,
+            canvasHeight: canvasSize.h,
+            strokes: data.strokes || [],
+            media
+          }
+          saveDraft(studentId, assignmentUid, pageUid, draftPayload)
         }
       } catch {}
     }
     id = window.setInterval(tick, 800)
     return ()=>{ if (id!=null) window.clearInterval(id) }
-  }, [pageIndex, studentId])
+  }, [pageIndex, studentId, media, canvasSize.w, canvasSize.h])
 
   /* ---------- Draft autosave (coarse) ---------- */
   useEffect(()=>{
@@ -734,10 +787,16 @@ export default function StudentAssignment(){
         if (!running) return
         const data = drawRef.current?.getStrokes()
         if (!data) return
-        const s = JSON.stringify(data)
+        const draftPayload = {
+          canvasWidth: canvasSize.w,
+          canvasHeight: canvasSize.h,
+          strokes: data.strokes || [],
+          media
+        }
+        const s = JSON.stringify(draftPayload)
         if (s !== lastSerialized) {
           const { assignmentUid, pageUid } = getCacheIds()
-          saveDraft(studentId, assignmentUid, pageUid, data)
+          saveDraft(studentId, assignmentUid, pageUid, draftPayload)
           lastSerialized = s
         }
       } catch {}
@@ -752,7 +811,13 @@ export default function StudentAssignment(){
         const data = drawRef.current?.getStrokes()
         if (data) {
           const { assignmentUid, pageUid } = getCacheIds()
-          saveDraft(studentId, assignmentUid, pageUid, data)
+          const draftPayload = {
+            canvasWidth: canvasSize.w,
+            canvasHeight: canvasSize.h,
+            strokes: data.strokes || [],
+            media
+          }
+          saveDraft(studentId, assignmentUid, pageUid, draftPayload)
         }
       } catch {}
     }
@@ -762,7 +827,7 @@ export default function StudentAssignment(){
       document.removeEventListener('visibilitychange', onVis)
       window.removeEventListener('beforeunload', onBeforeUnload as any)
     }
-  }, [pageIndex, studentId])
+  }, [pageIndex, studentId, media, canvasSize.w, canvasSize.h])
 
   /* ---------- Submit (dirty-check) + cache ---------- */
   const submit = async ()=>{
@@ -787,11 +852,12 @@ export default function StudentAssignment(){
 
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
-      // Save strokes with the canvas size for correct teacher playback scale
-      const payloadForSave = {
+      // 5.4 — Save strokes + media with canvas size
+      const payloadForSave: PageArtifact = {
         canvasWidth: canvasSize.w,
         canvasHeight: canvasSize.h,
-        strokes: normalized.strokes
+        strokes: normalized.strokes,
+        media: media
       }
       await saveStrokes(submission_id, payloadForSave)
       localStorage.setItem(lastKey, encHash)
@@ -820,13 +886,22 @@ export default function StudentAssignment(){
   }
 
   const submitIfNeeded = async (_reason: string) => {
-    const { hasInk, current } = hasInkOrAudio()
+    const { hasInk } = hasInkOrAudio()
     if (!hasInk) return
     try {
       await submit()
     } catch {
       const { assignmentUid, pageUid } = getCacheIds()
-      try { saveDraft(studentId, assignmentUid, pageUid, current) } catch {}
+      try {
+        const data = drawRef.current?.getStrokes() || {strokes:[]}
+        const draftPayload = {
+          canvasWidth: canvasSize.w,
+          canvasHeight: canvasSize.h,
+          strokes: data.strokes || [],
+          media
+        }
+        saveDraft(studentId, assignmentUid, pageUid, draftPayload)
+      } catch {}
     }
   }
 
@@ -846,6 +921,7 @@ export default function StudentAssignment(){
         pageIndex,
         canvas: { w: canvasSize.w, h: canvasSize.h },
         strokes,
+        media,
         ts: Date.now()
       }
     } catch {
@@ -860,9 +936,9 @@ export default function StudentAssignment(){
       detach = attachBeforeUnloadSave('student-close-save', async () => buildSavePayload())
     })()
     return () => { try { detach?.() } catch {} }
-  }, [studentId, classCode, rtAssignmentId, pageIndex, canvasSize.w, canvasSize.h])
+  }, [studentId, classCode, rtAssignmentId, pageIndex, canvasSize.w, canvasSize.h, media])
 
-  /* ---------- Realtime + polling (defensive) ---------- */
+  /* ---------- Realtime + polling ---------- */
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(classCode, rtAssignmentId, {
@@ -921,19 +997,40 @@ export default function StudentAssignment(){
       if (!ids.assignment_id || !ids.page_id) return
 
       const latest = await loadLatestSubmission(ids.assignment_id!, ids.page_id!, studentId)
-      const strokesPayload = latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
-      const normalized = normalizeStrokes(strokesPayload)
+      const payload: PageArtifact | any =
+        latest?.artifacts?.find((a:any)=>a.kind==='strokes')?.strokes_json
+      const normalized = normalizeStrokes(payload)
 
       const hasServerInk = Array.isArray(normalized?.strokes) && normalized.strokes.length > 0
       if (!hasServerInk) return
 
       const serverHash = await hashStrokes(normalized)
-      if (serverHash === lastAppliedServerHash.current) return
+      if (serverHash === lastAppliedServerHash.current) {
+        // still refresh media if changed
+        const mediaIn: AudioSeg[] = Array.isArray(payload?.media) ? payload.media : []
+        setMedia(mediaIn)
+        try {
+          const mx = mediaIn.reduce((m, seg)=> Math.max(m, seg.startMs + seg.durationMs), 0)
+          if (mx > 0) absorbMediaEnd(mx)
+        } catch {}
+        return
+      }
 
       if (!localDirty.current) {
         drawRef.current?.loadStrokes(normalized)
+        try {
+          for (const s of normalized.strokes) {
+            if (s.pts?.length) absorbStrokePointT(s.pts[s.pts.length-1]?.t)
+          }
+        } catch {}
+        const mediaIn: AudioSeg[] = Array.isArray(payload?.media) ? payload.media : []
+        setMedia(mediaIn)
+        try {
+          const mx = mediaIn.reduce((m, seg)=> Math.max(m, seg.startMs + seg.durationMs), 0)
+          if (mx > 0) absorbMediaEnd(mx)
+        } catch {}
         const { assignmentUid, pageUid } = getCacheIds(ids.page_id)
-        saveSubmittedCache(studentId, assignmentUid, pageUid, normalized)
+        saveSubmittedCache(studentId, assignmentUid, pageUid, payload)
         lastAppliedServerHash.current = serverHash
         lastLocalHash.current = serverHash
       }
@@ -997,6 +1094,11 @@ export default function StudentAssignment(){
           pts: (u.pts as any) || [],
           done: !!u.done,
         })
+        // 5.3 — absorb latest realtime point
+        try {
+          const last = (u.pts && u.pts.length) ? u.pts[u.pts.length-1] : undefined
+          if (last && typeof (last as any).t === 'number') absorbStrokePointT((last as any).t)
+        } catch {}
       }
 
       try {
@@ -1021,6 +1123,59 @@ export default function StudentAssignment(){
       inkSubRef.current = null
     }
   }, [classBootDone, classCode, studentId, pageIndex, rtAssignmentId])
+
+  /* ---------- Audio helpers (5.5) ---------- */
+  async function uploadAudioBlob(studentId:string, assignmentId:string, pageId:string, blob:Blob, mime:string): Promise<string> {
+    const ext = mime.includes('mp4') ? 'm4a' : 'webm'
+    const path = `audio/${assignmentId}/${pageId}/${studentId}-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('pdfs').upload(path, blob, { contentType: mime, upsert: true })
+    if (error) throw error
+    const { data: pub } = supabase.storage.from('pdfs').getPublicUrl(path)
+    return pub?.publicUrl || ''
+  }
+
+  function addAudioSegment(startMs:number, durationMs:number, mime:string, url:string) {
+    const seg: AudioSeg = {
+      kind: 'audio',
+      id: `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+      startMs, durationMs, mime, url
+    }
+    setMedia(prev => {
+      const next = [...prev, seg]
+      try { absorbMediaEnd(seg.startMs + seg.durationMs) } catch {}
+      return next
+    })
+  }
+
+  async function handleRecordStart() {
+    markFirstAction()
+  }
+
+  async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
+    try {
+      const ids = currIds.current
+      const start = nowMs()
+      if (!ids.assignment_id || !ids.page_id) {
+        const url = URL.createObjectURL(blob)
+        addAudioSegment(start, elapsedMs, mime, url)
+        showToast('Audio saved locally', 'ok', 1200)
+        return
+      }
+      const url = await uploadAudioBlob(studentId, ids.assignment_id, ids.page_id, blob, mime)
+      addAudioSegment(start, elapsedMs, mime, url)
+      showToast('Audio uploaded', 'ok', 1200)
+    } catch (e) {
+      console.warn('upload audio failed', e)
+      const start = nowMs()
+      const url = URL.createObjectURL(blob)
+      addAudioSegment(start, elapsedMs, mime, url)
+      showToast('Upload failed — kept locally', 'err', 1600)
+    }
+  }
+
+  function deleteAudio(id: string) {
+    setMedia(prev => prev.filter(s => s.id !== id))
+  }
 
   /* ---------- UI ---------- */
   const Toolbar = (
@@ -1087,7 +1242,13 @@ export default function StudentAssignment(){
         </div>
       </div>
 
+      {/* 5.6 — record + submit */}
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        <AudioRecordButton
+          onStart={handleRecordStart}
+          onStop={handleRecordStop}
+          onLongHint={(ms)=> showToast(`Long recording (${Math.round(ms/1000)}s)…`, 'ok', 1200)}
+        />
         <button onClick={submit}
           style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
             color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving || !hasTask}>
@@ -1128,7 +1289,7 @@ export default function StudentAssignment(){
 
       <div
         ref={scrollHostRef}
-        style={{ height:'calc(100vh - 160px)', overflow:'auto', WebkitOverflowScrolling:'touch',
+        style={{ height:'calc(100vh - 220px)', overflow:'auto', WebkitOverflowScrolling:'touch',
           touchAction: handMode ? 'auto' : 'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
@@ -1163,6 +1324,13 @@ export default function StudentAssignment(){
               tool={tool}
               selfId={studentId}
               onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
+                // 5.3 — clock kick + absorb latest t
+                try { markFirstAction() } catch {}
+                try {
+                  const pLast = (u.pts && u.pts.length) ? u.pts[u.pts.length - 1] : undefined
+                  if (pLast && typeof (pLast as any).t === 'number') absorbStrokePointT((pLast as any).t)
+                } catch {}
+
                 const ids = currIds.current
                 if (!ids.assignment_id || !ids.page_id) return
                 const payload = { ...u, studentId }
@@ -1182,6 +1350,33 @@ export default function StudentAssignment(){
             />
           </div>
         </div>
+      </div>
+
+      {/* 5.6 — Timeline bar */}
+      <div style={{ display:'flex', justifyContent:'center', marginTop:12 }}>
+        <TimelineBar
+          widthPx={Math.min(900, Math.max(480, canvasSize.w))}
+          durationMs={
+            Math.max(
+              1000,
+              media.reduce((m, s) => Math.max(m, s.startMs + s.durationMs), 0),
+              (() => {
+                const data = drawRef.current?.getStrokes()
+                if (!data?.strokes?.length) return 0
+                let mx = 0
+                for (const s of data.strokes) {
+                  if (s.pts?.length) {
+                    const t = s.pts[s.pts.length - 1]?.t || 0
+                    mx = Math.max(mx, t)
+                  }
+                }
+                return mx
+              })()
+            )
+          }
+          audio={media}
+          onDelete={(id)=> deleteAudio(id)}
+        />
       </div>
 
       {/* Pager */}
