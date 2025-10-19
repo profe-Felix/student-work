@@ -298,8 +298,10 @@ export default function StudentAssignment(){
     const el = pdfCanvasEl.current
     if (!el) return
     const rect = el.getBoundingClientRect()
-    const cssW = Math.max(1, Math.round(rect.width))
-    const cssH = Math.max(1, Math.round(rect.height))
+    const dprW = (window.devicePixelRatio || 1)
+    const cssW = Math.max(1, Math.round(Math.max(rect.width, (el as HTMLCanvasElement).width / dprW)))
+    const dpr = (window.devicePixelRatio || 1)
+    const cssH = Math.max(1, Math.round(Math.max(rect.height, (el as HTMLCanvasElement).height / dpr)))
     setCanvasSize(prev => (prev.w === cssW && prev.h === cssH) ? prev : { w: cssW, h: cssH })
   }
 
@@ -1186,7 +1188,7 @@ export default function StudentAssignment(){
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
-        <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px` }}>
+        <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px`, overflow:'visible' }}>
           {/* PDF layer */}
           {hasTask && pdfUrl ? (
             <div style={{ position:'absolute', inset:0, zIndex:0 }}>
