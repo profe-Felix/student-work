@@ -350,9 +350,7 @@ export default function PlaybackDrawer({
         if (!pts || pts.length === 0) continue
         if (pts[0].t > cutoffAbs) continue
 
-        const pathPts: {x:number;y:number}[] = []
-        pathPts.push({ x: pts[0].x, y: pts[0].y })
-
+        const pathPts: {x:number;y:number}[] = [{ x: pts[0].x, y: pts[0].y }]
         for (let i = 1; i < pts.length; i++) {
           const a = pts[i - 1], b = pts[i]
           if (b.t <= cutoffAbs) {
@@ -370,35 +368,10 @@ export default function PlaybackDrawer({
           applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
           ctx.beginPath()
           ctx.moveTo(pathPts[0].x, pathPts[0].y)
-          for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].y, pathPts[i].y) // BUG FIX in next line
-          // ^^^ replaced below (typo guard)
-        }
-      }
-      // second pass to actually stroke after fixing typo above
-      for (const s of pointTL.strokes) {
-        const pts = s.pts
-        if (!pts || pts.length === 0) continue
-        if (pts[0].t > cutoffAbs) continue
-
-        const pathPts: {x:number;y:number}[] = [{ x: pts[0].x, y: pts[0].y }]
-        for (let i = 1; i < pts.length; i++) {
-          const a = pts[i - 1], b = pts[i]
-          if (b.t <= cutoffAbs) pathPts.push({ x: b.x, y: b.y })
-          else if (a.t < cutoffAbs && cutoffAbs < b.t) {
-            const u = clamp((cutoffAbs - a.t) / Math.max(1, b.t - a.t), 0, 1)
-            pathPts.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u })
-            break
-          } else if (a.t >= cutoffAbs) break
-        }
-        if (pathPts.length >= 1) {
-          applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
-          ctx.beginPath()
-          ctx.moveTo(pathPts[0].x, pathPts[0].y)
           for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y)
           ctx.stroke()
         }
       }
-
       ctx.globalAlpha = 1
       ctx.globalCompositeOperation = 'source-over'
     })
@@ -420,7 +393,6 @@ export default function PlaybackDrawer({
       else if (absSec > s.endSec) lo = mid + 1
       else return { idx: mid, seg: s }
     }
-    // not within any clip
     return null
   }
 
@@ -446,23 +418,24 @@ export default function PlaybackDrawer({
       if (hit) {
         const { seg } = hit
         const wantWithin = absSec - seg.startSec
-        // if wrong src, switch & start at within
-        if (!a.src || !a.src.endsWith(seg.url)) {
+        // signed URLs may differ; just switch when different
+        const needSrc = !a.src || a.src !== seg.url
+        if (needSrc) {
           try {
             a.src = seg.url
             a.currentTime = Math.max(0, wantWithin)
             a.play().catch(()=>{})
           } catch {}
         } else {
-          // small drift correction
+          // drift correction
           const drift = Math.abs((a.currentTime || 0) - wantWithin)
-          if (drift > 0.06) {
+          if (drift > 0.08) {
             try { a.currentTime = Math.max(0, wantWithin) } catch {}
           }
           if (a.paused) { a.play().catch(()=>{}) }
         }
       } else {
-        // in a gap → make sure audio is paused
+        // in a gap → ensure audio is paused
         try { if (!a.paused) a.pause() } catch {}
       }
     }
@@ -489,7 +462,7 @@ export default function PlaybackDrawer({
   function pause() {
     setPlaying(false)
     stopRAF()
-    // also pause audio
+    // pause audio too
     try { audioRef.current?.pause() } catch {}
   }
 
@@ -500,6 +473,7 @@ export default function PlaybackDrawer({
   }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload])
 
   const hasAnyAudio = segments.length > 0
+  const isAtEnd = clockMsRef.current >= totalMs
 
   return (
     <div role="dialog" aria-modal="true" style={{ position:'fixed', inset:0, background:'rgba(17,24,39,0.55)', display:'flex', justifyContent:'center', zIndex:50 }}>
@@ -545,7 +519,14 @@ export default function PlaybackDrawer({
           </span>
           {!playing ? (
             <button
-              onClick={() => start(clockMsRef.current >= totalMs ? 0 : undefined)}
+              onClick={() => {
+                // If we’re at the end, rewind to 0 before starting
+                if (clockMsRef.current >= totalMs) {
+                  clockMsRef.current = 0
+                  drawAtRelMs(0)
+                }
+                start()
+              }}
               style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
             >
               Play
