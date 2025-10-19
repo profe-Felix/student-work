@@ -402,12 +402,11 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   return (
     <canvas
       ref={canvasRef}
+      width={width}
+      height={height}
       style={{
         position:'absolute', inset:0, zIndex:10,
-        display:'block',
-        // Explicit pixel size to match backing store 1:1 (prevents bottom clipping)
-        width:  `${Math.round(width)}px`,
-        height: `${Math.round(height)}px`,
+        display:'block', width:'100%', height:'100%',
         touchAction:'pan-y pinch-zoom', background:'transparent'
       }}
     />
