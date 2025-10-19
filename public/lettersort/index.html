@@ -40,19 +40,36 @@
 
     main{max-width:1100px;margin:14px auto;padding:0 12px}
 
-    /* Always keep all columns in ONE row */
+    /* One-row columns */
     .columns{
       display:grid;
       gap:16px;
       margin-top:16px;
-      overflow-x:auto;            /* allow gentle horizontal scroll if super tight */
+      overflow-x:auto;
       scroll-snap-type:x proximity;
     }
     .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px;scroll-snap-align:start}
-    .col header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+    .col header{display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+
+    /* Syllable tile like your screenshot */
+    .syllTile{
+      min-width:110px;
+      min-height:78px;
+      padding:10px 14px;
+      background:#6dd0ff;               /* bright sky blue */
+      color:#000;
+      font-size:38px;
+      line-height:1;
+      border-radius:18px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      box-shadow:inset 0 0 0 2px rgba(0,0,0,.05);
+      user-select:none;
+    }
+
     .col h2{margin:0;font-size:18px}
 
-    /* Bigger drops; cards should expand to fit column width */
     .drop{
       min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
       padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;align-items:stretch
@@ -67,11 +84,11 @@
     }
     .card:active{cursor:grabbing}
 
-    /* Pictures: stretch nicely; keep aspect */
+    /* Stretch pictures nicely in both rack and drops */
     .card img{
       display:block;width:100%;
-      aspect-ratio: 4/3;         /* consistent box; looks good in columns */
-      object-fit: contain;        /* don’t crop educational images */
+      aspect-ratio: 4/3;
+      object-fit: contain;
       background:#fafafa
     }
     .card .cap{padding:6px 8px;width:100%;text-align:center;font-size:14px}
@@ -79,7 +96,7 @@
     .card.bad{outline:3px solid var(--bad)}
     .locked{opacity:.9}
 
-    /* When card is inside a drop, take full column width for that “stretchy” look */
+    /* Card fills column width when placed */
     .drop .card{width:100%}
 
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
@@ -88,8 +105,9 @@
     /* Solo toolbar */
     .soloBar{position:sticky;top:56px;z-index:4;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 10px rgba(0,0,0,.04)}
 
-    /* Inline verify under the bank */
+    /* Verify under the bank */
     .bankActions{display:flex;gap:8px;align-items:center;margin-top:10px}
+
     .celebrationCanvas{position:fixed;inset:0;pointer-events:none;z-index:50}
   </style>
 </head>
@@ -150,7 +168,7 @@
   </header>
 
   <main class="wrap">
-    <!-- SOLO TOOLBAR (hidden by default; shown in solo mode) -->
+    <!-- SOLO TOOLBAR -->
     <div id="soloBar" class="soloBar hidden">
       <button id="soloNewRound" class="btn">Nueva ronda</button>
       <button id="soloVerify" class="btn outline">Verificar</button>
@@ -163,7 +181,7 @@
       <h3>Cartas</h3>
       <div id="rack" class="rack" aria-label="rack"></div>
 
-      <!-- New: inline verify below the bank so students can reach it -->
+      <!-- Verify under the bank -->
       <div class="bankActions">
         <button id="inlineVerify" class="btn outline">Verificar</button>
         <button id="inlineReset" class="btn ghost">Reiniciar ronda</button>
@@ -185,7 +203,7 @@
     // URL params
     const qs = new URLSearchParams(location.search);
     const IB = qs.get('ib') || IMAGES_BUCKET;
-    theAB = qs.get('ab') || AUDIO_BUCKET;
+    const AB = qs.get('ab') || AUDIO_BUCKET;
     const IP = qs.get('ip') || IMAGES_PREFIX;
     const AP = qs.get('ap') || AUDIO_PREFIX;
 
@@ -194,7 +212,6 @@
     const SOLO_PER  = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
     const SOLO_WORDS= (qs.get('words') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
-    // Solo mode triggers if letters or syllables are provided
     const SOLO_MODE = (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -279,7 +296,7 @@
     }
     renderLetterPicker();
 
-    /******** Helpers (markers/accent, syllables) ********/
+    /******** Helpers (accents/markers & syllables) ********/
     function markersToPretty(s){
       return (s||'')
         .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
@@ -427,12 +444,12 @@
 
         audioMap = new Map();
         try {
-          const audList = await listAll(theAB, AP);
+          const audList = await listAll(AB, AP);
           for (const f of audList) {
             const base = f.fullpath.split('/').pop() || f.fullpath;
             const e = extOf(base);
             if (!['mp3','wav','m4a','ogg'].includes(e)) continue;
-            const { data } = client.storage.from(theAB).getPublicUrl(f.fullpath);
+            const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
             if (data?.publicUrl) {
               const stem = stemOf(base);
               audioMap.set(coreFromAudioStem(stem), data.publicUrl);
@@ -483,7 +500,7 @@
     /******** Round building ********/
     function labelForKey(key){
       if(key.startsWith('not-')){ return `No empieza con /${key.slice(4)}/`; }
-      if(key.startsWith('syll:')){ return `Sílabas “${key.slice(5)}”`; }
+      if(key.startsWith('syll:')){ return key.slice(5); } // plain syllable text
       return `Empieza con /${key}/`;
     }
 
@@ -510,7 +527,7 @@
       return columns;
     }
     function buildColumnsForSyllables(sylls){
-      return sylls.map(s => ({ label:`Sílabas “${normalizePlain(s)}”`, key:`syll:${normalizePlain(s)}` }));
+      return sylls.map(s => ({ label: s, key:`syll:${normalizePlain(s)}`, display:s }));
     }
 
     function buildRoundFromLetters(activeLetters, perCol){
@@ -553,7 +570,7 @@
 
     function buildRoundFromSyllables(sylls, perCol){
       const normSyl = sylls.map(s => normalizePlain(s));
-      const columns = buildColumnsForSyllables(normSyl);
+      const columns = buildColumnsForSyllables(sylls); // keep pretty display
       const cards = [];
 
       const pickNoRepeat = (arr, n) => {
@@ -603,8 +620,17 @@
     }
 
     function setOneRowGrid(colsCount){
-      // Force single row; each column shares the width
       columnsEl.style.gridTemplateColumns = `repeat(${colsCount}, minmax(140px, 1fr))`;
+    }
+
+    function renderHeaderHTML(col){
+      // If it's a syllable column, show the big tile with the display text (e.g., "ta")
+      if (col.key.startsWith('syll:')) {
+        const text = (col.display || labelForKey(col.key)).toLowerCase();
+        return `<div class="syllTile" aria-hidden="true">${text}</div>`;
+      }
+      // Otherwise normal header text
+      return `<h2>${labelForKey(col.key)}</h2>`;
     }
 
     function buildColumns(columns){
@@ -615,9 +641,7 @@
         const col = document.createElement('div');
         col.className='col';
         col.innerHTML = `
-          <header>
-            <h2>${labelForKey(c.key)}</h2>
-          </header>
+          <header>${renderHeaderHTML(c)}</header>
           <div class="drop" data-col="${idx}"></div>`;
         columnsEl.appendChild(col);
       });
@@ -659,7 +683,7 @@
       clearAllPlacements();
     }
 
-    // ---- Confetti (lightweight canvas) ----
+    // ---- Confetti (slower) ----
     function celebrate(){
       const cvs = document.createElement('canvas');
       cvs.className = 'celebrationCanvas';
@@ -670,27 +694,35 @@
       const parts = [];
       function resize(){ W=window.innerWidth; H=window.innerHeight; cvs.width=W; cvs.height=H; }
       window.addEventListener('resize', resize); resize();
+
       for(let i=0;i<N;i++){
         parts.push({
           x: Math.random()*W,
-          y: -20-Math.random()*H*0.3,
-          vx: -1 + Math.random()*2,
-          vy: 2 + Math.random()*3,
+          y: -20-Math.random()*H*0.2,
+          vx: (-0.6 + Math.random()*1.2),     // slower horizontal drift
+          vy: 1.2 + Math.random()*1.3,        // slower initial fall
           rot: Math.random()*Math.PI,
-          vr: -0.2 + Math.random()*0.4,
-          size: 4 + Math.random()*6,
+          vr: (-0.12 + Math.random()*0.24),   // slower spin
+          size: 5 + Math.random()*6,
           hue: Math.floor(Math.random()*360)
         });
       }
+
       function tick(ts){
         if(!t0) t0=ts;
         const dt = Math.min(32, ts - t0); t0 = ts;
+
         ctx.clearRect(0,0,W,H);
         parts.forEach(p=>{
-          p.vy += 0.02;                 // gravity
-          p.x += p.vx;
-          p.y += p.vy;
-          p.rot += p.vr;
+          const gravity = 0.006;              // gentler gravity
+          const drag    = 0.003;              // tiny air drag
+          p.vy += gravity * (dt/16);
+          p.vx *= (1 - drag);
+          p.vy *= (1 - drag*0.6);
+          p.x += p.vx * (dt/16);
+          p.y += p.vy * (dt/16);
+          p.rot += p.vr * (dt/16);
+
           ctx.save();
           ctx.translate(p.x, p.y);
           ctx.rotate(p.rot);
@@ -698,6 +730,7 @@
           ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size*0.6);
           ctx.restore();
         });
+
         if (parts.every(p=>p.y > H+30)) {
           document.body.removeChild(cvs);
           window.removeEventListener('resize', resize);
@@ -707,7 +740,6 @@
     }
 
     function everythingCorrect(){
-      // all cards placed (rack empty) and all placed are locked (marked ok)
       const inRack = rackEl.querySelectorAll('.card').length;
       if(inRack>0) return false;
       const anyBad = document.querySelector('.drop .card.bad');
@@ -747,16 +779,14 @@
         });
       });
 
-      // celebrate if perfect
       if (everythingCorrect()) celebrate();
 
-      // rebroadcast verify only from teacher controls
       if (!fromBroadcast && isTeacher && channel){
         channel.send({ type:'broadcast', event:'VERIFY' });
       }
     }
 
-    // ----- Robust drag & drop -----
+    // ----- DnD -----
     let drag=null;
     function makeDraggable(el){
       el.style.touchAction='none';
@@ -792,7 +822,8 @@
         drag.el.style.zIndex=1000;
         drag.el.style.pointerEvents='none';
       }
-      moveTo(drag.el, e.clientX, e.clientY);
+      drag.el.style.left=(e.clientX-70)+'px';
+      drag.el.style.top =(e.clientY-70)+'px';
     }
     function onDrop(e){
       if(!drag || e.pointerId!==drag.pointerId) return;
@@ -834,7 +865,6 @@
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex=''; el.style.pointerEvents='';
       el.style.width=''; el.style.height='';
     }
-    function moveTo(el,x,y){ el.style.left=(x-70)+'px'; el.style.top=(y-70)+'px'; }
     function hitTestDrop(x, y){
       const drops = Array.from(document.querySelectorAll('.drop'));
       for(const d of drops){
@@ -853,7 +883,7 @@
       cardEl.replaceWith(clone);
     }
 
-    /******** Controls wiring (teacher/solo/inline) ********/
+    /******** Controls wiring ********/
     btnVerify.addEventListener('click', ()=> verifyNow(false));
     btnReset.addEventListener('click', resetRoundPlacements);
     soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
