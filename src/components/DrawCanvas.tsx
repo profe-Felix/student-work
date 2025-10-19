@@ -200,7 +200,7 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     let ro: ResizeObserver | null = null
     if ('ResizeObserver' in window) {
       ro = new ResizeObserver(()=>{ setupCanvas(); redraw() })
-      ro.observe(c)
+      ro.observe(c.parentElement || c)
     }
     const onWinResize = ()=>{ setupCanvas(); redraw() }
     window.addEventListener('resize', onWinResize)
