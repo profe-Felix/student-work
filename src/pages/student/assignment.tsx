@@ -122,6 +122,21 @@ function normalizeStrokes(data: unknown): StrokesPayload {
 
   return { strokes }
 }
+// Coerce DrawCanvas strokes (t?: number) into timeline strokes (t: number required)
+function toTimelineStrokes(
+  strokes: { color:string; size:number; tool:'pen'|'highlighter'|'eraser'; pts: {x:number;y:number;t?:number}[] }[]
+): import('../../types/timeline').Stroke[] {
+  return (strokes || []).map(s => ({
+    color: s.color,
+    size: s.size,
+    tool: s.tool,
+    pts: (s.pts || []).map(p => ({
+      x: p.x,
+      y: p.y,
+      t: typeof p.t === 'number' ? p.t : 0
+    }))
+  }))
+}
 
 function saveDraft(student:string, assignmentUid:string, pageUid:string, payload:any){
   try { localStorage.setItem(draftKey(student, assignmentUid, pageUid), JSON.stringify({ t: Date.now(), ...payload })) } catch {}
