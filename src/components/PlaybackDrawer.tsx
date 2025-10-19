@@ -209,11 +209,11 @@ export default function PlaybackDrawer({
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
-  // ===== NEW: Delay INK before the first stroke so audio and ink line up =====
-  // Positive = draw later. Adjust in ±100–200ms steps.
-  const PRE_INK_DRAW_DELAY_MS = 7000
-  const firstInkT = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
-  const firstInkAbsSec = Number.isFinite(firstInkT) ? firstInkT / 1000 : Infinity
+// ===== NEW: Delay INK until the first audio starts so ink doesn't lead =====
+// Positive = draw later. Adjust in ±100–200ms steps.
+const PRE_INK_DRAW_DELAY_MS = 1103
+const firstAudioStartSec = segments.length ? segments[0].startSec : Infinity
+
 
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
@@ -365,9 +365,10 @@ export default function PlaybackDrawer({
 
     if (!pointTL.strokes.length) return
 
-    const visualAbsSec = (timelineZero + relMs) / 1000
-    const extraDelay = visualAbsSec < firstInkAbsSec ? PRE_INK_DRAW_DELAY_MS : 0
-    const cutoffAbs = Math.max(timelineZero, timelineZero + relMs - extraDelay)
+const visualAbsSec = (timelineZero + relMs) / 1000
+// Delay ink only up until the first audio clip actually begins
+const extraDelay = visualAbsSec < firstAudioStartSec ? PRE_INK_DRAW_DELAY_MS : 0
+const cutoffAbs = Math.max(timelineZero, timelineZero + relMs - extraDelay)
 
     withScale(ctx, () => {
       for (const s of pointTL.strokes) {
