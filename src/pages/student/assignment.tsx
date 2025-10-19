@@ -310,6 +310,9 @@ export default function StudentAssignment(){
 
   const drawRef = useRef<DrawCanvasHandle>(null)
   const scrollHostRef = useRef<HTMLDivElement | null>(null)
+  // remember when a recording started, so startMs matches ink timebase
+  const recordStartRef = useRef<number | null>(null)
+
 
   // 5.2 — media + page clock
   const [media, setMedia] = useState<AudioSeg[]>([])
@@ -1163,31 +1166,37 @@ const payloadForSave: PageArtifact = {
     })
   }
 
-  async function handleRecordStart() {
-    markFirstAction()
-  }
+async function handleRecordStart() {
+  // ensure page clock is running AND remember when the clip begins
+  markFirstAction()
+  try { recordStartRef.current = nowMs() } catch { recordStartRef.current = null }
+}
 
-  async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
-    try {
-      const ids = currIds.current
-      const start = nowMs()
-      if (!ids.assignment_id || !ids.page_id) {
-        const url = URL.createObjectURL(blob)
-        addAudioSegment(start, elapsedMs, mime, url)
-        showToast('Audio saved locally', 'ok', 1200)
-        return
-      }
-      const url = await uploadAudioBlob(studentId, ids.assignment_id, ids.page_id, blob, mime)
-      addAudioSegment(start, elapsedMs, mime, url)
-      showToast('Audio uploaded', 'ok', 1200)
-    } catch (e) {
-      console.warn('upload audio failed', e)
-      const start = nowMs()
+async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
+  try {
+    const ids = currIds.current
+    // use the start time captured at onStart (fallback to now if missing)
+    const start = (recordStartRef.current ?? nowMs())
+    recordStartRef.current = null
+
+    if (!ids.assignment_id || !ids.page_id) {
       const url = URL.createObjectURL(blob)
       addAudioSegment(start, elapsedMs, mime, url)
-      showToast('Upload failed — kept locally', 'err', 1600)
+      showToast('Audio saved locally', 'ok', 1200)
+      return
     }
+    const url = await uploadAudioBlob(studentId, ids.assignment_id, ids.page_id, blob, mime)
+    addAudioSegment(start, elapsedMs, mime, url)
+    showToast('Audio uploaded', 'ok', 1200)
+  } catch (e) {
+    console.warn('upload audio failed', e)
+    const start = (recordStartRef.current ?? nowMs())
+    recordStartRef.current = null
+    const url = URL.createObjectURL(blob)
+    addAudioSegment(start, elapsedMs, mime, url)
+    showToast('Upload failed — kept locally', 'err', 1600)
   }
+}
 
   function deleteAudio(id: string) {
     setMedia(prev => prev.filter(s => s.id !== id))
