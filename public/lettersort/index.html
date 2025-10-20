@@ -107,60 +107,63 @@
     }
 
     /* START SIZE + GROWTH FOR ROW DROP */
-    .rowDrop{
-      min-width: 380px;            /* ⬅ wider, obvious start on desktop */
-      min-height:160px;
-      width: max-content;          /* expand to fit dropped tiles */
-      max-width: 100%;             /* never overflow the row */
-      background: var(--drop);
-      border:2px dashed #c7d2fe;
-      border-radius:12px;
-      display:flex;
-      flex-wrap:wrap;
-      gap:8px;
-      align-content:flex-start;
-      align-items:flex-start;
-      justify-content:flex-start;
-      padding:8px;
-    }
+/* Base row drop — stays inside its grid cell (used by row mode) */
+.rowDrop{
+  min-height:160px;
+  background:var(--drop);
+  border:2px dashed #c7d2fe;
+  border-radius:12px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-content:flex-start;
+  align-items:stretch;
+  padding:8px;
+}
 
-    .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
-    .rowCard{width:150px}
-    .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
+/* Row Alliteration (twoCols) — allow the drop to expand horizontally */
+.rowLine.twoCols .rowDrop{
+  width:max-content;   /* grows to fit dropped tiles */
+  max-width:100%;      /* but never overflow the row */
+  min-width:220px;     /* clear starting size on desktop */
+  align-items:flex-start;
+  justify-content:flex-start;
+}
 
-    /* ---------- Compact tweaks (mobile) ---------- */
-    body.row-compact .wrap { padding-top:6px; }
-    body.row-compact header { border-bottom-width:1px; }
-    body.row-compact .soloBar { padding:6px; }
-    body.row-compact .columns { gap:12px; }
+.rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
+.rowCard{width:150px}
+.rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
 
-    body.row-compact #rowMode { gap:10px; }
-    body.row-compact .rowLine{
-      grid-template-columns: 150px 140px 1fr;
-      padding:8px;
-      gap:10px;
-      border-radius:10px;
-      box-shadow:0 3px 10px rgba(0,0,0,.045);
-    }
-    body.row-compact .rowLine.twoCols{ grid-template-columns: minmax(150px, max-content) 1fr; }
-    body.row-compact .rowDrop{
-      min-width: 260px;            /* ⬅ clear start size in compact */
-      min-height:120px;
-      width: max-content;
-      max-width: 100%;
-      padding:6px;
-      border-radius:10px;
-      display:flex;
-      flex-wrap:wrap;
-      gap:6px;
-      align-content:flex-start;
-      align-items:flex-start;
-      justify-content:flex-start;
-    }
-    body.row-compact .rowRack{ gap:6px; }
-    body.row-compact .rowCard{ width:120px; }
-    body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
-    body.row-compact .bankActions{ margin-top:6px; }
+/* ---------- Compact tweaks (mobile) ---------- */
+body.row-compact .wrap { padding-top:6px; }
+body.row-compact header { border-bottom-width:1px; }
+body.row-compact .soloBar { padding:6px; }
+body.row-compact .columns { gap:12px; }
+
+body.row-compact #rowMode { gap:10px; }
+body.row-compact .rowLine{
+  grid-template-columns: 150px 140px 1fr;
+  padding:8px;
+  gap:10px;
+  border-radius:10px;
+  box-shadow:0 3px 10px rgba(0,0,0,.045);
+}
+body.row-compact .rowLine.twoCols{ grid-template-columns: minmax(150px, max-content) 1fr; }
+body.row-compact .rowDrop{
+  min-height:120px;
+  padding:6px;
+  border-radius:10px;
+  gap:6px;
+}
+body.row-compact .rowLine.twoCols .rowDrop{
+  min-width:150px;     /* clear start size in compact */
+  width:max-content;
+  max-width:100%;
+}
+body.row-compact .rowRack{ gap:6px; }
+body.row-compact .rowCard{ width:120px; }
+body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
+body.row-compact .bankActions{ margin-top:6px; }
   </style>
 </head>
 <body>
