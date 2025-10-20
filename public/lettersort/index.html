@@ -1174,16 +1174,14 @@ const SOLO_MODE =
     /******** Controls wiring ********/
     document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
     document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
-    const soloVerifyBtn = document.getElementById('soloVerify');
-    const soloResetBtn = document.getElementById('soloReset');
+
+    // Use the *existing* refs from the UI refs section (do NOT redeclare consts)
     soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     soloResetBtn.addEventListener('click', resetRoundPlacements);
-    const inlineResetBtn = document.getElementById('inlineReset');
-    const inlineVerifyBtn2 = document.getElementById('inlineVerify');
-    inlineVerifyBtn2.addEventListener('click', ()=> verifyNow(false));
+
+    inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     inlineResetBtn.addEventListener('click', resetRoundPlacements);
-    const rowVerify = document.getElementById('rowVerify');
-    const rowReset = document.getElementById('rowReset');
+
     rowVerify.addEventListener('click', ()=> verifyNow(false));
     rowReset.addEventListener('click', resetRoundPlacements);
 
@@ -1214,6 +1212,7 @@ const SOLO_MODE =
       teacherPanel.classList.toggle('hidden', !isTeacher);
       studentPanel.classList.toggle('hidden', isTeacher);
     });
+
 
     const LETTERS = 'a,b,c,ch,d,e,f,g,h,i,j,k,l,ll,m,n,ñ,o,p,q,r,rr,s,t,u,v,w,x,y,z'.split(',');
     function renderLetterPicker(){
@@ -1296,7 +1295,6 @@ const SOLO_MODE =
         setPanelsForSolo();
         await ensureStorageLoaded();
         if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort') return;
-        const soloNewRoundBtn = document.getElementById('soloNewRound');
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
