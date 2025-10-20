@@ -278,10 +278,15 @@
     const ROWS_RAW   = qs.get('rows') || ''; // "gato,pato,galleta,rana;tomate,tenedor,tigre,oso"
     const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true'; // ignored for rowalli
 
-    // SOLO if any of these are present OR a row mode
-    const SOLO_MODE =
-      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' ||
-      (SOLO_LETTERS.length>0) || (SOLO_SYLLABLES.length>0) || (SOLO_WORDS.length>0);
+// Force SOLO by default. Only show teacher/student (session code) if ?sync=true is present.
+const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
+
+// SOLO if NOT in sync mode, or any solo hints/row modes are present.
+const SOLO_MODE =
+  !SYNC ||
+  MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' ||
+  (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0);
+
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
