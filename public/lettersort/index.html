@@ -8,7 +8,6 @@
   <!-- Kid-friendly font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <!-- Preconnect to Supabase for faster fetches -->
   <link rel="preconnect" href="https://dmlsiyyqpcupbizpxwhp.supabase.co" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
 
@@ -237,77 +236,35 @@
 
     /******** State ********/
     let ROOM = null, channel = null, isTeacher = false;
-    let imageFiles = []; // [{name, path, url, stem, core, initial}]
-    let audioMap = new Map(); // core -> audio URL
+    // imageFiles entry will include:
+    // { name, path, url, stem, rawCore, core, initial }
+    let imageFiles = [];
+    // audioMap: key = rawCore (exact picture stem without _pic, preserves marker dots), val = public URL (.webm)
+    const audioMap = new Map();
+    // wordAudioCache: rawCore -> HTMLAudioElement (preloaded)
+    const wordAudioCache = new Map();
+
     let currentCols = [], currentCards = [], usedSet = new Set();
 
-    function setPanelsForSolo() {
-      teacherPanel.classList.add('hidden');
-      studentPanel.classList.add('hidden');
-      document.querySelector('.switch').classList.add('hidden');
-
-      // Toggle stretch style based on percategory
-      document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
-
-      if (SOLO_MODE) {
-        const per = SOLO_PER || 4;
-        const modeTxt = SOLO_SYLLABLES.length
-          ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
-          : `letras=${SOLO_LETTERS.join(', ')}`;
-        const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
-        const labelTxt = LABEL_STYLE==='emoji' ? ' · etiquetas: emoji' : '';
-        const hideTxt = HIDE_TITLE ? ' · sin título' : '';
-        soloPill.style.display = 'inline-block';
-        soloPill.textContent = `Modo individual: ${modeTxt} · ${per} por columna${wordsTxt}${labelTxt}${hideTxt}`;
-        soloBar.classList.remove('hidden');
-      }
-    }
-
-    modeToggle.addEventListener('change', () => {
-      isTeacher = modeToggle.checked;
-      teacherPanel.classList.toggle('hidden', !isTeacher);
-      studentPanel.classList.toggle('hidden', isTeacher);
-    });
-
-    const LETTERS = 'a,b,c,ch,d,e,f,g,h,i,j,k,l,ll,m,n,ñ,o,p,q,r,rr,s,t,u,v,w,x,y,z'.split(',');
-    function renderLetterPicker(){
-      letterPicker.innerHTML='';
-      LETTERS.forEach(L=>{
-        const b=document.createElement('button');
-        b.type='button'; b.textContent=L;
-        b.addEventListener('click', ()=>{
-          b.classList.toggle('active');
-          const act=[...letterPicker.querySelectorAll('.active')];
-          if(act.length>5) b.classList.remove('active');
-        });
-        letterPicker.appendChild(b);
-      });
-    }
-    renderLetterPicker();
-
-    /******** Helpers (accents/markers & syllables) ********/
+    /******** Accent/marker helpers ********/
     function markersToPretty(s){
       return (s||'')
         .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
         .replace(/n\.\./g,'ñ').replace(/u,,/g,'ü');
     }
-    function normalizePlain(s){
-      return (s||'').toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-        .replace(/ñ/g,'n').replace(/ü/g,'u').replace(/[^a-z]/g,'');
+    function stripDiacritics(s){
+      return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
     }
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
+    function stripImageSuffix(t){ return t.replace(/_(pic|img|image|foto)$/i,''); }
     function normalizeMarkers(s){
       let t = (s || '').toLowerCase().trim();
       t = t.replace(/a\.\./g,'a').replace(/e\.\./g,'e').replace(/i\.\./g,'i').replace(/o\.\./g,'o').replace(/u\.\./g,'u');
       t = t.replace(/u,,/g,'u').replace(/n\.\./g,'n');
-      t = t.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      t = stripDiacritics(t);
       return t;
     }
-    function stripImageSuffix(t){ return t.replace(/_(pic|img|image|foto)$/i,''); }
-    function coreFromImageStem(stem){ return normalizeMarkers(stripImageSuffix(stem)); }
-    function coreFromAudioStem(stem){ return normalizeMarkers(stem); }
     function initialFromStem(stemRaw){
       const raw = (stemRaw || '').toLowerCase();
       if(raw.startsWith('n..')) return 'ñ';
@@ -318,7 +275,7 @@
       return s[0] || '';
     }
 
-    /* syllabify + first syllable (same rules as Elkonin app) */
+    /******** Syllabify (same rules from Elkonin) ********/
     function syllabifyEs(wordRaw){
       const word = (wordRaw || '').toLowerCase();
       const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
@@ -381,76 +338,67 @@
     function firstSyllableNormalized(coreWord){
       const pretty = markersToPretty(coreWord);
       const first = syllabifyEs(pretty)[0] || '';
-      return normalizePlain(first);
+      return normalizeMarkers(first);
     }
 
-    /******** Targeted image/audio helpers (speed-ups) ********/
-    function normalizeNameForPath(s){
-      return (s||'').toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-        .replace(/ñ/g,'n').replace(/ü/g,'u')
-        .replace(/[^a-z0-9_-]/g,'');
-    }
-    async function getPublicUrlIfExists(bucket, path){
+    /******** Public URL existence check (GET tiny range) ********/
+    async function publicUrlIfExists(bucket, path){
       const { data } = client.storage.from(bucket).getPublicUrl(path);
-      if(!data?.publicUrl) return null;
-      try { const r = await fetch(data.publicUrl, { method:'HEAD' }); if(r.ok) return data.publicUrl; } catch {}
+      const url = data?.publicUrl;
+      if(!url) return null;
+      try {
+        // Try to fetch a byte; if 200, it exists
+        const r = await fetch(url, { method:'GET', headers:{ Range:'bytes=0-0' } });
+        if (r.ok) return url;
+      } catch {}
       return null;
     }
-    function imageCandidates(word){
-      const base = normalizeNameForPath(word);
+
+    /******** Image fast resolver (JPG only) ********/
+    function jpgCandidatesForWord(word){
+      // Try marker form, pretty accented form, and plain (no diacritics) form
+      const wMarker = (word||'').toLowerCase();
+      const wPretty = markersToPretty(word||'').toLowerCase();
+      const wPlain  = stripDiacritics(wPretty);
+
       const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
       const names = [
-        `${word.toLowerCase()}_pic`, `${base}_pic`,
-        `${word.toLowerCase()}`, `${base}`
+        `${wMarker}_pic.jpg`,
+        `${wPretty}_pic.jpg`,
+        `${wPlain}_pic.jpg`,
       ];
-      const exts = ['webp','jpg','jpeg','png','gif'];
-      const paths = [];
-      for (const n of names) for (const e of exts) paths.push(`${prefix}${n}.${e}`);
-      return paths;
+      return names.map(n => `${prefix}${n}`);
     }
     async function resolveImageForWord(word){
-      for (const p of imageCandidates(word)) {
-        const url = await getPublicUrlIfExists(IB, p);
+      for(const p of jpgCandidatesForWord(word)){
+        const url = await publicUrlIfExists(IB, p);
         if (url) {
           const name = p.split('/').pop();
-          const stem = name.replace(/\.[^.]+$/, '');
+          const stem = stemOf(name);                 // e.g. tele..fono_pic
+          const rawCore = stripImageSuffix(stem);    // e.g. tele..fono   (KEEP markers!)
           return {
             name,
             path: p,
             url,
             stem,
-            core: coreFromImageStem(stem),
+            rawCore,
+            core: normalizeMarkers(rawCore),         // normalized for grouping/initials
             initial: initialFromStem(stem)
           };
         }
       }
       return null;
     }
-    const AUDIO_EXTS_ROUND = ['webm','ogg','m4a','mp3','wav'];
-    async function resolveAudioForCore(core){
+
+    /******** Audio resolver (only .webm, using rawCore) ********/
+    async function resolveAudioForRawCore(rawCore){
       const prefix = AP ? `${AP.replace(/\/$/,'')}/` : '';
-      for (const ext of AUDIO_EXTS_ROUND) {
-        const p = `${prefix}${core}.${ext}`;
-        const url = await getPublicUrlIfExists(AB, p);
-        if (url) return url;
-      }
-      return null;
-    }
-    async function preloadAudioForCurrentCards(){
-      const tasks = [];
-      for (const c of currentCards){
-        const core = coreFromAudioStem(c.word || '');
-        if (audioMap.has(core)) continue;
-        tasks.push((async ()=>{
-          const url = await resolveAudioForCore(core);
-          if (url) audioMap.set(core, url);
-        })());
-      }
-      try { await Promise.allSettled(tasks); } catch {}
+      const p = `${prefix}${rawCore}.webm`;
+      const url = await publicUrlIfExists(AB, p);
+      return url; // null if not found
     }
 
-    /******** Storage ********/
+    /******** Bucket list (fallback) ********/
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
       let out = [], offset = 0, limit = 100;
@@ -462,53 +410,63 @@
         const items = data || [];
         for (const it of items) {
           const fullpath = path ? `${path.replace(/\/$/,'')}/${it.name}` : it.name;
-          out.push({ ...it, fullpath });
+          // If entry is a "folder" (no metadata), recurse
+          if (!it.metadata) {
+            out.push(...(await listAll(bucket, fullpath)));
+          } else {
+            out.push({ ...it, fullpath });
+          }
         }
         if (items.length < limit) break;
         offset += limit;
       }
       return out;
     }
-    async function listAllImages(){
-      const imgList = await listAll(IB, IP);
-      const pubImg = [];
-      for (const f of imgList) {
+
+    async function listAllImagesJpg(){
+      const files = await listAll(IB, IP);
+      const out = [];
+      for (const f of files){
         const base = f.fullpath.split('/').pop() || f.fullpath;
-        const e = extOf(base);
-        if (!['png','jpg','jpeg','webp','gif'].includes(e)) continue;
+        if (extOf(base) !== 'jpg') continue;  // JPG only
         const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
-        if (data?.publicUrl) {
-          const stem = stemOf(base);
-          pubImg.push({
-            name: base, path: f.fullpath, url: data.publicUrl,
-            stem, core: coreFromImageStem(stem), initial: initialFromStem(stem)
+        if (data?.publicUrl){
+          const stem = stemOf(base);               // e.g. tele..fono_pic
+          const rawCore = stripImageSuffix(stem);  // e.g. tele..fono
+          out.push({
+            name: base,
+            path: f.fullpath,
+            url: data.publicUrl,
+            stem,
+            rawCore,
+            core: normalizeMarkers(rawCore),
+            initial: initialFromStem(stem)
           });
         }
       }
-      return pubImg;
+      return out;
     }
 
+    /******** Storage bootstrap ********/
     async function ensureStorageLoaded(){
       try{
         imageFiles = [];
-        if (SOLO_WORDS.length) {
-          // Fast path: resolve only requested words; fallback to full list if none found
+        if (SOLO_WORDS.length){
+          // Fast path: resolve only requested words (JPG only)
           const found = [];
-          for (const w of SOLO_WORDS) {
+          for (const w of SOLO_WORDS){
             const f = await resolveImageForWord(w);
             if (f) found.push(f);
           }
-          imageFiles = found.length ? found : await listAllImages();
+          // If any missing, fall back to listing all JPGs once
+          imageFiles = found.length === SOLO_WORDS.length ? found : await listAllImagesJpg();
         } else {
-          imageFiles = await listAllImages();
+          imageFiles = await listAllImagesJpg();
         }
-
-        // Do NOT scan entire audio bucket; we preload only for current round
-        audioMap = new Map();
 
         storageWarn.style.display = imageFiles.length ? 'none' : 'block';
         if (!imageFiles.length){
-          storageWarn.textContent = `No se encontraron imágenes en "${IB}" (prefijo: ${IP || '(raíz)'}).`;
+          storageWarn.textContent = `No se encontraron imágenes JPG en "${IB}" (prefijo: ${IP || '(raíz)'}).`;
         }
       } catch(err){
         storageWarn.style.display = 'block';
@@ -517,6 +475,7 @@
     }
 
     /******** Realtime ********/
+    let channel = null;
     async function joinRoom(room){
       if(channel){ try{ await channel.unsubscribe(); }catch{} }
       ROOM = (room||'').trim();
@@ -552,7 +511,6 @@
       if (LABEL_STYLE === 'emoji') {
         return type==='is' ? `👍 Sílaba con /${letter}/` : `👎 Sílaba sin /${letter}/`;
       }
-      // classic
       return type==='is' ? `Empieza con /${letter}/` : `No empieza con /${letter}/`;
     }
 
@@ -568,43 +526,39 @@
       return columns;
     }
     function buildColumnsForSyllables(sylls){
-      return sylls.map(s => ({ label: s, key:`syll:${normalizePlain(s)}`, display:s }));
+      return sylls.map(s => ({ label: s, key:`syll:${normalizeMarkers(s)}`, display:s }));
     }
 
     /******** Round building ********/
+    function pickNoRepeat(arr, n){
+      const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
+      pool.sort(()=>Math.random()-0.5);
+      const chosen = pool.slice(0,n);
+      if(chosen.length < n){
+        const more = arr.filter(x=>!chosen.includes(x));
+        more.sort(()=>Math.random()-0.5);
+        chosen.push(...more.slice(0, n - chosen.length));
+      }
+      return chosen;
+    }
+
     function buildRoundFromLetters(activeLetters, perCol){
       const columns = buildColumnsForLetters(activeLetters);
-      const initialMap = (()=>{const m=new Map(); for(const f of imageFiles){(m.get(f.initial)||m.set(f.initial,[]).get(f.initial)).push(f);} return m;})();
+      const byInitial = (()=>{const m=new Map(); for(const f of imageFiles){(m.get(f.initial)||m.set(f.initial,[]).get(f.initial)).push(f);} return m;})();
       const everything = [...imageFiles];
-
-      const pickNoRepeat = (arr, n) => {
-        const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
-        pool.sort(()=>Math.random()-0.5);
-        const chosen = pool.slice(0,n);
-        if(chosen.length < n){
-          const more = arr.filter(x=>!chosen.includes(x));
-          more.sort(()=>Math.random()-0.5);
-          chosen.push(...more.slice(0, n - chosen.length));
-        }
-        return chosen;
-      };
-
       const cards = [];
       for(const col of columns){
         let picks=[];
         if(col.key.startsWith('not-')){
           const L = col.key.slice(4);
-          const notList = everything.filter(f => f.initial !== L);
-          picks = pickNoRepeat(notList, perCol);
+          picks = pickNoRepeat(everything.filter(f => f.initial !== L), perCol);
         } else {
           const L = col.key;
-          const list = initialMap.get(L) || [];
-          picks = pickNoRepeat(list, perCol);
+          picks = pickNoRepeat(byInitial.get(L) || [], perCol);
         }
         for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
-          const audioUrl = audioMap.get(f.core) || null;
-          cards.push({ id: crypto.randomUUID(), file: f.name, word: f.stem, imgUrl: f.url, audioUrl });
+          cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
         }
       }
       return { columns, cards };
@@ -613,27 +567,13 @@
     function buildRoundFromSyllables(sylls, perCol){
       const columns = buildColumnsForSyllables(sylls);
       const cards = [];
-
-      const pickNoRepeat = (arr, n) => {
-        const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
-        pool.sort(()=>Math.random()-0.5);
-        const chosen = pool.slice(0,n);
-        if(chosen.length < n){
-          const more = arr.filter(x=>!chosen.includes(x));
-          more.sort(()=>Math.random()-0.5);
-          chosen.push(...more.slice(0, n - chosen.length));
-        }
-        return chosen;
-      };
-
       for(const col of columns){
         const targetSyl = col.key.slice(5);
-        const list = imageFiles.filter(f => firstSyllableNormalized(f.core) === targetSyl);
+        const list = imageFiles.filter(f => firstSyllableNormalized(f.rawCore) === targetSyl);
         const picks = pickNoRepeat(list, perCol);
         for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
-          const audioUrl = audioMap.get(f.core) || null;
-          cards.push({ id: crypto.randomUUID(), file: f.name, word: f.stem, imgUrl: f.url, audioUrl });
+          cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
         }
       }
       return { columns, cards };
@@ -644,16 +584,18 @@
         ? buildColumnsForSyllables(sylls)
         : buildColumnsForLetters(activeLetters);
 
-      const coreIndex = new Map();
-      for(const f of imageFiles){ if(!coreIndex.has(f.core)) coreIndex.set(f.core, f); }
+      const indexNorm = new Map(); // normalized core -> file
+      for(const f of imageFiles){
+        const k = normalizeMarkers(f.rawCore);
+        if(!indexNorm.has(k)) indexNorm.set(k, f);
+      }
 
       const cards = [];
       for(const wRaw of wordsList){
-        const wNorm = normalizeMarkers(wRaw);
-        const f = coreIndex.get(wNorm);
+        const k = normalizeMarkers(wRaw);
+        const f = indexNorm.get(k);
         if(!f) continue;
-        const audioUrl = audioMap.get(f.core) || null;
-        cards.push({ id: crypto.randomUUID(), file: f.name, word: f.stem, imgUrl: f.url, audioUrl });
+        cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
       }
       return { columns, cards };
     }
@@ -692,9 +634,8 @@
       rackEl.innerHTML='';
       const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
-
-      // 🔊 Preload only the audio needed for this round
-      preloadAudioForCurrentCards();
+      // 🔊 Preload word audio for this round (instant on tap)
+      preloadRoundAudio();
     }
 
     let lastDragEndedAt = 0;
@@ -704,22 +645,12 @@
       el.className='card';
       el.dataset.id=card.id;
       el.setAttribute('tabindex','0');
-      // lazy/async helps with interactivity
-      el.innerHTML = `<img alt="" src="${card.imgUrl}" loading="lazy" decoding="async"/><div class="cap">&nbsp;</div>`;
+      // No lazy to avoid Edge's intervention note and to keep it simple here
+      el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
 
-      // Audio click: use preloaded URL; fallback to resolve once if missing
       el.addEventListener('click', async ()=>{
         if (Date.now() - lastDragEndedAt < 150) return;
-        const core = coreFromAudioStem(card.word || '');
-        let url = audioMap.get(core);
-        if (!url) {
-          url = await resolveAudioForCore(core);
-          if (url) audioMap.set(core, url);
-        }
-        if (url) {
-          const a = new Audio(url);
-          try { a.play(); } catch {}
-        }
+        playWordAudio(card.coreRaw);
       });
 
       makeDraggable(el);
@@ -737,7 +668,7 @@
       clearAllPlacements();
     }
 
-    /* Confetti: slightly faster than medium */
+    /* Confetti (slightly fast) */
     function celebrate(){
       const cvs = document.createElement('canvas');
       cvs.className = 'celebrationCanvas';
@@ -754,7 +685,7 @@
           x: Math.random()*W,
           y: -20-Math.random()*H*0.2,
           vx: (-0.9 + Math.random()*1.8),
-          vy: 2.0 + Math.random()*2.1,   // a bit faster than before
+          vy: 2.0 + Math.random()*2.1,
           rot: Math.random()*Math.PI,
           vr: (-0.22 + Math.random()*0.44),
           size: 5 + Math.random()*6,
@@ -768,7 +699,7 @@
 
         ctx.clearRect(0,0,W,H);
         parts.forEach(p=>{
-          const gravity = 0.011;          // slightly stronger than before
+          const gravity = 0.011;
           const drag    = 0.004;
           p.vy += gravity * (dt/16);
           p.vx *= (1 - drag);
@@ -816,15 +747,15 @@
           const card = currentCards.find(c=>c.id===cardEl.dataset.id);
           if(!card) return;
 
-          const core = card.word || '';
-          const coreNorm = normalizeMarkers(core);
+          const coreRaw = card.coreRaw;          // keep markers for audio; normalize for logic if needed
+          const coreNorm = normalizeMarkers(coreRaw);
 
           let ok = false;
           if (target.type === 'syll') {
-            const firstSyl = firstSyllableNormalized(core);
+            const firstSyl = firstSyllableNormalized(coreRaw);
             ok = (firstSyl === target.syll);
           } else {
-            const initial = initialFromStem(coreNorm);
+            const initial = initialFromStem(coreRaw);
             ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
           }
 
@@ -856,7 +787,7 @@
         startX:e.clientX, startY:e.clientY,
         moved:false
       };
-      el.classList.add('dragging');            // fixed size while dragging
+      el.classList.add('dragging');
       el.setPointerCapture(e.pointerId);
       window.addEventListener('pointermove', onMove, {passive:false});
       window.addEventListener('pointerup', onDrop, {passive:false});
@@ -935,20 +866,46 @@
     function lockCard(cardEl, card){
       const clone = cardEl.cloneNode(true);
       clone.classList.add('locked');
-      // Keep audio tap on locked version as well
-      clone.addEventListener('click', async ()=>{
-        const core = coreFromAudioStem(card.word || '');
-        let url = audioMap.get(core);
-        if (!url) {
-          url = await resolveAudioForCore(core);
-          if (url) audioMap.set(core, url);
-        }
-        if (url) { const a = new Audio(url); try { a.play(); } catch {} }
-      });
+      clone.addEventListener('click', ()=> playWordAudio(card.coreRaw));
       cardEl.replaceWith(clone);
     }
 
+    /******** Audio: preload & play ********/
+    function apPrefix(){ return AP ? `${AP.replace(/\/$/,'')}/` : ''; }
+    async function ensureAudioFor(rawCore){
+      if (audioMap.has(rawCore)) return audioMap.get(rawCore);
+      const url = await resolveAudioForRawCore(rawCore);
+      if (url) audioMap.set(rawCore, url);
+      return url;
+    }
+    async function preloadRoundAudio(){
+      const tasks = currentCards.map(async c=>{
+        const url = await ensureAudioFor(c.coreRaw);
+        if (url && !wordAudioCache.has(c.coreRaw)){
+          const a = new Audio();
+          a.preload = 'auto';
+          a.src = url;
+          try{ a.load(); }catch{}
+          wordAudioCache.set(c.coreRaw, a);
+        }
+      });
+      try { await Promise.allSettled(tasks); } catch {}
+    }
+    async function playWordAudio(rawCore){
+      // prefer preloaded element
+      let a = wordAudioCache.get(rawCore);
+      if (!a){
+        const url = await ensureAudioFor(rawCore);
+        if (!url) return;
+        a = new Audio(url);
+        wordAudioCache.set(rawCore, a);
+      }
+      try{ a.currentTime = 0; }catch{}
+      try{ await a.play(); }catch{}
+    }
+
     /******** Controls wiring ********/
+    let isTeacher = false, ROOM = null;
     document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
     document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
     soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
@@ -960,7 +917,7 @@
       if(!isTeacher) return;
       if(imageFiles.length===0){
         await ensureStorageLoaded();
-        if(imageFiles.length===0){ alert('No hay imágenes disponibles en Storage.'); return; }
+        if(imageFiles.length===0){ alert('No hay imágenes disponibles.'); return; }
       }
       const hasSyll = SOLO_SYLLABLES.length > 0;
       const activeLetters = hasSyll ? [] : [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
@@ -978,7 +935,49 @@
       await channel.send({ type:'broadcast', event:'ROUND', payload });
     });
 
-    // SOLO MODE
+    modeToggle.addEventListener('change', () => {
+      isTeacher = modeToggle.checked;
+      teacherPanel.classList.toggle('hidden', !isTeacher);
+      studentPanel.classList.toggle('hidden', isTeacher);
+    });
+
+    const LETTERS = 'a,b,c,ch,d,e,f,g,h,i,j,k,l,ll,m,n,ñ,o,p,q,r,rr,s,t,u,v,w,x,y,z'.split(',');
+    function renderLetterPicker(){
+      letterPicker.innerHTML='';
+      LETTERS.forEach(L=>{
+        const b=document.createElement('button');
+        b.type='button'; b.textContent=L;
+        b.addEventListener('click', ()=>{
+          b.classList.toggle('active');
+          const act=[...letterPicker.querySelectorAll('.active')];
+          if(act.length>5) b.classList.remove('active');
+        });
+        letterPicker.appendChild(b);
+      });
+    }
+    renderLetterPicker();
+
+    /******** SOLO MODE ********/
+    function setPanelsForSolo() {
+      teacherPanel.classList.add('hidden');
+      studentPanel.classList.add('hidden');
+      document.querySelector('.switch').classList.add('hidden');
+      document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
+
+      if (SOLO_MODE) {
+        const per = SOLO_PER || 4;
+        const modeTxt = SOLO_SYLLABLES.length
+          ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
+          : `letras=${SOLO_LETTERS.join(', ')}`;
+        const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
+        const labelTxt = LABEL_STYLE==='emoji' ? ' · etiquetas: emoji' : '';
+        const hideTxt = HIDE_TITLE ? ' · sin título' : '';
+        soloPill.style.display = 'inline-block';
+        soloPill.textContent = `Modo individual: ${modeTxt} · ${per} por columna${wordsTxt}${labelTxt}${hideTxt}`;
+        soloBar.classList.remove('hidden');
+      }
+    }
+
     function startSoloRound(){
       usedSet = new Set();
       const hasSyll = SOLO_SYLLABLES.length > 0;
