@@ -78,9 +78,8 @@
     .card.bad{outline:3px solid var(--bad)}
     .locked{opacity:.9}
 
-    /* Grow only after drop AND only when percategory=1 */
+    /* Grow only after drop AND only when percategory=1 (classic columns only) */
     .one-per .drop .card{width:100%}
-    /* While dragging, keep a fixed size (no giant cards when moving) */
     .card.dragging{width:150px !important; height:auto !important}
 
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
@@ -98,28 +97,32 @@
     #rowMode{margin-top:14px;display:grid;gap:14px}
     .rowLine{
       display:grid;
-      grid-template-columns: 170px 170px 1fr; /* default for 3-col row mode */
+      grid-template-columns: 170px 170px 1fr; /* default for 3-col row mode (prompt) */
       align-items:center;
       gap:14px;
       background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px;
       box-shadow:0 4px 14px rgba(0,0,0,.05)
     }
-    .rowLine.twoCols{ grid-template-columns: 220px 1fr; } /* row-alliteration: drop + rack */
+
+    /* row-alliteration: let the left (drop) column expand to fit its cards */
+    .rowLine.twoCols{ grid-template-columns: max-content 1fr; }
     .rowPrompt{display:flex;justify-content:center}
 
-    /* ⬇⬇⬇ CHANGED: stretchy drop (no fixed height) */
     .rowDrop{
-      min-height:160px; /* sensible floor */
-      height:auto;      /* grow to card height */
-      background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
-      display:flex;align-items:center;justify-content:center;padding:6px
+      min-height:160px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
+      display:flex;flex-wrap:wrap;gap:8px;
+      align-items:center;justify-content:flex-start;padding:6px;
+      inline-size:max-content; /* grow to fit children width */
+      min-inline-size:220px;  /* nice empty-state size */
     }
+    /* prevent shrinking of cards inside the drop (keeps image height consistent) */
+    .rowDrop .card{ flex:0 0 auto; }
 
     .rowRack{display:flex;gap:8px;flex-wrap:wrap}
     .rowCard{width:150px}
     .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
 
-    /* ---------- Row-mode compact: smaller so rows fit on one screen ---------- */
+    /* ---------- Row-mode compact (still allow autowidth in twoCols) ---------- */
     body.row-compact .wrap { padding-top:6px; }
     body.row-compact header { border-bottom-width:1px; }
     body.row-compact .soloBar { padding:6px; }
@@ -133,12 +136,11 @@
       border-radius:10px;
       box-shadow:0 3px 10px rgba(0,0,0,.045);
     }
-    body.row-compact .rowLine.twoCols{ grid-template-columns: 150px 1fr; }
+    /* keep auto-growing behavior in compact row-alliteration too */
+    body.row-compact .rowLine.twoCols{ grid-template-columns: max-content 1fr; }
 
-    /* ⬇⬇⬇ CHANGED: stretchy drop in compact too */
     body.row-compact .rowDrop{
       min-height:120px;
-      height:auto;
       padding:6px;
       border-radius:10px;
     }
@@ -347,7 +349,7 @@
       return s[0] || '';
     }
 
-    // Syllabify rules (from your Elkonin page)
+    // Syllabify rules
     function syllabifyEs(wordRaw){
       const word = (wordRaw || '').toLowerCase();
       const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
@@ -540,7 +542,6 @@
       try{
         imageFiles = [];
         if (MODE==='row' || MODE==='rowalli'){
-          // We resolve per-requested words; still listing keeps classic usable.
           imageFiles = await listAllImagesJpg();
         } else if (SOLO_WORDS.length){
           const found = [];
@@ -721,10 +722,6 @@
         if (Date.now() - lastDragEndedAt < 150) return;
         playWordAudio(card.coreRaw);
       });
-      // ⬇ Sync row heights when the image finishes loading
-      const img = el.querySelector('img');
-      if (img) img.addEventListener('load', () => syncRowHeights(), { once:true });
-
       makeDraggable(el, opts.rowScope ? String(opts.rowIndex) : null);
       return el;
     }
@@ -737,13 +734,7 @@
     }
     function resetRoundPlacements(){
       document.querySelectorAll('.card').forEach(c=> c.classList.remove('ok','bad','locked') );
-      if (currentMode==='row'){
-        rowData.forEach((r, idx)=>{
-          r.dropEl.innerHTML='';
-          r.rackEl.innerHTML='';
-          r.cards.forEach(c=> r.rackEl.appendChild(renderCard(c,{rowCard:true,rowIndex:idx,rowScope:true})));
-        });
-      } else if (currentMode==='rowalli'){
+      if (currentMode==='row' || currentMode==='rowalli'){
         rowData.forEach((r, idx)=>{
           r.dropEl.innerHTML='';
           r.rackEl.innerHTML='';
@@ -752,7 +743,6 @@
       } else {
         clearAllPlacements();
       }
-      syncRowHeights();
     }
 
     /* Confetti (medium-fast) */
@@ -842,29 +832,10 @@
       return { initial: bestI || '', count: bestC<0 ? 0 : bestC };
     }
 
-    /******** Responsive density + stretchy rows ********/
-    function applyRowDensity() {
-      const compactParam = (qs.get('compact') || '').toLowerCase() === 'true';
-      const smallScreen  = window.matchMedia('(max-width: 1024px)').matches;
-      const useCompact   = compactParam || smallScreen;
-      document.body.classList.toggle('row-compact', useCompact);
-    }
-    function syncRowHeights() {
-      document.querySelectorAll('.rowLine').forEach(line => {
-        const drop = line.querySelector('.rowDrop');
-        const rack = line.querySelector('.rowRack');
-        const sample = rack?.querySelector('.rowCard, .card') || drop?.querySelector('.rowCard, .card');
-        if (!drop || !sample) return;
-        const h = sample.offsetHeight;
-        if (h > 0) drop.style.minHeight = h + 'px';
-      });
-    }
-    window.addEventListener('resize', () => { applyRowDensity(); syncRowHeights(); });
-
     /******** Row: prompt+choices (existing) ********/
     async function buildRowMode(){
       currentMode = 'row';
-      applyRowDensity(); // responsive instead of forcing compact
+      document.body.classList.add('row-compact');
       columnsEl.classList.add('hidden');
       rackSectionEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
@@ -922,13 +893,12 @@
 
         rowData.push({ type:'row', prompt:pImg, dropEl:drop, rackEl:rack, cards });
       }
-      setTimeout(syncRowHeights, 0);
     }
 
     /******** Row Alliteration: groups only (no prompt, no title) ********/
     async function buildRowAlliMode(){
       currentMode = 'rowalli';
-      applyRowDensity(); // responsive instead of forcing compact
+      document.body.classList.add('row-compact');
       columnsEl.classList.add('hidden');
       rackSectionEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
@@ -988,7 +958,6 @@
           majInitial
         });
       }
-      setTimeout(syncRowHeights, 0);
     }
 
     function everythingCorrect(){
@@ -1140,13 +1109,12 @@
       resetDraggedStyles(el);
 
       const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
-const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
-document.body.classList.toggle('one-per', perCol === 1);
-
+      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
+      document.body.classList.toggle('one-per', perCol === 1); // fixed variable name
 
       if(drop){
         if (drop.classList.contains('rowDrop')){
-          // rowDrop holds any number for rowalli, but capacity=1 for prompt-row mode handled by verify (kept simple)
+          // rowDrop holds any number for rowalli; capacity=1 for prompt rows is naturally limited by width
           if (currentMode==='row' && drop.children.length>=1){ drag.originParent.appendChild(el); }
           else { drop.appendChild(el); }
         } else {
@@ -1157,7 +1125,6 @@ document.body.classList.toggle('one-per', perCol === 1);
         drag.originParent.appendChild(el);
       }
       lastDragEndedAt = Date.now();
-      syncRowHeights(); // ⬅ keep drop height matched after any move
       drag=null;
     }
     function onCancel(e){
@@ -1198,14 +1165,16 @@ document.body.classList.toggle('one-per', perCol === 1);
     /******** Controls wiring ********/
     document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
     document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
-    soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
-    soloResetBtn.addEventListener('click', resetRoundPlacements);
-    inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
-    inlineResetBtn.addEventListener('click', resetRoundPlacements);
-    rowVerify.addEventListener('click', ()=> verifyNow(false));
-    rowReset.addEventListener('click', resetRoundPlacements);
+    document.getElementById('inlineVerify').addEventListener('click', ()=> verifyNow(false));
+    document.getElementById('inlineReset').addEventListener('click', resetRoundPlacements));
+    document.getElementById('rowVerify').addEventListener('click', ()=> verifyNow(false));
+    document.getElementById('rowReset').addEventListener('click', resetRoundPlacements);
 
-    btnNewRound.addEventListener('click', async ()=>{
+    document.getElementById('soloVerify').addEventListener('click', ()=> verifyNow(false));
+    document.getElementById('soloReset').addEventListener('click', resetRoundPlacements);
+    document.getElementById('soloNewRound').addEventListener('click', ()=> startSoloRound());
+
+    document.getElementById('btnNewRound').addEventListener('click', async ()=>{
       if(!isTeacher) return;
       if(imageFiles.length===0){
         await ensureStorageLoaded();
@@ -1251,8 +1220,8 @@ document.body.classList.toggle('one-per', perCol === 1);
 
     /******** SOLO MODE ********/
     function setPanelsForSolo() {
-      teacherPanel.classList.add('hidden');
-      studentPanel.classList.add('hidden');
+      document.getElementById('teacherPanel').classList.add('hidden');
+      document.getElementById('studentPanel').classList.add('hidden');
       document.querySelector('.switch').classList.add('hidden');
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
@@ -1266,9 +1235,9 @@ document.body.classList.toggle('one-per', perCol === 1);
       const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
       const labelTxt = LABEL_STYLE==='emoji' ? ' · etiquetas: emoji' : '';
       const hideTxt = HIDE_TITLE ? ' · sin título' : '';
-      soloPill.style.display = 'inline-block';
-      soloPill.textContent = `Modo individual: ${modeTxt}${wordsTxt}${labelTxt}${hideTxt}`;
-      soloBar.classList.remove('hidden');
+      document.getElementById('soloPill').style.display = 'inline-block';
+      document.getElementById('soloPill').textContent = `Modo individual: ${modeTxt}${wordsTxt}${labelTxt}${hideTxt}`;
+      document.getElementById('soloBar').classList.remove('hidden');
     }
 
     function startSoloRound(){
@@ -1282,9 +1251,8 @@ document.body.classList.toggle('one-per', perCol === 1);
         return;
       }
 
-      // leaving row modes: recalc density for classic UI too
+      // leaving row modes: remove compact class if present
       document.body.classList.remove('row-compact');
-      applyRowDensity();
 
       const hasSyll = SOLO_SYLLABLES.length > 0;
       const per = SOLO_PER || 4;
@@ -1311,13 +1279,10 @@ document.body.classList.toggle('one-per', perCol === 1);
     }
 
     (async function boot(){
-      applyRowDensity(); // ensure first paint uses the right density
-
       if (SOLO_MODE) {
         setPanelsForSolo();
         await ensureStorageLoaded();
         if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli') return;
-        soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
       }
@@ -1326,8 +1291,8 @@ document.body.classList.toggle('one-per', perCol === 1);
       currentMode = 'classic';
       modeToggle.checked = false;
       isTeacher = false;
-      teacherPanel.classList.add('hidden');
-      studentPanel.classList.remove('hidden');
+      document.getElementById('teacherPanel').classList.add('hidden');
+      document.getElementById('studentPanel').classList.remove('hidden');
     })();
   </script>
 </body>
