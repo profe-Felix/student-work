@@ -1140,8 +1140,9 @@
       resetDraggedStyles(el);
 
       const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
-      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
-      document.body.classList.toggle('one-per', per === 1);
+const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
+document.body.classList.toggle('one-per', perCol === 1);
+
 
       if(drop){
         if (drop.classList.contains('rowDrop')){
