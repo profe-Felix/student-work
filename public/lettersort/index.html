@@ -24,7 +24,6 @@
     .switch{display:flex;gap:8px;align-items:center}
     .hidden{display:none}
     .panel{margin-top:10px}
-    .panel.hidden{display:none}
     .grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end}
     .field{margin:6px 0}
     .field .inline{display:flex;gap:8px}
@@ -41,7 +40,7 @@
 
     main{max-width:1100px;margin:14px auto;padding:0 12px}
 
-    /* One-row columns */
+    /* One-row columns (classic/letters/syllables modes) */
     .columns{
       display:grid;
       gap:16px;
@@ -73,11 +72,7 @@
       box-shadow:0 2px 6px rgba(0,0,0,.06);width:150px;overflow:hidden;cursor:grab;display:flex;flex-direction:column;align-items:center
     }
     .card:active{cursor:grabbing}
-
-    .card img{
-      display:block;width:100%;
-      aspect-ratio: 4/3; object-fit: contain; background:#fafafa
-    }
+    .card img{display:block;width:100%;aspect-ratio:4/3;object-fit:contain;background:#fafafa}
     .card .cap{padding:6px 8px;width:100%;text-align:center;font-size:14px}
     .card.ok{outline:3px solid var(--ok)}
     .card.bad{outline:3px solid var(--bad)}
@@ -85,7 +80,6 @@
 
     /* Grow only after drop AND only when percategory=1 */
     .one-per .drop .card{width:100%}
-
     /* While dragging, keep a fixed size (no giant cards when moving) */
     .card.dragging{width:150px !important; height:auto !important}
 
@@ -99,6 +93,26 @@
     .bankActions{display:flex;gap:8px;align-items:center;margin-top:10px}
 
     .celebrationCanvas{position:fixed;inset:0;pointer-events:none;z-index:50}
+
+    /* ---------- NEW: Row Picture Mode ---------- */
+    #rowMode{margin-top:14px;display:grid;gap:14px}
+    .rowLine{
+      display:grid;
+      grid-template-columns: 170px 170px 1fr;
+      align-items:center;
+      gap:14px;
+      background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px;
+      box-shadow:0 4px 14px rgba(0,0,0,.05)
+    }
+    .rowPrompt{display:flex;justify-content:center}
+    .rowDrop{
+      height:160px;min-height:160px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
+      display:flex;align-items:center;justify-content:center;padding:6px
+    }
+    .rowRack{display:flex;gap:8px;flex-wrap:wrap}
+    .rowCard{width:150px}
+    .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
+    /* keep row cards within their row rack unless dropped in that row's drop */
   </style>
 </head>
 <body>
@@ -165,9 +179,18 @@
       <button id="soloReset" class="btn ghost">Reiniciar ronda</button>
     </div>
 
+    <!-- Classic columns container -->
     <div id="columns" class="columns"></div>
 
-    <section class="rackSection">
+    <!-- NEW: Row picture mode container -->
+    <section id="rowMode" class="hidden"></section>
+    <div id="rowActions" class="bankActions hidden">
+      <button id="rowVerify" class="btn outline">Verificar</button>
+      <button id="rowReset" class="btn ghost">Reiniciar</button>
+    </div>
+
+    <!-- Global rack (classic modes) -->
+    <section id="rackSection" class="rackSection">
       <h3>Cartas</h3>
       <div id="rack" class="rack" aria-label="rack"></div>
       <div class="bankActions">
@@ -190,6 +213,7 @@
 
     // URL params
     const qs = new URLSearchParams(location.search);
+    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row' or classic
     const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
     const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
     const IP = qs.get('ip') || DEFAULT_IMAGES_PREFIX;
@@ -202,8 +226,12 @@
     const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
-    // SOLO if any of these are present
-    const SOLO_MODE = (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0);
+    // Row mode params
+    const ROWS_RAW   = qs.get('rows') || ''; // gato~pato,cocodrilo;tomate~chancla,chocolate
+    const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
+
+    // SOLO if any of these are present OR mode=row
+    const SOLO_MODE = MODE==='row' || (SOLO_LETTERS.length>0) || (SOLO_SYLLABLES.length>0) || (SOLO_WORDS.length>0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -219,6 +247,7 @@
     const letterPicker  = document.getElementById('letterPicker');
     const cardsPerColEl = document.getElementById('cardsPerCol');
     const columnsEl     = document.getElementById('columns');
+    const rackSectionEl = document.getElementById('rackSection');
     const rackEl        = document.getElementById('rack');
     const btnNewRound   = document.getElementById('btnNewRound');
     const btnVerify     = document.getElementById('btnVerify');
@@ -235,6 +264,12 @@
     const inlineVerifyBtn= document.getElementById('inlineVerify');
     const inlineResetBtn = document.getElementById('inlineReset');
 
+    // Row mode refs
+    const rowModeEl   = document.getElementById('rowMode');
+    const rowActions  = document.getElementById('rowActions');
+    const rowVerify   = document.getElementById('rowVerify');
+    const rowReset    = document.getElementById('rowReset');
+
     /******** State ********/
     let ROOM = null, channel = null, isTeacher = false;
 
@@ -246,6 +281,9 @@
     const audioElByRawCore  = new Map();     // rawCore -> preloaded HTMLAudioElement
 
     let currentCols = [], currentCards = [], usedSet = new Set();
+
+    // Row mode state
+    let rowData = []; // [{prompt:{rawCore,url}, dropEl, rackEl, cards:[{id,rawCore,imgUrl,row}] }]
 
     /******** Helpers ********/
     function markersToPretty(s){
@@ -375,12 +413,8 @@
           const stem = stemOf(name);                 // e.g. tele..fono_pic
           const rawCore = stripImageSuffix(stem);    // e.g. tele..fono
           return {
-            name,
-            path: p,
-            url,
-            stem,
-            rawCore,
-            core: normalizeMarkers(rawCore),
+            name, path:p, url, stem,
+            rawCore, core: normalizeMarkers(rawCore),
             initial: initialFromStem(stem)
           };
         }
@@ -415,18 +449,14 @@
       const out = [];
       for (const f of files){
         const base = f.fullpath.split('/').pop() || f.fullpath;
-        if (extOf(base) !== 'jpg') continue;  // JPG only
+        if (extOf(base) !== 'jpg') continue;
         const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
         if (data?.publicUrl){
           const stem = stemOf(base);
           const rawCore = stripImageSuffix(stem);
           out.push({
-            name: base,
-            path: f.fullpath,
-            url: data.publicUrl,
-            stem,
-            rawCore,
-            core: normalizeMarkers(rawCore),
+            name: base, path: f.fullpath, url: data.publicUrl,
+            stem, rawCore, core: normalizeMarkers(rawCore),
             initial: initialFromStem(stem)
           });
         }
@@ -447,18 +477,18 @@
       if (url) audioUrlByRawCore.set(rawCore, url);
       return url;
     }
-    async function preloadRoundAudio(){
-      const tasks = currentCards.map(async c=>{
-        const url = await ensureAudioUrl(c.coreRaw);
-        if (url && !audioElByRawCore.has(c.coreRaw)){
+    async function preloadAudioForCores(rawCores){
+      const uniq = Array.from(new Set(rawCores));
+      await Promise.all(uniq.map(async k=>{
+        const url = await ensureAudioUrl(k);
+        if (url && !audioElByRawCore.has(k)){
           const a = new Audio();
           a.preload = 'auto';
           a.src = url;
           try{ a.load(); }catch{}
-          audioElByRawCore.set(c.coreRaw, a);
+          audioElByRawCore.set(k, a);
         }
-      });
-      try { await Promise.allSettled(tasks); } catch {}
+      }));
     }
     async function playWordAudio(rawCore){
       let a = audioElByRawCore.get(rawCore);
@@ -476,8 +506,11 @@
     async function ensureStorageLoaded(){
       try{
         imageFiles = [];
-        if (SOLO_WORDS.length){
-          // Fast path: resolve only requested words
+        if (MODE==='row'){
+          // Row mode resolves only what is referenced; classic modes may still need full list.
+          // We'll lazily resolve row assets later.
+          imageFiles = await listAllImagesJpg(); // keeps classic features working if user switches params
+        } else if (SOLO_WORDS.length){
           const found = [];
           for (const w of SOLO_WORDS){
             const f = await resolveImageForWord(w);
@@ -499,6 +532,7 @@
     }
 
     /******** Realtime (teacher/student only) ********/
+    let currentMode = MODE || 'classic';
     async function joinRoom(room){
       if(channel){ try{ await channel.unsubscribe(); }catch{} }
       ROOM = (room||'').trim();
@@ -507,6 +541,7 @@
       channel = client.channel(`lettersort:${ROOM}`);
       channel.on('broadcast', { event:'ROUND' }, p=>{
         const d=p.payload;
+        // only classic grid is synced; row mode is solo-only
         buildColumns(d.columns);
         setCards(d.cards);
         clearAllPlacements();
@@ -518,16 +553,6 @@
       if(error){ alert('Error de Realtime'); console.error(error); }
     }
 
-    btnJoin.addEventListener('click', async ()=>{
-      const room = roomCodeEl.value || 'A_01';
-      await joinRoom(room);
-      await ensureStorageLoaded();
-    });
-    btnStudentJoin.addEventListener('click', async ()=>{
-      const room = studentRoomEl.value || 'A_01';
-      await joinRoom(room);
-    });
-
     /******** Labels (modular) ********/
     function labelTextFor(letter, type){
       if (LABEL_STYLE === 'emoji') {
@@ -535,7 +560,6 @@
       }
       return type==='is' ? `Empieza con /${letter}/` : `No empieza con /${letter}/`;
     }
-
     function buildColumnsForLetters(activeLetters){
       const columns = [];
       if(activeLetters.length===1){
@@ -551,7 +575,7 @@
       return sylls.map(s => ({ label: s, key:`syll:${normalizeMarkers(s)}`, display:s }));
     }
 
-    /******** Round building ********/
+    /******** Round building (classic) ********/
     function pickNoRepeat(arr, n){
       const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
       pool.sort(()=>Math.random()-0.5);
@@ -563,7 +587,6 @@
       }
       return chosen;
     }
-
     function buildRoundFromLetters(activeLetters, perCol){
       const columns = buildColumnsForLetters(activeLetters);
       const byInitial = (()=>{const m=new Map(); for(const f of imageFiles){(m.get(f.initial)||m.set(f.initial,[]).get(f.initial)).push(f);} return m;})();
@@ -585,7 +608,6 @@
       }
       return { columns, cards };
     }
-
     function buildRoundFromSyllables(sylls, perCol){
       const columns = buildColumnsForSyllables(sylls);
       const cards = [];
@@ -600,7 +622,6 @@
       }
       return { columns, cards };
     }
-
     function buildRoundFromWordList(activeLetters, sylls, wordsList){
       const columns = (sylls && sylls.length)
         ? buildColumnsForSyllables(sylls)
@@ -630,7 +651,7 @@
         if (HIDE_TITLE) return '';
         const text = (col.display || '').toLowerCase();
         return `<div class="syllTile" aria-hidden="true">${text}</div>`;
-      }
+        }
       return `<h2>${col.label}</h2>`;
     }
     function buildColumns(columns){
@@ -648,28 +669,27 @@
       const per = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
       document.body.classList.toggle('one-per', per === 1);
     }
-
     function setCards(cards){
       currentCards = [...cards];
       rackEl.innerHTML='';
       const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
-      preloadRoundAudio(); // 🔊 preload mp3s for instant taps
+      preloadAudioForCores(ordered.map(c=>c.coreRaw));
     }
 
     let lastDragEndedAt = 0;
-
-    function renderCard(card){
+    function renderCard(card, opts={}){
       const el=document.createElement('div');
-      el.className='card';
+      el.className='card' + (opts.rowCard ? ' rowCard' : '');
       el.dataset.id=card.id;
+      if (opts.rowIndex != null) el.dataset.row = String(opts.rowIndex);
       el.setAttribute('tabindex','0');
-      el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
+      el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap" ${ROW_TITLE?'':'style="display:none"'}>${ROW_TITLE ? (markersToPretty(card.coreRaw)||'') : '&nbsp;'}</div>`;
       el.addEventListener('click', async ()=>{
         if (Date.now() - lastDragEndedAt < 150) return;
         playWordAudio(card.coreRaw);
       });
-      makeDraggable(el);
+      makeDraggable(el, opts.rowScope ? String(opts.rowIndex) : null);
       return el;
     }
 
@@ -681,7 +701,16 @@
     }
     function resetRoundPlacements(){
       document.querySelectorAll('.card').forEach(c=> c.classList.remove('ok','bad','locked') );
-      clearAllPlacements();
+      if (currentMode==='row'){
+        // put all row cards back to their row racks
+        rowData.forEach((r, idx)=>{
+          r.dropEl.innerHTML='';
+          r.rackEl.innerHTML='';
+          r.cards.forEach(c=> r.rackEl.appendChild(renderCard(c,{rowCard:true,rowIndex:idx,rowScope:true})));
+        });
+      } else {
+        clearAllPlacements();
+      }
     }
 
     /* Confetti (medium-fast) */
@@ -741,6 +770,15 @@
     }
 
     function everythingCorrect(){
+      if (currentMode==='row'){
+        // each row must have exactly one locked card in drop; none left in racks
+        for (const r of rowData){
+          const inRack = r.rackEl.querySelectorAll('.card').length;
+          const locked = r.dropEl.querySelectorAll('.card.locked').length;
+          if (inRack>0 || locked!==1) return false;
+        }
+        return true;
+      }
       const inRack = rackEl.querySelectorAll('.card').length;
       if(inRack>0) return false;
       const anyBad = document.querySelector('.drop .card.bad');
@@ -751,6 +789,23 @@
     }
 
     function verifyNow(fromBroadcast){
+      if (currentMode==='row'){
+        rowData.forEach((r, idx)=>{
+          const dropped = r.dropEl.querySelector('.card');
+          if (!dropped) return;
+          const cardId = dropped.dataset.id;
+          const card = r.cards.find(c=>c.id===cardId);
+          if (!card) return;
+          const a = initialFromStem(r.prompt.rawCore);
+          const b = initialFromStem(card.coreRaw);
+          const ok = (a===b);
+          if(ok){ dropped.classList.add('ok','locked'); lockCard(dropped, card); }
+          else { dropped.classList.add('bad'); setTimeout(()=> { dropped.classList.remove('bad'); r.rackEl.appendChild(dropped); }, 300); }
+        });
+        if (everythingCorrect()) celebrate();
+        return;
+      }
+
       const getTarget = key => {
         if (key.startsWith('not-')) return {type:'not', letter:key.slice(4)};
         if (key.startsWith('syll:')) return {type:'syll', syll:key.slice(5)};
@@ -785,8 +840,9 @@
 
     // ----- Drag & Drop (fixed size during drag) -----
     let drag=null;
-    function makeDraggable(el){
+    function makeDraggable(el, rowScope){
       el.style.touchAction='none';
+      if (rowScope != null) el.dataset.row = String(rowScope);
       el.addEventListener('pointerdown', onGrab);
     }
     function onGrab(e){
@@ -796,6 +852,7 @@
       drag={
         el,
         originParent:el.parentElement,
+        rowScope: el.dataset.row || null,
         pointerId:e.pointerId,
         startX:e.clientX, startY:e.clientY,
         moved:false
@@ -836,15 +893,21 @@
 
       resetDraggedStyles(el);
 
-      const drop = hitTestDrop(e.clientX, e.clientY);
+      const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
       const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
       document.body.classList.toggle('one-per', perCol === 1);
 
       if(drop){
-        if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
-        else { drop.appendChild(el); }
+        // classic drop has capacity; row drop holds 1 image
+        if (drop.classList.contains('rowDrop')){
+          if (drop.children.length>=1){ drag.originParent.appendChild(el); }
+          else { drop.appendChild(el); }
+        } else {
+          if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
+          else { drop.appendChild(el); }
+        }
       } else {
-        rackEl.appendChild(el);
+        drag.originParent.appendChild(el);
       }
       lastDragEndedAt = Date.now();
       drag=null;
@@ -867,9 +930,10 @@
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex=''; el.style.pointerEvents='';
       el.style.width=''; el.style.height='';
     }
-    function hitTestDrop(x, y){
-      const drops = Array.from(document.querySelectorAll('.drop'));
+    function hitTestDrop(x, y, rowScope){
+      const drops = Array.from(document.querySelectorAll('.drop, .rowDrop'));
       for(const d of drops){
+        if (rowScope != null && d.dataset.row && d.dataset.row !== rowScope) continue; // keep within row
         const r = d.getBoundingClientRect();
         if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return d;
       }
@@ -890,6 +954,8 @@
     soloResetBtn.addEventListener('click', resetRoundPlacements);
     inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     inlineResetBtn.addEventListener('click', resetRoundPlacements);
+    rowVerify.addEventListener('click', ()=> verifyNow(false));
+    rowReset.addEventListener('click', resetRoundPlacements);
 
     btnNewRound.addEventListener('click', async ()=>{
       if(!isTeacher) return;
@@ -943,19 +1009,102 @@
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
       const per = SOLO_PER || 4;
-      const modeTxt = SOLO_SYLLABLES.length
-        ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
-        : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras');
+      const modeTxt = (MODE==='row')
+        ? `modo filas`
+        : (SOLO_SYLLABLES.length
+            ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
+            : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras'));
       const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
       const labelTxt = LABEL_STYLE==='emoji' ? ' · etiquetas: emoji' : '';
       const hideTxt = HIDE_TITLE ? ' · sin título' : '';
       soloPill.style.display = 'inline-block';
-      soloPill.textContent = `Modo individual: ${modeTxt} · ${per} por columna${wordsTxt}${labelTxt}${hideTxt}`;
+      soloPill.textContent = `Modo individual: ${modeTxt}${wordsTxt}${labelTxt}${hideTxt}`;
       soloBar.classList.remove('hidden');
+    }
+
+    function parseRows(str){
+      // gato~pato,cocodrilo;tomate~chancla,chocolate
+      return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
+        const [left, right] = seg.split('~');
+        const prompt = (left||'').trim();
+        const choices = (right||'').split(',').map(s=>s.trim()).filter(Boolean);
+        return { prompt, choices };
+      }).filter(r=>r.prompt && r.choices.length);
+    }
+
+    async function buildRowMode(){
+      currentMode = 'row';
+      columnsEl.classList.add('hidden');
+      rackSectionEl.classList.add('hidden');
+      rowModeEl.classList.remove('hidden');
+      rowActions.classList.remove('hidden');
+
+      // resolve all assets used in rows
+      const rows = parseRows(ROWS_RAW);
+      // build prompt and choice descriptors with urls
+      rowData = [];
+      rowModeEl.innerHTML = '';
+
+      // Resolve images
+      for (let i=0;i<rows.length;i++){
+        const r = rows[i];
+        const pImg = await resolveImageForWord(r.prompt);
+        if (!pImg) continue;
+
+        const choiceImgs = [];
+        for (const ch of r.choices){
+          const ci = await resolveImageForWord(ch);
+          if (ci) choiceImgs.push(ci);
+        }
+        if (!choiceImgs.length) continue;
+
+        // Preload audio for prompt + choices
+        const coresToPreload = [pImg.rawCore, ...choiceImgs.map(c=>c.rawCore)];
+        await preloadAudioForCores(coresToPreload);
+
+        // Build DOM for the row
+        const line = document.createElement('div');
+        line.className = 'rowLine';
+
+        const promptWrap = document.createElement('div');
+        promptWrap.className = 'rowPrompt';
+        const pCard = document.createElement('div');
+        pCard.className = 'card';
+        pCard.innerHTML = `<img alt="" src="${pImg.url}"><div class="cap" style="display:${ROW_TITLE?'block':'none'}">${ROW_TITLE?markersToPretty(pImg.rawCore):'&nbsp;'}</div>`;
+        pCard.addEventListener('click', ()=> playWordAudio(pImg.rawCore));
+        promptWrap.appendChild(pCard);
+
+        const drop = document.createElement('div');
+        drop.className = 'rowDrop';
+        drop.dataset.row = String(i);
+
+        const rack = document.createElement('div');
+        rack.className = 'rowRack';
+        rack.dataset.row = String(i);
+
+        line.appendChild(promptWrap);
+        line.appendChild(drop);
+        line.appendChild(rack);
+        rowModeEl.appendChild(line);
+
+        const cards = choiceImgs.map(ci => ({
+          id: crypto.randomUUID(),
+          imgUrl: ci.url,
+          coreRaw: ci.rawCore
+        }));
+        cards.forEach(c=> rack.appendChild(renderCard(c,{rowCard:true,rowIndex:i,rowScope:true})));
+
+        rowData.push({ prompt:pImg, dropEl:drop, rackEl:rack, cards });
+      }
     }
 
     function startSoloRound(){
       usedSet = new Set();
+      if (MODE==='row'){
+        buildRowMode();
+        return;
+      }
+
       const hasSyll = SOLO_SYLLABLES.length > 0;
       const per = SOLO_PER || 4;
       document.body.classList.toggle('one-per', per === 1);
@@ -969,6 +1118,12 @@
         payload = buildRoundFromLetters(SOLO_LETTERS, per);
       }
 
+      currentMode = 'classic';
+      rowModeEl.classList.add('hidden');
+      rowActions.classList.add('hidden');
+      columnsEl.classList.remove('hidden');
+      rackSectionEl.classList.remove('hidden');
+
       buildColumns(payload.columns);
       setCards(payload.cards);
       clearAllPlacements();
@@ -978,13 +1133,14 @@
       if (SOLO_MODE) {
         setPanelsForSolo();
         await ensureStorageLoaded();
-        if(imageFiles.length===0) return;
+        if(imageFiles.length===0 && MODE!=='row') return;
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
       }
 
-      // default (teacher/student UI)
+      // default (teacher/student UI for classic grid only)
+      currentMode = 'classic';
       modeToggle.checked = false;
       isTeacher = false;
       teacherPanel.classList.add('hidden');
