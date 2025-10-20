@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="es">
 <head>
   <meta charset="utf-8" />
@@ -94,7 +94,7 @@
 
     .celebrationCanvas{position:fixed;inset:0;pointer-events:none;z-index:50}
 
-    /* ---------- NEW: Row Picture Mode ---------- */
+    /* ---------- Row Picture Mode ---------- */
     #rowMode{margin-top:14px;display:grid;gap:14px}
     .rowLine{
       display:grid;
@@ -112,7 +112,31 @@
     .rowRack{display:flex;gap:8px;flex-wrap:wrap}
     .rowCard{width:150px}
     .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
-    /* keep row cards within their row rack unless dropped in that row's drop */
+
+    /* ---------- Row-mode compact: smaller so rows fit on one screen ---------- */
+    body.row-compact .wrap { padding-top:6px; }
+    body.row-compact header { border-bottom-width:1px; }
+    body.row-compact .soloBar { padding:6px; }
+    body.row-compact .columns { gap:12px; }
+
+    body.row-compact #rowMode { gap:10px; }
+    body.row-compact .rowLine{
+      grid-template-columns: 150px 140px 1fr;
+      padding:8px;
+      gap:10px;
+      border-radius:10px;
+      box-shadow:0 3px 10px rgba(0,0,0,.045);
+    }
+    body.row-compact .rowDrop{
+      height:120px;
+      min-height:120px;
+      padding:6px;
+      border-radius:10px;
+    }
+    body.row-compact .rowRack{ gap:6px; }
+    body.row-compact .rowCard{ width:120px; }
+    body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
+    body.row-compact .bankActions{ margin-top:6px; }
   </style>
 </head>
 <body>
@@ -182,7 +206,7 @@
     <!-- Classic columns container -->
     <div id="columns" class="columns"></div>
 
-    <!-- NEW: Row picture mode container -->
+    <!-- Row picture mode container -->
     <section id="rowMode" class="hidden"></section>
     <div id="rowActions" class="bankActions hidden">
       <button id="rowVerify" class="btn outline">Verificar</button>
@@ -227,7 +251,7 @@
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
     // Row mode params
-    const ROWS_RAW   = qs.get('rows') || ''; // gato~pato,cocodrilo;tomate~chancla,chocolate
+    const ROWS_RAW   = qs.get('rows') || ''; // e.g.: gato~pato,cocodrilo;tomate~chancla,chocolate
     const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
 
     // SOLO if any of these are present OR mode=row
@@ -508,7 +532,6 @@
         imageFiles = [];
         if (MODE==='row'){
           // Row mode resolves only what is referenced; classic modes may still need full list.
-          // We'll lazily resolve row assets later.
           imageFiles = await listAllImagesJpg(); // keeps classic features working if user switches params
         } else if (SOLO_WORDS.length){
           const found = [];
@@ -769,26 +792,25 @@
       requestAnimationFrame(tick);
     }
 
-function everythingCorrect(){
-  if (currentMode==='row'){
-    // Celebrate when each row has its correct choice locked in the drop.
-    for (const r of rowData){
-      const locked = r.dropEl.querySelectorAll('.card.locked').length;
-      if (locked !== 1) return false;
+    function everythingCorrect(){
+      if (currentMode==='row'){
+        // Celebrate when each row has its correct choice locked in the drop.
+        for (const r of rowData){
+          const locked = r.dropEl.querySelectorAll('.card.locked').length;
+          if (locked !== 1) return false;
+        }
+        return true;
+      }
+
+      // Classic modes (unchanged)
+      const inRack = rackEl.querySelectorAll('.card').length;
+      if(inRack>0) return false;
+      const anyBad = document.querySelector('.drop .card.bad');
+      if(anyBad) return false;
+      const placed = document.querySelectorAll('.drop .card').length;
+      const locked = document.querySelectorAll('.drop .card.locked').length;
+      return placed>0 && placed===locked;
     }
-    return true;
-  }
-
-  // Classic modes (unchanged)
-  const inRack = rackEl.querySelectorAll('.card').length;
-  if(inRack>0) return false;
-  const anyBad = document.querySelector('.drop .card.bad');
-  if(anyBad) return false;
-  const placed = document.querySelectorAll('.drop .card').length;
-  const locked = document.querySelectorAll('.drop .card.locked').length;
-  return placed>0 && placed===locked;
-}
-
 
     function verifyNow(fromBroadcast){
       if (currentMode==='row'){
@@ -1036,6 +1058,10 @@ function everythingCorrect(){
 
     async function buildRowMode(){
       currentMode = 'row';
+
+      // enable compact sizing so rows fit on screen
+      document.body.classList.add('row-compact');
+
       columnsEl.classList.add('hidden');
       rackSectionEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
@@ -1043,7 +1069,6 @@ function everythingCorrect(){
 
       // resolve all assets used in rows
       const rows = parseRows(ROWS_RAW);
-      // build prompt and choice descriptors with urls
       rowData = [];
       rowModeEl.innerHTML = '';
 
@@ -1106,6 +1131,9 @@ function everythingCorrect(){
         buildRowMode();
         return;
       }
+
+      // leaving row mode: remove compact class if present
+      document.body.classList.remove('row-compact');
 
       const hasSyll = SOLO_SYLLABLES.length > 0;
       const per = SOLO_PER || 4;
