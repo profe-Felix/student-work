@@ -183,70 +183,71 @@
     const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
-    const IMAGES_BUCKET = "lettersort-images";
-    const AUDIO_BUCKET  = "lettersort-audio";
-    const IMAGES_PREFIX = "";
-    const AUDIO_PREFIX  = "";
+    const DEFAULT_IMAGES_BUCKET = "lettersort-images";
+    const DEFAULT_AUDIO_BUCKET  = "lettersort-audio";
+    const DEFAULT_IMAGES_PREFIX = "";
+    const DEFAULT_AUDIO_PREFIX  = "";
 
     // URL params
     const qs = new URLSearchParams(location.search);
-    const IB = qs.get('ib') || IMAGES_BUCKET;
-    const AB = qs.get('ab') || AUDIO_BUCKET;
-    const IP = qs.get('ip') || IMAGES_PREFIX;
-    const AP = qs.get('ap') || AUDIO_PREFIX;
+    const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
+    const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
+    const IP = qs.get('ip') || DEFAULT_IMAGES_PREFIX;
+    const AP = qs.get('ap') || DEFAULT_AUDIO_PREFIX;
 
     const SOLO_LETTERS   = (qs.get('letters')   || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
     const SOLO_SYLLABLES = (qs.get('syllables') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-    const SOLO_PER  = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
-    const SOLO_WORDS= (qs.get('words') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-    const HIDE_TITLE = (qs.get('hidetitle') || '').toLowerCase() === 'true';
-    const LABEL_STYLE = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
+    const SOLO_PER       = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
+    const SOLO_WORDS     = (qs.get('words') || '').split(',').map(s => s.trim()).filter(Boolean);
+    const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
+    const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
-    const SOLO_MODE = (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0);
+    // SOLO if any of these are present
+    const SOLO_MODE = (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     /******** UI refs ********/
-    const storageWarn = document.getElementById('storageWarn');
-    const modeToggle = document.getElementById('modeToggle');
-    const teacherPanel = document.getElementById('teacherPanel');
-    const studentPanel = document.getElementById('studentPanel');
-    const btnJoin = document.getElementById('btnJoin');
-    const roomCodeEl = document.getElementById('roomCode');
+    const storageWarn   = document.getElementById('storageWarn');
+    const modeToggle    = document.getElementById('modeToggle');
+    const teacherPanel  = document.getElementById('teacherPanel');
+    const studentPanel  = document.getElementById('studentPanel');
+    const btnJoin       = document.getElementById('btnJoin');
+    const roomCodeEl    = document.getElementById('roomCode');
     const studentRoomEl = document.getElementById('studentRoom');
-    const btnStudentJoin = document.getElementById('btnStudentJoin');
-    const letterPicker = document.getElementById('letterPicker');
+    const btnStudentJoin= document.getElementById('btnStudentJoin');
+    const letterPicker  = document.getElementById('letterPicker');
     const cardsPerColEl = document.getElementById('cardsPerCol');
-    const columnsEl = document.getElementById('columns');
-    const rackEl = document.getElementById('rack');
-    const btnNewRound = document.getElementById('btnNewRound');
-    const btnVerify = document.getElementById('btnVerify');
-    const btnReset = document.getElementById('btnReset');
-    const soloPill = document.getElementById('soloPill');
+    const columnsEl     = document.getElementById('columns');
+    const rackEl        = document.getElementById('rack');
+    const btnNewRound   = document.getElementById('btnNewRound');
+    const btnVerify     = document.getElementById('btnVerify');
+    const btnReset      = document.getElementById('btnReset');
+    const soloPill      = document.getElementById('soloPill');
 
     // Solo toolbar refs
-    const soloBar = document.getElementById('soloBar');
-    const soloNewRoundBtn = document.getElementById('soloNewRound');
-    const soloVerifyBtn   = document.getElementById('soloVerify');
-    const soloResetBtn    = document.getElementById('soloReset');
+    const soloBar        = document.getElementById('soloBar');
+    const soloNewRoundBtn= document.getElementById('soloNewRound');
+    const soloVerifyBtn  = document.getElementById('soloVerify');
+    const soloResetBtn   = document.getElementById('soloReset');
 
     // Inline (under bank)
-    const inlineVerifyBtn = document.getElementById('inlineVerify');
-    const inlineResetBtn  = document.getElementById('inlineReset');
+    const inlineVerifyBtn= document.getElementById('inlineVerify');
+    const inlineResetBtn = document.getElementById('inlineReset');
 
     /******** State ********/
     let ROOM = null, channel = null, isTeacher = false;
-    // imageFiles entry will include:
+
+    // imageFiles entry:
     // { name, path, url, stem, rawCore, core, initial }
     let imageFiles = [];
-    // audioMap: key = rawCore (exact picture stem without _pic, preserves marker dots), val = public URL (.webm)
-    const audioMap = new Map();
-    // wordAudioCache: rawCore -> HTMLAudioElement (preloaded)
-    const wordAudioCache = new Map();
+    // audio map and cache
+    const audioUrlByRawCore = new Map();     // rawCore -> mp3 URL
+    const audioElByRawCore  = new Map();     // rawCore -> preloaded HTMLAudioElement
 
     let currentCols = [], currentCards = [], usedSet = new Set();
 
-    /******** Accent/marker helpers ********/
+    /******** Helpers ********/
     function markersToPretty(s){
       return (s||'')
         .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
@@ -275,7 +276,7 @@
       return s[0] || '';
     }
 
-    /******** Syllabify (same rules from Elkonin) ********/
+    // Syllabify rules (from your Elkonin page)
     function syllabifyEs(wordRaw){
       const word = (wordRaw || '').toLowerCase();
       const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
@@ -341,26 +342,23 @@
       return normalizeMarkers(first);
     }
 
-    /******** Public URL existence check (GET tiny range) ********/
+    /******** Public URL existence check (GET with Range) ********/
     async function publicUrlIfExists(bucket, path){
       const { data } = client.storage.from(bucket).getPublicUrl(path);
       const url = data?.publicUrl;
       if(!url) return null;
       try {
-        // Try to fetch a byte; if 200, it exists
         const r = await fetch(url, { method:'GET', headers:{ Range:'bytes=0-0' } });
         if (r.ok) return url;
       } catch {}
       return null;
     }
 
-    /******** Image fast resolver (JPG only) ********/
+    /******** Image resolver (JPG only) ********/
     function jpgCandidatesForWord(word){
-      // Try marker form, pretty accented form, and plain (no diacritics) form
       const wMarker = (word||'').toLowerCase();
       const wPretty = markersToPretty(word||'').toLowerCase();
       const wPlain  = stripDiacritics(wPretty);
-
       const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
       const names = [
         `${wMarker}_pic.jpg`,
@@ -375,14 +373,14 @@
         if (url) {
           const name = p.split('/').pop();
           const stem = stemOf(name);                 // e.g. tele..fono_pic
-          const rawCore = stripImageSuffix(stem);    // e.g. tele..fono   (KEEP markers!)
+          const rawCore = stripImageSuffix(stem);    // e.g. tele..fono
           return {
             name,
             path: p,
             url,
             stem,
             rawCore,
-            core: normalizeMarkers(rawCore),         // normalized for grouping/initials
+            core: normalizeMarkers(rawCore),
             initial: initialFromStem(stem)
           };
         }
@@ -390,15 +388,6 @@
       return null;
     }
 
-    /******** Audio resolver (only .webm, using rawCore) ********/
-    async function resolveAudioForRawCore(rawCore){
-      const prefix = AP ? `${AP.replace(/\/$/,'')}/` : '';
-      const p = `${prefix}${rawCore}.webm`;
-      const url = await publicUrlIfExists(AB, p);
-      return url; // null if not found
-    }
-
-    /******** Bucket list (fallback) ********/
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
       let out = [], offset = 0, limit = 100;
@@ -410,7 +399,6 @@
         const items = data || [];
         for (const it of items) {
           const fullpath = path ? `${path.replace(/\/$/,'')}/${it.name}` : it.name;
-          // If entry is a "folder" (no metadata), recurse
           if (!it.metadata) {
             out.push(...(await listAll(bucket, fullpath)));
           } else {
@@ -422,7 +410,6 @@
       }
       return out;
     }
-
     async function listAllImagesJpg(){
       const files = await listAll(IB, IP);
       const out = [];
@@ -431,8 +418,8 @@
         if (extOf(base) !== 'jpg') continue;  // JPG only
         const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
         if (data?.publicUrl){
-          const stem = stemOf(base);               // e.g. tele..fono_pic
-          const rawCore = stripImageSuffix(stem);  // e.g. tele..fono
+          const stem = stemOf(base);
+          const rawCore = stripImageSuffix(stem);
           out.push({
             name: base,
             path: f.fullpath,
@@ -447,19 +434,56 @@
       return out;
     }
 
+    /******** Audio resolver (only .mp3, rawCore.mp3) ********/
+    async function resolveAudioForRawCore(rawCore){
+      const prefix = AP ? `${AP.replace(/\/$/,'')}/` : '';
+      const p = `${prefix}${rawCore}.mp3`;
+      const url = await publicUrlIfExists(AB, p);
+      return url; // null if not found
+    }
+    async function ensureAudioUrl(rawCore){
+      if (audioUrlByRawCore.has(rawCore)) return audioUrlByRawCore.get(rawCore);
+      const url = await resolveAudioForRawCore(rawCore);
+      if (url) audioUrlByRawCore.set(rawCore, url);
+      return url;
+    }
+    async function preloadRoundAudio(){
+      const tasks = currentCards.map(async c=>{
+        const url = await ensureAudioUrl(c.coreRaw);
+        if (url && !audioElByRawCore.has(c.coreRaw)){
+          const a = new Audio();
+          a.preload = 'auto';
+          a.src = url;
+          try{ a.load(); }catch{}
+          audioElByRawCore.set(c.coreRaw, a);
+        }
+      });
+      try { await Promise.allSettled(tasks); } catch {}
+    }
+    async function playWordAudio(rawCore){
+      let a = audioElByRawCore.get(rawCore);
+      if (!a){
+        const url = await ensureAudioUrl(rawCore);
+        if (!url) return;
+        a = new Audio(url);
+        audioElByRawCore.set(rawCore, a);
+      }
+      try{ a.currentTime = 0; }catch{}
+      try{ await a.play(); }catch{}
+    }
+
     /******** Storage bootstrap ********/
     async function ensureStorageLoaded(){
       try{
         imageFiles = [];
         if (SOLO_WORDS.length){
-          // Fast path: resolve only requested words (JPG only)
+          // Fast path: resolve only requested words
           const found = [];
           for (const w of SOLO_WORDS){
             const f = await resolveImageForWord(w);
             if (f) found.push(f);
           }
-          // If any missing, fall back to listing all JPGs once
-          imageFiles = found.length === SOLO_WORDS.length ? found : await listAllImagesJpg();
+          imageFiles = (found.length === SOLO_WORDS.length) ? found : await listAllImagesJpg();
         } else {
           imageFiles = await listAllImagesJpg();
         }
@@ -474,8 +498,7 @@
       }
     }
 
-    /******** Realtime ********/
-    let channel = null;
+    /******** Realtime (teacher/student only) ********/
     async function joinRoom(room){
       if(channel){ try{ await channel.unsubscribe(); }catch{} }
       ROOM = (room||'').trim();
@@ -507,7 +530,6 @@
 
     /******** Labels (modular) ********/
     function labelTextFor(letter, type){
-      // type: 'is' | 'not'
       if (LABEL_STYLE === 'emoji') {
         return type==='is' ? `👍 Sílaba con /${letter}/` : `👎 Sílaba sin /${letter}/`;
       }
@@ -603,7 +625,6 @@
     function setOneRowGrid(colsCount){
       columnsEl.style.gridTemplateColumns = `repeat(${colsCount}, minmax(140px, 1fr))`;
     }
-
     function renderHeaderHTML(col){
       if (col.key.startsWith('syll:')) {
         if (HIDE_TITLE) return '';
@@ -612,7 +633,6 @@
       }
       return `<h2>${col.label}</h2>`;
     }
-
     function buildColumns(columns){
       currentCols = columns;
       columnsEl.innerHTML='';
@@ -634,8 +654,7 @@
       rackEl.innerHTML='';
       const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
-      // 🔊 Preload word audio for this round (instant on tap)
-      preloadRoundAudio();
+      preloadRoundAudio(); // 🔊 preload mp3s for instant taps
     }
 
     let lastDragEndedAt = 0;
@@ -645,14 +664,11 @@
       el.className='card';
       el.dataset.id=card.id;
       el.setAttribute('tabindex','0');
-      // No lazy to avoid Edge's intervention note and to keep it simple here
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
-
       el.addEventListener('click', async ()=>{
         if (Date.now() - lastDragEndedAt < 150) return;
         playWordAudio(card.coreRaw);
       });
-
       makeDraggable(el);
       return el;
     }
@@ -668,7 +684,7 @@
       clearAllPlacements();
     }
 
-    /* Confetti (slightly fast) */
+    /* Confetti (medium-fast) */
     function celebrate(){
       const cvs = document.createElement('canvas');
       cvs.className = 'celebrationCanvas';
@@ -747,13 +763,10 @@
           const card = currentCards.find(c=>c.id===cardEl.dataset.id);
           if(!card) return;
 
-          const coreRaw = card.coreRaw;          // keep markers for audio; normalize for logic if needed
-          const coreNorm = normalizeMarkers(coreRaw);
-
+          const coreRaw = card.coreRaw;
           let ok = false;
           if (target.type === 'syll') {
-            const firstSyl = firstSyllableNormalized(coreRaw);
-            ok = (firstSyl === target.syll);
+            ok = (firstSyllableNormalized(coreRaw) === target.syll);
           } else {
             const initial = initialFromStem(coreRaw);
             ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
@@ -770,7 +783,7 @@
       }
     }
 
-    // ----- DnD (fixed-size during drag) -----
+    // ----- Drag & Drop (fixed size during drag) -----
     let drag=null;
     function makeDraggable(el){
       el.style.touchAction='none';
@@ -870,42 +883,7 @@
       cardEl.replaceWith(clone);
     }
 
-    /******** Audio: preload & play ********/
-    function apPrefix(){ return AP ? `${AP.replace(/\/$/,'')}/` : ''; }
-    async function ensureAudioFor(rawCore){
-      if (audioMap.has(rawCore)) return audioMap.get(rawCore);
-      const url = await resolveAudioForRawCore(rawCore);
-      if (url) audioMap.set(rawCore, url);
-      return url;
-    }
-    async function preloadRoundAudio(){
-      const tasks = currentCards.map(async c=>{
-        const url = await ensureAudioFor(c.coreRaw);
-        if (url && !wordAudioCache.has(c.coreRaw)){
-          const a = new Audio();
-          a.preload = 'auto';
-          a.src = url;
-          try{ a.load(); }catch{}
-          wordAudioCache.set(c.coreRaw, a);
-        }
-      });
-      try { await Promise.allSettled(tasks); } catch {}
-    }
-    async function playWordAudio(rawCore){
-      // prefer preloaded element
-      let a = wordAudioCache.get(rawCore);
-      if (!a){
-        const url = await ensureAudioFor(rawCore);
-        if (!url) return;
-        a = new Audio(url);
-        wordAudioCache.set(rawCore, a);
-      }
-      try{ a.currentTime = 0; }catch{}
-      try{ await a.play(); }catch{}
-    }
-
     /******** Controls wiring ********/
-    let isTeacher = false, ROOM = null;
     document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
     document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
     soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
@@ -964,18 +942,16 @@
       document.querySelector('.switch').classList.add('hidden');
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
-      if (SOLO_MODE) {
-        const per = SOLO_PER || 4;
-        const modeTxt = SOLO_SYLLABLES.length
-          ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
-          : `letras=${SOLO_LETTERS.join(', ')}`;
-        const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
-        const labelTxt = LABEL_STYLE==='emoji' ? ' · etiquetas: emoji' : '';
-        const hideTxt = HIDE_TITLE ? ' · sin título' : '';
-        soloPill.style.display = 'inline-block';
-        soloPill.textContent = `Modo individual: ${modeTxt} · ${per} por columna${wordsTxt}${labelTxt}${hideTxt}`;
-        soloBar.classList.remove('hidden');
-      }
+      const per = SOLO_PER || 4;
+      const modeTxt = SOLO_SYLLABLES.length
+        ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
+        : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras');
+      const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
+      const labelTxt = LABEL_STYLE==='emoji' ? ' · etiquetas: emoji' : '';
+      const hideTxt = HIDE_TITLE ? ' · sin título' : '';
+      soloPill.style.display = 'inline-block';
+      soloPill.textContent = `Modo individual: ${modeTxt} · ${per} por columna${wordsTxt}${labelTxt}${hideTxt}`;
+      soloBar.classList.remove('hidden');
     }
 
     function startSoloRound(){
@@ -1003,7 +979,6 @@
         setPanelsForSolo();
         await ensureStorageLoaded();
         if(imageFiles.length===0) return;
-
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
