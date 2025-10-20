@@ -16,7 +16,7 @@
     :root{--bg:#f7f7fb;--ink:#111;--muted:#666;--brand:#2563eb;--ok:#16a34a;--bad:#dc2626;--card:#fff;--drop:#eef2ff}
     html,body{height:100%}
     body{margin:0;font:16px/1.45 Andika, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;background:var(--bg);color:var(--ink)}
-    .wrap{max-width:1100px;margin:0 auto;padding:12px}
+    .wrap{max-width:1200px;margin:0 auto;padding:12px}
     header{position:sticky;top:0;background:#fff;border-bottom:1px solid #e5e7eb;z-index:5}
     .row{display:flex;gap:12px;align-items:center}
     .brand{font-weight:700}
@@ -38,9 +38,9 @@
     .letters button{min-width:36px;height:36px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
     .letters button.active{background:var(--brand);color:#fff;border-color:transparent}
 
-    main{max-width:1100px;margin:14px auto;padding:0 12px}
+    main{max-width:1200px;margin:14px auto;padding:0 12px}
 
-    /* One-row columns (classic/letters/syllables modes) */
+    /* Classic columns */
     .columns{
       display:grid;
       gap:16px;
@@ -51,7 +51,6 @@
     .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px;scroll-snap-align:start}
     .col header{display:flex;align-items:center;justify-content:center;margin-bottom:10px}
 
-    /* Syllable tile */
     .syllTile{
       min-width:110px;min-height:78px;padding:10px 14px;
       background:#6dd0ff;color:#000;font-size:38px;line-height:1;border-radius:18px;
@@ -78,51 +77,50 @@
     .card.bad{outline:3px solid var(--bad)}
     .locked{opacity:.9}
 
-    /* Grow only after drop AND only when percategory=1 (classic columns only) */
     .one-per .drop .card{width:100%}
     .card.dragging{width:150px !important; height:auto !important}
 
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-    /* Solo toolbar */
     .soloBar{position:sticky;top:56px;z-index:4;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 10px rgba(0,0,0,.04)}
-
-    /* Verify under the bank */
     .bankActions{display:flex;gap:8px;align-items:center;margin-top:10px}
 
     .celebrationCanvas{position:fixed;inset:0;pointer-events:none;z-index:50}
 
     /* ---------- Row Picture Modes ---------- */
     #rowMode{margin-top:14px;display:grid;gap:14px}
+
     .rowLine{
       display:grid;
-      grid-template-columns: 170px 170px 1fr; /* default for 3-col row mode (prompt) */
+      grid-template-columns: 170px 170px 1fr; /* prompt-row mode */
       align-items:center;
       gap:14px;
       background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px;
       box-shadow:0 4px 14px rgba(0,0,0,.05)
     }
 
-    /* row-alliteration: let the left (drop) column expand to fit its cards */
-    .rowLine.twoCols{ grid-template-columns: max-content 1fr; }
-    .rowPrompt{display:flex;justify-content:center}
-
+    /* Row Alliteration: two columns (DROP grows with content) */
+    .rowLine.twoCols{
+      grid-template-columns: minmax(220px, max-content) 1fr;
+      align-items:start;
+    }
     .rowDrop{
       min-height:160px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
-      display:flex;flex-wrap:wrap;gap:8px;
-      align-items:center;justify-content:flex-start;padding:6px;
-      inline-size:max-content; /* grow to fit children width */
-      min-inline-size:220px;  /* nice empty-state size */
+      display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;align-items:stretch;
+      padding:8px;
     }
-    /* prevent shrinking of cards inside the drop (keeps image height consistent) */
-    .rowDrop .card{ flex:0 0 auto; }
+    /* Make DROP expand to cards instead of shrinking them (rowalli) */
+    .rowLine.twoCols .rowDrop{
+      width:max-content;       /* grows to fit tiles */
+      max-width:100%;          /* but never exceed container width */
+    }
 
-    .rowRack{display:flex;gap:8px;flex-wrap:wrap}
+    .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
     .rowCard{width:150px}
     .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
 
-    /* ---------- Row-mode compact (still allow autowidth in twoCols) ---------- */
+    /* ---------- Compact tweaks (mobile) ---------- */
     body.row-compact .wrap { padding-top:6px; }
     body.row-compact header { border-bottom-width:1px; }
     body.row-compact .soloBar { padding:6px; }
@@ -136,9 +134,7 @@
       border-radius:10px;
       box-shadow:0 3px 10px rgba(0,0,0,.045);
     }
-    /* keep auto-growing behavior in compact row-alliteration too */
-    body.row-compact .rowLine.twoCols{ grid-template-columns: max-content 1fr; }
-
+    body.row-compact .rowLine.twoCols{ grid-template-columns: minmax(150px, max-content) 1fr; }
     body.row-compact .rowDrop{
       min-height:120px;
       padding:6px;
@@ -248,7 +244,7 @@
 
     // URL params
     const qs = new URLSearchParams(location.search);
-    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', or classic
+    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', or classic
     const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
     const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
     const IP = qs.get('ip') || DEFAULT_IMAGES_PREFIX;
@@ -262,11 +258,13 @@
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
     // Row modes params
-    const ROWS_RAW   = qs.get('rows') || ''; // e.g.: "gato,pato,galleta,rana;tomate,tenedor,tigre,oso"
-    const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true'; // ignored in rowalli (no titles)
+    const ROWS_RAW   = qs.get('rows') || ''; // "gato,pato,galleta,rana;tomate,tenedor,tigre,oso"
+    const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true'; // ignored for rowalli
 
     // SOLO if any of these are present OR a row mode
-    const SOLO_MODE = MODE==='row' || MODE==='rowalli' || (SOLO_LETTERS.length>0) || (SOLO_SYLLABLES.length>0) || (SOLO_WORDS.length>0);
+    const SOLO_MODE =
+      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' ||
+      (SOLO_LETTERS.length>0) || (SOLO_SYLLABLES.length>0) || (SOLO_WORDS.length>0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -445,8 +443,8 @@
         const url = await publicUrlIfExists(IB, p);
         if (url) {
           const name = p.split('/').pop();
-          const stem = stemOf(name);                 // e.g. tele..fono_pic
-          const rawCore = stripImageSuffix(stem);    // e.g. tele..fono
+          const stem = stemOf(name);
+          const rawCore = stripImageSuffix(stem);
           return {
             name, path:p, url, stem,
             rawCore, core: normalizeMarkers(rawCore),
@@ -541,7 +539,7 @@
     async function ensureStorageLoaded(){
       try{
         imageFiles = [];
-        if (MODE==='row' || MODE==='rowalli'){
+        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort'){
           imageFiles = await listAllImagesJpg();
         } else if (SOLO_WORDS.length){
           const found = [];
@@ -574,7 +572,6 @@
       channel = client.channel(`lettersort:${ROOM}`);
       channel.on('broadcast', { event:'ROUND' }, p=>{
         const d=p.payload;
-        // only classic grid is synced; row modes are solo-only
         buildColumns(d.columns);
         setCards(d.cards);
         clearAllPlacements();
@@ -745,7 +742,7 @@
       }
     }
 
-    /* Confetti (medium-fast) */
+    /* Confetti */
     function celebrate(){
       const cvs = document.createElement('canvas');
       cvs.className = 'celebrationCanvas';
@@ -803,7 +800,6 @@
 
     /******** Row helpers ********/
     function parseRows(str){
-      // For row mode with prompt: "gato~pato,cocodrilo;tomate~chancla,chocolate"
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const [left, right] = seg.split('~');
         const prompt = (left||'').trim();
@@ -813,7 +809,6 @@
     }
 
     function parseAlliGroups(str){
-      // For row-alliteration: "gato,pato,galleta,rana;tomate,tenedor,tigre,oso"
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const items = seg.split(',').map(s=>s.trim()).filter(Boolean);
         return items;
@@ -821,7 +816,6 @@
     }
 
     function majorityInitial(rawCores){
-      // returns {initial, count}
       const m = new Map();
       for (const rc of rawCores){
         const ini = initialFromStem(rc);
@@ -832,7 +826,7 @@
       return { initial: bestI || '', count: bestC<0 ? 0 : bestC };
     }
 
-    /******** Row: prompt+choices (existing) ********/
+    /******** Row: prompt+choices ********/
     async function buildRowMode(){
       currentMode = 'row';
       document.body.classList.add('row-compact');
@@ -911,7 +905,6 @@
       for (let i=0;i<groups.length;i++){
         const names = groups[i];
 
-        // Resolve images for all items in the group
         const imgs = [];
         for (const w of names){
           const f = await resolveImageForWord(w);
@@ -919,13 +912,10 @@
         }
         if (imgs.length < 2) continue;
 
-        // Determine the majority initial
         const { initial: majInitial, count: majCount } = majorityInitial(imgs.map(x=>x.rawCore));
 
-        // Preload audio for all items
         await preloadAudioForCores(imgs.map(x=>x.rawCore));
 
-        // Build DOM: just DROP + RACK (two columns)
         const line = document.createElement('div');
         line.className = 'rowLine twoCols';
 
@@ -948,7 +938,6 @@
         }));
         cards.forEach(c=> rack.appendChild(renderCard(c,{rowCard:true,rowIndex:i,rowScope:true})));
 
-        // Store per-row meta for verification
         rowData.push({
           type:'rowalli',
           dropEl: drop,
@@ -1006,7 +995,6 @@
 
       if (currentMode==='rowalli'){
         rowData.forEach((r)=>{
-          // Check ALL cards currently in the drop
           [...r.dropEl.children].forEach(cardEl=>{
             const card = r.cards.find(c=>c.id===cardEl.dataset.id);
             if (!card) return;
@@ -1053,7 +1041,7 @@
       }
     }
 
-    // ----- Drag & Drop (fixed size during drag) -----
+    // ----- Drag & Drop -----
     let drag=null;
     function makeDraggable(el, rowScope){
       el.style.touchAction='none';
@@ -1110,11 +1098,10 @@
 
       const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
       const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
-      document.body.classList.toggle('one-per', perCol === 1); // fixed variable name
+      document.body.classList.toggle('one-per', perCol === 1);
 
       if(drop){
         if (drop.classList.contains('rowDrop')){
-          // rowDrop holds any number for rowalli; capacity=1 for prompt rows is naturally limited by width
           if (currentMode==='row' && drop.children.length>=1){ drag.originParent.appendChild(el); }
           else { drop.appendChild(el); }
         } else {
@@ -1148,7 +1135,7 @@
     function hitTestDrop(x, y, rowScope){
       const drops = Array.from(document.querySelectorAll('.drop, .rowDrop'));
       for(const d of drops){
-        if (rowScope != null && d.dataset.row && d.dataset.row !== rowScope) continue; // keep within row
+        if (rowScope != null && d.dataset.row && d.dataset.row !== rowScope) continue;
         const r = d.getBoundingClientRect();
         if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return d;
       }
@@ -1165,16 +1152,14 @@
     /******** Controls wiring ********/
     document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
     document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
-    document.getElementById('inlineVerify').addEventListener('click', ()=> verifyNow(false));
-    document.getElementById('inlineReset').addEventListener('click', resetRoundPlacements));
-    document.getElementById('rowVerify').addEventListener('click', ()=> verifyNow(false));
-    document.getElementById('rowReset').addEventListener('click', resetRoundPlacements);
+    soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
+    soloResetBtn.addEventListener('click', resetRoundPlacements);
+    inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
+    document.getElementById('inlineReset').addEventListener('click', resetRoundPlacements);
+    rowVerify.addEventListener('click', ()=> verifyNow(false));
+    rowReset.addEventListener('click', resetRoundPlacements);
 
-    document.getElementById('soloVerify').addEventListener('click', ()=> verifyNow(false));
-    document.getElementById('soloReset').addEventListener('click', resetRoundPlacements);
-    document.getElementById('soloNewRound').addEventListener('click', ()=> startSoloRound());
-
-    document.getElementById('btnNewRound').addEventListener('click', async ()=>{
+    btnNewRound.addEventListener('click', async ()=>{
       if(!isTeacher) return;
       if(imageFiles.length===0){
         await ensureStorageLoaded();
@@ -1220,24 +1205,24 @@
 
     /******** SOLO MODE ********/
     function setPanelsForSolo() {
-      document.getElementById('teacherPanel').classList.add('hidden');
-      document.getElementById('studentPanel').classList.add('hidden');
+      teacherPanel.classList.add('hidden');
+      studentPanel.classList.add('hidden');
       document.querySelector('.switch').classList.add('hidden');
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
       const per = SOLO_PER || 4;
       const modeTxt =
         (MODE==='row')     ? `modo filas` :
-        (MODE==='rowalli') ? `aliteración por filas` :
+        (MODE==='rowalli' || MODE==='allisort') ? `aliteración por filas` :
         (SOLO_SYLLABLES.length
           ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
           : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras'));
       const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
       const labelTxt = LABEL_STYLE==='emoji' ? ' · etiquetas: emoji' : '';
       const hideTxt = HIDE_TITLE ? ' · sin título' : '';
-      document.getElementById('soloPill').style.display = 'inline-block';
-      document.getElementById('soloPill').textContent = `Modo individual: ${modeTxt}${wordsTxt}${labelTxt}${hideTxt}`;
-      document.getElementById('soloBar').classList.remove('hidden');
+      soloPill.style.display = 'inline-block';
+      soloPill.textContent = `Modo individual: ${modeTxt}${wordsTxt}${labelTxt}${hideTxt}`;
+      soloBar.classList.remove('hidden');
     }
 
     function startSoloRound(){
@@ -1246,7 +1231,7 @@
         buildRowMode();
         return;
       }
-      if (MODE==='rowalli'){
+      if (MODE==='rowalli' || MODE==='allisort'){
         buildRowAlliMode();
         return;
       }
@@ -1282,7 +1267,8 @@
       if (SOLO_MODE) {
         setPanelsForSolo();
         await ensureStorageLoaded();
-        if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli') return;
+        if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort') return;
+        soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
       }
@@ -1291,8 +1277,8 @@
       currentMode = 'classic';
       modeToggle.checked = false;
       isTeacher = false;
-      document.getElementById('teacherPanel').classList.add('hidden');
-      document.getElementById('studentPanel').classList.remove('hidden');
+      teacherPanel.classList.add('hidden');
+      studentPanel.classList.remove('hidden');
     })();
   </script>
 </body>
