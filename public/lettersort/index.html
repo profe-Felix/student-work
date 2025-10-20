@@ -769,24 +769,26 @@
       requestAnimationFrame(tick);
     }
 
-    function everythingCorrect(){
-      if (currentMode==='row'){
-        // each row must have exactly one locked card in drop; none left in racks
-        for (const r of rowData){
-          const inRack = r.rackEl.querySelectorAll('.card').length;
-          const locked = r.dropEl.querySelectorAll('.card.locked').length;
-          if (inRack>0 || locked!==1) return false;
-        }
-        return true;
-      }
-      const inRack = rackEl.querySelectorAll('.card').length;
-      if(inRack>0) return false;
-      const anyBad = document.querySelector('.drop .card.bad');
-      if(anyBad) return false;
-      const placed = document.querySelectorAll('.drop .card').length;
-      const locked = document.querySelectorAll('.drop .card.locked').length;
-      return placed>0 && placed===locked;
+function everythingCorrect(){
+  if (currentMode==='row'){
+    // Celebrate when each row has its correct choice locked in the drop.
+    for (const r of rowData){
+      const locked = r.dropEl.querySelectorAll('.card.locked').length;
+      if (locked !== 1) return false;
     }
+    return true;
+  }
+
+  // Classic modes (unchanged)
+  const inRack = rackEl.querySelectorAll('.card').length;
+  if(inRack>0) return false;
+  const anyBad = document.querySelector('.drop .card.bad');
+  if(anyBad) return false;
+  const placed = document.querySelectorAll('.drop .card').length;
+  const locked = document.querySelectorAll('.drop .card.locked').length;
+  return placed>0 && placed===locked;
+}
+
 
     function verifyNow(fromBroadcast){
       if (currentMode==='row'){
