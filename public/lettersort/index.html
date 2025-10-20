@@ -8,6 +8,8 @@
   <!-- Kid-friendly font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Preconnect to Supabase for faster fetches -->
+  <link rel="preconnect" href="https://dmlsiyyqpcupbizpxwhp.supabase.co" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
 
   <style>
@@ -382,6 +384,72 @@
       return normalizePlain(first);
     }
 
+    /******** Targeted image/audio helpers (speed-ups) ********/
+    function normalizeNameForPath(s){
+      return (s||'').toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+        .replace(/ñ/g,'n').replace(/ü/g,'u')
+        .replace(/[^a-z0-9_-]/g,'');
+    }
+    async function getPublicUrlIfExists(bucket, path){
+      const { data } = client.storage.from(bucket).getPublicUrl(path);
+      if(!data?.publicUrl) return null;
+      try { const r = await fetch(data.publicUrl, { method:'HEAD' }); if(r.ok) return data.publicUrl; } catch {}
+      return null;
+    }
+    function imageCandidates(word){
+      const base = normalizeNameForPath(word);
+      const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
+      const names = [
+        `${word.toLowerCase()}_pic`, `${base}_pic`,
+        `${word.toLowerCase()}`, `${base}`
+      ];
+      const exts = ['webp','jpg','jpeg','png','gif'];
+      const paths = [];
+      for (const n of names) for (const e of exts) paths.push(`${prefix}${n}.${e}`);
+      return paths;
+    }
+    async function resolveImageForWord(word){
+      for (const p of imageCandidates(word)) {
+        const url = await getPublicUrlIfExists(IB, p);
+        if (url) {
+          const name = p.split('/').pop();
+          const stem = name.replace(/\.[^.]+$/, '');
+          return {
+            name,
+            path: p,
+            url,
+            stem,
+            core: coreFromImageStem(stem),
+            initial: initialFromStem(stem)
+          };
+        }
+      }
+      return null;
+    }
+    const AUDIO_EXTS_ROUND = ['webm','ogg','m4a','mp3','wav'];
+    async function resolveAudioForCore(core){
+      const prefix = AP ? `${AP.replace(/\/$/,'')}/` : '';
+      for (const ext of AUDIO_EXTS_ROUND) {
+        const p = `${prefix}${core}.${ext}`;
+        const url = await getPublicUrlIfExists(AB, p);
+        if (url) return url;
+      }
+      return null;
+    }
+    async function preloadAudioForCurrentCards(){
+      const tasks = [];
+      for (const c of currentCards){
+        const core = coreFromAudioStem(c.word || '');
+        if (audioMap.has(core)) continue;
+        tasks.push((async ()=>{
+          const url = await resolveAudioForCore(core);
+          if (url) audioMap.set(core, url);
+        })());
+      }
+      try { await Promise.allSettled(tasks); } catch {}
+    }
+
     /******** Storage ********/
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
@@ -401,40 +469,42 @@
       }
       return out;
     }
+    async function listAllImages(){
+      const imgList = await listAll(IB, IP);
+      const pubImg = [];
+      for (const f of imgList) {
+        const base = f.fullpath.split('/').pop() || f.fullpath;
+        const e = extOf(base);
+        if (!['png','jpg','jpeg','webp','gif'].includes(e)) continue;
+        const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
+        if (data?.publicUrl) {
+          const stem = stemOf(base);
+          pubImg.push({
+            name: base, path: f.fullpath, url: data.publicUrl,
+            stem, core: coreFromImageStem(stem), initial: initialFromStem(stem)
+          });
+        }
+      }
+      return pubImg;
+    }
 
     async function ensureStorageLoaded(){
       try{
-        const imgList = await listAll(IB, IP);
-        const pubImg = [];
-        for (const f of imgList) {
-          const base = f.fullpath.split('/').pop() || f.fullpath;
-          const e = extOf(base);
-          if (!['png','jpg','jpeg','webp','gif'].includes(e)) continue;
-          const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
-          if (data?.publicUrl) {
-            const stem = stemOf(base);
-            pubImg.push({
-              name: base, path: f.fullpath, url: data.publicUrl,
-              stem, core: coreFromImageStem(stem), initial: initialFromStem(stem)
-            });
+        imageFiles = [];
+        if (SOLO_WORDS.length) {
+          // Fast path: resolve only requested words; fallback to full list if none found
+          const found = [];
+          for (const w of SOLO_WORDS) {
+            const f = await resolveImageForWord(w);
+            if (f) found.push(f);
           }
+          imageFiles = found.length ? found : await listAllImages();
+        } else {
+          imageFiles = await listAllImages();
         }
-        imageFiles = pubImg;
 
+        // Do NOT scan entire audio bucket; we preload only for current round
         audioMap = new Map();
-        try {
-          const audList = await listAll(AB, AP);
-          for (const f of audList) {
-            const base = f.fullpath.split('/').pop() || f.fullpath;
-            const e = extOf(base);
-            if (!['mp3','wav','m4a','ogg'].includes(e)) continue;
-            const { data } = client.storage.from(AB).getPublicUrl(f.fullpath);
-            if (data?.publicUrl) {
-              const stem = stemOf(base);
-              audioMap.set(coreFromAudioStem(stem), data.publicUrl);
-            }
-          }
-        } catch {}
 
         storageWarn.style.display = imageFiles.length ? 'none' : 'block';
         if (!imageFiles.length){
@@ -622,6 +692,9 @@
       rackEl.innerHTML='';
       const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
+
+      // 🔊 Preload only the audio needed for this round
+      preloadAudioForCurrentCards();
     }
 
     let lastDragEndedAt = 0;
@@ -631,13 +704,24 @@
       el.className='card';
       el.dataset.id=card.id;
       el.setAttribute('tabindex','0');
-      el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap">&nbsp;</div>`;
-      if(card.audioUrl){
-        el.addEventListener('click', ()=>{
-          if (Date.now() - lastDragEndedAt < 150) return;
-          new Audio(card.audioUrl).play().catch(()=>{});
-        });
-      }
+      // lazy/async helps with interactivity
+      el.innerHTML = `<img alt="" src="${card.imgUrl}" loading="lazy" decoding="async"/><div class="cap">&nbsp;</div>`;
+
+      // Audio click: use preloaded URL; fallback to resolve once if missing
+      el.addEventListener('click', async ()=>{
+        if (Date.now() - lastDragEndedAt < 150) return;
+        const core = coreFromAudioStem(card.word || '');
+        let url = audioMap.get(core);
+        if (!url) {
+          url = await resolveAudioForCore(core);
+          if (url) audioMap.set(core, url);
+        }
+        if (url) {
+          const a = new Audio(url);
+          try { a.play(); } catch {}
+        }
+      });
+
       makeDraggable(el);
       return el;
     }
@@ -653,7 +737,7 @@
       clearAllPlacements();
     }
 
-    /* Confetti: medium speed (between previous two) */
+    /* Confetti: slightly faster than medium */
     function celebrate(){
       const cvs = document.createElement('canvas');
       cvs.className = 'celebrationCanvas';
@@ -669,10 +753,10 @@
         parts.push({
           x: Math.random()*W,
           y: -20-Math.random()*H*0.2,
-          vx: (-0.8 + Math.random()*1.6),
-          vy: 1.6 + Math.random()*1.8,   // medium initial fall
+          vx: (-0.9 + Math.random()*1.8),
+          vy: 2.0 + Math.random()*2.1,   // a bit faster than before
           rot: Math.random()*Math.PI,
-          vr: (-0.18 + Math.random()*0.36),
+          vr: (-0.22 + Math.random()*0.44),
           size: 5 + Math.random()*6,
           hue: Math.floor(Math.random()*360)
         });
@@ -684,7 +768,7 @@
 
         ctx.clearRect(0,0,W,H);
         parts.forEach(p=>{
-          const gravity = 0.009;           // medium gravity
+          const gravity = 0.011;          // slightly stronger than before
           const drag    = 0.004;
           p.vy += gravity * (dt/16);
           p.vx *= (1 - drag);
@@ -851,9 +935,16 @@
     function lockCard(cardEl, card){
       const clone = cardEl.cloneNode(true);
       clone.classList.add('locked');
-      if(card?.audioUrl){
-        clone.addEventListener('click', ()=>{ new Audio(card.audioUrl).play().catch(()=>{}); });
-      }
+      // Keep audio tap on locked version as well
+      clone.addEventListener('click', async ()=>{
+        const core = coreFromAudioStem(card.word || '');
+        let url = audioMap.get(core);
+        if (!url) {
+          url = await resolveAudioForCore(core);
+          if (url) audioMap.set(core, url);
+        }
+        if (url) { const a = new Audio(url); try { a.play(); } catch {} }
+      });
       cardEl.replaceWith(clone);
     }
 
