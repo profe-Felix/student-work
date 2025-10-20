@@ -105,15 +105,23 @@
       grid-template-columns: minmax(220px, max-content) 1fr;
       align-items:start;
     }
+
+    /* START SIZE + GROWTH FOR ROW DROP */
     .rowDrop{
-      min-height:160px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
-      display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;align-items:stretch;
+      min-width: 380px;            /* ⬅ wider, obvious start on desktop */
+      min-height:160px;
+      width: max-content;          /* expand to fit dropped tiles */
+      max-width: 100%;             /* never overflow the row */
+      background: var(--drop);
+      border:2px dashed #c7d2fe;
+      border-radius:12px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-content:flex-start;
+      align-items:flex-start;
+      justify-content:flex-start;
       padding:8px;
-    }
-    /* Make DROP expand to cards instead of shrinking them (rowalli) */
-    .rowLine.twoCols .rowDrop{
-      width:max-content;       /* grows to fit tiles */
-      max-width:100%;          /* but never exceed container width */
     }
 
     .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
@@ -136,9 +144,18 @@
     }
     body.row-compact .rowLine.twoCols{ grid-template-columns: minmax(150px, max-content) 1fr; }
     body.row-compact .rowDrop{
+      min-width: 260px;            /* ⬅ clear start size in compact */
       min-height:120px;
+      width: max-content;
+      max-width: 100%;
       padding:6px;
       border-radius:10px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:6px;
+      align-content:flex-start;
+      align-items:flex-start;
+      justify-content:flex-start;
     }
     body.row-compact .rowRack{ gap:6px; }
     body.row-compact .rowCard{ width:120px; }
@@ -1152,10 +1169,16 @@
     /******** Controls wiring ********/
     document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
     document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
+    const soloVerifyBtn = document.getElementById('soloVerify');
+    const soloResetBtn = document.getElementById('soloReset');
     soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     soloResetBtn.addEventListener('click', resetRoundPlacements);
-    inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
-    document.getElementById('inlineReset').addEventListener('click', resetRoundPlacements);
+    const inlineResetBtn = document.getElementById('inlineReset');
+    const inlineVerifyBtn2 = document.getElementById('inlineVerify');
+    inlineVerifyBtn2.addEventListener('click', ()=> verifyNow(false));
+    inlineResetBtn.addEventListener('click', resetRoundPlacements);
+    const rowVerify = document.getElementById('rowVerify');
+    const rowReset = document.getElementById('rowReset');
     rowVerify.addEventListener('click', ()=> verifyNow(false));
     rowReset.addEventListener('click', resetRoundPlacements);
 
@@ -1218,8 +1241,8 @@
           ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
           : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras'));
       const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
-      const labelTxt = LABEL_STYLE==='emoji' ? ' · etiquetas: emoji' : '';
-      const hideTxt = HIDE_TITLE ? ' · sin título' : '';
+      const labelTxt = LABEL_STYLE==='emoji' ? ` · etiquetas: emoji` : '';
+      const hideTxt = HIDE_TITLE ? ` · sin título` : '';
       soloPill.style.display = 'inline-block';
       soloPill.textContent = `Modo individual: ${modeTxt}${wordsTxt}${labelTxt}${hideTxt}`;
       soloBar.classList.remove('hidden');
@@ -1268,6 +1291,7 @@
         setPanelsForSolo();
         await ensureStorageLoaded();
         if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort') return;
+        const soloNewRoundBtn = document.getElementById('soloNewRound');
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
