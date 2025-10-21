@@ -153,14 +153,14 @@ function buildUnifiedPointTimeline(strokes: Stroke[]): PointTimeline {
   return { strokes: tl, tMin: globalMin, tMax: globalMax }
 }
 
-/* ------------ source space inference (USE BACKING-STORE WHEN META MISSING) ------------ */
+/* ------------ source space inference (CSS fallback, no backing-store) ------------ */
 function inferSourceDimsFromMetaOrPdf(
   metaW:number, metaH:number,
   pdfCssW:number, pdfCssH:number,
-  pdfPxW:number, pdfPxH:number
 ) {
+  // If the student saved capture meta, trust it (points recorded in that space).
   if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
-  if (pdfPxW > 0 && pdfPxH > 0) return { sw: pdfPxW, sh: pdfPxH }
+  // Otherwise, use the PDF canvas's visible CSS size. This matches how points were captured.
   return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
 }
 
@@ -171,14 +171,16 @@ export default function PlaybackDrawer({
   const [overlay, setOverlay] = useState<OverlaySize>({
     cssW: 800, cssH: 600, dpr: window.devicePixelRatio || 1
   })
+  // CSS size of the PDF canvas
   const pdfCssRef = useRef<{ w:number; h:number }>({ w: 800, h: 600 })
-  const pdfPxRef  = useRef<{ w:number; h:number }>({ w: 800, h: 600 })
 
   const parsed = useMemo(() => parseStrokes(strokesPayload), [strokesPayload])
   const strokes = parsed.strokes
 
+  // Unified ms timeline (ink + eraser in correct order, *absolute t*)
   const pointTL = useMemo(() => buildUnifiedPointTimeline(strokes), [strokes])
 
+  // Build segments from media[] or legacy single audioUrl
   const segments: Seg[] = useMemo<Seg[]>(() => {
     if (parsed.media.length) {
       return parsed.media
@@ -198,6 +200,7 @@ export default function PlaybackDrawer({
     return []
   }, [parsed.media, audioUrl])
 
+  // Timeline zero = earliest among ink points and media starts
   const timelineZero = useMemo(() => {
     let t0 = Number.POSITIVE_INFINITY
     if (pointTL.strokes.length) t0 = Math.min(t0, pointTL.tMin)
@@ -205,12 +208,14 @@ export default function PlaybackDrawer({
     return Number.isFinite(t0) ? t0 : 0
   }, [pointTL.tMin, segments])
 
+  // Total duration = latest among ink end and media end, minus zero
   const totalMs = useMemo(() => {
     let tMax = pointTL.tMax
     for (const s of segments) tMax = Math.max(tMax, s.endSec * 1000)
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
+  // ===== Delay INK only at the start if audio comes first =====
   const PRE_INK_DRAW_DELAY_MS = 1130
   const firstInkMs =
     pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
@@ -218,15 +223,16 @@ export default function PlaybackDrawer({
     segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
   const audioFirst = firstAudioMs <= firstInkMs
 
+  // Scaling space (from source sw×sh → overlay.cssW×overlay.cssH)
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(
       parsed.metaW, parsed.metaH,
-      pdfCssRef.current.w, pdfCssRef.current.h,
-      pdfPxRef.current.w,  pdfPxRef.current.h
+      pdfCssRef.current.w, pdfCssRef.current.h
     ),
     [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH]
   )
 
+  // Refs & state (declare ONCE)
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const pdfHostRef = useRef<HTMLDivElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -237,11 +243,14 @@ export default function PlaybackDrawer({
   const [scrubMs, setScrubMs] = useState<number>(totalMs)
   const clockMsRef = useRef<number>(totalMs)
 
+  // Timer engine (declare ONCE)
   const intervalRef = useRef<number | null>(null)
   const lastWallRef = useRef<number | null>(null)
 
+  // Keep scrub range synced on payload/size changes & draw final frame
   useEffect(() => { setScrubMs(totalMs); clockMsRef.current = totalMs; drawAtRelMs(totalMs) }, [totalMs])
 
+  // If legacy single audio, set its duration on metadata
   useEffect(() => {
     const a = audioRef.current
     if (!a || !segments.length || segments[0].id !== 'legacy-0') return
@@ -271,14 +280,12 @@ export default function PlaybackDrawer({
     const syncSize = () => {
       const pdfC = findPdfCanvas()
       if (!pdfC) return
+      // CSS box only (alignment is based on CSS, not backing store)
       const rect = pdfC.getBoundingClientRect()
       const cssW = Math.max(1, Math.round(rect.width))
       const cssH = Math.max(1, Math.round(rect.height))
-      const pxW = Math.max(1, pdfC.width || Math.round(rect.width * (window.devicePixelRatio || 1)))
-      const pxH = Math.max(1, pdfC.height || Math.round(rect.height * (window.devicePixelRatio || 1)))
 
       pdfCssRef.current = { w: cssW, h: cssH }
-      pdfPxRef.current  = { w: pxW,  h: pxH }
 
       const dpr = window.devicePixelRatio || 1
       setOverlay(prev => (prev.cssW === cssW && prev.cssH === cssH && prev.dpr === dpr) ? prev : { cssW, cssH, dpr })
@@ -316,12 +323,14 @@ export default function PlaybackDrawer({
     if (c.height !== bh) c.height = bh
     const ctx = c.getContext('2d')
     if (!ctx) return null
+    // map 1 drawing unit = 1 CSS pixel
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.scale(dpr, dpr)
     return ctx
   }
 
   function withScale(ctx: CanvasRenderingContext2D, draw: () => void) {
+    // Scale FROM stroke source space (sw×sh) TO current CSS (overlay.cssW×overlay.cssH)
     const sx = overlay.cssW / Math.max(1, sw)
     const sy = overlay.cssH / Math.max(1, sh)
     ctx.save()
@@ -349,6 +358,7 @@ export default function PlaybackDrawer({
     ctx.lineJoin = 'round'
   }
 
+  // Find segment containing absolute seconds
   function findSegByAbsSec(absSec:number): { idx:number, seg:Seg } | null {
     if (!segments.length) return null
     let lo = 0, hi = segments.length - 1
@@ -362,6 +372,7 @@ export default function PlaybackDrawer({
     return null
   }
 
+  // Draw strokes up to relative time ms (0..totalMs) — converts to absolute by +timelineZero
   function drawAtRelMs(relMs:number) {
     const ctx = ensureCtx()
     if (!ctx) return
@@ -371,6 +382,7 @@ export default function PlaybackDrawer({
 
     if (!pointTL.strokes.length) return
 
+    // Delay ink by a fixed amount only at the very beginning *if* audio starts first.
     const extraDelay = audioFirst ? PRE_INK_DRAW_DELAY_MS : 0
     const cutoffAbs = timelineZero + Math.max(0, relMs - extraDelay)
 
@@ -407,6 +419,7 @@ export default function PlaybackDrawer({
     })
   }
 
+  // ==== TIMER ENGINE ====
   function stopTimer() {
     if (intervalRef.current != null) {
       window.clearInterval(intervalRef.current)
@@ -424,11 +437,14 @@ export default function PlaybackDrawer({
       const dt = now - last
       lastWallRef.current = now
 
+      // advance clock
       const next = clamp(clockMsRef.current + dt, 0, totalMs)
       clockMsRef.current = next
 
+      // draw (with pre-ink delay)
       drawAtRelMs(next)
 
+      // audio follow — NO artificial offset now
       if (syncToAudio && audioRef.current) {
         const absSec = (timelineZero + next) / 1000
         const hit = findSegByAbsSec(absSec)
@@ -452,11 +468,12 @@ export default function PlaybackDrawer({
         }
       }
 
+      // stop at end
       if (clockMsRef.current >= totalMs) {
         setPlaying(false)
         stopTimer()
       }
-    }, 16)
+    }, 16) // ~60 FPS
   }
 
   function play(fromRelMs?: number) {
@@ -475,11 +492,13 @@ export default function PlaybackDrawer({
     try { audioRef.current?.pause() } catch {}
   }
 
+  // Keep overlay updated on size/payload change when not playing
   useEffect(() => {
     if (!playing) drawAtRelMs(clockMsRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload])
 
+  // Cleanup
   useEffect(() => stopTimer, [])
 
   const hasAnyAudio = segments.length > 0
@@ -555,8 +574,8 @@ export default function PlaybackDrawer({
                 pageIndex={pageIndex}
                 onReady={(_pdf:any, canvas:HTMLCanvasElement) => {
                   const rect = canvas.getBoundingClientRect()
+                  // capture the PDF CSS size (visible box) ONLY — keeps coords in the same space as capture
                   pdfCssRef.current = { w: Math.max(1, Math.round(rect.width)), h: Math.max(1, Math.round(rect.height)) }
-                  pdfPxRef.current  = { w: Math.max(1, canvas.width), h: Math.max(1, canvas.height) }
                   const dpr = window.devicePixelRatio || 1
                   setOverlay(prev => {
                     const cssW = pdfCssRef.current.w, cssH = pdfCssRef.current.h
