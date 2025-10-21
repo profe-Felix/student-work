@@ -153,43 +153,12 @@ function buildUnifiedPointTimeline(strokes: Stroke[]): PointTimeline {
   return { strokes: tl, tMin: globalMin, tMax: globalMax }
 }
 
-/* ------------ source space inference (with DPR-normalization) ------------ */
-/**
- * Many stroke payloads store metaW/metaH in *backing store* pixels (CSS * DPR).
- * Teacher preview draws in CSS pixels. If meta looks like ~2x or ~3x the PDF's CSS size,
- * normalize by that integer factor so ink lines up with the PDF canvas.
- */
+/* ------------ source space inference (reverted to the simple, working logic) ------------ */
 function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
-  // If no meta, use current PDF CSS size
-  if (!(metaW > 10 && metaH > 10)) {
-    return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
-  }
-
-  const cssW = Math.max(1, pdfCssW)
-  const cssH = Math.max(1, pdfCssH)
-
-  // If we don't yet know the PDF's CSS size, keep meta as-is
-  if (!(cssW > 10 && cssH > 10)) {
-    return { sw: metaW, sh: metaH }
-  }
-
-  // Detect near-integer scale factor between meta and css (2x, 3x, 4x…)
-  const rx = metaW / cssW
-  const ry = metaH / cssH
-  const r  = (rx + ry) / 2
-  const nearest = Math.round(r)
-  const looksLikeIntegerScale = Math.abs(r - nearest) < 0.12 && nearest >= 2 && nearest <= 4
-
-  if (looksLikeIntegerScale) {
-    // Normalize from backing pixels back to CSS pixels
-    return {
-      sw: Math.max(1, Math.round(metaW / nearest)),
-      sh: Math.max(1, Math.round(metaH / nearest)),
-    }
-  }
-
-  // Already in the same space — keep meta
-  return { sw: metaW, sh: metaH }
+  // Prefer capture metadata if present and sane:
+  if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
+  // Otherwise fall back to the PDF's CSS size at capture time:
+  return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
 }
 
 /* =================== Component =================== */
@@ -243,15 +212,11 @@ export default function PlaybackDrawer({
   }, [pointTL.tMax, segments, timelineZero])
 
   // ===== Delay INK only at the start if audio comes first =====
-  // Positive = draw later. Start with 1600 and tweak ±100–200ms.
   const PRE_INK_DRAW_DELAY_MS = 1130
-
   const firstInkMs =
     pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
   const firstAudioMs =
     segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
-
-  // true if the first recorded event is audio (not ink)
   const audioFirst = firstAudioMs <= firstInkMs
 
   const { sw, sh } = useMemo(
@@ -379,7 +344,6 @@ export default function PlaybackDrawer({
     ctx.lineJoin = 'round'
   }
 
-  // Find segment containing absolute seconds
   function findSegByAbsSec(absSec:number): { idx:number, seg:Seg } | null {
     if (!segments.length) return null
     let lo = 0, hi = segments.length - 1
@@ -404,8 +368,6 @@ export default function PlaybackDrawer({
 
     if (!pointTL.strokes.length) return
 
-    // Delay ink by a fixed amount only at the very beginning *if* audio starts first.
-    // (If audio begins at timelineZero, the old "< firstAudioStartSec" check never fired.)
     const extraDelay = audioFirst ? PRE_INK_DRAW_DELAY_MS : 0
     const cutoffAbs = timelineZero + Math.max(0, relMs - extraDelay)
 
@@ -433,7 +395,7 @@ export default function PlaybackDrawer({
           applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
           ctx.beginPath()
           ctx.moveTo(pathPts[0].x, pathPts[0].y)
-          for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y)
+          for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pts[i].y)
           ctx.stroke()
         }
       }
@@ -443,6 +405,9 @@ export default function PlaybackDrawer({
   }
 
   // ==== TIMER ENGINE ====
+  const intervalRef = useRef<number | null>(null)
+  const lastWallRef = useRef<number | null>(null)
+
   function stopTimer() {
     if (intervalRef.current != null) {
       window.clearInterval(intervalRef.current)
@@ -460,14 +425,10 @@ export default function PlaybackDrawer({
       const dt = now - last
       lastWallRef.current = now
 
-      // advance clock
       const next = clamp(clockMsRef.current + dt, 0, totalMs)
       clockMsRef.current = next
-
-      // draw (with pre-ink delay)
       drawAtRelMs(next)
 
-      // audio follow — NO artificial offset now
       if (syncToAudio && audioRef.current) {
         const absSec = (timelineZero + next) / 1000
         const hit = findSegByAbsSec(absSec)
@@ -491,12 +452,11 @@ export default function PlaybackDrawer({
         }
       }
 
-      // stop at end
       if (clockMsRef.current >= totalMs) {
         setPlaying(false)
         stopTimer()
       }
-    }, 16) // ~60 FPS
+    }, 16)
   }
 
   function play(fromRelMs?: number) {
@@ -515,13 +475,22 @@ export default function PlaybackDrawer({
     try { audioRef.current?.pause() } catch {}
   }
 
-  // Keep overlay updated on size/payload change when not playing
+  const [syncToAudio, setSyncToAudio] = useState<boolean>(segments.length > 0)
+  const [scrubbing, setScrubbing] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const clockMsRef = useRef<number>(totalMs)
+
+  useEffect(() => {
+    setScrubMs(totalMs)
+    clockMsRef.current = totalMs
+    drawAtRelMs(totalMs)
+  }, [totalMs])
+
   useEffect(() => {
     if (!playing) drawAtRelMs(clockMsRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload])
 
-  // Cleanup
   useEffect(() => stopTimer, [])
 
   const hasAnyAudio = segments.length > 0
