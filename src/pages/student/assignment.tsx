@@ -1335,10 +1335,17 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
           )}
 
           {/* Draw layer */}
-          <div style={{
-              position:'absolute', inset:0, zIndex:10,
-              pointerEvents: (hasTask && !handMode) ? 'auto' : 'none'
-            }}>
+          <div
+            style={{
+              position:'absolute',
+              inset:0,
+              zIndex:10,
+              // receive events only in draw mode
+              pointerEvents: (hasTask && !handMode) ? 'auto' : 'none',
+              // block 1-finger browser scrolling in draw mode; 2-finger will still scroll
+              touchAction: (hasTask && !handMode) ? 'none' : 'auto',
+            }}
+          >
             <DrawCanvas
               ref={drawRef}
               width={canvasSize.w}
