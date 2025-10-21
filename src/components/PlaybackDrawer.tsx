@@ -208,30 +208,32 @@ export default function PlaybackDrawer({
     return Number.isFinite(t0) ? t0 : 0
   }, [pointTL.tMin, segments])
 
-  // Total duration = latest among ink end and media end, minus zero
-  const totalMs = useMemo(() => {
+  /* ===== Auto origin shift: use measured bias if audio starts before ink ===== */
+  const FALLBACK_AUDIO_BIAS_MS = 4130 // your known-good value
+  const firstInkMs   = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
+  const firstAudioMs = segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
+  const audioFirst   = firstAudioMs <= firstInkMs
+
+  // If audio is first, use the measured gap (ink - audio). Clamp to sane bounds.
+  // If we can’t compute it, fall back to your 4130 ms.
+  const measuredBias =
+    Number.isFinite(firstInkMs) && Number.isFinite(firstAudioMs)
+      ? Math.max(0, firstInkMs - firstAudioMs)
+      : NaN
+
+  const originShiftMs = audioFirst
+    ? (Number.isFinite(measuredBias) ? Math.min(measuredBias, 10000) : FALLBACK_AUDIO_BIAS_MS)
+    : 0
+
+  // Base duration (absolute) without any origin shift
+  const baseTotalMs = useMemo(() => {
     let tMax = pointTL.tMax
     for (const s of segments) tMax = Math.max(tMax, s.endSec * 1000)
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
-/* ===== Auto origin shift: use measured bias if audio starts before ink ===== */
-const FALLBACK_AUDIO_BIAS_MS = 4130 // your known-good value
-const firstInkMs   = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
-const firstAudioMs = segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
-const audioFirst   = firstAudioMs <= firstInkMs
-
-// If audio is first, use the measured gap (ink - audio). Clamp to sane bounds.
-// If we can’t compute it, fall back to your 4130 ms.
-const measuredBias =
-  Number.isFinite(firstInkMs) && Number.isFinite(firstAudioMs)
-    ? Math.max(0, firstInkMs - firstAudioMs)
-    : NaN
-
-const originShiftMs = audioFirst
-  ? (Number.isFinite(measuredBias) ? Math.min(measuredBias, 10000) : FALLBACK_AUDIO_BIAS_MS)
-  : 0
-
+  // Final UI duration: base + shift, so the last ink frame is reachable
+  const totalMs = baseTotalMs + originShiftMs
 
   function relToAbsMs(relMs: number) {
     return timelineZero + Math.max(0, relMs - originShiftMs)
@@ -259,6 +261,10 @@ const originShiftMs = audioFirst
   const [playing, setPlaying] = useState(false)
   const [scrubMs, setScrubMs] = useState<number>(totalMs)
   const clockMsRef = useRef<number>(totalMs)
+
+  // Audio seek guards
+  const lastSegIdRef = useRef<string | null>(null)
+  const lastAudioAdjustRef = useRef<number>(0)
 
   // Timer engine (declare ONCE)
   const intervalRef = useRef<number | null>(null)
@@ -459,27 +465,41 @@ const originShiftMs = audioFirst
       // draw (with unified origin shift)
       drawAtRelMs(next)
 
-      // audio follow — use the same absolute time
+      // audio follow — use the same absolute time (guarded + throttled)
       if (syncToAudio && audioRef.current) {
+        const a = audioRef.current
         const absSec = relToAbsSec(next)
         const hit = findSegByAbsSec(absSec)
-        const a = audioRef.current
-        if (hit) {
+
+        if (!hit) {
+          if (!a.paused) { try { a.pause() } catch {} }
+          lastSegIdRef.current = null
+        } else {
           const { seg } = hit
           const within = absSec - seg.startSec
-          if (!a.src || a.src !== seg.url) {
+
+          // swap audio only when the segment id changes
+          if (lastSegIdRef.current !== seg.id) {
             try {
               a.src = seg.url
+              lastSegIdRef.current = seg.id
               a.currentTime = Math.max(0, within)
-              a.play().catch(()=>{})
+              a.play().catch(() => {})
             } catch {}
           } else {
+            // throttle drift corrections to avoid “machine gun” seeks
+            const nowMs = performance.now()
             const drift = Math.abs((a.currentTime || 0) - within)
-            if (drift > 0.1) { try { a.currentTime = Math.max(0, within) } catch {} }
-            if (a.paused) { a.play().catch(()=>{}) }
+            if (drift > 0.25 && nowMs - lastAudioAdjustRef.current > 250) {
+              try {
+                a.currentTime = Math.max(0, within)
+                lastAudioAdjustRef.current = nowMs
+              } catch {}
+            }
+            if (a.paused) {
+              a.play().catch(() => {})
+            }
           }
-        } else {
-          try { if (!a.paused) a.pause() } catch {}
         }
       }
 
@@ -635,13 +655,18 @@ const originShiftMs = audioFirst
                       const { seg } = hit
                       const within = absSec - seg.startSec
                       try {
-                        a.src = seg.url
+                        // swap only if changing segment
+                        if (seg.id !== lastSegIdRef.current) {
+                          a.src = seg.url
+                          lastSegIdRef.current = seg.id
+                        }
                         a.currentTime = Math.max(0, within)
                         if (playing) a.play().catch(()=>{})
                         else a.pause()
                       } catch {}
                     } else {
                       try { a.pause() } catch {}
+                      lastSegIdRef.current = null
                     }
                   }
                 }
