@@ -153,10 +153,43 @@ function buildUnifiedPointTimeline(strokes: Stroke[]): PointTimeline {
   return { strokes: tl, tMin: globalMin, tMax: globalMax }
 }
 
-/* ------------ source space inference ------------ */
+/* ------------ source space inference (with DPR-normalization) ------------ */
+/**
+ * Many stroke payloads store metaW/metaH in *backing store* pixels (CSS * DPR).
+ * Teacher preview draws in CSS pixels. If meta looks like ~2x or ~3x the PDF's CSS size,
+ * normalize by that integer factor so ink lines up with the PDF canvas.
+ */
 function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
-  if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
-  return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
+  // If no meta, use current PDF CSS size
+  if (!(metaW > 10 && metaH > 10)) {
+    return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
+  }
+
+  const cssW = Math.max(1, pdfCssW)
+  const cssH = Math.max(1, pdfCssH)
+
+  // If we don't yet know the PDF's CSS size, keep meta as-is
+  if (!(cssW > 10 && cssH > 10)) {
+    return { sw: metaW, sh: metaH }
+  }
+
+  // Detect near-integer scale factor between meta and css (2x, 3x, 4x…)
+  const rx = metaW / cssW
+  const ry = metaH / cssH
+  const r  = (rx + ry) / 2
+  const nearest = Math.round(r)
+  const looksLikeIntegerScale = Math.abs(r - nearest) < 0.12 && nearest >= 2 && nearest <= 4
+
+  if (looksLikeIntegerScale) {
+    // Normalize from backing pixels back to CSS pixels
+    return {
+      sw: Math.max(1, Math.round(metaW / nearest)),
+      sh: Math.max(1, Math.round(metaH / nearest)),
+    }
+  }
+
+  // Already in the same space — keep meta
+  return { sw: metaW, sh: metaH }
 }
 
 /* =================== Component =================== */
@@ -209,19 +242,17 @@ export default function PlaybackDrawer({
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
-// ===== Delay INK only at the start if audio comes first =====
-// Positive = draw later. Start with 1600 and tweak ±100–200ms.
-const PRE_INK_DRAW_DELAY_MS = 1130
+  // ===== Delay INK only at the start if audio comes first =====
+  // Positive = draw later. Start with 1600 and tweak ±100–200ms.
+  const PRE_INK_DRAW_DELAY_MS = 1130
 
-const firstInkMs =
-  pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
-const firstAudioMs =
-  segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
+  const firstInkMs =
+    pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
+  const firstAudioMs =
+    segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
 
-// true if the first recorded event is audio (not ink)
-const audioFirst = firstAudioMs <= firstInkMs
-
-
+  // true if the first recorded event is audio (not ink)
+  const audioFirst = firstAudioMs <= firstInkMs
 
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
@@ -373,10 +404,10 @@ const audioFirst = firstAudioMs <= firstInkMs
 
     if (!pointTL.strokes.length) return
 
-// Delay ink by a fixed amount only at the very beginning *if* audio starts first.
-// (If audio begins at timelineZero, the old "< firstAudioStartSec" check never fired.)
-const extraDelay = audioFirst ? PRE_INK_DRAW_DELAY_MS : 0
-const cutoffAbs = timelineZero + Math.max(0, relMs - extraDelay)
+    // Delay ink by a fixed amount only at the very beginning *if* audio starts first.
+    // (If audio begins at timelineZero, the old "< firstAudioStartSec" check never fired.)
+    const extraDelay = audioFirst ? PRE_INK_DRAW_DELAY_MS : 0
+    const cutoffAbs = timelineZero + Math.max(0, relMs - extraDelay)
 
     withScale(ctx, () => {
       for (const s of pointTL.strokes) {
