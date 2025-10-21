@@ -153,11 +153,9 @@ function buildUnifiedPointTimeline(strokes: Stroke[]): PointTimeline {
   return { strokes: tl, tMin: globalMin, tMax: globalMax }
 }
 
-/* ------------ source space inference (reverted to the simple, working logic) ------------ */
+/* ------------ source space inference (simple, working) ------------ */
 function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
-  // Prefer capture metadata if present and sane:
   if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
-  // Otherwise fall back to the PDF's CSS size at capture time:
   return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
 }
 
@@ -219,27 +217,28 @@ export default function PlaybackDrawer({
     segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
   const audioFirst = firstAudioMs <= firstInkMs
 
+  // Scaling space (from source sw×sh → overlay.cssW×overlay.cssH)
   const { sw, sh } = useMemo(
     () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
     [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH]
   )
 
+  // Refs & state (declare ONCE)
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const pdfHostRef = useRef<HTMLDivElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  // Master playback state
   const [syncToAudio, setSyncToAudio] = useState<boolean>(segments.length > 0)
   const [scrubbing, setScrubbing] = useState(false)
   const [playing, setPlaying] = useState(false)
-  const clockMsRef = useRef<number>(totalMs)  // relative ms (0..totalMs)
+  const [scrubMs, setScrubMs] = useState<number>(totalMs)
+  const clockMsRef = useRef<number>(totalMs)
 
-  // Timer engine
+  // Timer engine (declare ONCE)
   const intervalRef = useRef<number | null>(null)
   const lastWallRef = useRef<number | null>(null)
 
   // Keep scrub range synced on payload/size changes & draw final frame
-  const [scrubMs, setScrubMs] = useState<number>(totalMs)
   useEffect(() => { setScrubMs(totalMs); clockMsRef.current = totalMs; drawAtRelMs(totalMs) }, [totalMs])
 
   // If legacy single audio, set its duration on metadata
@@ -344,6 +343,7 @@ export default function PlaybackDrawer({
     ctx.lineJoin = 'round'
   }
 
+  // Find segment containing absolute seconds
   function findSegByAbsSec(absSec:number): { idx:number, seg:Seg } | null {
     if (!segments.length) return null
     let lo = 0, hi = segments.length - 1
@@ -368,6 +368,7 @@ export default function PlaybackDrawer({
 
     if (!pointTL.strokes.length) return
 
+    // Delay ink by a fixed amount only at the very beginning *if* audio starts first.
     const extraDelay = audioFirst ? PRE_INK_DRAW_DELAY_MS : 0
     const cutoffAbs = timelineZero + Math.max(0, relMs - extraDelay)
 
@@ -395,7 +396,7 @@ export default function PlaybackDrawer({
           applyStyleForTool(ctx, s.color || '#111', s.size || 4, s.tool)
           ctx.beginPath()
           ctx.moveTo(pathPts[0].x, pathPts[0].y)
-          for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pts[i].y)
+          for (let i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y) // <-- fixed
           ctx.stroke()
         }
       }
@@ -405,9 +406,6 @@ export default function PlaybackDrawer({
   }
 
   // ==== TIMER ENGINE ====
-  const intervalRef = useRef<number | null>(null)
-  const lastWallRef = useRef<number | null>(null)
-
   function stopTimer() {
     if (intervalRef.current != null) {
       window.clearInterval(intervalRef.current)
@@ -425,10 +423,14 @@ export default function PlaybackDrawer({
       const dt = now - last
       lastWallRef.current = now
 
+      // advance clock
       const next = clamp(clockMsRef.current + dt, 0, totalMs)
       clockMsRef.current = next
+
+      // draw (with pre-ink delay)
       drawAtRelMs(next)
 
+      // audio follow — NO artificial offset now
       if (syncToAudio && audioRef.current) {
         const absSec = (timelineZero + next) / 1000
         const hit = findSegByAbsSec(absSec)
@@ -452,11 +454,12 @@ export default function PlaybackDrawer({
         }
       }
 
+      // stop at end
       if (clockMsRef.current >= totalMs) {
         setPlaying(false)
         stopTimer()
       }
-    }, 16)
+    }, 16) // ~60 FPS
   }
 
   function play(fromRelMs?: number) {
@@ -475,22 +478,13 @@ export default function PlaybackDrawer({
     try { audioRef.current?.pause() } catch {}
   }
 
-  const [syncToAudio, setSyncToAudio] = useState<boolean>(segments.length > 0)
-  const [scrubbing, setScrubbing] = useState(false)
-  const [playing, setPlaying] = useState(false)
-  const clockMsRef = useRef<number>(totalMs)
-
-  useEffect(() => {
-    setScrubMs(totalMs)
-    clockMsRef.current = totalMs
-    drawAtRelMs(totalMs)
-  }, [totalMs])
-
+  // Keep overlay updated on size/payload change when not playing
   useEffect(() => {
     if (!playing) drawAtRelMs(clockMsRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlay.cssW, overlay.cssH, overlay.dpr, sw, sh, strokesPayload])
 
+  // Cleanup
   useEffect(() => stopTimer, [])
 
   const hasAnyAudio = segments.length > 0
