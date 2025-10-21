@@ -246,7 +246,7 @@ export default function PlaybackDrawer({
     [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH]
   )
 
-  // Refs & state
+  // Refs & state (declare ONCE)
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const pdfHostRef = useRef<HTMLDivElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -257,7 +257,7 @@ export default function PlaybackDrawer({
   const [scrubMs, setScrubMs] = useState<number>(totalMs)
   const clockMsRef = useRef<number>(totalMs)
 
-  // Timer engine
+  // Timer engine (declare ONCE)
   const intervalRef = useRef<number | null>(null)
   const lastWallRef = useRef<number | null>(null)
 
@@ -630,7 +630,7 @@ export default function PlaybackDrawer({
                       try {
                         a.src = seg.url
                         a.currentTime = Math.max(0, within)
-                        if (playing) a.play().catch(()=>{}) else a.pause()
+                        if (playing) { a.play().catch(()=>{}) } else { a.pause() }
                       } catch {}
                     } else {
                       try { a.pause() } catch {}
