@@ -216,7 +216,7 @@ export default function PlaybackDrawer({
   }, [pointTL.tMax, segments, timelineZero])
 
   // ===== Delay INK only at the start if audio comes first =====
-  const PRE_INK_DRAW_DELAY_MS = 1130
+  const PRE_INK_DRAW_DELAY_MS = 4130
   const firstInkMs =
     pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
   const firstAudioMs =
