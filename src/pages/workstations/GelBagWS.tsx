@@ -1,11 +1,8 @@
-
 import { useEffect, useRef } from 'react'
 
 /**
  * Gel Bag Decomposer workstation (2–3 parts) with multi-touch "gel press"
- * - URL params: parts, count, size, gel, hand, copies, toolbar
- * - Drawing canvas covers bag + stems (not header) so students can write on stems
- * - Route-friendly single-file React component
+ * URL params: parts, count, size, gel, hand, copies, toolbar, stemfs, stemw
  */
 export default function GelBagWS() {
   // DOM refs
@@ -47,6 +44,10 @@ export default function GelBagWS() {
     let PRESS_STRENGTH = Math.max(0.02, Math.min(1.2, numParam('gel', 0.22)))
     let AREA_BOOST     = Math.max(0.3, Math.min(3.0, numParam('hand', 1.0)))
     let COPIES = Math.max(1, Math.min(10, numParam('copies', 5)))
+    // NEW: stems width + font size
+    let STEM_W  = Math.max(260, Math.min(640, numParam('stemw', 440))) // px
+    let STEM_FS = Math.max(18,  Math.min(56,  numParam('stemfs', 32))) // px
+
     const hideToolbar = params.get('toolbar') === '0' || params.get('toolbar') === 'false'
 
     // Apply defaults to UI if visible
@@ -57,6 +58,9 @@ export default function GelBagWS() {
     if (partsEl) partsEl.value = String(parts)
     if (gelEl)   gelEl.value   = String(PRESS_STRENGTH)
     if (handEl)  handEl.value  = String(AREA_BOOST)
+
+    // expose stems width as a CSS var so JSX can use it
+    document.documentElement.style.setProperty('--stemW', `${STEM_W}px`)
 
     if (hideToolbar) {
       header.style.display = 'none'
@@ -86,9 +90,8 @@ export default function GelBagWS() {
     // ---- Helpers ----
     function setToolbarHeightVar(){
       const hb = header.style.display==='none' ? 0 : header.offsetHeight
-      // size canvases below header
       draw.style.top = hb + 'px'
-      ;(document.documentElement as any).style.setProperty('--toolbarH', hb + 'px')
+      document.documentElement.style.setProperty('--toolbarH', hb + 'px')
     }
 
     function fit(){
@@ -106,10 +109,11 @@ export default function GelBagWS() {
 
       // draw covers bag + stems
       const cardRect = card.getBoundingClientRect()
+      const hb = header.style.display==='none' ? 0 : header.offsetHeight
       draw.width  = Math.floor(cardRect.width * DPR)
-      draw.height = Math.floor((cardRect.height - (header.style.display==='none'?0:header.offsetHeight)) * DPR)
+      draw.height = Math.floor((cardRect.height - hb) * DPR)
       draw.style.width = cardRect.width + 'px'
-      draw.style.height= (cardRect.height - (header.style.display==='none'?0:header.offsetHeight)) + 'px'
+      draw.style.height= (cardRect.height - hb) + 'px'
 
       const pad = 24 * DPR
       bag.x = pad; bag.y = pad; bag.w = sim.width - pad*2; bag.h = sim.height - pad*2
@@ -218,9 +222,11 @@ export default function GelBagWS() {
       const unders = (parts===2)
         ? '<span class="unders">_______</span> + <span class="unders">_______</span> = <span class="unders">_______</span>'
         : '<span class="unders">_______</span> + <span class="unders">_______</span> + <span class="unders">_______</span> = <span class="unders">_______</span>'
-      let html=''
-      for(let i=0;i<COPIES;i++) html += `<div class="stemRow">${unders}</div>`
-      stems.innerHTML = `<div class="stemTitle">Descompón (${COPIES} maneras):</div>${html}`
+      let rows = ''
+      for(let i=0;i<COPIES;i++){
+        rows += `<div class="stemRow" style="font-size:${STEM_FS}px; padding:10px 0; border-bottom:1px dotted #e5e7eb">${unders}</div>`
+      }
+      stems.innerHTML = `<div class="stemTitle" style="font-weight:700; font-size:${Math.round(STEM_FS*0.9)}px; margin:4px 0 8px">Descompón (${COPIES} maneras):</div>${rows}`
     }
 
     // drawing layer
@@ -412,10 +418,24 @@ export default function GelBagWS() {
       </div>
 
       {/* Stems (right panel) */}
-      <aside ref={stemsRef} className="stems" style={{position:'absolute', top:'var(--toolbarH)', right:0, bottom:0, width:320, borderLeft:'1px dashed #e2e8f0', background:'#fff', padding:'12px 14px', overflow:'auto'}} />
+      <aside
+        ref={stemsRef}
+        className="stems"
+        style={{
+          position:'absolute',
+          top:'var(--toolbarH)',
+          right:0,
+          bottom:0,
+          width:'var(--stemW)',            // ← dynamic width from URL
+          borderLeft:'1px dashed #e2e8f0',
+          background:'#fff',
+          padding:'12px 14px',
+          overflow:'auto'
+        }}
+      />
 
       {/* Sim region (left of stems, below header) */}
-      <div className="sim-wrap" style={{position:'absolute', top:'var(--toolbarH)', left:0, right:320, bottom:16}}>
+      <div className="sim-wrap" style={{position:'absolute', top:'var(--toolbarH)', left:0, right:'var(--stemW)', bottom:16}}>
         <canvas id="sim" ref={simRef} style={{display:'block', width:'100%', height:'100%', borderRadius:'0 0 0 16px', background:'#fff', border:'1px solid #e5e7eb', position:'absolute', inset:0, zIndex:1}} />
       </div>
 
