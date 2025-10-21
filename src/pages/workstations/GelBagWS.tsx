@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 
 /**
  * Gel Bag Decomposer workstation (2–3 parts) with multi-touch "gel press"
- * URL params: parts, count, size, gel, hand, copies, toolbar, stemfs, stemw
+ * URL params: parts, count, size, gel, hand, copies, toolbar, stemfs, stemw, stemg
  */
 export default function GelBagWS() {
   // DOM refs
@@ -44,9 +44,10 @@ export default function GelBagWS() {
     let PRESS_STRENGTH = Math.max(0.02, Math.min(1.2, numParam('gel', 0.22)))
     let AREA_BOOST     = Math.max(0.3, Math.min(3.0, numParam('hand', 1.0)))
     let COPIES = Math.max(1, Math.min(10, numParam('copies', 5)))
-    // NEW: stems width + font size
+    // stems width + font size + gutter
     let STEM_W  = Math.max(260, Math.min(640, numParam('stemw', 440))) // px
     let STEM_FS = Math.max(18,  Math.min(56,  numParam('stemfs', 32))) // px
+    let STEM_G  = Math.max(8,   Math.min(48,  numParam('stemg', 12)))  // px
 
     const hideToolbar = params.get('toolbar') === '0' || params.get('toolbar') === 'false'
 
@@ -59,8 +60,9 @@ export default function GelBagWS() {
     if (gelEl)   gelEl.value   = String(PRESS_STRENGTH)
     if (handEl)  handEl.value  = String(AREA_BOOST)
 
-    // expose stems width as a CSS var so JSX can use it
+    // expose stems width/gutter as CSS vars so JSX can use them
     document.documentElement.style.setProperty('--stemW', `${STEM_W}px`)
+    document.documentElement.style.setProperty('--stemGutter', `${STEM_G}px`)
 
     if (hideToolbar) {
       header.style.display = 'none'
@@ -218,15 +220,41 @@ export default function GelBagWS() {
       }
     }
 
+    // ----- Non-wrapping stems with fixed-width blanks -----
     function renderStems(){
-      const unders = (parts===2)
-        ? '<span class="unders">_______</span> + <span class="unders">_______</span> = <span class="unders">_______</span>'
-        : '<span class="unders">_______</span> + <span class="unders">_______</span> + <span class="unders">_______</span> = <span class="unders">_______</span>'
-      let rows = ''
-      for(let i=0;i<COPIES;i++){
-        rows += `<div class="stemRow" style="font-size:${STEM_FS}px; padding:10px 0; border-bottom:1px dotted #e5e7eb">${unders}</div>`
+      const innerPad = 32; // keep in sync with aside padding
+      const usable = STEM_W - innerPad * 2; // px available for blanks and symbols
+
+      const mkBlank = (w:number) =>
+        `<span style="
+          display:inline-block;
+          vertical-align:baseline;
+          border-bottom:3px solid #0f172a;
+          width:${Math.max(48, Math.floor(w))}px;
+          transform:translateY(-0.15em);
+        "></span>`;
+
+      let rowHTML = '';
+      if (parts === 2) {
+        // 3 blanks; space for "+   =" (~6ch), tweak divisor so iPad doesn’t wrap
+        const blankW = usable / 3.6;
+        const row = `${mkBlank(blankW)} <span>+</span> ${mkBlank(blankW)} <span>=</span> ${mkBlank(blankW)}`;
+        for (let i = 0; i < COPIES; i++) {
+          rowHTML += `<div class="stemRow" style="white-space:nowrap; line-height:1.25; font-size:${STEM_FS}px; padding:12px 0; border-bottom:1px dotted #e5e7eb">${row}</div>`;
+        }
+      } else {
+        // 4 blanks; make each narrower so it fits one line
+        const blankW = usable / 4.9;
+        const row = `${mkBlank(blankW)} <span>+</span> ${mkBlank(blankW)} <span>+</span> ${mkBlank(blankW)} <span>=</span> ${mkBlank(blankW)}`;
+        for (let i = 0; i < COPIES; i++) {
+          rowHTML += `<div class="stemRow" style="white-space:nowrap; line-height:1.25; font-size:${STEM_FS}px; padding:12px 0; border-bottom:1px dotted #e5e7eb">${row}</div>`;
+        }
       }
-      stems.innerHTML = `<div class="stemTitle" style="font-weight:700; font-size:${Math.round(STEM_FS*0.9)}px; margin:4px 0 8px">Descompón (${COPIES} maneras):</div>${rows}`
+
+      stems.innerHTML =
+        `<div class="stemTitle" style="font-weight:700; font-size:${Math.round(STEM_FS*0.95)}px; margin:2px 0 10px">
+           Descompón (${COPIES} maneras):
+         </div>` + rowHTML;
     }
 
     // drawing layer
@@ -426,16 +454,25 @@ export default function GelBagWS() {
           top:'var(--toolbarH)',
           right:0,
           bottom:0,
-          width:'var(--stemW)',            // ← dynamic width from URL
+          width:'var(--stemW)',            // dynamic width from URL
           borderLeft:'1px dashed #e2e8f0',
           background:'#fff',
-          padding:'12px 14px',
+          padding:'16px 16px',             // keep in sync with innerPad
           overflow:'auto'
         }}
       />
 
       {/* Sim region (left of stems, below header) */}
-      <div className="sim-wrap" style={{position:'absolute', top:'var(--toolbarH)', left:0, right:'var(--stemW)', bottom:16}}>
+      <div
+        className="sim-wrap"
+        style={{
+          position:'absolute',
+          top:'var(--toolbarH)',
+          left:0,
+          right:'calc(var(--stemW) + var(--stemGutter))',  // add gutter so bag is narrower
+          bottom:16
+        }}
+      >
         <canvas id="sim" ref={simRef} style={{display:'block', width:'100%', height:'100%', borderRadius:'0 0 0 16px', background:'#fff', border:'1px solid #e5e7eb', position:'absolute', inset:0, zIndex:1}} />
       </div>
 
