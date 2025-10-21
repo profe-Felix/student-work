@@ -155,32 +155,27 @@ function buildUnifiedPointTimeline(strokes: Stroke[]): PointTimeline {
 
 /* ------------ source space inference (normalize capture DPR → CSS px) ------------ */
 function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
-  // If capture meta exists, it may be in backing-store pixels (hi-DPI capture).
-  if (metaW > 0 && metaH > 0) {
+  if (metaW > 10 && metaH > 10) {
     let sw = metaW
     let sh = metaH
 
-    // Compare to current PDF CSS size. If the ratio is near an integer 2–4×,
-    // divide it out so strokes are interpreted in CSS pixels.
+    // Detect when the saved capture space is a multiple (≈ DPR) of display space
     const rx = sw / Math.max(1, pdfCssW)
     const ry = sh / Math.max(1, pdfCssH)
-
-    const nearInt = (r:number) => {
-      const k = Math.round(r)
-      return k >= 2 && k <= 4 && Math.abs(r - k) < 0.15
+    const avg = (rx + ry) / 2
+    if (avg > 1.4 && avg < 3.6) {
+      const factor = Math.round(avg)
+      sw /= factor
+      sh /= factor
     }
 
-    const fx = nearInt(rx) ? Math.round(rx) : 1
-    const fy = nearInt(ry) ? Math.round(ry) : 1
-    const f  = Math.max(1, Math.min(fx || 1, fy || 1)) // prefer consistent factor
-
-    if (f > 1) { sw = sw / f; sh = sh / f }
-    return { sw: Math.max(1, Math.round(sw)), sh: Math.max(1, Math.round(sh)) }
+    return { sw, sh }
   }
 
-  // Fallback: assume capture space == current PDF CSS size
-  return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
+  // Fallback if no metadata — just use the PDF display size
+  return { sw: pdfCssW, sh: pdfCssH }
 }
+
 
 /* =================== Component =================== */
 export default function PlaybackDrawer({
