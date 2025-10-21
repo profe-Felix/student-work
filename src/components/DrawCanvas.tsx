@@ -244,14 +244,8 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
   const getPos = (e: PointerEvent)=>{
     const c = canvasRef.current!
     const r = c.getBoundingClientRect()
-    // CSS-space coordinates (context already scaled to DPR)
+    // CSS-space coordinates (context scaled to DPR already)
     return { x: e.clientX - r.left, y: e.clientY - r.top }
-  }
-
-  // NEW: helper to safely release pointer capture
-  function releaseCaptureIfAny(c: HTMLCanvasElement, id: number | null) {
-    if (id == null) return
-    try { c.releasePointerCapture(id) } catch {}
   }
 
   useEffect(()=>{
@@ -263,16 +257,12 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       const allowed = (tool === 'pen' || tool === 'highlighter' || tool === 'eraser' || tool === 'eraserObject')
       if (!allowed) return false
       if (e.pointerType === 'pen') return true
-      // allow a single finger; disallow once a second touch is down
       return activePointers.current.size <= 1
     }
 
     const onPointerDown = (e: PointerEvent)=>{
       if (e.pointerType !== 'pen') activePointers.current.add(e.pointerId)
-
-      // If this touch shouldn't start a draw (e.g., second finger), let the browser handle scroll/zoom.
       if (!shouldDraw(e)) return
-
       drawingPointerId.current = e.pointerId
       c.setPointerCapture(e.pointerId)
 
@@ -297,25 +287,18 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     const onPointerMove = (e: PointerEvent)=>{
       if (drawingPointerId.current !== e.pointerId) return
       if (!current.current) return
-
-      // If we shouldn't draw anymore (e.g., second finger went down),
-      // end the stroke and RELEASE CAPTURE so the page can scroll/pinch.
       if (!shouldDraw(e)) {
-        if (current.current.pts.length > 1) {
-          strokes.current.push(current.current)
-          onStrokeUpdate?.({
-            id: localStrokeId.current!, color, size,
-            tool: current.current.tool, pts: [], done: true, from: selfId
-          })
-        }
+        if (current.current.pts.length > 1) strokes.current.push(current.current)
+        onStrokeUpdate?.({
+          id: localStrokeId.current!, color, size,
+          tool: current.current.tool, pts: [], done: true, from: selfId
+        })
         current.current = null
         localStrokeId.current = null
-        releaseCaptureIfAny(c, drawingPointerId.current)
         drawingPointerId.current = null
         redraw()
         return
       }
-
       const p = getPos(e) as StrokePoint
       p.t = stampNow()
       current.current.pts.push(p)
@@ -344,12 +327,12 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
     const onPointerUp = (e: PointerEvent)=>{
       if (e.pointerType !== 'pen') activePointers.current.delete(e.pointerId)
       if (drawingPointerId.current === e.pointerId) endStroke()
-      releaseCaptureIfAny(c, e.pointerId)
+      try { c.releasePointerCapture(e.pointerId) } catch {}
     }
     const onPointerCancel = (e: PointerEvent)=>{
       if (e.pointerType !== 'pen') activePointers.current.delete(e.pointerId)
       if (drawingPointerId.current === e.pointerId) endStroke()
-      releaseCaptureIfAny(c, e.pointerId)
+      try { c.releasePointerCapture(e.pointerId) } catch {}
     }
 
     c.addEventListener('pointerdown', onPointerDown as EventListener, { passive:false })
@@ -372,12 +355,8 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       ref={canvasRef}
       style={{
         position:'absolute', inset:0, zIndex:10,
-        display:'block',
-        width:`${Math.max(1, Math.round(width))}px`,
-        height:`${Math.max(1, Math.round(height))}px`,
-        // Leave this as pan-y pinch-zoom so two-finger scroll & pinch work in draw mode
-        touchAction:'pan-y pinch-zoom',
-        background:'transparent'
+        display:'block', width:`${Math.max(1, Math.round(width))}px`, height:`${Math.max(1, Math.round(height))}px`,
+        touchAction:'pan-y pinch-zoom', background:'transparent'
       }}
     />
   )
