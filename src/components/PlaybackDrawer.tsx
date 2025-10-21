@@ -153,29 +153,23 @@ function buildUnifiedPointTimeline(strokes: Stroke[]): PointTimeline {
   return { strokes: tl, tMin: globalMin, tMax: globalMax }
 }
 
-/* ------------ source space inference (normalize capture DPR → CSS px) ------------ */
-function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
-  if (metaW > 10 && metaH > 10) {
-    let sw = metaW
-    let sh = metaH
+/* ------------ source space inference (USE BACKING-STORE WHEN META MISSING) ------------ */
+function inferSourceDimsFromMetaOrPdf(
+  metaW:number, metaH:number,
+  pdfCssW:number, pdfCssH:number,
+  pdfPxW:number, pdfPxH:number
+) {
+  // If the student saved capture meta, trust it (points were recorded in that space).
+  if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
 
-    // Detect when the saved capture space is a multiple (≈ DPR) of display space
-    const rx = sw / Math.max(1, pdfCssW)
-    const ry = sh / Math.max(1, pdfCssH)
-    const avg = (rx + ry) / 2
-    if (avg > 1.4 && avg < 3.6) {
-      const factor = Math.round(avg)
-      sw /= factor
-      sh /= factor
-    }
+  // Otherwise, prefer the PDF canvas's backing-store pixels (canvas.width/height).
+  // Student strokes are commonly in backing-store px; our context already scales by DPR,
+  // so using backing px here avoids double-scaling.
+  if (pdfPxW > 0 && pdfPxH > 0) return { sw: pdfPxW, sh: pdfPxH }
 
-    return { sw, sh }
-  }
-
-  // Fallback if no metadata — just use the PDF display size
-  return { sw: pdfCssW, sh: pdfCssH }
+  // Last resort: use CSS size.
+  return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
 }
-
 
 /* =================== Component =================== */
 export default function PlaybackDrawer({
@@ -184,7 +178,10 @@ export default function PlaybackDrawer({
   const [overlay, setOverlay] = useState<OverlaySize>({
     cssW: 800, cssH: 600, dpr: window.devicePixelRatio || 1
   })
+  // CSS size of the PDF canvas
   const pdfCssRef = useRef<{ w:number; h:number }>({ w: 800, h: 600 })
+  // BACKING-STORE pixel size of the PDF canvas
+  const pdfPxRef  = useRef<{ w:number; h:number }>({ w: 800, h: 600 })
 
   const parsed = useMemo(() => parseStrokes(strokesPayload), [strokesPayload])
   const strokes = parsed.strokes
@@ -237,7 +234,11 @@ export default function PlaybackDrawer({
 
   // Scaling space (from source sw×sh → overlay.cssW×overlay.cssH)
   const { sw, sh } = useMemo(
-    () => inferSourceDimsFromMetaOrPdf(parsed.metaW, parsed.metaH, pdfCssRef.current.w, pdfCssRef.current.h),
+    () => inferSourceDimsFromMetaOrPdf(
+      parsed.metaW, parsed.metaH,
+      pdfCssRef.current.w, pdfCssRef.current.h,
+      pdfPxRef.current.w,  pdfPxRef.current.h
+    ),
     [parsed.metaW, parsed.metaH, overlay.cssW, overlay.cssH]
   )
 
@@ -289,9 +290,17 @@ export default function PlaybackDrawer({
     const syncSize = () => {
       const pdfC = findPdfCanvas()
       if (!pdfC) return
+      // CSS box
       const rect = pdfC.getBoundingClientRect()
       const cssW = Math.max(1, Math.round(rect.width))
       const cssH = Math.max(1, Math.round(rect.height))
+      // BACKING store
+      const pxW = Math.max(1, pdfC.width || Math.round(rect.width * (window.devicePixelRatio || 1)))
+      const pxH = Math.max(1, pdfC.height || Math.round(rect.height * (window.devicePixelRatio || 1)))
+
+      pdfCssRef.current = { w: cssW, h: cssH }
+      pdfPxRef.current  = { w: pxW,  h: pxH }
+
       const dpr = window.devicePixelRatio || 1
       setOverlay(prev => (prev.cssW === cssW && prev.cssH === cssH && prev.dpr === dpr) ? prev : { cssW, cssH, dpr })
     }
@@ -329,11 +338,13 @@ export default function PlaybackDrawer({
     const ctx = c.getContext('2d')
     if (!ctx) return null
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.scale(dpr, dpr)
+    ctx.scale(dpr, dpr) // map 1 unit = 1 CSS px
     return ctx
   }
 
   function withScale(ctx: CanvasRenderingContext2D, draw: () => void) {
+    // Scale FROM stroke source space (sw×sh) TO current CSS (overlay.cssW×overlay.cssH).
+    // Note: if sw/sh are backing-store px, sx≈1/dpr; combined with ctx.scale(dpr) above → exact 1:1.
     const sx = overlay.cssW / Math.max(1, sw)
     const sy = overlay.cssH / Math.max(1, sh)
     ctx.save()
@@ -376,7 +387,6 @@ export default function PlaybackDrawer({
   }
 
   // Draw strokes up to relative time ms (0..totalMs) — converts to absolute by +timelineZero
-  // NEW: apply PRE_INK_DRAW_DELAY_MS before the very first ink point
   function drawAtRelMs(relMs:number) {
     const ctx = ensureCtx()
     if (!ctx) return
@@ -579,6 +589,8 @@ export default function PlaybackDrawer({
                 onReady={(_pdf:any, canvas:HTMLCanvasElement) => {
                   const rect = canvas.getBoundingClientRect()
                   pdfCssRef.current = { w: Math.max(1, Math.round(rect.width)), h: Math.max(1, Math.round(rect.height)) }
+                  // capture backing-store pixels too
+                  pdfPxRef.current  = { w: Math.max(1, canvas.width), h: Math.max(1, canvas.height) }
                   const dpr = window.devicePixelRatio || 1
                   setOverlay(prev => {
                     const cssW = pdfCssRef.current.w, cssH = pdfCssRef.current.h
@@ -625,7 +637,8 @@ export default function PlaybackDrawer({
                       try {
                         a.src = seg.url
                         a.currentTime = Math.max(0, within)
-                        if (playing) { a.play().catch(()=>{}) } else { a.pause() }
+                        if (playing) a.play().catch(()=>{})
+                        else a.pause()
                       } catch {}
                     } else {
                       try { a.pause() } catch {}
