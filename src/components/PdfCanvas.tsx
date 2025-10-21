@@ -1,9 +1,12 @@
 // src/components/PdfCanvas.tsx
 import { useEffect, useRef } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import 'pdfjs-dist/build/pdf.worker.min.mjs' // Vite-friendly worker import
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString()
 
 export default function PdfCanvas({
   url,
