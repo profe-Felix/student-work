@@ -1,6 +1,6 @@
 // src/pages/student/assignment.tsx
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload, type Stroke } from '../../components/DrawCanvas'
@@ -398,21 +398,22 @@ export default function StudentAssignment(){
   }
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
-  // When PDF is ready, remember its canvas and sync size immediately
-  const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
-    pdfCanvasEl.current = canvas
-    if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
-      const w = Math.max(1, Math.round(dims.cssW))
-      const h = Math.max(1, Math.round(dims.cssH))
-      setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
-    }
-    try {
-      const dpr = (window.devicePixelRatio || 1)
-      if (canvas.width && !canvas.style.width)  canvas.style.width  = `${Math.round(canvas.width / dpr)}px`
-      if (canvas.height && !canvas.style.height) canvas.style.height = `${Math.round(canvas.height / dpr)}px`
-    } catch {}
-    syncFromPdfCanvas()
+// When PDF is ready, remember its canvas and sync size immediately
+const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
+  pdfCanvasEl.current = canvas
+  if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
+    const w = Math.max(1, Math.round(dims.cssW))
+    const h = Math.max(1, Math.round(dims.cssH))
+    setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
   }
+  try {
+    const dpr = (window.devicePixelRatio || 1)
+    if (canvas.width && !canvas.style.width)  canvas.style.width  = `${Math.round(canvas.width / dpr)}px`
+    if (canvas.height && !canvas.style.height) canvas.style.height = `${Math.round(canvas.height / dpr)}px`
+  } catch {}
+  syncFromPdfCanvas()
+}, []); // 👈 stable reference; won’t change when tool/color/handMode change
+
 
   // Keep overlay size synced to PDF canvas + parent size changes and zoom/orientation
   useEffect(() => {
@@ -1326,6 +1327,16 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
       </div>
     </div>
   )
+  
+  // 👇 Add this just before `return ( ... )`
+  const pdfNode = useMemo(() => {
+    if (!hasTask || !pdfUrl) return null
+    return (
+      <div style={{ position:'absolute', inset:0, zIndex:0 }}>
+        <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
+      </div>
+    )
+  }, [pdfUrl, pageIndex, hasTask, onPdfReady])
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
@@ -1365,11 +1376,7 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px`, overflow:'visible' }}>
           {/* PDF layer */}
-          {hasTask && pdfUrl ? (
-            <div style={{ position:'absolute', inset:0, zIndex:0 }}>
-              <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
-            </div>
-          ) : (
+          {pdfNode ?? (
             <div style={{
               position:'absolute', inset:0, zIndex:0, display:'grid', placeItems:'center',
               color:'#6b7280', fontWeight:700, fontSize:22
