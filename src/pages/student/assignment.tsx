@@ -310,24 +310,53 @@ export default function StudentAssignment(){
 
   const drawRef = useRef<DrawCanvasHandle>(null)
   const scrollHostRef = useRef<HTMLDivElement | null>(null)
+
+  // 2-finger pan on the scroll host while in draw mode
+  useEffect(() => {
+    const host = scrollHostRef.current
+    if (!host) return
+
+    let pan = false, startY = 0, startX = 0, startTop = 0, startLeft = 0
+
+    const onTS = (e: TouchEvent) => {
+      if (e.touches.length >= 2 && !handMode) {
+        pan = true
+        const [t1, t2] = [e.touches[0], e.touches[1]]
+        startY = (t1.clientY + t2.clientY) / 2
+        startX = (t1.clientX + t2.clientX) / 2
+        startTop = host.scrollTop
+        startLeft = host.scrollLeft
+      }
+    }
+
+    const onTM = (e: TouchEvent) => {
+      if (pan && e.touches.length >= 2) {
+        e.preventDefault() // we’ll scroll manually
+        const [t1, t2] = [e.touches[0], e.touches[1]]
+        const y = (t1.clientY + t2.clientY) / 2
+        const x = (t1.clientX + t2.clientX) / 2
+        host.scrollTop  = startTop  - (y - startY)
+        host.scrollLeft = startLeft - (x - startX)
+      }
+    }
+
+    const end = () => { pan = false }
+
+    host.addEventListener('touchstart', onTS,       { passive: true,  capture: true })
+    host.addEventListener('touchmove',  onTM,       { passive: false, capture: true })
+    host.addEventListener('touchend',   end,        { passive: true,  capture: true })
+    host.addEventListener('touchcancel',end,        { passive: true,  capture: true })
+
+    return () => {
+      host.removeEventListener('touchstart', onTS as any, true)
+      host.removeEventListener('touchmove',  onTM as any, true)
+      host.removeEventListener('touchend',   end as any,  true)
+      host.removeEventListener('touchcancel',end as any,  true)
+    }
+  }, [handMode])
+  
   // remember when a recording started, so startMs matches ink timebase
   const recordStartRef = useRef<number | null>(null)
-  // allow 2-finger scroll while blocking 1-finger
-const [allowTwoFingerScroll, setAllowTwoFingerScroll] = useState(false)
-
-const onOverlayTouchStart = (e: React.TouchEvent) => {
-  if (!hasTask || handMode) return
-  setAllowTwoFingerScroll(e.touches?.length >= 2)
-}
-const onOverlayTouchMove = (e: React.TouchEvent) => {
-  if (!hasTask || handMode) return
-  if (e.touches?.length >= 2) setAllowTwoFingerScroll(true)
-}
-const onOverlayTouchEnd = (e: React.TouchEvent) => {
-  if (!hasTask || handMode) return
-  if (!e.touches || e.touches.length < 2) setAllowTwoFingerScroll(false)
-}
-
 
   // 5.2 — media + page clock
   const [media, setMedia] = useState<AudioSeg[]>([])
@@ -1330,7 +1359,7 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
       <div
         ref={scrollHostRef}
         style={{ height:'calc(100vh - 220px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-          touchAction: 'pan-y',
+          touchAction: handMode ? 'auto' : 'none',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
@@ -1362,10 +1391,6 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
     // when overlay is active, block browser gestures; when disabled, let them through
     touchAction: (hasTask && !handMode && !allowTwoFingerScroll) ? 'none' : 'auto',
   }}
-  onTouchStart={onOverlayTouchStart}
-  onTouchMove={onOverlayTouchMove}
-  onTouchEnd={onOverlayTouchEnd}
-  onTouchCancel={onOverlayTouchEnd}
           >
             <DrawCanvas
               ref={drawRef}
