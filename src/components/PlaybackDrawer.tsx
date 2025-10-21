@@ -215,13 +215,19 @@ export default function PlaybackDrawer({
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
-  // ===== Delay INK only at the start if audio comes first =====
-  const PRE_INK_DRAW_DELAY_MS = 4130
-  const firstInkMs =
-    pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
-  const firstAudioMs =
-    segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
+  /* ===== Unified 4130 ms origin shift (applies to BOTH ink & audio when audio starts first) ===== */
+  const ORIGIN_OFFSET_MS = 4130
+  const firstInkMs  = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
+  const firstAudioMs = segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
   const audioFirst = firstAudioMs <= firstInkMs
+  const originShiftMs = audioFirst ? ORIGIN_OFFSET_MS : 0
+
+  function relToAbsMs(relMs: number) {
+    return timelineZero + Math.max(0, relMs - originShiftMs)
+  }
+  function relToAbsSec(relMs: number) {
+    return relToAbsMs(relMs) / 1000
+  }
 
   // Scaling space (from source sw×sh → overlay.cssW×overlay.cssH)
   const { sw, sh } = useMemo(
@@ -372,7 +378,7 @@ export default function PlaybackDrawer({
     return null
   }
 
-  // Draw strokes up to relative time ms (0..totalMs) — converts to absolute by +timelineZero
+  // Draw strokes up to relative time ms (0..totalMs) — converts to absolute with unified shift
   function drawAtRelMs(relMs:number) {
     const ctx = ensureCtx()
     if (!ctx) return
@@ -382,9 +388,7 @@ export default function PlaybackDrawer({
 
     if (!pointTL.strokes.length) return
 
-    // Delay ink by a fixed amount only at the very beginning *if* audio starts first.
-    const extraDelay = audioFirst ? PRE_INK_DRAW_DELAY_MS : 0
-    const cutoffAbs = timelineZero + Math.max(0, relMs - extraDelay)
+    const cutoffAbs = relToAbsMs(relMs)
 
     withScale(ctx, () => {
       for (const s of pointTL.strokes) {
@@ -441,12 +445,12 @@ export default function PlaybackDrawer({
       const next = clamp(clockMsRef.current + dt, 0, totalMs)
       clockMsRef.current = next
 
-      // draw (with pre-ink delay)
+      // draw (with unified origin shift)
       drawAtRelMs(next)
 
-      // audio follow — NO artificial offset now
+      // audio follow — use the same absolute time
       if (syncToAudio && audioRef.current) {
-        const absSec = (timelineZero + next) / 1000
+        const absSec = relToAbsSec(next)
         const hit = findSegByAbsSec(absSec)
         const a = audioRef.current
         if (hit) {
@@ -613,7 +617,7 @@ export default function PlaybackDrawer({
                   clockMsRef.current = v
                   drawAtRelMs(v)
                   if (syncToAudio && audioRef.current) {
-                    const absSec = (timelineZero + v) / 1000
+                    const absSec = relToAbsSec(v)
                     const hit = findSegByAbsSec(absSec)
                     const a = audioRef.current
                     if (hit) {
