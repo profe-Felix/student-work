@@ -1384,12 +1384,8 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
     position: 'absolute',
     inset: 0,
     zIndex: 10,
-    // draw mode: catch touches unless we're allowing 2-finger scroll
-    pointerEvents: (hasTask && !handMode)
-      ? (allowTwoFingerScroll ? 'none' : 'auto')
-      : 'none',
-    // when overlay is active, block browser gestures; when disabled, let them through
-    touchAction: (hasTask && !handMode && !allowTwoFingerScroll) ? 'none' : 'auto',
+    pointerEvents: (hasTask && !handMode) ? 'auto' : 'none',
+    touchAction: (hasTask && !handMode) ? 'none' : 'auto',
   }}
           >
             <DrawCanvas
