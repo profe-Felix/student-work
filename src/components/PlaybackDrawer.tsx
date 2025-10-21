@@ -215,12 +215,23 @@ export default function PlaybackDrawer({
     return Math.max(1000, Math.ceil(tMax - timelineZero))
   }, [pointTL.tMax, segments, timelineZero])
 
-  /* ===== Unified 4130 ms origin shift (applies to BOTH ink & audio when audio starts first) ===== */
-  const ORIGIN_OFFSET_MS = 4130
-  const firstInkMs  = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
-  const firstAudioMs = segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
-  const audioFirst = firstAudioMs <= firstInkMs
-  const originShiftMs = audioFirst ? ORIGIN_OFFSET_MS : 0
+/* ===== Auto origin shift: use measured bias if audio starts before ink ===== */
+const FALLBACK_AUDIO_BIAS_MS = 4130 // your known-good value
+const firstInkMs   = pointTL.strokes.length ? pointTL.tMin : Number.POSITIVE_INFINITY
+const firstAudioMs = segments.length ? Math.round(segments[0].startSec * 1000) : Number.POSITIVE_INFINITY
+const audioFirst   = firstAudioMs <= firstInkMs
+
+// If audio is first, use the measured gap (ink - audio). Clamp to sane bounds.
+// If we can’t compute it, fall back to your 4130 ms.
+const measuredBias =
+  Number.isFinite(firstInkMs) && Number.isFinite(firstAudioMs)
+    ? Math.max(0, firstInkMs - firstAudioMs)
+    : NaN
+
+const originShiftMs = audioFirst
+  ? (Number.isFinite(measuredBias) ? Math.min(measuredBias, 10000) : FALLBACK_AUDIO_BIAS_MS)
+  : 0
+
 
   function relToAbsMs(relMs: number) {
     return timelineZero + Math.max(0, relMs - originShiftMs)
