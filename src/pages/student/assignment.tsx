@@ -312,6 +312,21 @@ export default function StudentAssignment(){
   const scrollHostRef = useRef<HTMLDivElement | null>(null)
   // remember when a recording started, so startMs matches ink timebase
   const recordStartRef = useRef<number | null>(null)
+  // allow 2-finger scroll while blocking 1-finger
+const [allowTwoFingerScroll, setAllowTwoFingerScroll] = useState(false)
+
+const onOverlayTouchStart = (e: React.TouchEvent) => {
+  if (!hasTask || handMode) return
+  setAllowTwoFingerScroll(e.touches?.length >= 2)
+}
+const onOverlayTouchMove = (e: React.TouchEvent) => {
+  if (!hasTask || handMode) return
+  if (e.touches?.length >= 2) setAllowTwoFingerScroll(true)
+}
+const onOverlayTouchEnd = (e: React.TouchEvent) => {
+  if (!hasTask || handMode) return
+  if (!e.touches || e.touches.length < 2) setAllowTwoFingerScroll(false)
+}
 
 
   // 5.2 — media + page clock
@@ -1335,16 +1350,22 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
           )}
 
           {/* Draw layer */}
-          <div
-            style={{
-              position:'absolute',
-              inset:0,
-              zIndex:10,
-              // receive events only in draw mode
-              pointerEvents: (hasTask && !handMode) ? 'auto' : 'none',
-              // block 1-finger browser scrolling in draw mode; 2-finger will still scroll
-              touchAction: (hasTask && !handMode) ? 'none' : 'auto',
-            }}
+<div
+  style={{
+    position: 'absolute',
+    inset: 0,
+    zIndex: 10,
+    // draw mode: catch touches unless we're allowing 2-finger scroll
+    pointerEvents: (hasTask && !handMode)
+      ? (allowTwoFingerScroll ? 'none' : 'auto')
+      : 'none',
+    // when overlay is active, block browser gestures; when disabled, let them through
+    touchAction: (hasTask && !handMode && !allowTwoFingerScroll) ? 'none' : 'auto',
+  }}
+  onTouchStart={onOverlayTouchStart}
+  onTouchMove={onOverlayTouchMove}
+  onTouchEnd={onOverlayTouchEnd}
+  onTouchCancel={onOverlayTouchEnd}
           >
             <DrawCanvas
               ref={drawRef}
