@@ -153,9 +153,29 @@ function buildUnifiedPointTimeline(strokes: Stroke[]): PointTimeline {
   return { strokes: tl, tMin: globalMin, tMax: globalMax }
 }
 
-/* ------------ source space inference (simple, working) ------------ */
+/* ------------ source space inference (normalized for capture DPR) ------------ */
 function inferSourceDimsFromMetaOrPdf(metaW:number, metaH:number, pdfCssW:number, pdfCssH:number) {
-  if (metaW > 10 && metaH > 10) return { sw: metaW, sh: metaH }
+  // If capture meta exists, it may be in backing-store pixels (e.g., iPad @2x/@3x).
+  if (metaW > 0 && metaH > 0) {
+    let sw = metaW
+    let sh = metaH
+
+    // Compare to current CSS size. If ratio is near an integer 2–4, divide to normalize.
+    const rx = sw / Math.max(1, pdfCssW)
+    const ry = sh / Math.max(1, pdfCssH)
+    const isNearInt = (r:number) => {
+      const k = Math.round(r)
+      return k >= 2 && k <= 4 && Math.abs(r - k) < 0.15
+    }
+    const fx = isNearInt(rx) ? Math.round(rx) : 1
+    const fy = isNearInt(ry) ? Math.round(ry) : 1
+    const f  = Math.max(1, Math.min(fx || 1, fy || 1)) // use a consistent factor if both look valid
+
+    if (f > 1) { sw = sw / f; sh = sh / f }
+    return { sw: Math.max(1, Math.round(sw)), sh: Math.max(1, Math.round(sh)) }
+  }
+
+  // Fallback: assume capture space == current CSS PDF size
   return { sw: Math.max(1, pdfCssW), sh: Math.max(1, pdfCssH) }
 }
 
