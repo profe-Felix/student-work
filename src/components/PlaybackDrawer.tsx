@@ -267,8 +267,8 @@ export default function PlaybackDrawer({
     const onMeta = () => {
       const dur = a.duration || 0
       if (dur > 0) {
-        segments[0].durationMs = dur * 1000
-        segments[0].endSec = dur
+        ;(segments[0] as any).durationMs = dur * 1000
+        ;(segments[0] as any).endSec = dur
       }
     }
     a.addEventListener('loadedmetadata', onMeta)
@@ -455,10 +455,10 @@ export default function PlaybackDrawer({
       const next = clamp(clockMsRef.current + dt, 0, totalMs)
       clockMsRef.current = next
 
-      // draw (with pre-ink delay)
+      // draw
       drawAtRelMs(next)
 
-      // audio follow — NO artificial offset now
+      // audio follow
       if (syncToAudio && audioRef.current) {
         const absSec = (timelineZero + next) / 1000
         const hit = findSegByAbsSec(absSec)
@@ -482,7 +482,6 @@ export default function PlaybackDrawer({
         }
       }
 
-      // stop at end
       if (clockMsRef.current >= totalMs) {
         setPlaying(false)
         stopTimer()
@@ -549,7 +548,7 @@ export default function PlaybackDrawer({
         </div>
 
         {/* Controls */}
-        <div style={{ display:'flex', alignItems:'center', gap:12, padding:12, borderBottom:'1px solid #e5e7eb' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12, padding:12, borderBottom:'1px solid '#e5e7eb' }}>
           {/* Hidden; we drive it off the master clock */}
           <audio ref={audioRef} preload="auto" style={{ display:'none' }} />
           <span style={{ fontSize:12, color:'#374151' }}>
