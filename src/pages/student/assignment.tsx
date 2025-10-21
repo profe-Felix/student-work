@@ -1315,7 +1315,7 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
       <div
         ref={scrollHostRef}
         style={{ height:'calc(100vh - 220px)', overflow:'auto', WebkitOverflowScrolling:'touch',
-          touchAction: handMode ? 'auto' : 'none',
+          touchAction: 'pan-y',
           display:'flex', alignItems:'flex-start', justifyContent:'center', padding:12,
           background:'#fff', border:'1px solid #eee', borderRadius:12, position:'relative' }}
       >
