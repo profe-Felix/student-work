@@ -1,6 +1,6 @@
 // src/pages/student/assignment.tsx
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PdfCanvas from '../../components/PdfCanvas'
 import DrawCanvas, { DrawCanvasHandle, StrokesPayload, type Stroke } from '../../components/DrawCanvas'
@@ -310,9 +310,53 @@ export default function StudentAssignment(){
 
   const drawRef = useRef<DrawCanvasHandle>(null)
   const scrollHostRef = useRef<HTMLDivElement | null>(null)
+
+  // 2-finger pan on the scroll host while in draw mode
+  useEffect(() => {
+    const host = scrollHostRef.current
+    if (!host) return
+
+    let pan = false, startY = 0, startX = 0, startTop = 0, startLeft = 0
+
+    const onTS = (e: TouchEvent) => {
+      if (e.touches.length >= 2 && !handMode) {
+        pan = true
+        const [t1, t2] = [e.touches[0], e.touches[1]]
+        startY = (t1.clientY + t2.clientY) / 2
+        startX = (t1.clientX + t2.clientX) / 2
+        startTop = host.scrollTop
+        startLeft = host.scrollLeft
+      }
+    }
+
+    const onTM = (e: TouchEvent) => {
+      if (pan && e.touches.length >= 2) {
+        e.preventDefault() // we’ll scroll manually
+        const [t1, t2] = [e.touches[0], e.touches[1]]
+        const y = (t1.clientY + t2.clientY) / 2
+        const x = (t1.clientX + t2.clientX) / 2
+        host.scrollTop  = startTop  - (y - startY)
+        host.scrollLeft = startLeft - (x - startX)
+      }
+    }
+
+    const end = () => { pan = false }
+
+    host.addEventListener('touchstart', onTS,       { passive: true,  capture: true })
+    host.addEventListener('touchmove',  onTM,       { passive: false, capture: true })
+    host.addEventListener('touchend',   end,        { passive: true,  capture: true })
+    host.addEventListener('touchcancel',end,        { passive: true,  capture: true })
+
+    return () => {
+      host.removeEventListener('touchstart', onTS as any, true)
+      host.removeEventListener('touchmove',  onTM as any, true)
+      host.removeEventListener('touchend',   end as any,  true)
+      host.removeEventListener('touchcancel',end as any,  true)
+    }
+  }, [handMode])
+  
   // remember when a recording started, so startMs matches ink timebase
   const recordStartRef = useRef<number | null>(null)
-
 
   // 5.2 — media + page clock
   const [media, setMedia] = useState<AudioSeg[]>([])
@@ -354,21 +398,22 @@ export default function StudentAssignment(){
   }
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
-  // When PDF is ready, remember its canvas and sync size immediately
-  const onPdfReady = (_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
-    pdfCanvasEl.current = canvas
-    if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
-      const w = Math.max(1, Math.round(dims.cssW))
-      const h = Math.max(1, Math.round(dims.cssH))
-      setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
-    }
-    try {
-      const dpr = (window.devicePixelRatio || 1)
-      if (canvas.width && !canvas.style.width)  canvas.style.width  = `${Math.round(canvas.width / dpr)}px`
-      if (canvas.height && !canvas.style.height) canvas.style.height = `${Math.round(canvas.height / dpr)}px`
-    } catch {}
-    syncFromPdfCanvas()
+// When PDF is ready, remember its canvas and sync size immediately
+const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
+  pdfCanvasEl.current = canvas
+  if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
+    const w = Math.max(1, Math.round(dims.cssW))
+    const h = Math.max(1, Math.round(dims.cssH))
+    setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
   }
+  try {
+    const dpr = (window.devicePixelRatio || 1)
+    if (canvas.width && !canvas.style.width)  canvas.style.width  = `${Math.round(canvas.width / dpr)}px`
+    if (canvas.height && !canvas.style.height) canvas.style.height = `${Math.round(canvas.height / dpr)}px`
+  } catch {}
+  syncFromPdfCanvas()
+}, []); // 👈 stable reference; won’t change when tool/color/handMode change
+
 
   // Keep overlay size synced to PDF canvas + parent size changes and zoom/orientation
   useEffect(() => {
@@ -1282,6 +1327,16 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
       </div>
     </div>
   )
+  
+  // 👇 Add this just before `return ( ... )`
+  const pdfNode = useMemo(() => {
+    if (!hasTask || !pdfUrl) return null
+    return (
+      <div style={{ position:'absolute', inset:0, zIndex:0 }}>
+        <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
+      </div>
+    )
+  }, [pdfUrl, pageIndex, hasTask, onPdfReady])
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
@@ -1321,11 +1376,7 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
       >
         <div style={{ position:'relative', width:`${canvasSize.w}px`, height:`${canvasSize.h}px`, overflow:'visible' }}>
           {/* PDF layer */}
-          {hasTask && pdfUrl ? (
-            <div style={{ position:'absolute', inset:0, zIndex:0 }}>
-              <PdfCanvas url={pdfUrl} pageIndex={pageIndex} onReady={onPdfReady} />
-            </div>
-          ) : (
+          {pdfNode ?? (
             <div style={{
               position:'absolute', inset:0, zIndex:0, display:'grid', placeItems:'center',
               color:'#6b7280', fontWeight:700, fontSize:22
@@ -1335,10 +1386,15 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
           )}
 
           {/* Draw layer */}
-          <div style={{
-              position:'absolute', inset:0, zIndex:10,
-              pointerEvents: (hasTask && !handMode) ? 'auto' : 'none'
-            }}>
+<div
+  style={{
+    position: 'absolute',
+    inset: 0,
+    zIndex: 10,
+    pointerEvents: (hasTask && !handMode) ? 'auto' : 'none',
+    touchAction: (hasTask && !handMode) ? 'none' : 'auto',
+  }}
+          >
             <DrawCanvas
               ref={drawRef}
               width={canvasSize.w}
