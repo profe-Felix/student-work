@@ -1154,15 +1154,24 @@ rowData.push({
         }
         return rowData.length>0;
       }
-      if (currentMode==='rowsyll'){
-        const placed = rowModeEl.querySelectorAll('.rowDrop .chip').length;
-        if (placed === 0) return false;
-        const anyBad = rowModeEl.querySelector('.rowDrop .chip.bad');
-        if (anyBad) return false;
-        // If anything dropped, all must be locked (i.e., correct)
-        const locked = rowModeEl.querySelectorAll('.rowDrop .chip.locked').length;
-        return placed === locked;
-      }
+if (currentMode === 'rowsyll') {
+  // 1) Bank must be empty
+  const chipsInBank = rackEl.querySelectorAll('.chip').length;
+  if (chipsInBank > 0) return false;
+
+  // 2) There must be placed chips
+  const placed = rowModeEl.querySelectorAll('.rowDrop .chip').length;
+  if (placed === 0) return false;
+
+  // 3) No incorrect chips showing red
+  const anyBad = rowModeEl.querySelector('.rowDrop .chip.bad');
+  if (anyBad) return false;
+
+  // 4) All placed chips must be locked (i.e., correct)
+  const locked = rowModeEl.querySelectorAll('.rowDrop .chip.locked').length;
+  return placed === locked;
+}
+
 
       // Classic modes
       const inRack = rackEl.querySelectorAll('.card').length;
