@@ -81,6 +81,7 @@
     .card.dragging{width:150px !important; height:auto !important}
 
 /* Word chip for rowsyll mode */
+/* Word chip for rowsyll mode — keep a wide, non-shrinking basis */
 .chip{
   user-select:none;touch-action:none;cursor:grab;
   display:flex;align-items:center;justify-content:center;
@@ -90,9 +91,9 @@
   font-size:34px; line-height:1.15;
   min-height:72px;
 
-  /* make them wide and allow wrapping */
-  flex: 0 1 300px;       /* target width ~300px, can shrink a bit if needed */
-  max-width: 360px;
+  /* NEW: fixed basis, don’t shrink → multiple chips per row */
+  flex: 0 0 320px;          /* ~320px each */
+  max-width:420px;
   text-align:center;
   white-space:normal;
   word-break:break-word;
@@ -135,25 +136,26 @@
       align-items:start;
     }
 
-    /* Base row drop */
-    .rowDrop{
-      min-height:160px;
-      background:var(--drop);
-      border:2px dashed #c7d2fe;
-      border-radius:12px;
-      display:flex;
-      flex-wrap:wrap;
-      gap:8px;
-      align-content:flex-start;
-      align-items:stretch;
-      padding:8px;
-    }
+/* Base row drop — force horizontal flow and no stretching */
+.rowDrop{
+  min-height:160px;
+  background:var(--drop);
+  border:2px dashed #c7d2fe;
+  border-radius:12px;
+  display:flex;
+  flex-direction: row;     /* NEW: row-first */
+  flex-wrap:wrap;
+  gap:14px;                /* a bit more breathing room */
+  align-content:flex-start;
+  align-items:flex-start;  /* NEW: don’t stretch chips vertically */
+  padding:8px;
+}
 
-    /* twoCols grow */
+/* twoCols grow — give horizontal space so chips can sit side-by-side */
 .rowLine.twoCols .rowDrop{
-  width:max-content;     /* grows to fit chips */
+  width:max-content;        /* grow with content */
   max-width:100%;
-  min-width:380px;       /* wider start so chips line up horizontally */
+  min-width:600px;          /* NEW: room for at least two chips on typical screens */
   align-items:flex-start;
   justify-content:flex-start;
 }
@@ -193,9 +195,11 @@
     body.row-compact .rowCard{ width:120px; }
     body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
     body.row-compact .bankActions{ margin-top:6px; }
-    body.row-compact .chip{
-  min-width:120px;
-  max-width:200px;
+/* Mobile/compact tweak: still don’t shrink, just use a smaller basis */
+body.row-compact .chip{
+  flex: 0 0 180px;          /* keep row-first on small screens */
+  min-width:180px;
+  max-width:220px;
   font-size:20px;
   padding:10px 14px;
 }
