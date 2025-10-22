@@ -23,6 +23,13 @@ export default function GelBagWS() {
   const gelRef = useRef<HTMLInputElement | null>(null)
   const handRef = useRef<HTMLInputElement | null>(null)
 
+  // --- Live-apply params if hash query changes (so you can tweak URL without a hard refresh)
+  useEffect(() => {
+    const onHashChange = () => location.reload()
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
   useEffect(() => {
     const card = cardRef.current!
     const sim = simRef.current!
@@ -33,8 +40,14 @@ export default function GelBagWS() {
     const sctx = (sim.getContext('2d') as CanvasRenderingContext2D)!
     const dctx = (draw.getContext('2d') as CanvasRenderingContext2D)!
 
-    // ---- URL params ----
-    const params = new URLSearchParams(location.search)
+    // ---- URL params (read from the HASH for HashRouter) ----
+    function getHashQuery(): string {
+      const h = window.location.hash || ''
+      const qi = h.indexOf('?')
+      return qi >= 0 ? h.slice(qi + 1) : ''
+    }
+    const params = new URLSearchParams(getHashQuery())
+
     const numParam = (k:string, d:number)=> {
       const v = params.get(k); return (v!=null && !isNaN(+v)) ? +v : d
     }
@@ -56,7 +69,7 @@ export default function GelBagWS() {
 
     // header & sliders visibility
     const hideToolbar = params.get('toolbar') === '0' || params.get('toolbar') === 'false'
-    const showControls = boolParam('controls', 1 as any) // 1 default -> show sliders
+    const showControls = boolParam('controls', true) // default show sliders
 
     // 🎲 Randomize range for COUNT
     const RAND_MIN = Math.max(1, numParam('randmin', COUNT))
