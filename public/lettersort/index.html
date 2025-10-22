@@ -85,18 +85,18 @@
 .chip{
   user-select:none;touch-action:none;cursor:grab;
   display:flex;align-items:center;justify-content:center;
-  padding:14px 22px;
-  border-radius:18px;border:1px solid #d1d5db;background:var(--drop);
+  padding:10px 16px;
+  border-radius:14px;border:1px solid #d1d5db;background:var(--drop);
   box-shadow:0 2px 6px rgba(0,0,0,.06);
   font-size:34px; line-height:1.15;
   min-height:72px;
 
   /* NEW: fixed basis, don’t shrink → multiple chips per row */
-  flex: 0 0 320px;          /* ~320px each */
-  max-width:420px;
-  text-align:center;
-  white-space:normal;
-  word-break:break-word;
+  flex: 1 1 clamp(160px, 28%, 240px);
+  min-width: 160px;
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-word;
 }
 .chip:active{cursor:grabbing}
 .chip.ok{outline:3px solid var(--ok)}
@@ -153,11 +153,12 @@
 
 /* twoCols grow — give horizontal space so chips can sit side-by-side */
 .rowLine.twoCols .rowDrop{
-  width:max-content;        /* grow with content */
-  max-width:100%;
-  min-width:600px;          /* NEW: room for at least two chips on typical screens */
-  align-items:flex-start;
-  justify-content:flex-start;
+  width: 100%;        /* fill available grid column, don't exceed it */
+  max-width: 100%;
+  min-width: 0;       /* allow shrinking below intrinsic width */
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 10px;          /* a bit tighter spacing */
 }
 
 
