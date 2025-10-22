@@ -150,13 +150,14 @@
     }
 
     /* twoCols grow */
-    .rowLine.twoCols .rowDrop{
-      width:max-content;
-      max-width:100%;
-      min-width:220px;
-      align-items:flex-start;
-      justify-content:flex-start;
-    }
+.rowLine.twoCols .rowDrop{
+  width:max-content;     /* grows to fit chips */
+  max-width:100%;
+  min-width:380px;       /* wider start so chips line up horizontally */
+  align-items:flex-start;
+  justify-content:flex-start;
+}
+
 
     .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
     .rowCard{width:150px}
@@ -1044,11 +1045,13 @@ if (currentMode==='rowsyll'){
 
     /******** Row Syllable (new): prompt image + shared bank of word chips ********/
     async function buildRowSyllMode(){
-      currentMode = 'rowsyll';
-      document.body.classList.add('row-compact');
-      columnsEl.classList.add('hidden');
-      rowModeEl.classList.remove('hidden');
-      rowActions.classList.remove('hidden');
+currentMode = 'rowsyll';
+// rowsyll uses big chips → do NOT force compact
+document.body.classList.remove('row-compact');
+columnsEl.classList.add('hidden');
+rowModeEl.classList.remove('hidden');
+rowActions.classList.remove('hidden');
+
 
 // Show global bank at the bottom and fill with chips in typed order
 rackSectionEl.classList.remove('hidden');
@@ -1066,8 +1069,10 @@ SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
         const pImg = await resolveImageForWord(r.prompt);
         if (!pImg) continue;
 
-        const line = document.createElement('div');
-        line.className = 'rowLine';
+const line = document.createElement('div');
+// twoCols lets the drop grow horizontally to fit chips
+line.className = 'rowLine twoCols';
+
 
         const promptWrap = document.createElement('div');
         promptWrap.className = 'rowPrompt';
