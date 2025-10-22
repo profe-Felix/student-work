@@ -26,12 +26,6 @@ export default function GelBagWS() {
   const handRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
-    const onHashChange = () => location.reload()
-    window.addEventListener('hashchange', onHashChange)
-    return () => window.removeEventListener('hashchange', onHashChange)
-  }, [])
-
-  useEffect(() => {
     const card = cardRef.current!
     const sim = simRef.current!
     const drawSim = simDrawRef.current!
@@ -39,52 +33,26 @@ export default function GelBagWS() {
     const drawStems = stemsDrawRef.current!
     const header = headerRef.current!
 
-    const sctx = (sim.getContext('2d') as CanvasRenderingContext2D)!
-    const dSim = (drawSim.getContext('2d') as CanvasRenderingContext2D)!
-    const dStm = (drawStems.getContext('2d') as CanvasRenderingContext2D)!
+    const sctx = sim.getContext('2d')!
+    const dSim = drawSim.getContext('2d')!
+    const dStm = drawStems.getContext('2d')!
 
-    // ---- URL params from HASH (HashRouter) ----
-    function getHashQuery(): string {
-      const h = window.location.hash || ''
-      const qi = h.indexOf('?')
-      return qi >= 0 ? h.slice(qi + 1) : ''
-    }
-    const params = new URLSearchParams(getHashQuery())
-    const numParam = (k:string, d:number)=> { const v = params.get(k); return (v!=null && !isNaN(+v)) ? +v : d }
-    const boolParam = (k:string, d:boolean)=> { const v = params.get(k); if(v==null) return d; return v==='1'||v==='true' }
+    // === Params/state that can change via URL ===
+    let parts = 2
+    let COUNT = 12
+    let SIZE = 12
+    let PRESS_STRENGTH = 0.22
+    let AREA_BOOST = 1.0
+    let COPIES = 5
+    let STEM_W = 440
+    let STEM_FS = 32
+    let STEM_G = 12
+    let compactHeader = false
+    let showControls = true
+    let RAND_MIN = 12
+    let RAND_MAX = 12
 
-    let parts = Math.max(2, Math.min(3, numParam('parts', 2)))
-    let COUNT = Math.max(1, Math.min(60, numParam('count', 12)))
-    let SIZE  = Math.max(6, Math.min(28, numParam('size', 12)))
-    let PRESS_STRENGTH = Math.max(0.02, Math.min(1.2, numParam('gel', 0.22)))
-    let AREA_BOOST     = Math.max(0.3, Math.min(3.0, numParam('hand', 1.0)))
-    let COPIES = Math.max(1, Math.min(10, numParam('copies', 5)))
-
-    // stems panel sizing
-    let STEM_W  = Math.max(260, Math.min(640, numParam('stemw', 440)))
-    let STEM_FS = Math.max(18,  Math.min(56,  numParam('stemfs', 32)))
-    let STEM_G  = Math.max(8,   Math.min(48,  numParam('stemg', 12)))
-
-    // header/sliders visibility
-    const compactHeader = params.get('toolbar') === '0' || params.get('toolbar') === 'false'
-    const showControls = boolParam('controls', true)
-
-    // 🎲 Randomize range
-    const RAND_MIN = Math.max(1, numParam('randmin', COUNT))
-    const RAND_MAX = Math.max(RAND_MIN, numParam('randmax', COUNT))
-
-    // set slider defaults
-    countRef.current!.value = String(COUNT)
-    sizeRef.current!.value  = String(SIZE)
-    partsRef.current!.value = String(parts)
-    gelRef.current!.value   = String(PRESS_STRENGTH)
-    handRef.current!.value  = String(AREA_BOOST)
-
-    // CSS vars
-    document.documentElement.style.setProperty('--stemW', `${STEM_W}px`)
-    document.documentElement.style.setProperty('--stemGutter', `${STEM_G}px`)
-
-    // ---- State ----
+    // world & physics
     let DPR = Math.max(1, window.devicePixelRatio || 1)
     let penSize = 4 * DPR
     const colors = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899']
@@ -93,11 +61,11 @@ export default function GelBagWS() {
     const balls: Ball[] = []
     let Rmin = 8*DPR, Rmax = 16*DPR
 
-    // keep-off-lines (margin depends on DPR; tweaked below)
+    // keep-off partition lines
     const LINE_PAD_BASE = 6
     let LINE_PAD = LINE_PAD_BASE * DPR
 
-    // separate stroke stores
+    // strokes (split)
     type Stroke = { size:number; pts:{x:number;y:number}[] }
     const strokesSim: Stroke[] = []
     const strokesStm: Stroke[] = []
@@ -114,19 +82,71 @@ export default function GelBagWS() {
     const BASE_PRESS_R = 60
     const VISCOSITY = 0.85
 
-    // ---- Header layout ----
-    function configureHeader() {
-      if (compactHeader || !showControls) {
-        document.querySelectorAll('.select').forEach(el => (el as HTMLElement).style.display = 'none')
-        header.style.padding = '8px'
-      }
+    // ====== Utilities ======
+    const getHashQuery = () => {
+      const h = window.location.hash || ''
+      const qi = h.indexOf('?')
+      return qi >= 0 ? h.slice(qi + 1) : ''
+    }
+    const numParam = (p:URLSearchParams,k:string,d:number)=>{
+      const v=p.get(k); return (v!=null && !isNaN(+v)) ? +v : d
+    }
+    const boolParam = (p:URLSearchParams,k:string,d:boolean)=>{
+      const v=p.get(k); if(v==null) return d; return v==='1'||v==='true'
+    }
+
+    function applyParamsFromURL(shouldRespawn=true){
+      const p = new URLSearchParams(getHashQuery())
+
+      parts = Math.max(2, Math.min(3, numParam(p,'parts', parts)))
+      COUNT = Math.max(1, Math.min(60, numParam(p,'count', COUNT)))
+      SIZE  = Math.max(6, Math.min(28, numParam(p,'size',  SIZE)))
+      PRESS_STRENGTH = Math.max(0.02, Math.min(1.2, numParam(p,'gel', PRESS_STRENGTH)))
+      AREA_BOOST     = Math.max(0.3,  Math.min(3.0, numParam(p,'hand', AREA_BOOST)))
+      COPIES = Math.max(1, Math.min(10, numParam(p,'copies', COPIES)))
+
+      STEM_W  = Math.max(260, Math.min(640, numParam(p,'stemw', STEM_W)))
+      STEM_FS = Math.max(18,  Math.min(56,  numParam(p,'stemfs', STEM_FS)))
+      STEM_G  = Math.max(8,   Math.min(48,  numParam(p,'stemg', STEM_G)))
+
+      compactHeader = (p.get('toolbar') === '0' || p.get('toolbar') === 'false')
+      showControls  = boolParam(p,'controls', true)
+
+      RAND_MIN = Math.max(1, numParam(p,'randmin', COUNT))
+      RAND_MAX = Math.max(RAND_MIN, numParam(p,'randmax', COUNT))
+
+      // reflect to UI (only if sliders visible)
+      if (countRef.current) countRef.current.value = String(COUNT)
+      if (sizeRef.current)  sizeRef.current.value  = String(SIZE)
+      if (partsRef.current) partsRef.current.value = String(parts)
+      if (gelRef.current)   gelRef.current.value   = String(PRESS_STRENGTH)
+      if (handRef.current)  handRef.current.value  = String(AREA_BOOST)
+
+      // CSS vars
+      document.documentElement.style.setProperty('--stemW', `${STEM_W}px`)
+      document.documentElement.style.setProperty('--stemGutter', `${STEM_G}px`)
+
+      configureHeader()
+      fit()   // re-fit canvases with possibly changed width
+      renderStems()
+
+      updateR()
+      if (shouldRespawn) placeBalls(COUNT)
+    }
+
+    // layout/header
+    function configureHeader(){
+      // hide controls if compact or controls=0
+      const hideControls = compactHeader || !showControls
+      document.querySelectorAll('.select').forEach(el => {
+        (el as HTMLElement).style.display = hideControls ? 'none' : ''
+      })
+      header.style.padding = hideControls ? '8px' : '10px'
       const hb = header.offsetHeight
-      document.documentElement.style.setProperty('--toolbarH', hb + 'px')
+      ;(document.documentElement as any).style.setProperty('--toolbarH', hb + 'px')
     }
 
     function fit(){
-      configureHeader()
-
       const simWrap = sim.parentElement! // .sim-wrap
       const srect = simWrap.getBoundingClientRect()
       const rrect = stems.getBoundingClientRect()
@@ -166,7 +186,7 @@ export default function GelBagWS() {
       return false
     }
 
-    // --- partition helpers & line avoidance ---
+    // partitions & line-avoidance
     function partitionXs(){
       const xs:number[] = []
       if(parts===2) xs.push(bag.x + bag.w/2)
@@ -175,23 +195,20 @@ export default function GelBagWS() {
     }
     function isNearAnyLine(x:number, r:number){
       const xs = partitionXs()
-      for(const lx of xs){
-        if (Math.abs(x - lx) < r + LINE_PAD) return true
-      }
+      for(const lx of xs){ if (Math.abs(x - lx) < r + LINE_PAD) return true }
       return false
     }
-    function keepOffLines(b: Ball){
+    function keepOffLines(b:Ball){
       const xs = partitionXs()
       for(const lx of xs){
         const dx = b.x - lx
         const minClear = b.r + LINE_PAD
         if (Math.abs(dx) < minClear){
-          // push to nearest side by the extra needed
           const dir = dx < 0 ? -1 : 1
           b.x = lx + dir * minClear
         }
       }
-      clampInBag(b) // ensure still inside bag after push
+      clampInBag(b)
     }
 
     function clampInBag(b:Ball){
@@ -199,10 +216,8 @@ export default function GelBagWS() {
       if(b.y-b.r < bag.y) b.y = bag.y + b.r
       if(b.x+b.r > bag.x+bag.w) b.x = bag.x+bag.w - b.r
       if(b.y+b.r > bag.y+bag.h) b.y = bag.y+bag.h - b.r
-      // also keep away from lines after general clamping
       keepOffLines(b)
     }
-
     function resolveCollisions(){
       for(let i=0;i<balls.length;i++){
         for(let j=i+1;j<balls.length;j++){
@@ -213,8 +228,6 @@ export default function GelBagWS() {
             a.x -= nx*push; a.y -= ny*push
             b.x += nx*push; b.y += ny*push
             clampInBag(a); clampInBag(b)
-            // extra safety: if either still near a line, nudge again
-            keepOffLines(a); keepOffLines(b)
           }
         }
       }
@@ -313,9 +326,9 @@ export default function GelBagWS() {
       dSim.lineCap='round'; dSim.lineJoin='round'
       for(const s of strokesSim){
         dSim.strokeStyle='#111827'; dSim.lineWidth=s.size
-        const pts=s.pts; if(!pts.length) continue
-        dSim.beginPath(); dSim.moveTo(pts[0].x, pts[0].y)
-        for(let i=1;i<pts.length;i++) dSim.lineTo(pts[i].x, pts[i].y)
+        if(!s.pts.length) continue
+        dSim.beginPath(); dSim.moveTo(s.pts[0].x, s.pts[0].y)
+        for(let i=1;i<s.pts.length;i++) dSim.lineTo(s.pts[i].x, s.pts[i].y)
         dSim.stroke()
       }
     }
@@ -324,13 +337,13 @@ export default function GelBagWS() {
       dStm.lineCap='round'; dStm.lineJoin='round'
       for(const s of strokesStm){
         dStm.strokeStyle='#111827'; dStm.lineWidth=s.size
-        const pts=s.pts; if(!pts.length) continue
-        dStm.beginPath(); dStm.moveTo(pts[0].x, pts[0].y)
-        for(let i=1;i<pts.length;i++) dStm.lineTo(pts[i].x, pts[i].y)
+        if(!s.pts.length) continue
+        dStm.beginPath(); dStm.moveTo(s.pts[0].x, s.pts[0].y)
+        for(let i=1;i<s.pts.length;i++) dStm.lineTo(s.pts[i].x, s.pts[i].y)
         dStm.stroke()
       }
     }
-    function eraseByPoint(list: Stroke[], ctx: CanvasRenderingContext2D, p:{x:number;y:number}, radius:number, redraw:()=>void){
+    function eraseByPoint(list: Stroke[], p:{x:number;y:number}, radius:number, redraw:()=>void){
       const r2 = radius*radius; const keep: Stroke[] = []
       for(const s of list){
         let hit=false
@@ -380,7 +393,7 @@ export default function GelBagWS() {
         }
       } else { // pen/erase draw on bag canvas
         const p = getPos(e, drawSim)
-        if(mode==='erase') eraseByPoint(strokesSim, dSim, p, penSize*1.2, redrawSim)
+        if(mode==='erase') eraseByPoint(strokesSim, p, penSize*1.2, redrawSim)
         else { currSim={ size:penSize, pts:[p] }; strokesSim.push(currSim); redrawSim() }
       }
       e.preventDefault?.()
@@ -396,7 +409,7 @@ export default function GelBagWS() {
         }
       } else if(currSim){
         const p=getPos(e, drawSim)
-        if(mode==='erase') eraseByPoint(strokesSim, dSim, p, penSize*1.2, redrawSim)
+        if(mode==='erase') eraseByPoint(strokesSim, p, penSize*1.2, redrawSim)
         else { currSim.pts.push(p); redrawSim() }
       }
       e.preventDefault?.()
@@ -406,17 +419,17 @@ export default function GelBagWS() {
       draggingBall=null; currSim=null; presses=[]
     }
 
-    // ---- STEMS overlay (draw/erase only) ----
+    // ---- STEMS overlay ----
     function onDownStems(e: MouseEvent | TouchEvent){
       const p = getPos(e, drawStems)
-      if(mode==='erase') eraseByPoint(strokesStm, dStm, p, penSize*1.2, redrawStems)
+      if(mode==='erase') eraseByPoint(strokesStm, p, penSize*1.2, redrawStems)
       else { currStm={ size:penSize, pts:[p] }; strokesStm.push(currStm); redrawStems() }
       e.preventDefault?.()
     }
     function onMoveStems(e: MouseEvent | TouchEvent){
       if(currStm){
         const p = getPos(e, drawStems)
-        if(mode==='erase') eraseByPoint(strokesStm, dStm, p, penSize*1.2, redrawStems)
+        if(mode==='erase') eraseByPoint(strokesStm, p, penSize*1.2, redrawStems)
         else { currStm.pts.push(p); redrawStems() }
       }
       e.preventDefault?.()
@@ -457,11 +470,12 @@ export default function GelBagWS() {
 
     const setActive = (btn: HTMLButtonElement | null, on:boolean) => {
       if(!btn) return
-      if(on){ btn.style.background='#22c55e'; btn.style.borderColor='#22c55e'; btn.style.color='#fff' }
-      else  { btn.style.background='#fff';     btn.style.borderColor='#cbd5e1'; btn.style.color='#111827' }
+      btn.style.background = on ? '#22c55e' : '#fff'
+      btn.style.borderColor= on ? '#22c55e' : '#cbd5e1'
+      btn.style.color      = on ? '#fff'     : '#111827'
     }
     function updateToolButtons(){
-      setActive(penBtn, mode!=='erase') // Pen/Hand share this button
+      setActive(penBtn, mode!=='erase') // pen/hand share
       setActive(eraseBtn, mode==='erase')
       penBtn.textContent = (mode==='hand') ? '✋ Mano' : '✎ Lápiz'
     }
@@ -469,6 +483,7 @@ export default function GelBagWS() {
     function randomize(){
       const n = Math.floor(RAND_MIN + Math.random() * (RAND_MAX - RAND_MIN + 1))
       COUNT = Math.max(1, Math.min(60, n))
+      if (countRef.current) countRef.current.value = String(COUNT)
       placeBalls(COUNT)
     }
 
@@ -487,9 +502,13 @@ export default function GelBagWS() {
     gelRef.current?.addEventListener('input', ()=>{ PRESS_STRENGTH = parseFloat(gelRef.current!.value) })
     handRef.current?.addEventListener('input', ()=>{ AREA_BOOST = parseFloat(handRef.current!.value) })
 
-    updateToolButtons()
+    // live-apply URL param changes (NO RELOAD)
+    const onHashChange = () => applyParamsFromURL(/*respawn*/true)
+    window.addEventListener('hashchange', onHashChange)
 
-    // resize observers
+    // init once
+    applyParamsFromURL(/*respawn*/true)
+    updateToolButtons()
     const ro = new ResizeObserver(()=> fit())
     ro.observe(card)
     window.addEventListener('resize', fit)
@@ -510,15 +529,8 @@ export default function GelBagWS() {
     drawStems.addEventListener('touchmove', onMoveStems as any, { passive:false } as any)
     window.addEventListener('touchend', onUpStems as any)
 
-    // init
-    configureHeader()
-    fit()
-    updateR()
-    placeBalls(COUNT)
-    renderStems()
-    tick()
-
-    return ()=>{
+    function cleanup(){
+      window.removeEventListener('hashchange', onHashChange)
       ro.disconnect()
       window.removeEventListener('resize', fit)
       window.removeEventListener('mouseup', onUpSim as any)
@@ -526,6 +538,8 @@ export default function GelBagWS() {
       window.removeEventListener('mouseup', onUpStems as any)
       window.removeEventListener('touchend', onUpStems as any)
     }
+    tick()
+    return cleanup
   }, [])
 
   return (
@@ -543,7 +557,7 @@ export default function GelBagWS() {
           <button id="btnNew" className="primary" style={btnPrimary}>↻ Nuevo</button>
           <button id="btnRand" className="ghost" style={btnGhost} title="Randomiza la cantidad">🎲 Randomizar</button>
 
-          {/* sliders (hidden in compact) */}
+          {/* sliders (hidden by toolbar=0 or controls=0) */}
           <label className="select" style={selStyle}>⚪ cantidad <input ref={countRef} type="range" min={1} max={60} defaultValue={12} /></label>
           <label className="select" style={selStyle}>⚪ tamaño <input ref={sizeRef} type="range" min={6} max={28} defaultValue={12} /></label>
           <label className="select" style={selStyle}>partes
@@ -590,7 +604,6 @@ export default function GelBagWS() {
         }}
       >
         <canvas id="sim" ref={simRef} style={{display:'block', width:'100%', height:'100%', borderRadius:'0 0 0 16px', background:'#fff', border:'1px solid #e5e7eb', position:'absolute', inset:0, zIndex:1}} />
-        {/* draw over BAG */}
         <canvas id="drawSim" ref={simDrawRef} style={{position:'absolute', inset:0, zIndex:5}} />
       </div>
 
