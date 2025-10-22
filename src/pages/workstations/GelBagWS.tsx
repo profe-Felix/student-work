@@ -56,7 +56,7 @@ export default function GelBagWS() {
     let DPR = Math.max(1, window.devicePixelRatio || 1)
     let penSize = 4 * DPR
     const colors = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899']
-    const bag = { x:0, y:0, w:0, h:0 }
+    const bag = { x:0, y:0, w:1, h:1 }
     type Ball = { x:number;y:number;r:number;color:string; vx:number;vy:number; grabbed:boolean }
     const balls: Ball[] = []
     let Rmin = 8*DPR, Rmax = 16*DPR
@@ -82,7 +82,7 @@ export default function GelBagWS() {
     const BASE_PRESS_R = 60
     const VISCOSITY = 0.85
 
-    // ====== Debounced fitting (avoid RO loops) ======
+    // ====== Debounced fitting (avoid loops) ======
     let fitRaf: number | null = null
     let fitting = false
     const scheduleFit = () => {
@@ -136,7 +136,7 @@ export default function GelBagWS() {
 
       configureHeader()
       renderStems()
-      scheduleFit() // refit after stems/content changes
+      scheduleFit()
 
       updateR()
       if (shouldRespawn) placeBalls(COUNT)
@@ -162,30 +162,39 @@ export default function GelBagWS() {
         const srect = simWrap.getBoundingClientRect()
         const rrect = stems.getBoundingClientRect()
 
+        // Guard: if layout not ready, skip and try again soon
+        if (srect.width <= 2 || srect.height <= 2 || rrect.width <= 2 || rrect.height <= 2) {
+          scheduleFit()
+          return
+        }
+
         DPR = Math.max(1, window.devicePixelRatio || 1)
         penSize = 4 * DPR
         LINE_PAD = LINE_PAD_BASE * DPR
 
         // world canvas (bag)
-        sim.width = Math.floor(srect.width * DPR)
-        sim.height= Math.floor(srect.height* DPR)
-        sim.style.width = srect.width + 'px'
-        sim.style.height= srect.height + 'px'
+        sim.width = Math.max(1, Math.floor(srect.width * DPR))
+        sim.height= Math.max(1, Math.floor(srect.height* DPR))
+        sim.style.width = `${srect.width}px`
+        sim.style.height= `${srect.height}px`
 
         // draw over bag
-        drawSim.width  = Math.floor(srect.width * DPR)
-        drawSim.height = Math.floor(srect.height * DPR)
-        drawSim.style.width  = srect.width + 'px'
-        drawSim.style.height = srect.height + 'px'
+        drawSim.width  = Math.max(1, Math.floor(srect.width * DPR))
+        drawSim.height = Math.max(1, Math.floor(srect.height * DPR))
+        drawSim.style.width  = `${srect.width}px`
+        drawSim.style.height = `${srect.height}px`
 
         // draw over stems
-        drawStems.width  = Math.floor(rrect.width * DPR)
-        drawStems.height = Math.floor(rrect.height * DPR)
-        drawStems.style.width  = rrect.width + 'px'
-        drawStems.style.height = rrect.height + 'px'
+        drawStems.width  = Math.max(1, Math.floor(rrect.width * DPR))
+        drawStems.height = Math.max(1, Math.floor(rrect.height * DPR))
+        drawStems.style.width  = `${rrect.width}px`
+        drawStems.style.height = `${rrect.height}px`
 
         const pad = 24 * DPR
-        bag.x = pad; bag.y = pad; bag.w = sim.width - pad*2; bag.h = sim.height - pad*2
+        bag.x = pad
+        bag.y = pad
+        bag.w = Math.max(1, sim.width - pad*2)
+        bag.h = Math.max(1, sim.height - pad*2)
 
         redrawSim()
         redrawStems()
@@ -223,14 +232,12 @@ export default function GelBagWS() {
           b.x = lx + dir * minClear
         }
       }
-      // NOTE: do NOT call clampInBag here (avoid recursion)
     }
     function clampInBag(b:Ball){
       if(b.x-b.r < bag.x) b.x = bag.x + b.r
       if(b.y-b.r < bag.y) b.y = bag.y + b.r
       if(b.x+b.r > bag.x+bag.w) b.x = bag.x+bag.w - b.r
       if(b.y+b.r > bag.y+bag.h) b.y = bag.y+bag.h - b.r
-      // NOTE: do NOT call keepOffLines here (avoid recursion)
     }
     function constrain(b: Ball){
       clampInBag(b)
@@ -238,7 +245,7 @@ export default function GelBagWS() {
     }
     function resolveCollisions(){
       for(let i=0;i<balls.length;i++){
-        for(let j=i+1;j<i+1 && j<balls.length;j++){
+        for(let j=i+1;j<balls.length;j++){
           const a=balls[i], b=balls[j]
           const dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy), min=a.r+b.r
           if(d>0 && d<min){
@@ -269,8 +276,10 @@ export default function GelBagWS() {
       render()
     }
 
+    // SAFE rounded-rect: never negative radius; bail if w/h invalid
     function roundRectPath(ctx:CanvasRenderingContext2D, x:number,y:number,w:number,h:number,r:number){
-      const rr = Math.min(r, w/2, h/2)
+      if (w <= 0 || h <= 0) return
+      const rr = Math.max(0, Math.min(r, w/2, h/2))
       ctx.moveTo(x+rr, y)
       ctx.arcTo(x+w, y, x+w, y+h, rr)
       ctx.arcTo(x+w, y+h, x, y+h, rr)
@@ -288,13 +297,17 @@ export default function GelBagWS() {
       g1.addColorStop(0.5, 'rgba(59,130,246,.06)')
       g1.addColorStop(1, 'rgba(59,130,246,.12)')
       sctx.fillStyle = g1; sctx.fill()
-      sctx.lineWidth = 2*DPR; sctx.strokeStyle = '#94a3b8'; sctx.stroke()
+      sctx.lineWidth = Math.max(1, 2*DPR); sctx.strokeStyle = '#94a3b8'; sctx.stroke()
+
+      // top sheen (guard width/height)
+      const sheenW = Math.max(1, bag.w - 12*DPR)
+      const sheenH = Math.max(1, bag.h*0.22)
       sctx.globalAlpha = 0.25; sctx.fillStyle = '#fff'
-      sctx.beginPath(); roundRectPath(sctx, bag.x+6*DPR, bag.y+6*DPR, bag.w-12*DPR, bag.h*0.22, r*0.6); sctx.fill()
+      sctx.beginPath(); roundRectPath(sctx, bag.x+6*DPR, bag.y+6*DPR, sheenW, sheenH, r*0.6); sctx.fill()
       sctx.restore()
 
       const xs = partitionXs()
-      sctx.save(); sctx.strokeStyle = 'rgba(30,41,59,.35)'; sctx.setLineDash([8*DPR, 10*DPR]); sctx.lineWidth=2*DPR
+      sctx.save(); sctx.strokeStyle = 'rgba(30,41,59,.35)'; sctx.setLineDash([8*DPR, 10*DPR]); sctx.lineWidth=Math.max(1,2*DPR)
       for(const lx of xs){ sctx.beginPath(); sctx.moveTo(lx, bag.y+10*DPR); sctx.lineTo(lx, bag.y+bag.h-10*DPR); sctx.stroke() }
       sctx.restore()
 
@@ -322,7 +335,7 @@ export default function GelBagWS() {
     // ----- Stems HTML -----
     function renderStems(){
       const innerPad = 32
-      const usable = STEM_W - innerPad * 2
+      const usable = Math.max(48, STEM_W - innerPad * 2)
       const mkBlank = (w:number) =>
         `<span style="display:inline-block; vertical-align:baseline; border-bottom:3px solid #0f172a; width:${Math.max(48, Math.floor(w))}px; transform:translateY(-0.15em);"></span>`
       let rows = ''
