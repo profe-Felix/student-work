@@ -83,27 +83,36 @@
 /* Word chip for rowsyll mode */
 /* Word chip for rowsyll mode — keep a wide, non-shrinking basis */
 .chip{
-  user-select:none;touch-action:none;cursor:grab;
-  display:flex;align-items:center;justify-content:center;
-  padding:10px 16px;
-  border-radius:14px;border:1px solid #d1d5db;background:var(--drop);
-  box-shadow:0 2px 6px rgba(0,0,0,.06);
-  font-size:34px; line-height:1.15;
-  min-height:72px;
+  user-select:none; touch-action:none; cursor:grab;
 
-  /* NEW: fixed basis, don’t shrink → multiple chips per row */
-  flex: 1 1 clamp(160px, 28%, 240px);
-  min-width: 160px;
-  max-width: 100%;
-  white-space: normal;
-  word-break: break-word;
+  display:inline-flex;          /* inline helps natural width */
+  align-items:center;
+  justify-content:center;
+
+  padding:6px 12px;             /* tighter sides */
+  border:1px solid #d1d5db;
+  border-radius:14px;
+  background:var(--drop);
+
+  font-size:clamp(24px, 2.8vw, 40px);  /* a bit bigger but responsive */
+  line-height:1.1;
+  min-height:48px;
+
+  flex:0 1 auto;                /* key: don’t grow to fill the row */
+  max-width:26ch;               /* wrap long words instead of widening forever */
+  white-space:normal;
+  word-break:break-word;
 }
 .chip:active{cursor:grabbing}
 .chip.ok{outline:3px solid var(--ok)}
 .chip.bad{outline:3px solid var(--bad)}
 
 /* nicer spacing for the chip bank */
-.rack.chips{ gap:16px; padding:16px }
+.rack.chips{
+  gap:12px;
+  padding:12px;
+  align-items:flex-start;       /* prevent tall chips in the bank */
+}
 
 /* keep visual size while dragging (don’t collapse like .card) */
 .chip.dragging{ width: auto !important; height:auto !important }
@@ -143,25 +152,20 @@
   border:2px dashed #c7d2fe;
   border-radius:12px;
   display:flex;
-  flex-direction: row;     /* NEW: row-first */
   flex-wrap:wrap;
-  gap:14px;                /* a bit more breathing room */
+  gap:10px;
   align-content:flex-start;
-  align-items:flex-start;  /* NEW: don’t stretch chips vertically */
+  align-items:flex-start;       /* was: stretch -> this stops the tall chips */
   padding:8px;
 }
 
 /* twoCols grow — give horizontal space so chips can sit side-by-side */
 .rowLine.twoCols .rowDrop{
-  width: 100%;        /* fill available grid column, don't exceed it */
-  max-width: 100%;
-  min-width: 0;       /* allow shrinking below intrinsic width */
-  justify-content: flex-start;
-  align-items: flex-start;
-  gap: 10px;          /* a bit tighter spacing */
+  width:100%;                  /* fill row, but don’t force extra width */
+  max-width:100%;
+  min-width:0;
+  justify-content:flex-start;
 }
-
-
     .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
     .rowCard{width:150px}
     .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
