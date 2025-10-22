@@ -82,7 +82,7 @@ export default function GelBagWS() {
     const BASE_PRESS_R = 60
     const VISCOSITY = 0.85
 
-    // ====== Debounced fit (prevents ResizeObserver loops) ======
+    // ====== Debounced fitting (avoid RO loops) ======
     let fitRaf: number | null = null
     let fitting = false
     const scheduleFit = () => {
@@ -135,8 +135,8 @@ export default function GelBagWS() {
       document.documentElement.style.setProperty('--stemGutter', `${STEM_G}px`)
 
       configureHeader()
-      renderStems()      // update DOM first
-      scheduleFit()      // then measure/size canvases
+      renderStems()
+      scheduleFit() // refit after stems/content changes
 
       updateR()
       if (shouldRespawn) placeBalls(COUNT)
@@ -144,6 +144,7 @@ export default function GelBagWS() {
 
     // layout/header
     function configureHeader(){
+      // hide controls if compact or controls=0
       const hideControls = compactHeader || !showControls
       document.querySelectorAll('.select').forEach(el => {
         (el as HTMLElement).style.display = hideControls ? 'none' : ''
@@ -188,6 +189,7 @@ export default function GelBagWS() {
 
         redrawSim()
         redrawStems()
+        render()
       } finally {
         fitting = false
       }
@@ -221,29 +223,29 @@ export default function GelBagWS() {
           b.x = lx + dir * minClear
         }
       }
-      clampInBag(b)
+      // NOTE: do NOT call clampInBag here (avoid recursion)
     }
-
     function clampInBag(b:Ball){
       if(b.x-b.r < bag.x) b.x = bag.x + b.r
       if(b.y-b.r < bag.y) b.y = bag.y + b.r
       if(b.x+b.r > bag.x+bag.w) b.x = bag.x+bag.w - b.r
       if(b.y+b.r > bag.y+bag.h) b.y = bag.y+bag.h - b.r
+      // NOTE: do NOT call keepOffLines here (avoid recursion)
+    }
+    function constrain(b: Ball){
+      clampInBag(b)
       keepOffLines(b)
     }
     function resolveCollisions(){
       for(let i=0;i<balls.length;i++){
-        for(let j=i+1;j<i+1+balls.length-j;j++){}
-      }
-      for(let i=0;i<balls.length;i++){
-        for(let j=i+1;j<balls.length;j++){
+        for(let j=i+1;j<i+1 && j<balls.length;j++){
           const a=balls[i], b=balls[j]
           const dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy), min=a.r+b.r
           if(d>0 && d<min){
             const push=(min-d)/2, nx=dx/d, ny=dy/d
             a.x -= nx*push; a.y -= ny*push
             b.x += nx*push; b.y += ny*push
-            clampInBag(a); clampInBag(b)
+            constrain(a); constrain(b)
           }
         }
       }
@@ -261,7 +263,7 @@ export default function GelBagWS() {
           if(!overlapsAny(x,y,r) && !isNearAnyLine(x,r)) break
         }
         const ball: Ball = { x, y, r, color: colors[i%colors.length], vx:0, vy:0, grabbed:false }
-        keepOffLines(ball)
+        constrain(ball)
         balls.push(ball)
       }
       render()
@@ -419,7 +421,7 @@ export default function GelBagWS() {
         if('touches' in e && (e as TouchEvent).touches){
           updatePressesFromTouches(e as TouchEvent)
         } else if(draggingBall!=null){
-          const p = getPos(e, sim); const b=balls[draggingBall]; b.x=p.x; b.y=p.y; keepOffLines(b); resolveCollisions()
+          const p = getPos(e, sim); const b=balls[draggingBall]; b.x=p.x; b.y=p.y; constrain(b); resolveCollisions()
         } else if(presses.length){
           const p = getPos(e, sim); presses[0].x=p.x; presses[0].y=p.y
         }
@@ -468,7 +470,7 @@ export default function GelBagWS() {
       for(const b of balls){
         if(!b.grabbed){
           b.x += b.vx; b.y += b.vy
-          keepOffLines(b)
+          constrain(b)
         }
       }
       resolveCollisions()
