@@ -83,21 +83,30 @@
 /* Word chip for rowsyll mode */
 .chip{
   user-select:none;touch-action:none;cursor:grab;
-  display:inline-flex;align-items:center;justify-content:center;
-  padding:12px 18px;
-  border-radius:14px;border:1px solid #d1d5db;background:#fff;
+  display:flex;align-items:center;justify-content:center;
+  padding:14px 22px;
+  border-radius:18px;border:1px solid #d1d5db;background:var(--drop);
   box-shadow:0 2px 6px rgba(0,0,0,.06);
-  font-size:30px; line-height:1.15;
-  min-height:50px;
-  min-width:300px;        /* ⬅ a little wider */
-  max-width:420px;        /* wraps nicely on longer words */
+  font-size:34px; line-height:1.15;
+  min-height:72px;
+
+  /* make them wide and allow wrapping */
+  flex: 0 1 300px;       /* target width ~300px, can shrink a bit if needed */
+  max-width: 360px;
   text-align:center;
-  white-space:normal;      /* allow wrapping */
-  word-break:break-word;   /* break long chunks if needed */
+  white-space:normal;
+  word-break:break-word;
 }
 .chip:active{cursor:grabbing}
 .chip.ok{outline:3px solid var(--ok)}
 .chip.bad{outline:3px solid var(--bad)}
+
+/* nicer spacing for the chip bank */
+.rack.chips{ gap:16px; padding:16px }
+
+/* keep visual size while dragging (don’t collapse like .card) */
+.chip.dragging{ width: auto !important; height:auto !important }
+
 
 
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
@@ -801,10 +810,12 @@
           r.dropEl.innerHTML='';
         });
         // For rowsyll, rebuild the bank chips in original order
-        if (currentMode==='rowsyll'){
-          rackEl.innerHTML = '';
-          SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
-        } else {
+if (currentMode==='rowsyll'){
+  rackEl.innerHTML = '';
+  rackEl.classList.add('chips');            // ← keep the wide layout after reset
+  SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
+} else {
+
           // row/rowalli had per-row racks; rebuild them
           rowData.forEach((r, idx)=>{
             if (r.rackEl && r.cards){
@@ -1039,10 +1050,12 @@
       rowModeEl.classList.remove('hidden');
       rowActions.classList.remove('hidden');
 
-      // Show global bank at the bottom and fill with chips in typed order
-      rackSectionEl.classList.remove('hidden');
-      rackEl.innerHTML = '';
-      SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
+// Show global bank at the bottom and fill with chips in typed order
+rackSectionEl.classList.remove('hidden');
+rackEl.innerHTML = '';
+rackEl.classList.add('chips');              // ← make the bank use chip spacing
+SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
+
 
       const defs = parseRowSyllDefs(ROWS_RAW); // [{prompt, how:'init'|'final'}]
       rowData = [];
@@ -1241,12 +1254,17 @@
       if(!drag.moved && Math.hypot(dx,dy) < 4) return;
       if(!drag.moved){
         drag.moved = true;
-        drag.el.style.position='fixed';
-        // keep chip size natural; cards keep width=150
-        if (drag.el.classList.contains('card')) drag.el.style.width = '150px';
-        drag.el.style.height = '';
-        drag.el.style.zIndex=1000;
-        drag.el.style.pointerEvents='none';
+drag.el.style.position='fixed';
+// keep cards at 150px, but preserve actual width for chips
+if (drag.el.classList.contains('card')) {
+  drag.el.style.width = '150px';
+} else {
+  drag.el.style.width = drag.el.getBoundingClientRect().width + 'px';
+}
+drag.el.style.height = '';
+drag.el.style.zIndex=1000;
+drag.el.style.pointerEvents='none';
+
       }
       drag.el.style.left=(e.clientX-70)+'px';
       drag.el.style.top =(e.clientY-70)+'px';
@@ -1410,10 +1428,11 @@
       soloBar.classList.remove('hidden');
     }
 
-    function startSoloRound(){
-      usedSet = new Set();
+function startSoloRound(){
+  usedSet = new Set();
+  rackEl.classList.remove('chips');         // ← reset, only rowsyll should set it
 
-      if (MODE==='row'){
+  if (MODE==='row'){
         buildRowMode();
         return;
       }
