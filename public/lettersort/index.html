@@ -106,64 +106,76 @@
       align-items:start;
     }
 
-    /* START SIZE + GROWTH FOR ROW DROP */
-/* Base row drop — stays inside its grid cell (used by row mode) */
-.rowDrop{
-  min-height:160px;
-  background:var(--drop);
-  border:2px dashed #c7d2fe;
-  border-radius:12px;
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-  align-content:flex-start;
-  align-items:stretch;
-  padding:8px;
-}
+    /* Base row drop — stays inside its grid cell (used by row mode) */
+    .rowDrop{
+      min-height:160px;
+      background:var(--drop);
+      border:2px dashed #c7d2fe;
+      border-radius:12px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-content:flex-start;
+      align-items:stretch;
+      padding:8px;
+    }
 
-/* Row Alliteration (twoCols) — allow the drop to expand horizontally */
-.rowLine.twoCols .rowDrop{
-  width:max-content;   /* grows to fit dropped tiles */
-  max-width:100%;      /* but never overflow the row */
-  min-width:220px;     /* clear starting size on desktop */
-  align-items:flex-start;
-  justify-content:flex-start;
-}
+    /* Row Alliteration + RowSyll (twoCols) — allow the drop to expand horizontally */
+    .rowLine.twoCols .rowDrop{
+      width:max-content;   /* grows to fit dropped tiles */
+      max-width:100%;      /* but never overflow the row */
+      min-width:220px;     /* clear starting size on desktop */
+      align-items:flex-start;
+      justify-content:flex-start;
+    }
 
-.rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
-.rowCard{width:150px}
-.rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
+    .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
+    .rowCard{width:150px}
+    .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
 
-/* ---------- Compact tweaks (mobile) ---------- */
-body.row-compact .wrap { padding-top:6px; }
-body.row-compact header { border-bottom-width:1px; }
-body.row-compact .soloBar { padding:6px; }
-body.row-compact .columns { gap:12px; }
+    /* Word chip (rowsyll choices) */
+    .chip{
+      user-select:none;touch-action:none;cursor:grab;
+      display:inline-flex;align-items:center;justify-content:center;
+      padding:10px 14px;border-radius:18px;border:1px solid #d1d5db;background:#fff;
+      box-shadow:0 2px 6px rgba(0,0,0,.06);
+      font-size:22px; line-height:1; white-space:nowrap;
+    }
+    .chip:active{cursor:grabbing}
+    .chip.ok{outline:3px solid var(--ok)}
+    .chip.bad{outline:3px solid var(--bad)}
+    .chip.dragging{position:fixed !important; z-index:1000 !important}
 
-body.row-compact #rowMode { gap:10px; }
-body.row-compact .rowLine{
-  grid-template-columns: 150px 140px 1fr;
-  padding:8px;
-  gap:10px;
-  border-radius:10px;
-  box-shadow:0 3px 10px rgba(0,0,0,.045);
-}
-body.row-compact .rowLine.twoCols{ grid-template-columns: minmax(150px, max-content) 1fr; }
-body.row-compact .rowDrop{
-  min-height:120px;
-  padding:6px;
-  border-radius:10px;
-  gap:6px;
-}
-body.row-compact .rowLine.twoCols .rowDrop{
-  min-width:150px;     /* clear start size in compact */
-  width:max-content;
-  max-width:100%;
-}
-body.row-compact .rowRack{ gap:6px; }
-body.row-compact .rowCard{ width:120px; }
-body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
-body.row-compact .bankActions{ margin-top:6px; }
+    /* ---------- Compact tweaks (mobile) ---------- */
+    body.row-compact .wrap { padding-top:6px; }
+    body.row-compact header { border-bottom-width:1px; }
+    body.row-compact .soloBar { padding:6px; }
+    body.row-compact .columns { gap:12px; }
+
+    body.row-compact #rowMode { gap:10px; }
+    body.row-compact .rowLine{
+      grid-template-columns: 150px 140px 1fr;
+      padding:8px;
+      gap:10px;
+      border-radius:10px;
+      box-shadow:0 3px 10px rgba(0,0,0,.045);
+    }
+    body.row-compact .rowLine.twoCols{ grid-template-columns: minmax(150px, max-content) 1fr; }
+    body.row-compact .rowDrop{
+      min-height:120px;
+      padding:6px;
+      border-radius:10px;
+      gap:6px;
+    }
+    body.row-compact .rowLine.twoCols .rowDrop{
+      min-width:150px;     /* clear start size in compact */
+      width:max-content;
+      max-width:100%;
+    }
+    body.row-compact .rowRack{ gap:6px; }
+    body.row-compact .rowCard{ width:120px; }
+    body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
+    body.row-compact .bankActions{ margin-top:6px; }
   </style>
 </head>
 <body>
@@ -264,7 +276,7 @@ body.row-compact .bankActions{ margin-top:6px; }
 
     // URL params
     const qs = new URLSearchParams(location.search);
-    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', or classic
+    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'rowsyll', or classic
     const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
     const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
     const IP = qs.get('ip') || DEFAULT_IMAGES_PREFIX;
@@ -278,18 +290,17 @@ body.row-compact .bankActions{ margin-top:6px; }
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
     // Row modes params
-    const ROWS_RAW   = qs.get('rows') || ''; // "gato,pato,galleta,rana;tomate,tenedor,tigre,oso"
+    const ROWS_RAW   = qs.get('rows') || ''; // for row/rowalli/rowsyll
     const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true'; // ignored for rowalli
 
-// Force SOLO by default. Only show teacher/student (session code) if ?sync=true is present.
-const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
+    // Force SOLO by default. Only show teacher/student (session code) if ?sync=true is present.
+    const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
 
-// SOLO if NOT in sync mode, or any solo hints/row modes are present.
-const SOLO_MODE =
-  !SYNC ||
-  MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' ||
-  (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0);
-
+    // SOLO if NOT in sync mode, or any solo hints/row modes are present.
+    const SOLO_MODE =
+      !SYNC ||
+      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'rowsyll' ||
+      (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -438,6 +449,13 @@ const SOLO_MODE =
       return normalizeMarkers(first);
     }
 
+    // helpers for rowsyll
+    function syllablesOf(wordRaw){ return syllabifyEs(markersToPretty(wordRaw)); }
+    function onsetOfSyllable(syl){
+      const s = normalizeMarkers(syl || '');
+      return initialFromStem(s); // respects ch/ll/rr
+    }
+
     /******** Public URL existence check (GET with Range) ********/
     async function publicUrlIfExists(bucket, path){
       const { data } = client.storage.from(bucket).getPublicUrl(path);
@@ -564,7 +582,7 @@ const SOLO_MODE =
     async function ensureStorageLoaded(){
       try{
         imageFiles = [];
-        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort'){
+        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort' || MODE==='rowsyll'){
           imageFiles = await listAllImagesJpg();
         } else if (SOLO_WORDS.length){
           const found = [];
@@ -742,8 +760,21 @@ const SOLO_MODE =
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap" ${ROW_TITLE?'':'style="display:none"'}>${ROW_TITLE ? (markersToPretty(card.coreRaw)||'') : '&nbsp;'}</div>`;
       el.addEventListener('click', async ()=>{
         if (Date.now() - lastDragEndedAt < 150) return;
+        // normal modes play audio
         playWordAudio(card.coreRaw);
       });
+      makeDraggable(el, opts.rowScope ? String(opts.rowIndex) : null);
+      return el;
+    }
+
+    // rowsyll chips (no audio)
+    function renderChip(id, word, opts={}){
+      const el = document.createElement('div');
+      el.className = 'chip';
+      el.dataset.id = id;
+      el.dataset.word = word;
+      if (opts.rowIndex != null) el.dataset.row = String(opts.rowIndex);
+      el.textContent = markersToPretty(word);
       makeDraggable(el, opts.rowScope ? String(opts.rowIndex) : null);
       return el;
     }
@@ -755,12 +786,19 @@ const SOLO_MODE =
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
     function resetRoundPlacements(){
-      document.querySelectorAll('.card').forEach(c=> c.classList.remove('ok','bad','locked') );
-      if (currentMode==='row' || currentMode==='rowalli'){
+      document.querySelectorAll('.card, .chip').forEach(c=> c.classList.remove('ok','bad','locked') );
+      if (currentMode==='row' || currentMode==='rowalli' || currentMode==='rowsyll'){
         rowData.forEach((r, idx)=>{
           r.dropEl.innerHTML='';
           r.rackEl.innerHTML='';
-          r.cards.forEach(c=> r.rackEl.appendChild(renderCard(c,{rowCard:true,rowIndex:idx,rowScope:true})));
+          if (r.type === 'rowsyll'){
+            r.choices.forEach(w=>{
+              const chip = renderChip(w.id, w.word, {rowCard:true,rowIndex:idx,rowScope:true});
+              r.rackEl.appendChild(chip);
+            });
+          } else {
+            r.cards.forEach(c=> r.rackEl.appendChild(renderCard(c,{rowCard:true,rowIndex:idx,rowScope:true})));
+          }
         });
       } else {
         clearAllPlacements();
@@ -840,6 +878,19 @@ const SOLO_MODE =
       }).filter(items=>items.length>=2);
     }
 
+    // rowsyll: "tigre:init~taza,toro; zapato:final~pato,carrito"
+    function parseRowsSyll(str){
+      return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
+        const [left, right] = seg.split('~');
+        if(!left || !right) return null;
+        const m = left.split(':');
+        const prompt = (m[0]||'').trim();
+        const rule = (m[1]||'init').trim().toLowerCase(); // init | final
+        const choices = right.split(',').map(s=>s.trim()).filter(Boolean);
+        return { prompt, rule: (rule==='final' ? 'final' : 'init'), choices };
+      }).filter(Boolean);
+    }
+
     function majorityInitial(rawCores){
       const m = new Map();
       for (const rc of rawCores){
@@ -851,7 +902,7 @@ const SOLO_MODE =
       return { initial: bestI || '', count: bestC<0 ? 0 : bestC };
     }
 
-    /******** Row: prompt+choices ********/
+    /******** Row: prompt+choices (pictures) ********/
     async function buildRowMode(){
       currentMode = 'row';
       document.body.classList.add('row-compact');
@@ -974,6 +1025,67 @@ const SOLO_MODE =
       }
     }
 
+    /******** Row Syllable: picture prompt + word chips (no audio) ********/
+    async function buildRowSyllMode(){
+      currentMode = 'rowsyll';
+      document.body.classList.add('row-compact');
+      columnsEl.classList.add('hidden');
+      rackSectionEl.classList.add('hidden');
+      rowModeEl.classList.remove('hidden');
+      rowActions.classList.remove('hidden');
+
+      const rows = parseRowsSyll(ROWS_RAW);
+      rowData = [];
+      rowModeEl.innerHTML = '';
+
+      for (let i=0;i<rows.length;i++){
+        const r = rows[i];
+        const pImg = await resolveImageForWord(r.prompt);
+        if (!pImg) continue;
+
+        // prompt onset (for rules)
+        const promptOnset = initialFromStem(pImg.rawCore);
+
+        const line = document.createElement('div');
+        line.className = 'rowLine twoCols';
+
+        const drop = document.createElement('div');
+        drop.className = 'rowDrop';
+        drop.dataset.row = String(i);
+
+        const rack = document.createElement('div');
+        rack.className = 'rowRack';
+        rack.dataset.row = String(i);
+
+        // prompt picture (no audio)
+        const promptWrap = document.createElement('div');
+        promptWrap.className = 'rowPrompt';
+        const pCard = document.createElement('div');
+        pCard.className = 'card';
+        pCard.innerHTML = `<img alt="" src="${pImg.url}"><div class="cap" style="display:${ROW_TITLE?'block':'none'}">${ROW_TITLE?markersToPretty(pImg.rawCore):'&nbsp;'}</div>`;
+        promptWrap.appendChild(pCard);
+
+        // Layout: prompt | drop | rack
+        line.insertBefore(promptWrap, line.firstChild);
+        line.appendChild(drop);
+        line.appendChild(rack);
+        rowModeEl.appendChild(line);
+
+        // build chips from choices
+        const choices = r.choices.map(w => ({ id: crypto.randomUUID(), word: w }));
+        choices.forEach(ch => rack.appendChild(renderChip(ch.id, ch.word, {rowIndex:i, rowScope:true})));
+
+        rowData.push({
+          type:'rowsyll',
+          dropEl: drop,
+          rackEl: rack,
+          rule: r.rule,            // 'init' | 'final'
+          promptOnset,             // e.g., 't' or 'ch'
+          choices                  // [{id, word}]
+        });
+      }
+    }
+
     function everythingCorrect(){
       if (currentMode==='row'){
         for (const r of rowData){
@@ -986,6 +1098,15 @@ const SOLO_MODE =
         for (const r of rowData){
           const locked = r.dropEl.querySelectorAll('.card.locked').length;
           if (locked !== r.expectedCount) return false;
+        }
+        return rowData.length>0;
+      }
+      if (currentMode==='rowsyll'){
+        // at least one chip and all locked
+        for (const r of rowData){
+          const placed = r.dropEl.querySelectorAll('.chip').length;
+          const locked = r.dropEl.querySelectorAll('.chip.locked').length;
+          if (placed === 0 || placed !== locked) return false;
         }
         return rowData.length>0;
       }
@@ -1027,6 +1148,31 @@ const SOLO_MODE =
             const ok = (ini === r.majInitial);
             if(ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
             else { cardEl.classList.add('bad'); setTimeout(()=> { cardEl.classList.remove('bad'); r.rackEl.appendChild(cardEl); }, 300); }
+          });
+        });
+        if (everythingCorrect()) celebrate();
+        return;
+      }
+
+      if (currentMode==='rowsyll'){
+        rowData.forEach((r)=>{
+          const wants = r.promptOnset;   // e.g., 't'
+          [...r.dropEl.children].forEach(chEl=>{
+            if (!chEl.classList.contains('chip')) return;
+            const word = chEl.dataset.word || '';
+            const syls = syllablesOf(word);
+            const targetSyl = (r.rule === 'final') ? syls[syls.length-1] : syls[0];
+            const ok = (onsetOfSyllable(targetSyl) === wants);
+            if (ok){
+              chEl.classList.add('ok','locked');
+              // lock by replacing with a non-draggable clone
+              const clone = chEl.cloneNode(true);
+              clone.classList.add('locked');
+              chEl.replaceWith(clone);
+            } else {
+              chEl.classList.add('bad');
+              setTimeout(()=> { chEl.classList.remove('bad'); r.rackEl.appendChild(chEl); }, 300);
+            }
           });
         });
         if (everythingCorrect()) celebrate();
@@ -1100,7 +1246,7 @@ const SOLO_MODE =
       if(!drag.moved){
         drag.moved = true;
         drag.el.style.position='fixed';
-        drag.el.style.width = '150px';
+        drag.el.style.width = '';
         drag.el.style.height = '';
         drag.el.style.zIndex=1000;
         drag.el.style.pointerEvents='none';
@@ -1108,44 +1254,44 @@ const SOLO_MODE =
       drag.el.style.left=(e.clientX-70)+'px';
       drag.el.style.top =(e.clientY-70)+'px';
     }
-function onDrop(e){
-  if(!drag || e.pointerId!==drag.pointerId) return;
-  cleanupPointer(e.pointerId);
-  const el = drag.el;
+    function onDrop(e){
+      if(!drag || e.pointerId!==drag.pointerId) return;
+      cleanupPointer(e.pointerId);
+      const el = drag.el;
 
-  if(!drag.moved){
-    resetDraggedStyles(el);
-    drag = null;
-    return;
-  }
+      if(!drag.moved){
+        resetDraggedStyles(el);
+        drag = null;
+        return;
+      }
 
-  resetDraggedStyles(el);
+      resetDraggedStyles(el);
 
-  const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
-  const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
-  document.body.classList.toggle('one-per', perCol === 1);
+      const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
+      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
+      document.body.classList.toggle('one-per', perCol === 1);
 
-  if (drop){
-    if (drop.classList.contains('rowDrop')){
-      // row-alliteration can hold many; prompt-row only 1
-      if (currentMode==='row' && drop.children.length>=1){ drag.originParent.appendChild(el); }
-      else { drop.appendChild(el); }
-    } else if (drop.classList.contains('drop')){
-      // classic columns respect perCol capacity
-      if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
-      else { drop.appendChild(el); }
-    } else {
-      // rack or rowRack — always accept
-      drop.appendChild(el);
+      if (drop){
+        if (drop.classList.contains('rowDrop')){
+          // row: allow 1; rowsyll/rowalli: unlimited
+          if (currentMode==='row' && drop.children.length>=1){ drag.originParent.appendChild(el); }
+          else { drop.appendChild(el); }
+        } else if (drop.classList.contains('drop')){
+          // classic columns respect perCol capacity
+          if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
+          else { drop.appendChild(el); }
+        } else {
+          // rack or rowRack — always accept
+          drop.appendChild(el);
+        }
+      } else {
+        // not over any zone; put it back
+        drag.originParent.appendChild(el);
+      }
+
+      lastDragEndedAt = Date.now();
+      drag = null;
     }
-  } else {
-    // not over any zone; put it back
-    drag.originParent.appendChild(el);
-  }
-
-  lastDragEndedAt = Date.now();
-  drag = null;
-}
     function onCancel(e){
       if(!drag || e.pointerId!==drag.pointerId) return;
       cleanupPointer(e.pointerId);
@@ -1164,16 +1310,16 @@ function onDrop(e){
       el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex=''; el.style.pointerEvents='';
       el.style.width=''; el.style.height='';
     }
-function hitTestDrop(x, y, rowScope){
-  // Make .rack and .rowRack valid drop zones too
-  const zones = Array.from(document.querySelectorAll('.drop, .rowDrop, .rack, .rowRack'));
-  for (const d of zones){
-    if (rowScope != null && d.dataset.row && d.dataset.row !== rowScope) continue; // keep within row when needed
-    const r = d.getBoundingClientRect();
-    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return d;
-  }
-  return null;
-}
+    function hitTestDrop(x, y, rowScope){
+      // Make .rack and .rowRack valid drop zones too
+      const zones = Array.from(document.querySelectorAll('.drop, .rowDrop, .rack, .rowRack'));
+      for (const d of zones){
+        if (rowScope != null && d.dataset.row && d.dataset.row !== rowScope) continue; // keep within row when needed
+        const r = d.getBoundingClientRect();
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return d;
+      }
+      return null;
+    }
     function ejectToRack(cardEl){ cardEl.classList.remove('bad'); rackEl.appendChild(cardEl); }
     function lockCard(cardEl, card){
       const clone = cardEl.cloneNode(true);
@@ -1186,7 +1332,6 @@ function hitTestDrop(x, y, rowScope){
     document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
     document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
 
-    // Use the *existing* refs from the UI refs section (do NOT redeclare consts)
     soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     soloResetBtn.addEventListener('click', resetRoundPlacements);
 
@@ -1224,7 +1369,6 @@ function hitTestDrop(x, y, rowScope){
       studentPanel.classList.toggle('hidden', isTeacher);
     });
 
-
     const LETTERS = 'a,b,c,ch,d,e,f,g,h,i,j,k,l,ll,m,n,ñ,o,p,q,r,rr,s,t,u,v,w,x,y,z'.split(',');
     function renderLetterPicker(){
       letterPicker.innerHTML='';
@@ -1250,8 +1394,9 @@ function hitTestDrop(x, y, rowScope){
 
       const per = SOLO_PER || 4;
       const modeTxt =
-        (MODE==='row')     ? `modo filas` :
+        (MODE==='row')       ? `modo filas` :
         (MODE==='rowalli' || MODE==='allisort') ? `aliteración por filas` :
+        (MODE==='rowsyll')   ? `sílabas (inicio/final) por filas` :
         (SOLO_SYLLABLES.length
           ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
           : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras'));
@@ -1271,6 +1416,10 @@ function hitTestDrop(x, y, rowScope){
       }
       if (MODE==='rowalli' || MODE==='allisort'){
         buildRowAlliMode();
+        return;
+      }
+      if (MODE==='rowsyll'){
+        buildRowSyllMode();
         return;
       }
 
@@ -1305,7 +1454,7 @@ function hitTestDrop(x, y, rowScope){
       if (SOLO_MODE) {
         setPanelsForSolo();
         await ensureStorageLoaded();
-        if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort') return;
+        if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' && MODE!=='rowsyll') return;
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
