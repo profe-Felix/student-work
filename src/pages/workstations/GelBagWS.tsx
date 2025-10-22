@@ -12,10 +12,10 @@ import { useEffect, useRef } from 'react'
 export default function GelBagWS() {
   // DOM refs
   const cardRef = useRef<HTMLDivElement | null>(null)
-  const simRef = useRef<HTMLCanvasElement | null>(null)        // bag drawing canvas
-  const simDrawRef = useRef<HTMLCanvasElement | null>(null)     // <— NEW: draw OVER bag
+  const simRef = useRef<HTMLCanvasElement | null>(null)        // bag base
+  const simDrawRef = useRef<HTMLCanvasElement | null>(null)     // draw over bag
   const stemsRef = useRef<HTMLDivElement | null>(null)          // stems container
-  const stemsDrawRef = useRef<HTMLCanvasElement | null>(null)   // <— NEW: draw OVER stems
+  const stemsDrawRef = useRef<HTMLCanvasElement | null>(null)   // draw over stems
   const headerRef = useRef<HTMLDivElement | null>(null)
 
   // Controls
@@ -25,7 +25,6 @@ export default function GelBagWS() {
   const gelRef = useRef<HTMLInputElement | null>(null)
   const handRef = useRef<HTMLInputElement | null>(null)
 
-  // re-apply params if hash changes
   useEffect(() => {
     const onHashChange = () => location.reload()
     window.addEventListener('hashchange', onHashChange)
@@ -51,12 +50,8 @@ export default function GelBagWS() {
       return qi >= 0 ? h.slice(qi + 1) : ''
     }
     const params = new URLSearchParams(getHashQuery())
-    const numParam = (k:string, d:number)=> {
-      const v = params.get(k); return (v!=null && !isNaN(+v)) ? +v : d
-    }
-    const boolParam = (k:string, d:boolean)=> {
-      const v = params.get(k); if(v==null) return d; return v==='1'||v==='true'
-    }
+    const numParam = (k:string, d:number)=> { const v = params.get(k); return (v!=null && !isNaN(+v)) ? +v : d }
+    const boolParam = (k:string, d:boolean)=> { const v = params.get(k); if(v==null) return d; return v==='1'||v==='true' }
 
     let parts = Math.max(2, Math.min(3, numParam('parts', 2)))
     let COUNT = Math.max(1, Math.min(60, numParam('count', 12)))
@@ -98,6 +93,10 @@ export default function GelBagWS() {
     const balls: Ball[] = []
     let Rmin = 8*DPR, Rmax = 16*DPR
 
+    // keep-off-lines (margin depends on DPR; tweaked below)
+    const LINE_PAD_BASE = 6
+    let LINE_PAD = LINE_PAD_BASE * DPR
+
     // separate stroke stores
     type Stroke = { size:number; pts:{x:number;y:number}[] }
     const strokesSim: Stroke[] = []
@@ -128,13 +127,13 @@ export default function GelBagWS() {
     function fit(){
       configureHeader()
 
-      // sizes
       const simWrap = sim.parentElement! // .sim-wrap
       const srect = simWrap.getBoundingClientRect()
       const rrect = stems.getBoundingClientRect()
 
       DPR = Math.max(1, window.devicePixelRatio || 1)
       penSize = 4 * DPR
+      LINE_PAD = LINE_PAD_BASE * DPR
 
       // world canvas (bag)
       sim.width = Math.floor(srect.width * DPR)
@@ -166,12 +165,44 @@ export default function GelBagWS() {
       for(const b of balls){ const dx=b.x-x, dy=b.y-y; if((dx*dx+dy*dy) < (b.r+r+2)**2) return true }
       return false
     }
+
+    // --- partition helpers & line avoidance ---
+    function partitionXs(){
+      const xs:number[] = []
+      if(parts===2) xs.push(bag.x + bag.w/2)
+      if(parts===3) xs.push(bag.x + bag.w/3, bag.x + 2*bag.w/3)
+      return xs
+    }
+    function isNearAnyLine(x:number, r:number){
+      const xs = partitionXs()
+      for(const lx of xs){
+        if (Math.abs(x - lx) < r + LINE_PAD) return true
+      }
+      return false
+    }
+    function keepOffLines(b: Ball){
+      const xs = partitionXs()
+      for(const lx of xs){
+        const dx = b.x - lx
+        const minClear = b.r + LINE_PAD
+        if (Math.abs(dx) < minClear){
+          // push to nearest side by the extra needed
+          const dir = dx < 0 ? -1 : 1
+          b.x = lx + dir * minClear
+        }
+      }
+      clampInBag(b) // ensure still inside bag after push
+    }
+
     function clampInBag(b:Ball){
       if(b.x-b.r < bag.x) b.x = bag.x + b.r
       if(b.y-b.r < bag.y) b.y = bag.y + b.r
       if(b.x+b.r > bag.x+bag.w) b.x = bag.x+bag.w - b.r
       if(b.y+b.r > bag.y+bag.h) b.y = bag.y+bag.h - b.r
+      // also keep away from lines after general clamping
+      keepOffLines(b)
     }
+
     function resolveCollisions(){
       for(let i=0;i<balls.length;i++){
         for(let j=i+1;j<balls.length;j++){
@@ -182,6 +213,8 @@ export default function GelBagWS() {
             a.x -= nx*push; a.y -= ny*push
             b.x += nx*push; b.y += ny*push
             clampInBag(a); clampInBag(b)
+            // extra safety: if either still near a line, nudge again
+            keepOffLines(a); keepOffLines(b)
           }
         }
       }
@@ -191,14 +224,16 @@ export default function GelBagWS() {
 
     function placeBalls(n:number){
       balls.length = 0
-      const triesMax = 800
+      const triesMax = 900
       for(let i=0;i<n;i++){
         const r = rnd(Rmin, Rmax); let x=0,y=0, tries=0
         while(tries++<triesMax){
           x=rnd(bag.x+r, bag.x+bag.w-r); y=rnd(bag.y+r, bag.y+bag.h-r)
-          if(!overlapsAny(x,y,r)) break
+          if(!overlapsAny(x,y,r) && !isNearAnyLine(x,r)) break
         }
-        balls.push({ x, y, r, color: colors[i%colors.length], vx:0, vy:0, grabbed:false })
+        const ball: Ball = { x, y, r, color: colors[i%colors.length], vx:0, vy:0, grabbed:false }
+        keepOffLines(ball)
+        balls.push(ball)
       }
       render()
     }
@@ -211,12 +246,6 @@ export default function GelBagWS() {
       ctx.arcTo(x, y+h, x, y, rr)
       ctx.arcTo(x, y, x+w, y, rr)
       ctx.closePath()
-    }
-    function partitionXs(){
-      const xs:number[] = []
-      if(parts===2) xs.push(bag.x + bag.w/2)
-      if(parts===3) xs.push(bag.x + bag.w/3, bag.x + 2*bag.w/3)
-      return xs
     }
 
     function drawGelBag(){
@@ -233,12 +262,11 @@ export default function GelBagWS() {
       sctx.beginPath(); roundRectPath(sctx, bag.x+6*DPR, bag.y+6*DPR, bag.w-12*DPR, bag.h*0.22, r*0.6); sctx.fill()
       sctx.restore()
 
-      const lines = partitionXs()
+      const xs = partitionXs()
       sctx.save(); sctx.strokeStyle = 'rgba(30,41,59,.35)'; sctx.setLineDash([8*DPR, 10*DPR]); sctx.lineWidth=2*DPR
-      for(const lx of lines){ sctx.beginPath(); sctx.moveTo(lx, bag.y+10*DPR); sctx.lineTo(lx, bag.y+bag.h-10*DPR); sctx.stroke() }
+      for(const lx of xs){ sctx.beginPath(); sctx.moveTo(lx, bag.y+10*DPR); sctx.lineTo(lx, bag.y+bag.h-10*DPR); sctx.stroke() }
       sctx.restore()
 
-      // visualize gel presses
       if(presses.length){
         sctx.save(); sctx.globalAlpha=0.15; sctx.fillStyle='#3b82f6'
         for(const p of presses){ sctx.beginPath(); sctx.arc(p.x,p.y,p.r,0,Math.PI*2); sctx.fill() }
@@ -260,7 +288,7 @@ export default function GelBagWS() {
       }
     }
 
-    // ----- Stems (HTML, drawn beneath the stems canvas) -----
+    // ----- Stems HTML -----
     function renderStems(){
       const innerPad = 32
       const usable = STEM_W - innerPad * 2
@@ -362,7 +390,7 @@ export default function GelBagWS() {
         if('touches' in e && (e as TouchEvent).touches){
           updatePressesFromTouches(e as TouchEvent)
         } else if(draggingBall!=null){
-          const p = getPos(e, sim); const b=balls[draggingBall]; b.x=p.x; b.y=p.y; clampInBag(b); resolveCollisions()
+          const p = getPos(e, sim); const b=balls[draggingBall]; b.x=p.x; b.y=p.y; keepOffLines(b); resolveCollisions()
         } else if(presses.length){
           const p = getPos(e, sim); presses[0].x=p.x; presses[0].y=p.y
         }
@@ -378,7 +406,7 @@ export default function GelBagWS() {
       draggingBall=null; currSim=null; presses=[]
     }
 
-    // ---- STEMS overlay events (no gel; just draw/erase) ----
+    // ---- STEMS overlay (draw/erase only) ----
     function onDownStems(e: MouseEvent | TouchEvent){
       const p = getPos(e, drawStems)
       if(mode==='erase') eraseByPoint(strokesStm, dStm, p, penSize*1.2, redrawStems)
@@ -408,7 +436,12 @@ export default function GelBagWS() {
           }
         }
       }
-      for(const b of balls){ if(!b.grabbed){ b.x += b.vx; b.y += b.vy; clampInBag(b) } }
+      for(const b of balls){
+        if(!b.grabbed){
+          b.x += b.vx; b.y += b.vy
+          keepOffLines(b)
+        }
+      }
       resolveCollisions()
     }
     function tick(){ if(mode==='hand' && presses.length) applyPress(); render(); requestAnimationFrame(tick) }
@@ -500,7 +533,7 @@ export default function GelBagWS() {
       ref={cardRef}
       style={{position:'relative', minHeight:560, height:'76vh', background:'#fff', border:'1px solid #e2e8f0', borderRadius:16, boxShadow:'0 10px 20px rgba(0,0,0,.08)'}}
     >
-      {/* Header (compact when toolbar=0 or controls=0) */}
+      {/* Header */}
       <div ref={headerRef} className="header" style={{
         position:'absolute', top:0, left:0, right:0, padding:10, display:'flex', flexWrap:'wrap',
         gap:8, alignItems:'center', justifyContent:'space-between',
