@@ -82,6 +82,14 @@ export default function GelBagWS() {
     const BASE_PRESS_R = 60
     const VISCOSITY = 0.85
 
+    // ====== Debounced fit (prevents ResizeObserver loops) ======
+    let fitRaf: number | null = null
+    let fitting = false
+    const scheduleFit = () => {
+      if (fitRaf != null) cancelAnimationFrame(fitRaf)
+      fitRaf = requestAnimationFrame(() => { fitRaf = null; fit() })
+    }
+
     // ====== Utilities ======
     const getHashQuery = () => {
       const h = window.location.hash || ''
@@ -127,8 +135,8 @@ export default function GelBagWS() {
       document.documentElement.style.setProperty('--stemGutter', `${STEM_G}px`)
 
       configureHeader()
-      fit()   // re-fit canvases with possibly changed width
-      renderStems()
+      renderStems()      // update DOM first
+      scheduleFit()      // then measure/size canvases
 
       updateR()
       if (shouldRespawn) placeBalls(COUNT)
@@ -136,7 +144,6 @@ export default function GelBagWS() {
 
     // layout/header
     function configureHeader(){
-      // hide controls if compact or controls=0
       const hideControls = compactHeader || !showControls
       document.querySelectorAll('.select').forEach(el => {
         (el as HTMLElement).style.display = hideControls ? 'none' : ''
@@ -147,37 +154,43 @@ export default function GelBagWS() {
     }
 
     function fit(){
-      const simWrap = sim.parentElement! // .sim-wrap
-      const srect = simWrap.getBoundingClientRect()
-      const rrect = stems.getBoundingClientRect()
+      if (fitting) return
+      fitting = true
+      try {
+        const simWrap = sim.parentElement! // .sim-wrap
+        const srect = simWrap.getBoundingClientRect()
+        const rrect = stems.getBoundingClientRect()
 
-      DPR = Math.max(1, window.devicePixelRatio || 1)
-      penSize = 4 * DPR
-      LINE_PAD = LINE_PAD_BASE * DPR
+        DPR = Math.max(1, window.devicePixelRatio || 1)
+        penSize = 4 * DPR
+        LINE_PAD = LINE_PAD_BASE * DPR
 
-      // world canvas (bag)
-      sim.width = Math.floor(srect.width * DPR)
-      sim.height= Math.floor(srect.height* DPR)
-      sim.style.width = srect.width + 'px'
-      sim.style.height= srect.height + 'px'
+        // world canvas (bag)
+        sim.width = Math.floor(srect.width * DPR)
+        sim.height= Math.floor(srect.height* DPR)
+        sim.style.width = srect.width + 'px'
+        sim.style.height= srect.height + 'px'
 
-      // draw over bag
-      drawSim.width  = Math.floor(srect.width * DPR)
-      drawSim.height = Math.floor(srect.height * DPR)
-      drawSim.style.width  = srect.width + 'px'
-      drawSim.style.height = srect.height + 'px'
+        // draw over bag
+        drawSim.width  = Math.floor(srect.width * DPR)
+        drawSim.height = Math.floor(srect.height * DPR)
+        drawSim.style.width  = srect.width + 'px'
+        drawSim.style.height = srect.height + 'px'
 
-      // draw over stems
-      drawStems.width  = Math.floor(rrect.width * DPR)
-      drawStems.height = Math.floor(rrect.height * DPR)
-      drawStems.style.width  = rrect.width + 'px'
-      drawStems.style.height = rrect.height + 'px'
+        // draw over stems
+        drawStems.width  = Math.floor(rrect.width * DPR)
+        drawStems.height = Math.floor(rrect.height * DPR)
+        drawStems.style.width  = rrect.width + 'px'
+        drawStems.style.height = rrect.height + 'px'
 
-      const pad = 24 * DPR
-      bag.x = pad; bag.y = pad; bag.w = sim.width - pad*2; bag.h = sim.height - pad*2
+        const pad = 24 * DPR
+        bag.x = pad; bag.y = pad; bag.w = sim.width - pad*2; bag.h = sim.height - pad*2
 
-      redrawSim()
-      redrawStems()
+        redrawSim()
+        redrawStems()
+      } finally {
+        fitting = false
+      }
     }
 
     const rnd = (a:number,b:number)=> a + Math.random()*(b-a)
@@ -219,6 +232,9 @@ export default function GelBagWS() {
       keepOffLines(b)
     }
     function resolveCollisions(){
+      for(let i=0;i<balls.length;i++){
+        for(let j=i+1;j<i+1+balls.length-j;j++){}
+      }
       for(let i=0;i<balls.length;i++){
         for(let j=i+1;j<balls.length;j++){
           const a=balls[i], b=balls[j]
@@ -498,7 +514,7 @@ export default function GelBagWS() {
     // sliders (only if visible)
     countRef.current?.addEventListener('input', ()=>{})
     sizeRef.current?.addEventListener('input', ()=>{ SIZE = parseInt(sizeRef.current!.value,10); updateR() })
-    partsRef.current?.addEventListener('change', ()=>{ parts = parseInt(partsRef.current!.value,10); renderStems(); fit() })
+    partsRef.current?.addEventListener('change', ()=>{ parts = parseInt(partsRef.current!.value,10); renderStems(); scheduleFit() })
     gelRef.current?.addEventListener('input', ()=>{ PRESS_STRENGTH = parseFloat(gelRef.current!.value) })
     handRef.current?.addEventListener('input', ()=>{ AREA_BOOST = parseFloat(handRef.current!.value) })
 
@@ -509,9 +525,9 @@ export default function GelBagWS() {
     // init once
     applyParamsFromURL(/*respawn*/true)
     updateToolButtons()
-    const ro = new ResizeObserver(()=> fit())
-    ro.observe(card)
-    window.addEventListener('resize', fit)
+    scheduleFit()
+    window.addEventListener('resize', scheduleFit)
+    window.addEventListener('orientationchange', scheduleFit)
 
     // pointer: SIM overlay
     drawSim.addEventListener('mousedown', onDownSim as any, { passive:false } as any)
@@ -531,8 +547,9 @@ export default function GelBagWS() {
 
     function cleanup(){
       window.removeEventListener('hashchange', onHashChange)
-      ro.disconnect()
-      window.removeEventListener('resize', fit)
+      window.removeEventListener('resize', scheduleFit)
+      window.removeEventListener('orientationchange', scheduleFit)
+      if (fitRaf != null) cancelAnimationFrame(fitRaf)
       window.removeEventListener('mouseup', onUpSim as any)
       window.removeEventListener('touchend', onUpSim as any)
       window.removeEventListener('mouseup', onUpStems as any)
