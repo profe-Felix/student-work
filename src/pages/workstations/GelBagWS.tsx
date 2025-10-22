@@ -3,18 +3,20 @@ import { useEffect, useRef } from 'react'
 /**
  * Gel Bag Decomposer workstation (2–3 parts) with multi-touch "gel press"
  * URL params:
- *  parts, count, size, gel, hand, copies, toolbar,
+ *  parts, count, size, gel, hand, copies,
  *  stemfs, stemw, stemg,
- *  controls (1|0 to show/hide sliders),
+ *  controls (1|0 -> show/hide sliders),
+ *  toolbar (1|0 -> compact header: hide sliders, keep buttons),
  *  randmin, randmax (for 🎲 Randomize count range)
  */
 export default function GelBagWS() {
   // DOM refs
   const cardRef = useRef<HTMLDivElement | null>(null)
-  const simRef = useRef<HTMLCanvasElement | null>(null)
-  const drawRef = useRef<HTMLCanvasElement | null>(null)
+  const simRef = useRef<HTMLCanvasElement | null>(null)        // bag drawing canvas
+  const simDrawRef = useRef<HTMLCanvasElement | null>(null)     // <— NEW: draw OVER bag
+  const stemsRef = useRef<HTMLDivElement | null>(null)          // stems container
+  const stemsDrawRef = useRef<HTMLCanvasElement | null>(null)   // <— NEW: draw OVER stems
   const headerRef = useRef<HTMLDivElement | null>(null)
-  const stemsRef = useRef<HTMLDivElement | null>(null)
 
   // Controls
   const countRef = useRef<HTMLInputElement | null>(null)
@@ -23,7 +25,7 @@ export default function GelBagWS() {
   const gelRef = useRef<HTMLInputElement | null>(null)
   const handRef = useRef<HTMLInputElement | null>(null)
 
-  // --- Live-apply params if hash query changes (so you can tweak URL without a hard refresh)
+  // re-apply params if hash changes
   useEffect(() => {
     const onHashChange = () => location.reload()
     window.addEventListener('hashchange', onHashChange)
@@ -33,21 +35,22 @@ export default function GelBagWS() {
   useEffect(() => {
     const card = cardRef.current!
     const sim = simRef.current!
-    const draw = drawRef.current!
-    const header = headerRef.current!
+    const drawSim = simDrawRef.current!
     const stems = stemsRef.current!
+    const drawStems = stemsDrawRef.current!
+    const header = headerRef.current!
 
     const sctx = (sim.getContext('2d') as CanvasRenderingContext2D)!
-    const dctx = (draw.getContext('2d') as CanvasRenderingContext2D)!
+    const dSim = (drawSim.getContext('2d') as CanvasRenderingContext2D)!
+    const dStm = (drawStems.getContext('2d') as CanvasRenderingContext2D)!
 
-    // ---- URL params (read from the HASH for HashRouter) ----
+    // ---- URL params from HASH (HashRouter) ----
     function getHashQuery(): string {
       const h = window.location.hash || ''
       const qi = h.indexOf('?')
       return qi >= 0 ? h.slice(qi + 1) : ''
     }
     const params = new URLSearchParams(getHashQuery())
-
     const numParam = (k:string, d:number)=> {
       const v = params.get(k); return (v!=null && !isNaN(+v)) ? +v : d
     }
@@ -62,33 +65,29 @@ export default function GelBagWS() {
     let AREA_BOOST     = Math.max(0.3, Math.min(3.0, numParam('hand', 1.0)))
     let COPIES = Math.max(1, Math.min(10, numParam('copies', 5)))
 
-    // stems width + font size + gutter
-    let STEM_W  = Math.max(260, Math.min(640, numParam('stemw', 440))) // px
-    let STEM_FS = Math.max(18,  Math.min(56,  numParam('stemfs', 32))) // px
-    let STEM_G  = Math.max(8,   Math.min(48,  numParam('stemg', 12)))  // px
+    // stems panel sizing
+    let STEM_W  = Math.max(260, Math.min(640, numParam('stemw', 440)))
+    let STEM_FS = Math.max(18,  Math.min(56,  numParam('stemfs', 32)))
+    let STEM_G  = Math.max(8,   Math.min(48,  numParam('stemg', 12)))
 
-    // header & sliders visibility
-    const hideToolbar = params.get('toolbar') === '0' || params.get('toolbar') === 'false'
-    const showControls = boolParam('controls', true) // default show sliders
+    // header/sliders visibility
+    const compactHeader = params.get('toolbar') === '0' || params.get('toolbar') === 'false'
+    const showControls = boolParam('controls', true)
 
-    // 🎲 Randomize range for COUNT
+    // 🎲 Randomize range
     const RAND_MIN = Math.max(1, numParam('randmin', COUNT))
     const RAND_MAX = Math.max(RAND_MIN, numParam('randmax', COUNT))
 
-    // Apply defaults to UI if visible
-    const countEl = countRef.current!, sizeEl = sizeRef.current!
-    const partsEl = partsRef.current!, gelEl = gelRef.current!, handEl = handRef.current!
-    if (countEl) countEl.value = String(COUNT)
-    if (sizeEl)  sizeEl.value  = String(SIZE)
-    if (partsEl) partsEl.value = String(parts)
-    if (gelEl)   gelEl.value   = String(PRESS_STRENGTH)
-    if (handEl)  handEl.value  = String(AREA_BOOST)
+    // set slider defaults
+    countRef.current!.value = String(COUNT)
+    sizeRef.current!.value  = String(SIZE)
+    partsRef.current!.value = String(parts)
+    gelRef.current!.value   = String(PRESS_STRENGTH)
+    handRef.current!.value  = String(AREA_BOOST)
 
-    // expose stems width/gutter as CSS vars so JSX can use them
+    // CSS vars
     document.documentElement.style.setProperty('--stemW', `${STEM_W}px`)
     document.documentElement.style.setProperty('--stemGutter', `${STEM_G}px`)
-
-    if (hideToolbar) header.style.display = 'none'
 
     // ---- State ----
     let DPR = Math.max(1, window.devicePixelRatio || 1)
@@ -99,14 +98,16 @@ export default function GelBagWS() {
     const balls: Ball[] = []
     let Rmin = 8*DPR, Rmax = 16*DPR
 
-    // drawing strokes
+    // separate stroke stores
     type Stroke = { size:number; pts:{x:number;y:number}[] }
-    const strokes: Stroke[] = []
-    let currentStroke: Stroke | null = null
+    const strokesSim: Stroke[] = []
+    const strokesStm: Stroke[] = []
+    let currSim: Stroke | null = null
+    let currStm: Stroke | null = null
 
-    // tool mode: 'hand' pushes gel, 'pen' draws, 'erase' erases
+    // tool mode
     type Mode = 'hand'|'pen'|'erase'
-    let mode: Mode = 'pen' // default: Pen
+    let mode: Mode = 'pen'
 
     // multi-press gel
     type Press = { id:number|string; x:number;y:number;r:number }
@@ -114,38 +115,50 @@ export default function GelBagWS() {
     const BASE_PRESS_R = 60
     const VISCOSITY = 0.85
 
-    // ---- Helpers ----
-    function setToolbarHeightVar(){
-      const hb = header.style.display==='none' ? 0 : header.offsetHeight
-      draw.style.top = hb + 'px'
+    // ---- Header layout ----
+    function configureHeader() {
+      if (compactHeader || !showControls) {
+        document.querySelectorAll('.select').forEach(el => (el as HTMLElement).style.display = 'none')
+        header.style.padding = '8px'
+      }
+      const hb = header.offsetHeight
       document.documentElement.style.setProperty('--toolbarH', hb + 'px')
     }
 
     function fit(){
-      setToolbarHeightVar()
+      configureHeader()
 
+      // sizes
       const simWrap = sim.parentElement! // .sim-wrap
       const srect = simWrap.getBoundingClientRect()
+      const rrect = stems.getBoundingClientRect()
+
       DPR = Math.max(1, window.devicePixelRatio || 1)
       penSize = 4 * DPR
 
+      // world canvas (bag)
       sim.width = Math.floor(srect.width * DPR)
       sim.height= Math.floor(srect.height* DPR)
       sim.style.width = srect.width + 'px'
       sim.style.height= srect.height + 'px'
 
-      // draw covers bag + stems
-      const cardRect = card.getBoundingClientRect()
-      const hb = header.style.display==='none' ? 0 : header.offsetHeight
-      draw.width  = Math.floor(cardRect.width * DPR)
-      draw.height = Math.floor((cardRect.height - hb) * DPR)
-      draw.style.width = cardRect.width + 'px'
-      draw.style.height= (cardRect.height - hb) + 'px'
+      // draw over bag
+      drawSim.width  = Math.floor(srect.width * DPR)
+      drawSim.height = Math.floor(srect.height * DPR)
+      drawSim.style.width  = srect.width + 'px'
+      drawSim.style.height = srect.height + 'px'
+
+      // draw over stems
+      drawStems.width  = Math.floor(rrect.width * DPR)
+      drawStems.height = Math.floor(rrect.height * DPR)
+      drawStems.style.width  = rrect.width + 'px'
+      drawStems.style.height = rrect.height + 'px'
 
       const pad = 24 * DPR
       bag.x = pad; bag.y = pad; bag.w = sim.width - pad*2; bag.h = sim.height - pad*2
 
-      redrawStrokes()
+      redrawSim()
+      redrawStems()
     }
 
     const rnd = (a:number,b:number)=> a + Math.random()*(b-a)
@@ -225,7 +238,7 @@ export default function GelBagWS() {
       for(const lx of lines){ sctx.beginPath(); sctx.moveTo(lx, bag.y+10*DPR); sctx.lineTo(lx, bag.y+bag.h-10*DPR); sctx.stroke() }
       sctx.restore()
 
-      // visualize presses
+      // visualize gel presses
       if(presses.length){
         sctx.save(); sctx.globalAlpha=0.15; sctx.fillStyle='#3b82f6'
         for(const p of presses){ sctx.beginPath(); sctx.arc(p.x,p.y,p.r,0,Math.PI*2); sctx.fill() }
@@ -247,62 +260,58 @@ export default function GelBagWS() {
       }
     }
 
-    // ----- Non-wrapping stems with fixed-width blanks -----
+    // ----- Stems (HTML, drawn beneath the stems canvas) -----
     function renderStems(){
-      const innerPad = 32; // keep in sync with aside padding
-      const usable = STEM_W - innerPad * 2; // px available for blanks and symbols
-
+      const innerPad = 32
+      const usable = STEM_W - innerPad * 2
       const mkBlank = (w:number) =>
-        `<span style="
-          display:inline-block;
-          vertical-align:baseline;
-          border-bottom:3px solid #0f172a;
-          width:${Math.max(48, Math.floor(w))}px;
-          transform:translateY(-0.15em);
-        "></span>`;
-
-      let rowHTML = '';
+        `<span style="display:inline-block; vertical-align:baseline; border-bottom:3px solid #0f172a; width:${Math.max(48, Math.floor(w))}px; transform:translateY(-0.15em);"></span>`
+      let rows = ''
       if (parts === 2) {
-        const blankW = usable / 3.6;
-        const row = `${mkBlank(blankW)} <span>+</span> ${mkBlank(blankW)} <span>=</span> ${mkBlank(blankW)}`;
-        for (let i = 0; i < COPIES; i++) {
-          rowHTML += `<div class="stemRow" style="white-space:nowrap; line-height:1.25; font-size:${STEM_FS}px; padding:12px 0; border-bottom:1px dotted #e5e7eb">${row}</div>`;
-        }
+        const w = usable / 3.6
+        const r = `${mkBlank(w)} <span>+</span> ${mkBlank(w)} <span>=</span> ${mkBlank(w)}`
+        for (let i=0;i<COPIES;i++) rows += `<div class="stemRow" style="white-space:nowrap; line-height:1.25; font-size:${STEM_FS}px; padding:12px 0; border-bottom:1px dotted #e5e7eb">${r}</div>`
       } else {
-        const blankW = usable / 4.9;
-        const row = `${mkBlank(blankW)} <span>+</span> ${mkBlank(blankW)} <span>+</span> ${mkBlank(blankW)} <span>=</span> ${mkBlank(blankW)}`;
-        for (let i = 0; i < COPIES; i++) {
-          rowHTML += `<div class="stemRow" style="white-space:nowrap; line-height:1.25; font-size:${STEM_FS}px; padding:12px 0; border-bottom:1px dotted #e5e7eb">${row}</div>`;
-        }
+        const w = usable / 4.9
+        const r = `${mkBlank(w)} <span>+</span> ${mkBlank(w)} <span>+</span> ${mkBlank(w)} <span>=</span> ${mkBlank(w)}`
+        for (let i=0;i<COPIES;i++) rows += `<div class="stemRow" style="white-space:nowrap; line-height:1.25; font-size:${STEM_FS}px; padding:12px 0; border-bottom:1px dotted #e5e7eb">${r}</div>`
       }
-
-      stems.innerHTML =
-        `<div class="stemTitle" style="font-weight:700; font-size:${Math.round(STEM_FS*0.95)}px; margin:2px 0 10px">
-           Descompón (${COPIES} maneras):
-         </div>` + rowHTML;
+      stems.innerHTML = `<div class="stemTitle" style="font-weight:700; font-size:${Math.round(STEM_FS*0.95)}px; margin:2px 0 10px">Descompón (${COPIES} maneras):</div>${rows}`
     }
 
-    // drawing layer
-    function redrawStrokes(){
-      dctx.clearRect(0,0,draw.width, draw.height)
-      dctx.lineCap='round'; dctx.lineJoin='round'
-      for(const s of strokes){
-        dctx.strokeStyle = '#111827'; dctx.lineWidth = s.size
+    // ===== Draw layers (separate) =====
+    function redrawSim(){
+      dSim.clearRect(0,0,drawSim.width, drawSim.height)
+      dSim.lineCap='round'; dSim.lineJoin='round'
+      for(const s of strokesSim){
+        dSim.strokeStyle='#111827'; dSim.lineWidth=s.size
         const pts=s.pts; if(!pts.length) continue
-        dctx.beginPath(); dctx.moveTo(pts[0].x, pts[0].y)
-        for(let i=1;i<pts.length;i++) dctx.lineTo(pts[i].x, pts[i].y)
-        dctx.stroke()
+        dSim.beginPath(); dSim.moveTo(pts[0].x, pts[0].y)
+        for(let i=1;i<pts.length;i++) dSim.lineTo(pts[i].x, pts[i].y)
+        dSim.stroke()
       }
     }
-    function eraseByPoint(p:{x:number;y:number}, radius:number){
+    function redrawStems(){
+      dStm.clearRect(0,0,drawStems.width, drawStems.height)
+      dStm.lineCap='round'; dStm.lineJoin='round'
+      for(const s of strokesStm){
+        dStm.strokeStyle='#111827'; dStm.lineWidth=s.size
+        const pts=s.pts; if(!pts.length) continue
+        dStm.beginPath(); dStm.moveTo(pts[0].x, pts[0].y)
+        for(let i=1;i<pts.length;i++) dStm.lineTo(pts[i].x, pts[i].y)
+        dStm.stroke()
+      }
+    }
+    function eraseByPoint(list: Stroke[], ctx: CanvasRenderingContext2D, p:{x:number;y:number}, radius:number, redraw:()=>void){
       const r2 = radius*radius; const keep: Stroke[] = []
-      for(const s of strokes){
-        let hit=false; for(const q of s.pts){ const dx=q.x-p.x, dy=q.y-p.y; if(dx*dx+dy*dy<=r2){ hit=true; break } }
+      for(const s of list){
+        let hit=false
+        for(const q of s.pts){ const dx=q.x-p.x, dy=q.y-p.y; if(dx*dx+dy*dy<=r2){ hit=true; break } }
         if(!hit) keep.push(s)
       }
-      if(keep.length!==strokes.length){ strokes.length=0; strokes.push(...keep) }
+      if(keep.length!==list.length){ list.length=0; list.push(...keep); redraw() }
     }
-    function getPos(e: MouseEvent | TouchEvent, target: HTMLElement){
+    const getPos = (e: MouseEvent | TouchEvent, target: HTMLElement) => {
       const r = target.getBoundingClientRect()
       if('touches' in e && e.touches && e.touches[0]){
         return { x:(e.touches[0].clientX-r.left)*DPR, y:(e.touches[0].clientY-r.top)*DPR }
@@ -311,7 +320,7 @@ export default function GelBagWS() {
       return { x:(me.clientX-r.left)*DPR, y:(me.clientY-r.top)*DPR }
     }
 
-    // input handling
+    // ---- SIM overlay events (bag area) ----
     let draggingBall: number | null = null
     function hitBall(p:{x:number;y:number}){
       for(let i=balls.length-1;i>=0;i--){ const b=balls[i]; const dx=b.x-p.x, dy=b.y-p.y; if(dx*dx+dy*dy<=b.r*b.r) return i }
@@ -330,36 +339,25 @@ export default function GelBagWS() {
         presses.push({ id: t.identifier, x, y, r })
       }
     }
-    function onDown(e: MouseEvent | TouchEvent){
-      const simRect = sim.getBoundingClientRect()
-      const px = ('touches' in e && e.touches[0]? e.touches[0].clientX : (e as MouseEvent).clientX)
-      const py = ('touches' in e && e.touches[0]? e.touches[0].clientY : (e as MouseEvent).clientY)
-      const inSim = px>=simRect.left && px<=simRect.right && py>=simRect.top && py<=simRect.bottom
 
-      // --- tool behavior
-      if(inSim && mode==='hand'){
+    function onDownSim(e: MouseEvent | TouchEvent){
+      if(mode==='hand'){
         if('touches' in e && (e as TouchEvent).touches){
-          updatePressesFromTouches(e as TouchEvent)
-          draggingBall=null
+          updatePressesFromTouches(e as TouchEvent); draggingBall=null
         } else {
           const p = getPos(e, sim)
           const i = hitBall(p)
           if(i>=0){ draggingBall=i; balls[i].grabbed=true; balls[i].vx=0; balls[i].vy=0; presses=[] }
           else { presses=[{ id:'mouse', x:p.x, y:p.y, r: (60*DPR*AREA_BOOST) }] }
         }
+      } else { // pen/erase draw on bag canvas
+        const p = getPos(e, drawSim)
+        if(mode==='erase') eraseByPoint(strokesSim, dSim, p, penSize*1.2, redrawSim)
+        else { currSim={ size:penSize, pts:[p] }; strokesSim.push(currSim); redrawSim() }
       }
-
-      // drawing allowed everywhere in pen/erase
-      if(mode!=='hand'){
-        const p = getPos(e, draw)
-        if(mode==='erase') eraseByPoint(p, penSize*1.2)
-        else { currentStroke={ size:penSize, pts:[p] }; strokes.push(currentStroke) }
-        redrawStrokes()
-      }
-
       e.preventDefault?.()
     }
-    function onMove(e: MouseEvent | TouchEvent){
+    function onMoveSim(e: MouseEvent | TouchEvent){
       if(mode==='hand'){
         if('touches' in e && (e as TouchEvent).touches){
           updatePressesFromTouches(e as TouchEvent)
@@ -368,20 +366,34 @@ export default function GelBagWS() {
         } else if(presses.length){
           const p = getPos(e, sim); presses[0].x=p.x; presses[0].y=p.y
         }
-      } else {
-        if(currentStroke){
-          const p=getPos(e, draw)
-          if(mode==='erase') eraseByPoint(p, penSize*1.2)
-          else currentStroke.pts.push(p)
-          redrawStrokes()
-        }
+      } else if(currSim){
+        const p=getPos(e, drawSim)
+        if(mode==='erase') eraseByPoint(strokesSim, dSim, p, penSize*1.2, redrawSim)
+        else { currSim.pts.push(p); redrawSim() }
       }
       e.preventDefault?.()
     }
-    function onUp(){
+    function onUpSim(){
       if(draggingBall!=null){ balls[draggingBall].grabbed=false }
-      draggingBall=null; currentStroke=null; presses=[]
+      draggingBall=null; currSim=null; presses=[]
     }
+
+    // ---- STEMS overlay events (no gel; just draw/erase) ----
+    function onDownStems(e: MouseEvent | TouchEvent){
+      const p = getPos(e, drawStems)
+      if(mode==='erase') eraseByPoint(strokesStm, dStm, p, penSize*1.2, redrawStems)
+      else { currStm={ size:penSize, pts:[p] }; strokesStm.push(currStm); redrawStems() }
+      e.preventDefault?.()
+    }
+    function onMoveStems(e: MouseEvent | TouchEvent){
+      if(currStm){
+        const p = getPos(e, drawStems)
+        if(mode==='erase') eraseByPoint(strokesStm, dStm, p, penSize*1.2, redrawStems)
+        else { currStm.pts.push(p); redrawStems() }
+      }
+      e.preventDefault?.()
+    }
+    function onUpStems(){ currStm=null }
 
     // physics for gel presses
     function applyPress(){
@@ -399,41 +411,28 @@ export default function GelBagWS() {
       for(const b of balls){ if(!b.grabbed){ b.x += b.vx; b.y += b.vy; clampInBag(b) } }
       resolveCollisions()
     }
-
     function tick(){ if(mode==='hand' && presses.length) applyPress(); render(); requestAnimationFrame(tick) }
 
     // ===== Toolbar =====
-    // show/hide sliders for student view
-    if (!showControls) {
-      document.querySelectorAll('.select').forEach(el => (el as HTMLElement).style.display = 'none')
-    }
+    const randBtn   = document.getElementById('btnRand')   as HTMLButtonElement
+    const penBtn    = document.getElementById('btnPen')    as HTMLButtonElement
+    const eraseBtn  = document.getElementById('btnErase')  as HTMLButtonElement
+    const clearAll  = document.getElementById('btnClear')  as HTMLButtonElement
+    const clearBag  = document.getElementById('btnClearBag') as HTMLButtonElement
+    const clearStem = document.getElementById('btnClearStems') as HTMLButtonElement
+    const newBtn    = document.getElementById('btnNew')    as HTMLButtonElement
 
-    const randBtn = document.getElementById('btnRand') as HTMLButtonElement
-    const penBtn  = document.getElementById('btnPen')  as HTMLButtonElement
-    const eraseBtn= document.getElementById('btnErase')as HTMLButtonElement
-    const clearBtn= document.getElementById('btnClear')as HTMLButtonElement
-    const newBtn  = document.getElementById('btnNew')  as HTMLButtonElement
-
-    // active style helper (green = active)
     const setActive = (btn: HTMLButtonElement | null, on:boolean) => {
       if(!btn) return
-      if(on){
-        btn.style.background = '#22c55e'
-        btn.style.borderColor= '#22c55e'
-        btn.style.color = '#fff'
-      } else {
-        btn.style.background = '#fff'
-        btn.style.borderColor= '#cbd5e1'
-        btn.style.color = '#111827'
-      }
+      if(on){ btn.style.background='#22c55e'; btn.style.borderColor='#22c55e'; btn.style.color='#fff' }
+      else  { btn.style.background='#fff';     btn.style.borderColor='#cbd5e1'; btn.style.color='#111827' }
     }
     function updateToolButtons(){
-      setActive(penBtn, mode!=='erase') // Pen/Hand share the same button
+      setActive(penBtn, mode!=='erase') // Pen/Hand share this button
       setActive(eraseBtn, mode==='erase')
       penBtn.textContent = (mode==='hand') ? '✋ Mano' : '✎ Lápiz'
     }
 
-    // Randomize: pick a new COUNT in range and respawn balls
     function randomize(){
       const n = Math.floor(RAND_MIN + Math.random() * (RAND_MAX - RAND_MIN + 1))
       COUNT = Math.max(1, Math.min(60, n))
@@ -442,22 +441,18 @@ export default function GelBagWS() {
 
     newBtn?.addEventListener('click', ()=> placeBalls(parseInt(countRef.current!.value,10)))
     randBtn?.addEventListener('click', randomize)
-
-    penBtn?.addEventListener('click', ()=> {
-      mode = (mode==='hand') ? 'pen' : 'hand'  // toggle Pen ↔ Hand
-      updateToolButtons()
-    })
+    penBtn?.addEventListener('click', ()=> { mode = (mode==='hand') ? 'pen' : 'hand'; updateToolButtons() })
     eraseBtn?.addEventListener('click', ()=> { mode='erase'; updateToolButtons() })
-    clearBtn?.addEventListener('click', ()=>{ strokes.length=0; redrawStrokes() })
+    clearAll?.addEventListener('click', ()=>{ strokesSim.length=0; strokesStm.length=0; redrawSim(); redrawStems() })
+    clearBag?.addEventListener('click', ()=>{ strokesSim.length=0; redrawSim() })
+    clearStem?.addEventListener('click', ()=>{ strokesStm.length=0; redrawStems() })
 
-    // sliders (when visible)
-    countEl?.addEventListener('input', ()=>{})
-    sizeEl?.addEventListener('input', ()=>{
-      SIZE = parseInt(sizeEl.value,10); updateR()
-    })
-    partsEl?.addEventListener('change', ()=>{ parts = parseInt(partsEl.value,10); renderStems() })
-    gelEl?.addEventListener('input', ()=>{ PRESS_STRENGTH = parseFloat(gelEl.value) })
-    handEl?.addEventListener('input', ()=>{ AREA_BOOST = parseFloat(handEl.value) })
+    // sliders (only if visible)
+    countRef.current?.addEventListener('input', ()=>{})
+    sizeRef.current?.addEventListener('input', ()=>{ SIZE = parseInt(sizeRef.current!.value,10); updateR() })
+    partsRef.current?.addEventListener('change', ()=>{ parts = parseInt(partsRef.current!.value,10); renderStems(); fit() })
+    gelRef.current?.addEventListener('input', ()=>{ PRESS_STRENGTH = parseFloat(gelRef.current!.value) })
+    handRef.current?.addEventListener('input', ()=>{ AREA_BOOST = parseFloat(handRef.current!.value) })
 
     updateToolButtons()
 
@@ -466,16 +461,24 @@ export default function GelBagWS() {
     ro.observe(card)
     window.addEventListener('resize', fit)
 
-    // pointer on draw (covers sim + stems)
-    draw.addEventListener('mousedown', onDown as any, { passive:false } as any)
-    draw.addEventListener('mousemove', onMove as any, { passive:false } as any)
-    window.addEventListener('mouseup', onUp as any)
+    // pointer: SIM overlay
+    drawSim.addEventListener('mousedown', onDownSim as any, { passive:false } as any)
+    drawSim.addEventListener('mousemove', onMoveSim as any, { passive:false } as any)
+    window.addEventListener('mouseup', onUpSim as any)
+    drawSim.addEventListener('touchstart', onDownSim as any, { passive:false } as any)
+    drawSim.addEventListener('touchmove', onMoveSim as any, { passive:false } as any)
+    window.addEventListener('touchend', onUpSim as any)
 
-    draw.addEventListener('touchstart', onDown as any, { passive:false } as any)
-    draw.addEventListener('touchmove', onMove as any, { passive:false } as any)
-    window.addEventListener('touchend', onUp as any)
+    // pointer: STEMS overlay
+    drawStems.addEventListener('mousedown', onDownStems as any, { passive:false } as any)
+    drawStems.addEventListener('mousemove', onMoveStems as any, { passive:false } as any)
+    window.addEventListener('mouseup', onUpStems as any)
+    drawStems.addEventListener('touchstart', onDownStems as any, { passive:false } as any)
+    drawStems.addEventListener('touchmove', onMoveStems as any, { passive:false } as any)
+    window.addEventListener('touchend', onUpStems as any)
 
     // init
+    configureHeader()
     fit()
     updateR()
     placeBalls(COUNT)
@@ -485,8 +488,10 @@ export default function GelBagWS() {
     return ()=>{
       ro.disconnect()
       window.removeEventListener('resize', fit)
-      window.removeEventListener('mouseup', onUp as any)
-      window.removeEventListener('touchend', onUp as any)
+      window.removeEventListener('mouseup', onUpSim as any)
+      window.removeEventListener('touchend', onUpSim as any)
+      window.removeEventListener('mouseup', onUpStems as any)
+      window.removeEventListener('touchend', onUpStems as any)
     }
   }, [])
 
@@ -495,16 +500,19 @@ export default function GelBagWS() {
       ref={cardRef}
       style={{position:'relative', minHeight:560, height:'76vh', background:'#fff', border:'1px solid #e2e8f0', borderRadius:16, boxShadow:'0 10px 20px rgba(0,0,0,.08)'}}
     >
-      {/* Header (can hide via ?toolbar=0) */}
+      {/* Header (compact when toolbar=0 or controls=0) */}
       <div ref={headerRef} className="header" style={{
-        position:'absolute', top:0, left:0, right:0, padding:10, display:'flex', flexWrap:'wrap', gap:8, alignItems:'center', justifyContent:'space-between',
+        position:'absolute', top:0, left:0, right:0, padding:10, display:'flex', flexWrap:'wrap',
+        gap:8, alignItems:'center', justifyContent:'space-between',
         background:'#fff', borderBottom:'1px solid #eef2f7', borderTopLeftRadius:16, borderTopRightRadius:16, zIndex:12
       }}>
         <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
           <button id="btnNew" className="primary" style={btnPrimary}>↻ Nuevo</button>
           <button id="btnRand" className="ghost" style={btnGhost} title="Randomiza la cantidad">🎲 Randomizar</button>
-          <label className="select" style={selStyle}>⚪ cantidad <input ref={countRef} type="range" min={1} max={60} defaultValue={12} /> </label>
-          <label className="select" style={selStyle}>⚪ tamaño <input ref={sizeRef} type="range" min={6} max={28} defaultValue={12} /> </label>
+
+          {/* sliders (hidden in compact) */}
+          <label className="select" style={selStyle}>⚪ cantidad <input ref={countRef} type="range" min={1} max={60} defaultValue={12} /></label>
+          <label className="select" style={selStyle}>⚪ tamaño <input ref={sizeRef} type="range" min={6} max={28} defaultValue={12} /></label>
           <label className="select" style={selStyle}>partes
             <select ref={partsRef} defaultValue={2} style={{marginLeft:6}}><option value={2}>2</option><option value={3}>3</option></select>
           </label>
@@ -514,7 +522,9 @@ export default function GelBagWS() {
         <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
           <button id="btnPen" className="success tool" aria-pressed="true" style={btnSuccess}>✎ Lápiz</button>
           <button id="btnErase" className="ghost tool" aria-pressed="false" style={btnGhost}>⌫ Borrar</button>
-          <button id="btnClear" className="ghost" style={btnGhost}>🗑️ Limpiar</button>
+          <button id="btnClearBag" className="ghost" style={btnGhost} title="Limpiar solo la bolsa">🧽 Limpiar bolsa</button>
+          <button id="btnClearStems" className="ghost" style={btnGhost} title="Limpiar solo oraciones">🧽 Limpiar oraciones</button>
+          <button id="btnClear" className="ghost" style={btnGhost} title="Limpiar todo">🗑️ Limpiar todo</button>
         </div>
       </div>
 
@@ -547,10 +557,23 @@ export default function GelBagWS() {
         }}
       >
         <canvas id="sim" ref={simRef} style={{display:'block', width:'100%', height:'100%', borderRadius:'0 0 0 16px', background:'#fff', border:'1px solid #e5e7eb', position:'absolute', inset:0, zIndex:1}} />
+        {/* draw over BAG */}
+        <canvas id="drawSim" ref={simDrawRef} style={{position:'absolute', inset:0, zIndex:5}} />
       </div>
 
-      {/* Drawing over both sim + stems (not header) */}
-      <canvas id="draw" ref={drawRef} style={{position:'absolute', top:'var(--toolbarH)', left:0, right:0, bottom:0, zIndex:5}} />
+      {/* draw over STEMS */}
+      <canvas
+        id="drawStems"
+        ref={stemsDrawRef}
+        style={{
+          position:'absolute',
+          top:'var(--toolbarH)',
+          right:0,
+          bottom:0,
+          width:'var(--stemW)',
+          zIndex:5
+        }}
+      />
     </div>
   )
 }
