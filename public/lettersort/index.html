@@ -80,16 +80,25 @@
     .one-per .drop .card{width:100%}
     .card.dragging{width:150px !important; height:auto !important}
 
-    /* Word chip for rowsyll mode */
-    .chip{
-      user-select:none;touch-action:none;cursor:grab;
-      display:inline-flex;align-items:center;justify-content:center;
-      padding:10px 14px;border-radius:14px;border:1px solid #d1d5db;background:#fff;
-      box-shadow:0 2px 6px rgba(0,0,0,.06);font-size:22px;min-height:46px;
-    }
-    .chip:active{cursor:grabbing}
-    .chip.ok{outline:3px solid var(--ok)}
-    .chip.bad{outline:3px solid var(--bad)}
+/* Word chip for rowsyll mode */
+.chip{
+  user-select:none;touch-action:none;cursor:grab;
+  display:inline-flex;align-items:center;justify-content:center;
+  padding:12px 18px;
+  border-radius:14px;border:1px solid #d1d5db;background:#fff;
+  box-shadow:0 2px 6px rgba(0,0,0,.06);
+  font-size:22px; line-height:1.15;
+  min-height:50px;
+  min-width:150px;        /* ⬅ a little wider */
+  max-width:260px;        /* wraps nicely on longer words */
+  text-align:center;
+  white-space:normal;      /* allow wrapping */
+  word-break:break-word;   /* break long chunks if needed */
+}
+.chip:active{cursor:grabbing}
+.chip.ok{outline:3px solid var(--ok)}
+.chip.bad{outline:3px solid var(--bad)}
+
 
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
@@ -174,6 +183,13 @@
     body.row-compact .rowCard{ width:120px; }
     body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
     body.row-compact .bankActions{ margin-top:6px; }
+    body.row-compact .chip{
+  min-width:120px;
+  max-width:200px;
+  font-size:20px;
+  padding:10px 14px;
+}
+
   </style>
 </head>
 <body>
