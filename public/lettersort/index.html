@@ -80,6 +80,17 @@
     .one-per .drop .card{width:100%}
     .card.dragging{width:150px !important; height:auto !important}
 
+    /* Word chip for rowsyll mode */
+    .chip{
+      user-select:none;touch-action:none;cursor:grab;
+      display:inline-flex;align-items:center;justify-content:center;
+      padding:10px 14px;border-radius:14px;border:1px solid #d1d5db;background:#fff;
+      box-shadow:0 2px 6px rgba(0,0,0,.06);font-size:22px;min-height:46px;
+    }
+    .chip:active{cursor:grabbing}
+    .chip.ok{outline:3px solid var(--ok)}
+    .chip.bad{outline:3px solid var(--bad)}
+
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
@@ -106,7 +117,7 @@
       align-items:start;
     }
 
-    /* Base row drop — stays inside its grid cell (used by row mode) */
+    /* Base row drop */
     .rowDrop{
       min-height:160px;
       background:var(--drop);
@@ -120,11 +131,11 @@
       padding:8px;
     }
 
-    /* Row Alliteration + RowSyll (twoCols) — allow the drop to expand horizontally */
+    /* twoCols grow */
     .rowLine.twoCols .rowDrop{
-      width:max-content;   /* grows to fit dropped tiles */
-      max-width:100%;      /* but never overflow the row */
-      min-width:220px;     /* clear starting size on desktop */
+      width:max-content;
+      max-width:100%;
+      min-width:220px;
       align-items:flex-start;
       justify-content:flex-start;
     }
@@ -132,19 +143,6 @@
     .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
     .rowCard{width:150px}
     .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
-
-    /* Word chip (rowsyll choices) */
-    .chip{
-      user-select:none;touch-action:none;cursor:grab;
-      display:inline-flex;align-items:center;justify-content:center;
-      padding:10px 14px;border-radius:18px;border:1px solid #d1d5db;background:#fff;
-      box-shadow:0 2px 6px rgba(0,0,0,.06);
-      font-size:22px; line-height:1; white-space:nowrap;
-    }
-    .chip:active{cursor:grabbing}
-    .chip.ok{outline:3px solid var(--ok)}
-    .chip.bad{outline:3px solid var(--bad)}
-    .chip.dragging{position:fixed !important; z-index:1000 !important}
 
     /* ---------- Compact tweaks (mobile) ---------- */
     body.row-compact .wrap { padding-top:6px; }
@@ -168,7 +166,7 @@
       gap:6px;
     }
     body.row-compact .rowLine.twoCols .rowDrop{
-      min-width:150px;     /* clear start size in compact */
+      min-width:150px;
       width:max-content;
       max-width:100%;
     }
@@ -252,7 +250,7 @@
       <button id="rowReset" class="btn ghost">Reiniciar</button>
     </div>
 
-    <!-- Global rack (classic modes) -->
+    <!-- Global rack (bank) -->
     <section id="rackSection" class="rackSection">
       <h3>Cartas</h3>
       <div id="rack" class="rack" aria-label="rack"></div>
@@ -290,8 +288,8 @@
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
     // Row modes params
-    const ROWS_RAW   = qs.get('rows') || ''; // for row/rowalli/rowsyll
-    const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true'; // ignored for rowalli
+    const ROWS_RAW   = qs.get('rows') || ''; // e.g., "tigre:init;zapato:final" or "gato,pato~op1,op2;..."
+    const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
 
     // Force SOLO by default. Only show teacher/student (session code) if ?sync=true is present.
     const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
@@ -448,12 +446,9 @@
       const first = syllabifyEs(pretty)[0] || '';
       return normalizeMarkers(first);
     }
-
-    // helpers for rowsyll
-    function syllablesOf(wordRaw){ return syllabifyEs(markersToPretty(wordRaw)); }
-    function onsetOfSyllable(syl){
-      const s = normalizeMarkers(syl || '');
-      return initialFromStem(s); // respects ch/ll/rr
+    function syllablesNormalized(coreWord){
+      const pretty = markersToPretty(coreWord);
+      return syllabifyEs(pretty).map(normalizeMarkers);
     }
 
     /******** Public URL existence check (GET with Range) ********/
@@ -760,22 +755,20 @@
       el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap" ${ROW_TITLE?'':'style="display:none"'}>${ROW_TITLE ? (markersToPretty(card.coreRaw)||'') : '&nbsp;'}</div>`;
       el.addEventListener('click', async ()=>{
         if (Date.now() - lastDragEndedAt < 150) return;
-        // normal modes play audio
         playWordAudio(card.coreRaw);
       });
       makeDraggable(el, opts.rowScope ? String(opts.rowIndex) : null);
       return el;
     }
 
-    // rowsyll chips (no audio)
-    function renderChip(id, word, opts={}){
+    /* New: word chips for rowsyll (no audio) */
+    function renderChip(word, id){
       const el = document.createElement('div');
       el.className = 'chip';
-      el.dataset.id = id;
-      el.dataset.word = word;
-      if (opts.rowIndex != null) el.dataset.row = String(opts.rowIndex);
+      el.dataset.id = id || crypto.randomUUID();
       el.textContent = markersToPretty(word);
-      makeDraggable(el, opts.rowScope ? String(opts.rowIndex) : null);
+      el.setAttribute('tabindex','0');
+      makeDraggable(el, null);
       return el;
     }
 
@@ -788,24 +781,28 @@
     function resetRoundPlacements(){
       document.querySelectorAll('.card, .chip').forEach(c=> c.classList.remove('ok','bad','locked') );
       if (currentMode==='row' || currentMode==='rowalli' || currentMode==='rowsyll'){
-        rowData.forEach((r, idx)=>{
+        rowData.forEach((r)=>{
           r.dropEl.innerHTML='';
-          r.rackEl.innerHTML='';
-          if (r.type === 'rowsyll'){
-            r.choices.forEach(w=>{
-              const chip = renderChip(w.id, w.word, {rowCard:true,rowIndex:idx,rowScope:true});
-              r.rackEl.appendChild(chip);
-            });
-          } else {
-            r.cards.forEach(c=> r.rackEl.appendChild(renderCard(c,{rowCard:true,rowIndex:idx,rowScope:true})));
-          }
         });
+        // For rowsyll, rebuild the bank chips in original order
+        if (currentMode==='rowsyll'){
+          rackEl.innerHTML = '';
+          SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
+        } else {
+          // row/rowalli had per-row racks; rebuild them
+          rowData.forEach((r, idx)=>{
+            if (r.rackEl && r.cards){
+              r.rackEl.innerHTML='';
+              r.cards.forEach(c=> r.rackEl.appendChild(renderCard(c,{rowCard:true,rowIndex:idx,rowScope:true})));
+            }
+          });
+        }
       } else {
         clearAllPlacements();
       }
     }
 
-    /* Confetti */
+    /* Confetti unchanged */
     function celebrate(){
       const cvs = document.createElement('canvas');
       cvs.className = 'celebrationCanvas';
@@ -816,7 +813,6 @@
       const parts = [];
       function resize(){ W=window.innerWidth; H=window.innerHeight; cvs.width=W; cvs.height=H; }
       window.addEventListener('resize', resize); resize();
-
       for(let i=0;i<N;i++){
         parts.push({
           x: Math.random()*W,
@@ -829,11 +825,9 @@
           hue: Math.floor(Math.random()*360)
         });
       }
-
       function tick(ts){
         if(!t0) t0=ts;
         const dt = Math.min(32, ts - t0); t0 = ts;
-
         ctx.clearRect(0,0,W,H);
         parts.forEach(p=>{
           const gravity = 0.011;
@@ -844,7 +838,6 @@
           p.x += p.vx * (dt/16);
           p.y += p.vy * (dt/16);
           p.rot += p.vr * (dt/16);
-
           ctx.save();
           ctx.translate(p.x, p.y);
           ctx.rotate(p.rot);
@@ -852,7 +845,6 @@
           ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size*0.6);
           ctx.restore();
         });
-
         if (parts.every(p=>p.y > H+30)) {
           document.body.removeChild(cvs);
           window.removeEventListener('resize', resize);
@@ -871,24 +863,22 @@
       }).filter(r=>r.prompt && r.choices.length);
     }
 
+    /* rowsyll parser: "word:init" or "word:final"; choices ignored (use global bank) */
+    function parseRowSyllDefs(str){
+      return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
+        // allow "word:init" OR legacy "word:init~choices" (choices ignored)
+        const [left] = seg.split('~');
+        const [prompt, howRaw] = (left||'').split(':').map(s=>s.trim());
+        const how = (howRaw||'init').toLowerCase()==='final' ? 'final' : 'init';
+        return { prompt, how };
+      }).filter(r=>r.prompt);
+    }
+
     function parseAlliGroups(str){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const items = seg.split(',').map(s=>s.trim()).filter(Boolean);
         return items;
       }).filter(items=>items.length>=2);
-    }
-
-    // rowsyll: "tigre:init~taza,toro; zapato:final~pato,carrito"
-    function parseRowsSyll(str){
-      return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
-        const [left, right] = seg.split('~');
-        if(!left || !right) return null;
-        const m = left.split(':');
-        const prompt = (m[0]||'').trim();
-        const rule = (m[1]||'init').trim().toLowerCase(); // init | final
-        const choices = right.split(',').map(s=>s.trim()).filter(Boolean);
-        return { prompt, rule: (rule==='final' ? 'final' : 'init'), choices };
-      }).filter(Boolean);
     }
 
     function majorityInitial(rawCores){
@@ -902,7 +892,7 @@
       return { initial: bestI || '', count: bestC<0 ? 0 : bestC };
     }
 
-    /******** Row: prompt+choices (pictures) ********/
+    /******** Row: prompt+choices ********/
     async function buildRowMode(){
       currentMode = 'row';
       document.body.classList.add('row-compact');
@@ -1025,63 +1015,58 @@
       }
     }
 
-    /******** Row Syllable: picture prompt + word chips (no audio) ********/
+    /******** Row Syllable (new): prompt image + shared bank of word chips ********/
     async function buildRowSyllMode(){
       currentMode = 'rowsyll';
       document.body.classList.add('row-compact');
       columnsEl.classList.add('hidden');
-      rackSectionEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
       rowActions.classList.remove('hidden');
 
-      const rows = parseRowsSyll(ROWS_RAW);
+      // Show global bank at the bottom and fill with chips in typed order
+      rackSectionEl.classList.remove('hidden');
+      rackEl.innerHTML = '';
+      SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
+
+      const defs = parseRowSyllDefs(ROWS_RAW); // [{prompt, how:'init'|'final'}]
       rowData = [];
       rowModeEl.innerHTML = '';
 
-      for (let i=0;i<rows.length;i++){
-        const r = rows[i];
+      for (let i=0;i<defs.length;i++){
+        const r = defs[i];
         const pImg = await resolveImageForWord(r.prompt);
         if (!pImg) continue;
 
-        // prompt onset (for rules)
-        const promptOnset = initialFromStem(pImg.rawCore);
-
         const line = document.createElement('div');
-        line.className = 'rowLine twoCols';
+        line.className = 'rowLine';
 
-        const drop = document.createElement('div');
-        drop.className = 'rowDrop';
-        drop.dataset.row = String(i);
-
-        const rack = document.createElement('div');
-        rack.className = 'rowRack';
-        rack.dataset.row = String(i);
-
-        // prompt picture (no audio)
         const promptWrap = document.createElement('div');
         promptWrap.className = 'rowPrompt';
         const pCard = document.createElement('div');
         pCard.className = 'card';
         pCard.innerHTML = `<img alt="" src="${pImg.url}"><div class="cap" style="display:${ROW_TITLE?'block':'none'}">${ROW_TITLE?markersToPretty(pImg.rawCore):'&nbsp;'}</div>`;
+        // No audio in rowsyll mode
         promptWrap.appendChild(pCard);
 
-        // Layout: prompt | drop | rack
-        line.insertBefore(promptWrap, line.firstChild);
+        const drop = document.createElement('div');
+        drop.className = 'rowDrop';
+        drop.dataset.row = String(i);
+
+        // Layout: [prompt] [drop] [blank spacer]
+        const spacer = document.createElement('div');
+        spacer.className = 'rowRack'; // just keeps grid consistent, but empty
+
+        line.appendChild(promptWrap);
         line.appendChild(drop);
-        line.appendChild(rack);
+        line.appendChild(spacer);
         rowModeEl.appendChild(line);
 
-        // build chips from choices
-        const choices = r.choices.map(w => ({ id: crypto.randomUUID(), word: w }));
-        choices.forEach(ch => rack.appendChild(renderChip(ch.id, ch.word, {rowIndex:i, rowScope:true})));
-
         rowData.push({
-          type:'rowsyll',
+          type: 'rowsyll',
           dropEl: drop,
-          rackEl: rack,
-          rule: r.rule,            // 'init' | 'final'
-          promptOnset,             // e.g., 't' or 'ch'
-          choices                  // [{id, word}]
+          prompt: pImg,
+          how: r.how,                  // 'init' or 'final'
+          targetInitial: initialFromStem(pImg.rawCore) // e.g., 't'
         });
       }
     }
@@ -1102,13 +1087,13 @@
         return rowData.length>0;
       }
       if (currentMode==='rowsyll'){
-        // at least one chip and all locked
-        for (const r of rowData){
-          const placed = r.dropEl.querySelectorAll('.chip').length;
-          const locked = r.dropEl.querySelectorAll('.chip.locked').length;
-          if (placed === 0 || placed !== locked) return false;
-        }
-        return rowData.length>0;
+        const placed = rowModeEl.querySelectorAll('.rowDrop .chip').length;
+        if (placed === 0) return false;
+        const anyBad = rowModeEl.querySelector('.rowDrop .chip.bad');
+        if (anyBad) return false;
+        // If anything dropped, all must be locked (i.e., correct)
+        const locked = rowModeEl.querySelectorAll('.rowDrop .chip.locked').length;
+        return placed === locked;
       }
 
       // Classic modes
@@ -1156,23 +1141,18 @@
 
       if (currentMode==='rowsyll'){
         rowData.forEach((r)=>{
-          const wants = r.promptOnset;   // e.g., 't'
-          [...r.dropEl.children].forEach(chEl=>{
-            if (!chEl.classList.contains('chip')) return;
-            const word = chEl.dataset.word || '';
-            const syls = syllablesOf(word);
-            const targetSyl = (r.rule === 'final') ? syls[syls.length-1] : syls[0];
-            const ok = (onsetOfSyllable(targetSyl) === wants);
-            if (ok){
-              chEl.classList.add('ok','locked');
-              // lock by replacing with a non-draggable clone
-              const clone = chEl.cloneNode(true);
-              clone.classList.add('locked');
-              chEl.replaceWith(clone);
-            } else {
-              chEl.classList.add('bad');
-              setTimeout(()=> { chEl.classList.remove('bad'); r.rackEl.appendChild(chEl); }, 300);
+          const tgt = r.targetInitial; // e.g., 't'
+          const how = r.how;           // 'init' or 'final'
+          [...r.dropEl.children].forEach(chipEl=>{
+            const text = (chipEl.textContent || '').trim().toLowerCase();
+            const syls = syllablesNormalized(text); // ['ti','gre'] etc.
+            let ok = false;
+            if (syls.length){
+              if (how==='init')  ok = syls[0].startsWith(tgt);
+              else                ok = syls[syls.length-1].startsWith(tgt);
             }
+            if (ok){ chipEl.classList.add('ok','locked'); /* no audio, just lock visually */ }
+            else { chipEl.classList.add('bad'); setTimeout(()=> { chipEl.classList.remove('bad'); rackEl.appendChild(chipEl); }, 300); }
           });
         });
         if (everythingCorrect()) celebrate();
@@ -1246,7 +1226,8 @@
       if(!drag.moved){
         drag.moved = true;
         drag.el.style.position='fixed';
-        drag.el.style.width = '';
+        // keep chip size natural; cards keep width=150
+        if (drag.el.classList.contains('card')) drag.el.style.width = '150px';
         drag.el.style.height = '';
         drag.el.style.zIndex=1000;
         drag.el.style.pointerEvents='none';
@@ -1273,7 +1254,7 @@
 
       if (drop){
         if (drop.classList.contains('rowDrop')){
-          // row: allow 1; rowsyll/rowalli: unlimited
+          // row: only one; rowalli/rowsyll: unlimited
           if (currentMode==='row' && drop.children.length>=1){ drag.originParent.appendChild(el); }
           else { drop.appendChild(el); }
         } else if (drop.classList.contains('drop')){
@@ -1324,7 +1305,10 @@
     function lockCard(cardEl, card){
       const clone = cardEl.cloneNode(true);
       clone.classList.add('locked');
-      clone.addEventListener('click', ()=> playWordAudio(card.coreRaw));
+      // Only attach audio for picture cards, not chips
+      if (cardEl.classList.contains('card') && card){
+        clone.addEventListener('click', ()=> playWordAudio(card.coreRaw));
+      }
       cardEl.replaceWith(clone);
     }
 
@@ -1390,13 +1374,15 @@
       teacherPanel.classList.add('hidden');
       studentPanel.classList.add('hidden');
       document.querySelector('.switch').classList.add('hidden');
+
+      // In rowsyll we don't use one-per at all, but keep behavior same as others
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
       const per = SOLO_PER || 4;
       const modeTxt =
-        (MODE==='row')       ? `modo filas` :
+        (MODE==='row')     ? `modo filas` :
         (MODE==='rowalli' || MODE==='allisort') ? `aliteración por filas` :
-        (MODE==='rowsyll')   ? `sílabas (inicio/final) por filas` :
+        (MODE==='rowsyll') ? `sílabas (inicio/final) por filas` :
         (SOLO_SYLLABLES.length
           ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
           : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras'));
@@ -1410,6 +1396,7 @@
 
     function startSoloRound(){
       usedSet = new Set();
+
       if (MODE==='row'){
         buildRowMode();
         return;
