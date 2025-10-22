@@ -485,6 +485,24 @@ body.row-compact .chip{
       const pretty = markersToPretty(coreWord);
       return syllabifyEs(pretty).map(normalizeMarkers);
     }
+// Does a syllable match target initial + vowel (CV)?
+function syllableMatchesCV(syllNorm, targetInitial){
+  if(!syllNorm) return false;
+
+  const VOWEL = /^[aeiou]/;
+
+  // handle digraph initials
+  const digraphs = ['ch','ll','rr'];
+  if (digraphs.includes(targetInitial)) {
+    if (!syllNorm.startsWith(targetInitial)) return false;
+    const rest = syllNorm.slice(targetInitial.length);
+    return rest.length > 0 && VOWEL.test(rest[0]); // must have a vowel immediately after
+  }
+
+  // single-letter initial
+  if (syllNorm[0] !== targetInitial) return false;
+  return syllNorm.length > 1 && VOWEL.test(syllNorm[1]);
+}
 
     /******** Public URL existence check (GET with Range) ********/
     async function publicUrlIfExists(bucket, path){
@@ -1104,13 +1122,20 @@ line.className = 'rowLine twoCols';
         line.appendChild(spacer);
         rowModeEl.appendChild(line);
 
-        rowData.push({
-          type: 'rowsyll',
-          dropEl: drop,
-          prompt: pImg,
-          how: r.how,                  // 'init' or 'final'
-          targetInitial: initialFromStem(pImg.rawCore) // e.g., 't'
-        });
+const promptSyls = syllablesNormalized(pImg.rawCore);               // ['za','pa','to'] for "zapato"
+const targetSyl = r.how === 'init'
+  ? (promptSyls[0] || '')
+  : (promptSyls[promptSyls.length - 1] || '');
+const targetInitial = initialFromStem(targetSyl);                   // 'z' for init, 't' for final ("zapato")
+
+rowData.push({
+  type: 'rowsyll',
+  dropEl: drop,
+  prompt: pImg,
+  how: r.how,                  // 'init' or 'final'
+  targetInitial
+});
+
       }
     }
 
@@ -1182,25 +1207,37 @@ line.className = 'rowLine twoCols';
         return;
       }
 
-      if (currentMode==='rowsyll'){
-        rowData.forEach((r)=>{
-          const tgt = r.targetInitial; // e.g., 't'
-          const how = r.how;           // 'init' or 'final'
-          [...r.dropEl.children].forEach(chipEl=>{
-            const text = (chipEl.textContent || '').trim().toLowerCase();
-            const syls = syllablesNormalized(text); // ['ti','gre'] etc.
-            let ok = false;
-            if (syls.length){
-              if (how==='init')  ok = syls[0].startsWith(tgt);
-              else                ok = syls[syls.length-1].startsWith(tgt);
-            }
-            if (ok){ chipEl.classList.add('ok','locked'); /* no audio, just lock visually */ }
-            else { chipEl.classList.add('bad'); setTimeout(()=> { chipEl.classList.remove('bad'); rackEl.appendChild(chipEl); }, 300); }
-          });
-        });
-        if (everythingCorrect()) celebrate();
-        return;
+if (currentMode==='rowsyll'){
+  rowData.forEach((r)=>{
+    const tgt = r.targetInitial; // e.g., 't' (or 'ch','ll','rr')
+    const how = r.how;           // 'init' or 'final'
+
+    [...r.dropEl.children].forEach(chipEl=>{
+      const text = (chipEl.textContent || '').trim().toLowerCase();
+
+      // normalized syllables (diacritics removed)
+      const syls = syllablesNormalized(text);   // e.g., ['ti','gre'] or ['za','pa','to']
+      let ok = false;
+
+      if (syls.length){
+        const chosen = (how==='init') ? syls[0] : syls[syls.length-1];
+        // require CV: initial (t/ch/ll/rr) immediately followed by a vowel
+        ok = syllableMatchesCV(chosen, tgt);
       }
+
+      if (ok){
+        chipEl.classList.add('ok','locked');
+      } else {
+        chipEl.classList.add('bad');
+        setTimeout(()=> { chipEl.classList.remove('bad'); rackEl.appendChild(chipEl); }, 300);
+      }
+    });
+  });
+
+  if (everythingCorrect()) celebrate();
+  return;
+}
+
 
       // Classic
       const getTarget = key => {
