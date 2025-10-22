@@ -55,6 +55,7 @@ export default function GelBagWS() {
     // world & physics
     let DPR = Math.max(1, window.devicePixelRatio || 1)
     let penSize = 4 * DPR
+    const SPEED_EPS = 0.18 * DPR // if speed below this, we'll snap away from line
     const colors = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899']
     const bag = { x:0, y:0, w:1, h:1 }
     type Ball = { x:number;y:number;r:number;color:string; vx:number;vy:number; grabbed:boolean }
@@ -162,7 +163,6 @@ export default function GelBagWS() {
         const srect = simWrap.getBoundingClientRect()
         const rrect = stems.getBoundingClientRect()
 
-        // Guard: if layout not ready, skip and try again soon
         if (srect.width <= 2 || srect.height <= 2 || rrect.width <= 2 || rrect.height <= 2) {
           scheduleFit()
           return
@@ -228,21 +228,20 @@ export default function GelBagWS() {
         const dx = b.x - lx
         const minClear = b.r + LINE_PAD
         if (Math.abs(dx) < minClear){
+          // choose side by current dx sign; if exactly 0, prefer right
           const dir = dx < 0 ? -1 : 1
           b.x = lx + dir * minClear
         }
       }
     }
+
     function clampInBag(b:Ball){
       if(b.x-b.r < bag.x) b.x = bag.x + b.r
       if(b.y-b.r < bag.y) b.y = bag.y + b.r
       if(b.x+b.r > bag.x+bag.w) b.x = bag.x+bag.w - b.r
       if(b.y+b.r > bag.y+bag.h) b.y = bag.y+bag.h - b.r
     }
-    function constrain(b: Ball){
-      clampInBag(b)
-      keepOffLines(b)
-    }
+
     function resolveCollisions(){
       for(let i=0;i<balls.length;i++){
         for(let j=i+1;j<balls.length;j++){
@@ -252,7 +251,8 @@ export default function GelBagWS() {
             const push=(min-d)/2, nx=dx/d, ny=dy/d
             a.x -= nx*push; a.y -= ny*push
             b.x += nx*push; b.y += ny*push
-            constrain(a); constrain(b)
+            // while moving, only clamp to bag; do NOT snap off lines here
+            clampInBag(a); clampInBag(b)
           }
         }
       }
@@ -270,13 +270,14 @@ export default function GelBagWS() {
           if(!overlapsAny(x,y,r) && !isNearAnyLine(x,r)) break
         }
         const ball: Ball = { x, y, r, color: colors[i%colors.length], vx:0, vy:0, grabbed:false }
-        constrain(ball)
+        // start away from lines initially
+        keepOffLines(ball); clampInBag(ball)
         balls.push(ball)
       }
       render()
     }
 
-    // SAFE rounded-rect: never negative radius; bail if w/h invalid
+    // SAFE rounded-rect
     function roundRectPath(ctx:CanvasRenderingContext2D, x:number,y:number,w:number,h:number,r:number){
       if (w <= 0 || h <= 0) return
       const rr = Math.max(0, Math.min(r, w/2, h/2))
@@ -299,7 +300,6 @@ export default function GelBagWS() {
       sctx.fillStyle = g1; sctx.fill()
       sctx.lineWidth = Math.max(1, 2*DPR); sctx.strokeStyle = '#94a3b8'; sctx.stroke()
 
-      // top sheen (guard width/height)
       const sheenW = Math.max(1, bag.w - 12*DPR)
       const sheenH = Math.max(1, bag.h*0.22)
       sctx.globalAlpha = 0.25; sctx.fillStyle = '#fff'
@@ -434,7 +434,12 @@ export default function GelBagWS() {
         if('touches' in e && (e as TouchEvent).touches){
           updatePressesFromTouches(e as TouchEvent)
         } else if(draggingBall!=null){
-          const p = getPos(e, sim); const b=balls[draggingBall]; b.x=p.x; b.y=p.y; constrain(b); resolveCollisions()
+          const p = getPos(e, sim)
+          const b=balls[draggingBall]
+          b.x=p.x; b.y=p.y
+          // while moving, only keep inside bag; allow crossing lines freely
+          clampInBag(b)
+          resolveCollisions()
         } else if(presses.length){
           const p = getPos(e, sim); presses[0].x=p.x; presses[0].y=p.y
         }
@@ -446,7 +451,15 @@ export default function GelBagWS() {
       e.preventDefault?.()
     }
     function onUpSim(){
-      if(draggingBall!=null){ balls[draggingBall].grabbed=false }
+      // when interaction ends, snap near-line balls just enough to one side
+      if (draggingBall!=null) {
+        const b = balls[draggingBall]
+        keepOffLines(b); clampInBag(b)
+        b.grabbed=false
+      } else if (!presses.length) {
+        // after gel press ends, settle all
+        for (const b of balls){ keepOffLines(b); clampInBag(b) }
+      }
       draggingBall=null; currSim=null; presses=[]
     }
 
@@ -483,7 +496,10 @@ export default function GelBagWS() {
       for(const b of balls){
         if(!b.grabbed){
           b.x += b.vx; b.y += b.vy
-          constrain(b)
+          clampInBag(b)          // allow crossing lines
+          // if moving slowly and near a line, gently snap off it
+          const speed = Math.hypot(b.vx, b.vy)
+          if (speed < SPEED_EPS) keepOffLines(b)
         }
       }
       resolveCollisions()
