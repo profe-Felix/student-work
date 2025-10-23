@@ -16,7 +16,7 @@
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
     --trash:#fee2e2; --danger:#ef4444;
     --gap:12px;            /* gap between boxes */
-    --inner-gap:8px;       /* gap inside a box (between tiles) */
+    --inner-gap:10px;      /* gap inside a box (between tiles) */
     --slot-min-h:72px;     /* box height */
     --tile-min-w:48px;     /* palette tile base size */
     --tile-h:48px;
@@ -47,7 +47,7 @@
   main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
   @media (max-width:1000px){ main{grid-template-columns:1fr} }
 
-  /* Board (left) */
+  /* Board */
   .board{
     background:var(--drop);
     border:2px solid var(--drop-border);
@@ -59,7 +59,7 @@
     --n: 0;
     min-height:var(--slot-min-h);
     background:#fff;border:2px solid var(--drop-border);border-radius:12px;
-    padding:8px;display:flex;gap:var(--inner-gap);align-items:center;flex-wrap:nowrap;
+    padding:10px;display:flex;gap:var(--inner-gap);align-items:center;flex-wrap:nowrap;
     justify-content:flex-start;
   }
 
@@ -70,25 +70,25 @@
     padding:8px 12px;border-radius:12px;font-size:16px;user-select:none
   }
 
-  /* Palettes (right) */
+  /* Palettes */
   .palettes{display:grid;grid-template-columns:1fr;gap:14px}
   .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
   .card h2{margin:0 0 8px;font-size:18px}
   .tray{display:flex;flex-wrap:wrap;gap:8px}
 
-  /* Tiles */
+  /* Tiles (base for palettes & dragging) */
   .tile{
     user-select:none; -webkit-user-drag:none; touch-action:none;
     display:inline-flex; align-items:center; justify-content:center;
-    min-width:var(--tile-min-w); height:var(--tile-h); padding:0 10px;
-    background:var(--tile); border:2px solid var(--tile-border); border-radius:10px;
+    min-width:var(--tile-min-w); height:var(--tile-h); padding:0 12px;
+    background:var(--tile); border:2px solid var(--tile-border); border-radius:12px;
     font-size:var(--tile-fs); line-height:1; cursor:grab; position:relative;
     transition:transform .05s ease;
   }
   .tile:active{cursor:grabbing; transform:scale(.98)}
   .tile .x{
     position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:999px;
-    background:#fff; border:2px solid #ef4444; color:#ef4444; font-size:14px; display:none;
+    background:#fff; border:2px solid var(--danger); color:var(--danger); font-size:14px; display:none;
     align-items:center; justify-content:center; cursor:pointer
   }
   .tile.clone .x{display:flex}
@@ -97,14 +97,21 @@
 
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-  /* ====== COMPACT word look (no stretch) ====== */
+  /* ====== In-slot look: remove the inner box entirely ====== */
   .slot .tile.in-slot{
-    flex: 0 0 auto;          /* <-- do not stretch */
+    flex: 0 0 auto;              /* no stretching */
     min-width: 0;
     height: clamp(48px, 6.5vh, 84px);
     font-size: clamp(26px, 3.6vw, 56px);
-    border-radius:12px;
-    padding: 0 10px;
+    padding: 0 6px;              /* tighter spacing between syllables */
+    background: transparent;     /* <-- no inner rounded rectangle */
+    border: none;                /* <-- no inner border */
+    border-radius: 0;            /* no extra rounding inside */
+    box-shadow: none;
+  }
+  /* keep the delete button visible on transparent tiles */
+  .slot .tile.in-slot .x{
+    top:-6px; right:-6px;
   }
 </style>
 </head>
@@ -160,17 +167,14 @@
     return fallback;
   }
 
-  // STRICT param parsing:
-  // - If param omitted → use defaults.
-  // - If param present & blank/“off”/“false”/“0” → empty list (hide).
-  // - If param present & has items → split into list.
+  // Lists: omit → defaults; blank/off/false/0/none → []; otherwise split by comma
   function getList(keys, defaults){
     const key = (Array.isArray(keys) ? keys.find(k => qs.has(k)) : keys) ?? null;
-    if (!key) return defaults;                         // no param → defaults
+    if (!key) return defaults;
     const raw = (qs.get(key) ?? '').trim();
     const lo = raw.toLowerCase();
-    if (raw === '' || lo === 'off' || lo === 'false' || lo === '0' || lo === 'none') return []; // explicit hide
-    return raw.split(',').map(s => s.trim()).filter(Boolean);  // explicit list
+    if (raw === '' || lo === 'off' || lo === 'false' || lo === '0' || lo === 'none') return [];
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
   }
 
   /******** Data ********/
@@ -241,21 +245,13 @@
   function fillPalettes(){
     // Letters
     lettersTray.innerHTML = '';
-    if (LETTERS.length === 0) {
-      lettersCard.style.display = 'none';
-    } else {
-      lettersCard.style.display = '';
-      LETTERS.forEach(t => lettersTray.appendChild(makeTile(t, false)));
-    }
+    lettersCard.style.display = LETTERS.length ? '' : 'none';
+    LETTERS.forEach(t => lettersTray.appendChild(makeTile(t, false)));
 
     // Syllables
     syllTray.innerHTML = '';
-    if (SYLL.length === 0) {
-      syllCard.style.display = 'none';
-    } else {
-      syllCard.style.display = '';
-      SYLL.forEach(t => syllTray.appendChild(makeTile(t, false)));
-    }
+    syllCard.style.display = SYLL.length ? '' : 'none';
+    SYLL.forEach(t => syllTray.appendChild(makeTile(t, false)));
   }
 
   /******** Layout inside slots ********/
@@ -397,4 +393,3 @@
 </script>
 </body>
 </html>
-
