@@ -14,12 +14,12 @@
   :root{
     --bg:#fafbff; --grid:#eef1f7; --ink:#111; --muted:#6b7280; --brand:#2563eb;
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
-    --trash:#fee2e2; --danger:#ef4444; --ok:#16a34a;
-    --gap:12px;           /* gap between boxes */
-    --inner-gap:6px;      /* gap between tiles in a box */
-    --slot-min-h:84px;    /* box height */
-    --tile-min-w:52px;    /* palette tile base size */
-    --tile-h:52px;
+    --trash:#fee2e2; --danger:#ef4444;
+    --gap:12px;            /* gap between boxes */
+    --inner-gap:8px;       /* gap inside a box (between tiles) */
+    --slot-min-h:72px;     /* box height */
+    --tile-min-w:48px;     /* palette tile base size */
+    --tile-h:48px;
     --tile-fs:28px;
   }
   html,body{height:100%}
@@ -47,7 +47,7 @@
   main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
   @media (max-width:1000px){ main{grid-template-columns:1fr} }
 
-  /* Board */
+  /* Board (left) */
   .board{
     background:var(--drop);
     border:2px solid var(--drop-border);
@@ -58,7 +58,7 @@
   .slot{
     --n: 0;
     min-height:var(--slot-min-h);
-    background:#fff;border:2px solid var(--drop-border);border-radius:8px;
+    background:#fff;border:2px solid var(--drop-border);border-radius:12px;
     padding:8px;display:flex;gap:var(--inner-gap);align-items:center;flex-wrap:nowrap;
     justify-content:flex-start;
   }
@@ -70,20 +70,20 @@
     padding:8px 12px;border-radius:12px;font-size:16px;user-select:none
   }
 
-  /* Palettes */
+  /* Palettes (right) */
   .palettes{display:grid;grid-template-columns:1fr;gap:14px}
   .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
   .card h2{margin:0 0 8px;font-size:18px}
   .tray{display:flex;flex-wrap:wrap;gap:8px}
 
-  /* Tiles (base style) */
+  /* Tiles */
   .tile{
     user-select:none; -webkit-user-drag:none; touch-action:none;
     display:inline-flex; align-items:center; justify-content:center;
     min-width:var(--tile-min-w); height:var(--tile-h); padding:0 10px;
     background:var(--tile); border:2px solid var(--tile-border); border-radius:10px;
     font-size:var(--tile-fs); line-height:1; cursor:grab; position:relative;
-    transition:transform .05s ease; white-space:nowrap;
+    transition:transform .05s ease;
   }
   .tile:active{cursor:grabbing; transform:scale(.98)}
   .tile .x{
@@ -97,21 +97,14 @@
 
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-  /* ===== Layout modes for tiles inside slots ===== */
-  /* Default: COMPACT (word-like) */
+  /* ====== COMPACT word look (no stretch) ====== */
   .slot .tile.in-slot{
-    flex: 0 0 auto;          /* size to content */
-    min-width: unset;
-    height: clamp(56px, 8vh, 96px);
-    font-size: clamp(28px, 5vw, 60px);
+    flex: 0 0 auto;          /* <-- do not stretch */
+    min-width: 0;
+    height: clamp(48px, 6.5vh, 84px);
+    font-size: clamp(26px, 3.6vw, 56px);
     border-radius:12px;
-    padding:0 8px;
-  }
-
-  /* Optional: STRETCH mode (old behavior) */
-  html[data-layout="stretch"] .slot .tile.in-slot{
-    flex: 1 1 calc( (100% - (var(--n) - 1) * var(--inner-gap)) / max(var(--n), 1) );
-    min-width:0;
+    padding: 0 10px;
   }
 </style>
 </head>
@@ -159,20 +152,25 @@
 <script>
   /******** URL options ********/
   const qs = new URLSearchParams(location.search);
-  const BOXES = Math.max(1, Math.min(12, parseInt(qs.get('boxes') || qs.get('drops') || '4', 10)));
+  const BOXES = clampInt(qs.get('boxes') ?? qs.get('drops'), 4, 1, 12);
 
-  // Layout: compact (default) or stretch
-  const LAYOUT = (qs.get('layout') || 'compact').toLowerCase();
-  if (LAYOUT === 'stretch') document.documentElement.setAttribute('data-layout','stretch');
+  function clampInt(val, fallback, min, max){
+    const n = parseInt(val, 10);
+    if (Number.isFinite(n)) return Math.max(min, Math.min(max, n));
+    return fallback;
+  }
 
-  // Helper: parse list param with "empty/hide" support
-  function parseListParam(keys, defaultList) {
-    const KEY = Array.isArray(keys) ? keys.find(k => qs.has(k)) : keys;
-    const raw = KEY ? qs.get(KEY) : null;
-    if (raw === null) return defaultList; // keep defaults when param omitted
-    const v = (raw || '').trim().toLowerCase();
-    if (v === '' || v === '0' || v === 'off' || v === 'false' || v === 'none') return [];
-    return raw.split(',').map(s => s.trim()).filter(Boolean);
+  // STRICT param parsing:
+  // - If param omitted → use defaults.
+  // - If param present & blank/“off”/“false”/“0” → empty list (hide).
+  // - If param present & has items → split into list.
+  function getList(keys, defaults){
+    const key = (Array.isArray(keys) ? keys.find(k => qs.has(k)) : keys) ?? null;
+    if (!key) return defaults;                         // no param → defaults
+    const raw = (qs.get(key) ?? '').trim();
+    const lo = raw.toLowerCase();
+    if (raw === '' || lo === 'off' || lo === 'false' || lo === '0' || lo === 'none') return []; // explicit hide
+    return raw.split(',').map(s => s.trim()).filter(Boolean);  // explicit list
   }
 
   /******** Data ********/
@@ -185,9 +183,8 @@
   ];
   const DEFAULT_SYLL = ['ma','me','mi','mo','mu','la','le','li','lo','lu','pa','pe','pi','po','pu','sa','se','si','so','su','bra','bre','bri','bro','bru','cha','che','chi','cho','chu','que','qui'];
 
-  // Allow explicit empty palettes via URL
-  const LETTERS = parseListParam('letters', DEFAULT_LETTERS);
-  const SYLL = parseListParam(['syllables','syll'], DEFAULT_SYLL);
+  const LETTERS = getList('letters', DEFAULT_LETTERS);
+  const SYLL = getList(['syll','syllables'], DEFAULT_SYLL);
 
   /******** DOM refs ********/
   const slotsEl = document.getElementById('slots');
@@ -214,14 +211,13 @@
       x.className = 'x';
       x.textContent = '×';
       x.title = 'Eliminar';
-      // Prevent starting drag on the ✕ and delete immediately
+      // block drag when pressing ✕
       x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
       x.addEventListener('click', (e)=>{
-        e.preventDefault();
-        e.stopImmediatePropagation();
+        e.preventDefault(); e.stopImmediatePropagation();
         const p = div.parentElement;
         div.remove();
-        if(p?.classList.contains('slot')) relayoutSlot(p);
+        if(p?.classList?.contains('slot')) relayoutSlot(p);
       });
       div.appendChild(x);
     }
@@ -244,19 +240,20 @@
 
   function fillPalettes(){
     // Letters
+    lettersTray.innerHTML = '';
     if (LETTERS.length === 0) {
       lettersCard.style.display = 'none';
     } else {
       lettersCard.style.display = '';
-      lettersTray.innerHTML = '';
       LETTERS.forEach(t => lettersTray.appendChild(makeTile(t, false)));
     }
+
     // Syllables
+    syllTray.innerHTML = '';
     if (SYLL.length === 0) {
       syllCard.style.display = 'none';
     } else {
       syllCard.style.display = '';
-      syllTray.innerHTML = '';
       SYLL.forEach(t => syllTray.appendChild(makeTile(t, false)));
     }
   }
@@ -280,7 +277,7 @@
 
     el.addEventListener('pointerdown', (e)=>{
       if(e.button!==0) return;
-      if (e.target && e.target.closest && e.target.closest('.x')) return; // ignore clicks on ✕
+      if (e.target && e.target.closest && e.target.closest('.x')) return; // clicking ✕ → no drag
 
       const src = e.currentTarget;
       const isPalette = src.parentElement === lettersTray || src.parentElement === syllTray;
@@ -293,7 +290,6 @@
       drag = {
         el: dragEl,
         pointerId: e.pointerId,
-        moved:false,
         fromPalette: isPalette,
         originParent: isPalette ? null : src.parentElement
       };
@@ -315,7 +311,6 @@
 
   function onMove(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
-    drag.moved = true;
     moveTo(drag.el, e.clientX, e.clientY);
 
     document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
@@ -327,4 +322,79 @@
   }
 
   function onUp(e){
-    if(!drag || e.pointerId!==drag
+    if(!drag || e.pointerId!==drag.pointerId) return;
+
+    const t = document.elementFromPoint(e.clientX, e.clientY);
+    const onTrash = !!t?.closest?.('#trash');
+    const slot = t?.closest?.('.slot');
+
+    document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
+    trashEl.classList.remove('highlight');
+
+    drag.el.classList.remove('dragging');
+    Object.assign(drag.el.style, {position:'', left:'', top:'', zIndex:'', pointerEvents:'', width:'', height:''});
+
+    if(onTrash){
+      const prev = drag.el.parentElement;
+      drag.el.remove();
+      if(prev?.classList.contains('slot')) relayoutSlot(prev);
+    } else if(slot){
+      const prev = drag.el.parentElement;
+      if(prev?.classList.contains('slot') && prev!==slot){
+        prev.removeChild(drag.el);
+        relayoutSlot(prev);
+      }
+      slot.appendChild(drag.el);
+      relayoutSlot(slot);
+    } else {
+      if(drag.fromPalette){
+        drag.el.remove();
+      } else if (drag.originParent){
+        drag.originParent.appendChild(drag.el);
+        if(drag.originParent.classList.contains('slot')) relayoutSlot(drag.originParent);
+      }
+    }
+    cleanup();
+  }
+
+  function onCancel(){
+    if(!drag) return;
+    if(drag.fromPalette){
+      drag.el.remove();
+    } else if (drag.originParent){
+      drag.originParent.appendChild(drag.el);
+      if(drag.originParent.classList.contains('slot')) relayoutSlot(drag.originParent);
+    }
+    cleanup();
+  }
+  function cleanup(){
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onCancel);
+    drag = null;
+  }
+
+  /******** Validate ********/
+  validateBtn.addEventListener('click', ()=>{
+    const result = [];
+    document.querySelectorAll('.slot').forEach(slot=>{
+      const word = [...slot.querySelectorAll('.tile')].map(t=>t.dataset.text).join('');
+      result.push(word);
+    });
+    alert('Cajas:\n' + result.map((w,i)=>`#${i+1}: ${w || '—'}`).join('\n'));
+  });
+
+  applyBoxes.addEventListener('click', ()=>{
+    const n = clampInt(boxesInput.value, 4, 1, 12);
+    buildSlots(n);
+    relayoutAllSlots();
+  });
+
+  /******** Boot ********/
+  buildSlots(BOXES);
+  fillPalettes();
+  relayoutAllSlots();
+</script>
+</body>
+</html>
+
