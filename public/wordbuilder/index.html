@@ -17,7 +17,6 @@
     --trash:#fee2e2; --danger:#ef4444;
     --gap:12px;            /* gap between boxes */
     --inner-gap:10px;      /* gap inside a box (between tiles) */
-    --slot-min-h:72px;     /* box height */
     --tile-min-w:48px;     /* palette tile base size */
     --tile-h:48px;
     --tile-fs:28px;
@@ -54,13 +53,30 @@
     border-radius:12px;
     padding:12px;
   }
-  .slots{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:var(--gap)}
+
+  /* ===== Slots now hug their content ===== */
+  .slots{
+    display:grid;
+    grid-template-columns:repeat(var(--cols,4), max-content); /* columns sized by content */
+    gap:var(--gap);
+    align-items:start;
+  }
   .slot{
-    --n: 0;
-    min-height:var(--slot-min-h);
-    background:#fff;border:2px solid var(--drop-border);border-radius:12px;
-    padding:10px;display:flex;gap:var(--inner-gap);align-items:center;flex-wrap:nowrap;
-    justify-content:flex-start;
+    background:#fff;
+    border:2px solid var(--drop-border);
+    border-radius:12px;
+    padding:6px 8px;                 /* tighter padding */
+    display:flex; gap:var(--inner-gap);
+    align-items:center; flex-wrap:nowrap; justify-content:flex-start;
+    width:max-content;               /* shrink to fit */
+    max-width:100%;
+    /* Keep a visible target when empty */
+    position:relative;
+  }
+  .slot:empty::before{
+    content:""; display:block;
+    width:8ch;                       /* small placeholder width */
+    height:clamp(40px, 6vh, 64px);   /* placeholder height ~ tile height */
   }
 
   .row-bottom{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
@@ -76,7 +92,7 @@
   .card h2{margin:0 0 8px;font-size:18px}
   .tray{display:flex;flex-wrap:wrap;gap:8px}
 
-  /* Tiles (base for palettes & dragging) */
+  /* Tiles (palette & dragging) */
   .tile{
     user-select:none; -webkit-user-drag:none; touch-action:none;
     display:inline-flex; align-items:center; justify-content:center;
@@ -97,22 +113,19 @@
 
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-  /* ====== In-slot look: remove the inner box entirely ====== */
+  /* ===== In-slot: word look (no inner box) ===== */
   .slot .tile.in-slot{
-    flex: 0 0 auto;              /* no stretching */
-    min-width: 0;
-    height: clamp(48px, 6.5vh, 84px);
-    font-size: clamp(26px, 3.6vw, 56px);
-    padding: 0 6px;              /* tighter spacing between syllables */
-    background: transparent;     /* <-- no inner rounded rectangle */
-    border: none;                /* <-- no inner border */
-    border-radius: 0;            /* no extra rounding inside */
-    box-shadow: none;
+    flex:0 0 auto;
+    min-width:0;
+    height:clamp(40px, 6vh, 64px);     /* smaller, matches slot placeholder */
+    font-size:clamp(26px, 3.4vw, 56px);
+    padding:0 6px;
+    background:transparent;
+    border:none;
+    border-radius:0;
+    box-shadow:none;
   }
-  /* keep the delete button visible on transparent tiles */
-  .slot .tile.in-slot .x{
-    top:-6px; right:-6px;
-  }
+  .slot .tile.in-slot .x{ top:-6px; right:-6px; }
 </style>
 </head>
 <body>
@@ -134,7 +147,6 @@
 </header>
 
 <main>
-  <!-- Board -->
   <section class="board">
     <div id="slots" class="slots" style="--cols:4"></div>
     <div class="row-bottom">
@@ -143,7 +155,6 @@
     </div>
   </section>
 
-  <!-- Palettes -->
   <aside class="palettes">
     <div class="card" id="lettersCard">
       <h2>Letras</h2>
@@ -157,7 +168,7 @@
 </main>
 
 <script>
-  /******** URL options ********/
+  /* ===== URL options ===== */
   const qs = new URLSearchParams(location.search);
   const BOXES = clampInt(qs.get('boxes') ?? qs.get('drops'), 4, 1, 12);
 
@@ -167,7 +178,7 @@
     return fallback;
   }
 
-  // Lists: omit → defaults; blank/off/false/0/none → []; otherwise split by comma
+  // Omit → defaults; blank/off/false/0/none → []; otherwise split by comma
   function getList(keys, defaults){
     const key = (Array.isArray(keys) ? keys.find(k => qs.has(k)) : keys) ?? null;
     if (!key) return defaults;
@@ -177,7 +188,7 @@
     return raw.split(',').map(s => s.trim()).filter(Boolean);
   }
 
-  /******** Data ********/
+  /* ===== Data ===== */
   const DEFAULT_LETTERS = [
     'ó','o','m','t','n','g','qu',
     'á','a','p','d','f','ch','z',
@@ -190,7 +201,7 @@
   const LETTERS = getList('letters', DEFAULT_LETTERS);
   const SYLL = getList(['syll','syllables'], DEFAULT_SYLL);
 
-  /******** DOM refs ********/
+  /* ===== DOM refs ===== */
   const slotsEl = document.getElementById('slots');
   const trashEl = document.getElementById('trash');
   const lettersTray = document.getElementById('lettersTray');
@@ -203,7 +214,7 @@
 
   boxesInput.value = BOXES;
 
-  /******** Helpers ********/
+  /* ===== Helpers ===== */
   function makeTile(text, isClone=false){
     const div = document.createElement('div');
     div.className = 'tile' + (isClone ? ' clone' : '');
@@ -215,7 +226,6 @@
       x.className = 'x';
       x.textContent = '×';
       x.title = 'Eliminar';
-      // block drag when pressing ✕
       x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
       x.addEventListener('click', (e)=>{
         e.preventDefault(); e.stopImmediatePropagation();
@@ -237,34 +247,30 @@
       const s = document.createElement('div');
       s.className = 'slot';
       s.dataset.index = i;
-      s.style.setProperty('--n','0');
       slotsEl.appendChild(s);
     }
   }
 
   function fillPalettes(){
-    // Letters
     lettersTray.innerHTML = '';
     lettersCard.style.display = LETTERS.length ? '' : 'none';
     LETTERS.forEach(t => lettersTray.appendChild(makeTile(t, false)));
 
-    // Syllables
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
     SYLL.forEach(t => syllTray.appendChild(makeTile(t, false)));
   }
 
-  /******** Layout inside slots ********/
+  /* ===== Layout inside slots ===== */
   function relayoutSlot(slot){
     const tiles = [...slot.querySelectorAll('.tile')];
-    slot.style.setProperty('--n', String(tiles.length));
     tiles.forEach(t => t.classList.add('in-slot'));
   }
   function relayoutAllSlots(){
     document.querySelectorAll('.slot').forEach(relayoutSlot);
   }
 
-  /******** Drag & Drop ********/
+  /* ===== Drag & Drop ===== */
   let drag = null;
 
   function makeDraggable(el, opts){
@@ -290,11 +296,11 @@
         originParent: isPalette ? null : src.parentElement
       };
       drag.el.classList.add('dragging');
-      drag.el.style.position='fixed';
-      drag.el.style.zIndex=1000;
-      drag.el.style.pointerEvents='none';
-      drag.el.style.width = drag.el.offsetWidth + 'px';
-      drag.el.style.height = drag.el.offsetHeight + 'px';
+      Object.assign(drag.el.style, {
+        position:'fixed', zIndex:1000, pointerEvents:'none',
+        width: drag.el.offsetWidth + 'px',
+        height: drag.el.offsetHeight + 'px'
+      });
       moveTo(drag.el, e.clientX, e.clientY);
 
       document.addEventListener('pointermove', onMove, {passive:false});
@@ -370,7 +376,7 @@
     drag = null;
   }
 
-  /******** Validate ********/
+  /* ===== Validate ===== */
   validateBtn.addEventListener('click', ()=>{
     const result = [];
     document.querySelectorAll('.slot').forEach(slot=>{
@@ -386,7 +392,7 @@
     relayoutAllSlots();
   });
 
-  /******** Boot ********/
+  /* ===== Boot ===== */
   buildSlots(BOXES);
   fillPalettes();
   relayoutAllSlots();
