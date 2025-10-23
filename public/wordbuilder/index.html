@@ -15,10 +15,10 @@
     --bg:#fafbff; --grid:#eef1f7; --ink:#111; --muted:#6b7280; --brand:#2563eb;
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
     --trash:#fee2e2; --danger:#ef4444; --ok:#16a34a;
-    --gap:12px;              /* gap between boxes */
-    --inner-gap:6px;         /* gap inside a box (between tiles) */
-    --slot-min-h:84px;       /* box height */
-    --tile-min-w:52px;       /* palette tile base size */
+    --gap:12px;
+    --inner-gap:6px;
+    --slot-min-h:84px;
+    --tile-min-w:52px;
     --tile-h:52px;
     --tile-fs:28px;
   }
@@ -47,7 +47,6 @@
   main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
   @media (max-width:1000px){ main{grid-template-columns:1fr} }
 
-  /* Board (left) */
   .board{
     background:var(--drop);
     border:2px solid var(--drop-border);
@@ -56,7 +55,7 @@
   }
   .slots{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:var(--gap)}
   .slot{
-    --n: 0; /* tiles in this slot; set by JS */
+    --n: 0;
     min-height:var(--slot-min-h);
     background:#fff;border:2px solid var(--drop-border);border-radius:8px;
     padding:8px;display:flex;gap:var(--inner-gap);align-items:center;flex-wrap:nowrap;
@@ -70,13 +69,11 @@
     padding:8px 12px;border-radius:12px;font-size:16px;user-select:none
   }
 
-  /* Palettes (right) */
   .palettes{display:grid;grid-template-columns:1fr;gap:14px}
   .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
   .card h2{margin:0 0 8px;font-size:18px}
   .tray{display:flex;flex-wrap:wrap;gap:8px}
 
-  /* Tiles (base style) */
   .tile{
     user-select:none; -webkit-user-drag:none; touch-action:none;
     display:inline-flex; align-items:center; justify-content:center;
@@ -97,12 +94,10 @@
 
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-  /* >>> Stretch tiles INSIDE boxes <<< */
-  /* When a tile sits in a .slot, JS adds .in-slot and sets --n on the slot.
-     Each tile then flexes to an equal share of the slot width. */
+  /* Stretch tiles INSIDE boxes */
   .slot .tile.in-slot{
     flex: 1 1 calc( (100% - (var(--n) - 1) * var(--inner-gap)) / max(var(--n), 1) );
-    min-width:0;                /* allow shrinking to fit evenly */
+    min-width:0;
     height: clamp(56px, 8vh, 96px);
     font-size: clamp(28px, 5vw, 60px);
     border-radius:12px;
@@ -129,7 +124,6 @@
 </header>
 
 <main>
-  <!-- Board -->
   <section class="board">
     <div id="slots" class="slots" style="--cols:4"></div>
     <div class="row-bottom">
@@ -138,13 +132,12 @@
     </div>
   </section>
 
-  <!-- Palettes -->
   <aside class="palettes">
-    <div class="card">
+    <div class="card" id="lettersCard">
       <h2>Letras</h2>
       <div id="lettersTray" class="tray"></div>
     </div>
-    <div class="card">
+    <div class="card" id="syllCard">
       <h2>Sílabas</h2>
       <div id="syllTray" class="tray"></div>
     </div>
@@ -155,8 +148,16 @@
   /******** URL options ********/
   const qs = new URLSearchParams(location.search);
   const BOXES = Math.max(1, Math.min(12, parseInt(qs.get('boxes') || qs.get('drops') || '4', 10)));
-  const URL_LETTERS = (qs.get('letters') || '').split(',').map(s=>s.trim()).filter(Boolean);
-  const URL_SYLL = (qs.get('syllables') || qs.get('syll') || '').split(',').map(s=>s.trim()).filter(Boolean);
+
+  // Helper: parse list param with "empty/hide" support
+  function parseListParam(keys, defaultList) {
+    const KEY = Array.isArray(keys) ? keys.find(k => qs.has(k)) : keys;
+    const raw = KEY ? qs.get(KEY) : null;
+    if (raw === null) return defaultList; // keep defaults when param omitted
+    const v = (raw || '').trim().toLowerCase();
+    if (v === '' || v === '0' || v === 'off' || v === 'false' || v === 'none') return [];
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+  }
 
   /******** Data ********/
   const DEFAULT_LETTERS = [
@@ -168,14 +169,17 @@
   ];
   const DEFAULT_SYLL = ['ma','me','mi','mo','mu','la','le','li','lo','lu','pa','pe','pi','po','pu','sa','se','si','so','su','bra','bre','bri','bro','bru','cha','che','chi','cho','chu','que','qui'];
 
-  const LETTERS = URL_LETTERS.length ? URL_LETTERS : DEFAULT_LETTERS;
-  const SYLL = URL_SYLL.length ? URL_SYLL : DEFAULT_SYLL;
+  // New: allow explicit empty palettes via URL
+  const LETTERS = parseListParam('letters', DEFAULT_LETTERS);
+  const SYLL = parseListParam(['syllables','syll'], DEFAULT_SYLL);
 
   /******** DOM refs ********/
   const slotsEl = document.getElementById('slots');
   const trashEl = document.getElementById('trash');
   const lettersTray = document.getElementById('lettersTray');
   const syllTray = document.getElementById('syllTray');
+  const lettersCard = document.getElementById('lettersCard');
+  const syllCard = document.getElementById('syllCard');
   const boxesInput = document.getElementById('boxesInput');
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn = document.getElementById('validateBtn');
@@ -188,14 +192,24 @@
     div.className = 'tile' + (isClone ? ' clone' : '');
     div.textContent = text;
     div.dataset.text = text;
+
     if(isClone){
       const x = document.createElement('div');
       x.className = 'x';
       x.textContent = '×';
       x.title = 'Eliminar';
-      x.addEventListener('click', (e)=>{ e.stopPropagation(); const p=div.parentElement; div.remove(); if(p?.classList.contains('slot')) relayoutSlot(p); });
+      // Prevent starting a drag when pressing the ✕
+      x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
+      x.addEventListener('click', (e)=>{
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const p = div.parentElement;
+        div.remove();
+        if(p?.classList.contains('slot')) relayoutSlot(p);
+      });
       div.appendChild(x);
     }
+
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
@@ -213,10 +227,22 @@
   }
 
   function fillPalettes(){
-    lettersTray.innerHTML = '';
-    LETTERS.forEach(t => lettersTray.appendChild(makeTile(t, false)));
-    syllTray.innerHTML = '';
-    SYLL.forEach(t => syllTray.appendChild(makeTile(t, false)));
+    // Letters
+    if (LETTERS.length === 0) {
+      lettersCard.style.display = 'none';
+    } else {
+      lettersCard.style.display = '';
+      lettersTray.innerHTML = '';
+      LETTERS.forEach(t => lettersTray.appendChild(makeTile(t, false)));
+    }
+    // Syllables
+    if (SYLL.length === 0) {
+      syllCard.style.display = 'none';
+    } else {
+      syllCard.style.display = '';
+      syllTray.innerHTML = '';
+      SYLL.forEach(t => syllTray.appendChild(makeTile(t, false)));
+    }
   }
 
   /******** Layout inside slots ********/
@@ -232,16 +258,19 @@
     document.querySelectorAll('.slot').forEach(relayoutSlot);
   }
 
-  /******** Drag & Drop (pointer events, clone from palette) ********/
+  /******** Drag & Drop ********/
   let drag = null;
 
   function makeDraggable(el, opts){
     const cloneOnDrag = !!opts?.cloneOnDrag;
     el.style.touchAction = 'none';
+
     el.addEventListener('pointerdown', (e)=>{
       if(e.button!==0) return;
-      const src = e.currentTarget;
+      // If the pointerdown originated from the ✕ button, don't start drag
+      if (e.target && e.target.closest && e.target.closest('.x')) return;
 
+      const src = e.currentTarget;
       const isPalette = src.parentElement === lettersTray || src.parentElement === syllTray;
       const dragEl = (cloneOnDrag && isPalette) ? makeTile(src.dataset.text, true) : src;
 
@@ -304,7 +333,6 @@
       drag.el.remove();
       if(prev?.classList.contains('slot')) relayoutSlot(prev);
     } else if(slot){
-      // If coming from a different slot, update that old slot’s layout first
       const prev = drag.el.parentElement;
       if(prev?.classList.contains('slot') && prev!==slot){
         prev.removeChild(drag.el);
@@ -313,12 +341,10 @@
       slot.appendChild(drag.el);
       relayoutSlot(slot);
     } else {
-      // Not dropped anywhere
       if(drag.fromPalette){
         drag.el.remove();
       } else if (drag.originParent) {
         drag.originParent.appendChild(drag.el);
-        // If origin was slot, keep it laid out
         if(drag.originParent.classList.contains('slot')) relayoutSlot(drag.originParent);
       }
     }
