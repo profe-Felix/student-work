@@ -85,21 +85,21 @@
 .chip{
   user-select:none; touch-action:none; cursor:grab;
 
-  display:inline-flex;          /* inline helps natural width */
+  display:inline-flex;
   align-items:center;
   justify-content:center;
 
-  padding:6px 12px;             /* tighter sides */
+  padding:6px 12px;
   border:1px solid #d1d5db;
   border-radius:14px;
   background:var(--drop);
 
-  font-size:clamp(24px, 2.8vw, 40px);  /* a bit bigger but responsive */
+  font-size:clamp(24px, 2.8vw, 40px);
   line-height:1.1;
   min-height:48px;
 
-  flex:0 1 auto;                /* key: don’t grow to fill the row */
-  max-width:26ch;               /* wrap long words instead of widening forever */
+  flex:0 1 auto;
+  max-width:26ch;
   white-space:normal;
   word-break:break-word;
 }
@@ -111,7 +111,7 @@
 .rack.chips{
   gap:12px;
   padding:12px;
-  align-items:flex-start;       /* prevent tall chips in the bank */
+  align-items:flex-start;
 }
 
 /* keep visual size while dragging (don’t collapse like .card) */
@@ -155,13 +155,13 @@
   flex-wrap:wrap;
   gap:10px;
   align-content:flex-start;
-  align-items:flex-start;       /* was: stretch -> this stops the tall chips */
+  align-items:flex-start;
   padding:8px;
 }
 
 /* twoCols grow — give horizontal space so chips can sit side-by-side */
 .rowLine.twoCols .rowDrop{
-  width:100%;                  /* fill row, but don’t force extra width */
+  width:100%;
   max-width:100%;
   min-width:0;
   justify-content:flex-start;
@@ -200,9 +200,8 @@
     body.row-compact .rowCard{ width:120px; }
     body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
     body.row-compact .bankActions{ margin-top:6px; }
-/* Mobile/compact tweak: still don’t shrink, just use a smaller basis */
 body.row-compact .chip{
-  flex: 0 0 180px;          /* keep row-first on small screens */
+  flex: 0 0 180px;
   min-width:180px;
   max-width:220px;
   font-size:20px;
@@ -321,6 +320,9 @@ body.row-compact .chip{
     const SOLO_WORDS     = (qs.get('words') || '').split(',').map(s => s.trim()).filter(Boolean);
     const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
+
+    // NEW: syllable match mode ('initial' | 'any')
+    const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
 
     // Row modes params
     const ROWS_RAW   = qs.get('rows') || ''; // e.g., "tigre:init;zapato:final" or "gato,pato~op1,op2;..."
@@ -485,24 +487,24 @@ body.row-compact .chip{
       const pretty = markersToPretty(coreWord);
       return syllabifyEs(pretty).map(normalizeMarkers);
     }
-// Does a syllable match target initial + vowel (CV)?
-function syllableMatchesCV(syllNorm, targetInitial){
-  if(!syllNorm) return false;
+    // Does a syllable match target initial + vowel (CV)?
+    function syllableMatchesCV(syllNorm, targetInitial){
+      if(!syllNorm) return false;
 
-  const VOWEL = /^[aeiou]/;
+      const VOWEL = /^[aeiou]/;
 
-  // handle digraph initials
-  const digraphs = ['ch','ll','rr'];
-  if (digraphs.includes(targetInitial)) {
-    if (!syllNorm.startsWith(targetInitial)) return false;
-    const rest = syllNorm.slice(targetInitial.length);
-    return rest.length > 0 && VOWEL.test(rest[0]); // must have a vowel immediately after
-  }
+      // handle digraph initials
+      const digraphs = ['ch','ll','rr'];
+      if (digraphs.includes(targetInitial)) {
+        if (!syllNorm.startsWith(targetInitial)) return false;
+        const rest = syllNorm.slice(targetInitial.length);
+        return rest.length > 0 && VOWEL.test(rest[0]); // must have a vowel immediately after
+      }
 
-  // single-letter initial
-  if (syllNorm[0] !== targetInitial) return false;
-  return syllNorm.length > 1 && VOWEL.test(syllNorm[1]);
-}
+      // single-letter initial
+      if (syllNorm[0] !== targetInitial) return false;
+      return syllNorm.length > 1 && VOWEL.test(syllNorm[1]);
+    }
 
     /******** Public URL existence check (GET with Range) ********/
     async function publicUrlIfExists(bucket, path){
@@ -734,7 +736,11 @@ function syllableMatchesCV(syllNorm, targetInitial){
       const cards = [];
       for(const col of columns){
         const targetSyl = col.key.slice(5);
-        const list = imageFiles.filter(f => firstSyllableNormalized(f.rawCore) === targetSyl);
+        // CHANGE: support ?syllmatch=any
+        const list = imageFiles.filter(f => {
+          const syls = syllablesNormalized(f.rawCore);
+          return SYLL_MATCH === 'any' ? syls.includes(targetSyl) : (syls[0] === targetSyl);
+        });
         const picks = pickNoRepeat(list, perCol);
         for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
@@ -838,11 +844,11 @@ function syllableMatchesCV(syllNorm, targetInitial){
           r.dropEl.innerHTML='';
         });
         // For rowsyll, rebuild the bank chips in original order
-if (currentMode==='rowsyll'){
-  rackEl.innerHTML = '';
-  rackEl.classList.add('chips');            // ← keep the wide layout after reset
-  SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
-} else {
+        if (currentMode==='rowsyll'){
+          rackEl.innerHTML = '';
+          rackEl.classList.add('chips');            // ← keep the wide layout after reset
+          SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
+        } else {
 
           // row/rowalli had per-row racks; rebuild them
           rowData.forEach((r, idx)=>{
@@ -1072,20 +1078,18 @@ if (currentMode==='rowsyll'){
 
     /******** Row Syllable (new): prompt image + shared bank of word chips ********/
     async function buildRowSyllMode(){
-currentMode = 'rowsyll';
-// rowsyll uses big chips → do NOT force compact
-document.body.classList.remove('row-compact');
-columnsEl.classList.add('hidden');
-rowModeEl.classList.remove('hidden');
-rowActions.classList.remove('hidden');
+      currentMode = 'rowsyll';
+      // rowsyll uses big chips → do NOT force compact
+      document.body.classList.remove('row-compact');
+      columnsEl.classList.add('hidden');
+      rowModeEl.classList.remove('hidden');
+      rowActions.classList.remove('hidden');
 
-
-// Show global bank at the bottom and fill with chips in typed order
-rackSectionEl.classList.remove('hidden');
-rackEl.innerHTML = '';
-rackEl.classList.add('chips');              // ← make the bank use chip spacing
-SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
-
+      // Show global bank at the bottom and fill with chips in typed order
+      rackSectionEl.classList.remove('hidden');
+      rackEl.innerHTML = '';
+      rackEl.classList.add('chips');              // ← make the bank use chip spacing
+      SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
 
       const defs = parseRowSyllDefs(ROWS_RAW); // [{prompt, how:'init'|'final'}]
       rowData = [];
@@ -1096,10 +1100,9 @@ SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
         const pImg = await resolveImageForWord(r.prompt);
         if (!pImg) continue;
 
-const line = document.createElement('div');
-// twoCols lets the drop grow horizontally to fit chips
-line.className = 'rowLine twoCols';
-
+        const line = document.createElement('div');
+        // twoCols lets the drop grow horizontally to fit chips
+        line.className = 'rowLine twoCols';
 
         const promptWrap = document.createElement('div');
         promptWrap.className = 'rowPrompt';
@@ -1122,19 +1125,19 @@ line.className = 'rowLine twoCols';
         line.appendChild(spacer);
         rowModeEl.appendChild(line);
 
-const promptSyls = syllablesNormalized(pImg.rawCore);               // ['za','pa','to'] for "zapato"
-const targetSyl = r.how === 'init'
-  ? (promptSyls[0] || '')
-  : (promptSyls[promptSyls.length - 1] || '');
-const targetInitial = initialFromStem(targetSyl);                   // 'z' for init, 't' for final ("zapato")
+        const promptSyls = syllablesNormalized(pImg.rawCore);               // ['za','pa','to'] for "zapato"
+        const targetSyl = r.how === 'init'
+          ? (promptSyls[0] || '')
+          : (promptSyls[promptSyls.length - 1] || '');
+        const targetInitial = initialFromStem(targetSyl);                   // 'z' for init, 't' for final ("zapato")
 
-rowData.push({
-  type: 'rowsyll',
-  dropEl: drop,
-  prompt: pImg,
-  how: r.how,                  // 'init' or 'final'
-  targetInitial
-});
+        rowData.push({
+          type: 'rowsyll',
+          dropEl: drop,
+          prompt: pImg,
+          how: r.how,                  // 'init' or 'final'
+          targetInitial
+        });
 
       }
     }
@@ -1154,24 +1157,23 @@ rowData.push({
         }
         return rowData.length>0;
       }
-if (currentMode === 'rowsyll') {
-  // 1) Bank must be empty
-  const chipsInBank = rackEl.querySelectorAll('.chip').length;
-  if (chipsInBank > 0) return false;
+      if (currentMode === 'rowsyll') {
+        // 1) Bank must be empty
+        const chipsInBank = rackEl.querySelectorAll('.chip').length;
+        if (chipsInBank > 0) return false;
 
-  // 2) There must be placed chips
-  const placed = rowModeEl.querySelectorAll('.rowDrop .chip').length;
-  if (placed === 0) return false;
+        // 2) There must be placed chips
+        const placed = rowModeEl.querySelectorAll('.rowDrop .chip').length;
+        if (placed === 0) return false;
 
-  // 3) No incorrect chips showing red
-  const anyBad = rowModeEl.querySelector('.rowDrop .chip.bad');
-  if (anyBad) return false;
+        // 3) No incorrect chips showing red
+        const anyBad = rowModeEl.querySelector('.rowDrop .chip.bad');
+        if (anyBad) return false;
 
-  // 4) All placed chips must be locked (i.e., correct)
-  const locked = rowModeEl.querySelectorAll('.rowDrop .chip.locked').length;
-  return placed === locked;
-}
-
+        // 4) All placed chips must be locked (i.e., correct)
+        const locked = rowModeEl.querySelectorAll('.rowDrop .chip.locked').length;
+        return placed === locked;
+      }
 
       // Classic modes
       const inRack = rackEl.querySelectorAll('.card').length;
@@ -1216,37 +1218,36 @@ if (currentMode === 'rowsyll') {
         return;
       }
 
-if (currentMode==='rowsyll'){
-  rowData.forEach((r)=>{
-    const tgt = r.targetInitial; // e.g., 't' (or 'ch','ll','rr')
-    const how = r.how;           // 'init' or 'final'
+      if (currentMode==='rowsyll'){
+        rowData.forEach((r)=>{
+          const tgt = r.targetInitial; // e.g., 't' (or 'ch','ll','rr')
+          const how = r.how;           // 'init' or 'final'
 
-    [...r.dropEl.children].forEach(chipEl=>{
-      const text = (chipEl.textContent || '').trim().toLowerCase();
+          [...r.dropEl.children].forEach(chipEl=>{
+            const text = (chipEl.textContent || '').trim().toLowerCase();
 
-      // normalized syllables (diacritics removed)
-      const syls = syllablesNormalized(text);   // e.g., ['ti','gre'] or ['za','pa','to']
-      let ok = false;
+            // normalized syllables (diacritics removed)
+            const syls = syllablesNormalized(text);   // e.g., ['ti','gre'] or ['za','pa','to']
+            let ok = false;
 
-      if (syls.length){
-        const chosen = (how==='init') ? syls[0] : syls[syls.length-1];
-        // require CV: initial (t/ch/ll/rr) immediately followed by a vowel
-        ok = syllableMatchesCV(chosen, tgt);
+            if (syls.length){
+              const chosen = (how==='init') ? syls[0] : syls[syls.length-1];
+              // require CV: initial (t/ch/ll/rr) immediately followed by a vowel
+              ok = syllableMatchesCV(chosen, tgt);
+            }
+
+            if (ok){
+              chipEl.classList.add('ok','locked');
+            } else {
+              chipEl.classList.add('bad');
+              setTimeout(()=> { chipEl.classList.remove('bad'); rackEl.appendChild(chipEl); }, 300);
+            }
+          });
+        });
+
+        if (everythingCorrect()) celebrate();
+        return;
       }
-
-      if (ok){
-        chipEl.classList.add('ok','locked');
-      } else {
-        chipEl.classList.add('bad');
-        setTimeout(()=> { chipEl.classList.remove('bad'); rackEl.appendChild(chipEl); }, 300);
-      }
-    });
-  });
-
-  if (everythingCorrect()) celebrate();
-  return;
-}
-
 
       // Classic
       const getTarget = key => {
@@ -1264,7 +1265,9 @@ if (currentMode==='rowsyll'){
           const coreRaw = card.coreRaw;
           let ok = false;
           if (target.type === 'syll') {
-            ok = (firstSyllableNormalized(coreRaw) === target.syll);
+            // CHANGE: support ?syllmatch=any for verification
+            const syls = syllablesNormalized(coreRaw);
+            ok = SYLL_MATCH === 'any' ? syls.includes(target.syll) : (syls[0] === target.syll);
           } else {
             const initial = initialFromStem(coreRaw);
             ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
@@ -1314,16 +1317,16 @@ if (currentMode==='rowsyll'){
       if(!drag.moved && Math.hypot(dx,dy) < 4) return;
       if(!drag.moved){
         drag.moved = true;
-drag.el.style.position='fixed';
-// keep cards at 150px, but preserve actual width for chips
-if (drag.el.classList.contains('card')) {
-  drag.el.style.width = '150px';
-} else {
-  drag.el.style.width = drag.el.getBoundingClientRect().width + 'px';
-}
-drag.el.style.height = '';
-drag.el.style.zIndex=1000;
-drag.el.style.pointerEvents='none';
+        drag.el.style.position='fixed';
+        // keep cards at 150px, but preserve actual width for chips
+        if (drag.el.classList.contains('card')) {
+          drag.el.style.width = '150px';
+        } else {
+          drag.el.style.width = drag.el.getBoundingClientRect().width + 'px';
+        }
+        drag.el.style.height = '';
+        drag.el.style.zIndex=1000;
+        drag.el.style.pointerEvents='none';
 
       }
       drag.el.style.left=(e.clientX-70)+'px';
@@ -1410,15 +1413,22 @@ drag.el.style.pointerEvents='none';
     document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
     document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
 
+    const soloVerifyBtn = document.getElementById('soloVerify');
+    const soloResetBtn = document.getElementById('soloReset');
     soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     soloResetBtn.addEventListener('click', resetRoundPlacements);
 
+    const inlineVerifyBtn = document.getElementById('inlineVerify');
+    const inlineResetBtn = document.getElementById('inlineReset');
     inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     inlineResetBtn.addEventListener('click', resetRoundPlacements);
 
+    const rowVerify = document.getElementById('rowVerify');
+    const rowReset = document.getElementById('rowReset');
     rowVerify.addEventListener('click', ()=> verifyNow(false));
     rowReset.addEventListener('click', resetRoundPlacements);
 
+    const btnNewRound = document.getElementById('btnNewRound');
     btnNewRound.addEventListener('click', async ()=>{
       if(!isTeacher) return;
       if(imageFiles.length===0){
@@ -1441,6 +1451,7 @@ drag.el.style.pointerEvents='none';
       await channel.send({ type:'broadcast', event:'ROUND', payload });
     });
 
+    const modeToggle = document.getElementById('modeToggle');
     modeToggle.addEventListener('change', () => {
       isTeacher = modeToggle.checked;
       teacherPanel.classList.toggle('hidden', !isTeacher);
@@ -1488,11 +1499,11 @@ drag.el.style.pointerEvents='none';
       soloBar.classList.remove('hidden');
     }
 
-function startSoloRound(){
-  usedSet = new Set();
-  rackEl.classList.remove('chips');         // ← reset, only rowsyll should set it
+    function startSoloRound(){
+      usedSet = new Set();
+      rackEl.classList.remove('chips');         // ← reset, only rowsyll should set it
 
-  if (MODE==='row'){
+      if (MODE==='row'){
         buildRowMode();
         return;
       }
