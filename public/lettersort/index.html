@@ -321,6 +321,18 @@
 
     // NEW: syllable match mode ('initial' | 'any')
     const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
+// NEW: syllable comparison mode ('eq' | 'prefix' | 'contains')
+// Also accepts legacy ?syllcontains=true (acts like 'prefix')
+const SYLL_CMP =
+  (qs.get('syllcmp') || '').toLowerCase() ||
+  ((qs.get('syllcontains') || '').toLowerCase() === 'true' ? 'prefix' : 'eq');
+
+function syllCompare(s, target){
+  if (!s || !target) return false;
+  if (SYLL_CMP === 'contains') return s.includes(target);
+  if (SYLL_CMP === 'prefix')   return s.startsWith(target);
+  return s === target; // 'eq'
+}
 
     // Row modes params
     const ROWS_RAW   = qs.get('rows') || ''; // e.g., "tigre:init;zapato:final" or "gato,pato~op1,op2;..."
@@ -743,10 +755,12 @@
       for(const col of columns){
         const targetSyl = col.key.slice(5);
         // CHANGE: support ?syllmatch=any
-        const list = imageFiles.filter(f => {
-          const syls = syllablesNormalized(f.rawCore);
-          return SYLL_MATCH === 'any' ? syls.includes(targetSyl) : (syls[0] === targetSyl);
-        });
+const list = imageFiles.filter(f => {
+  const syls = syllablesNormalized(f.rawCore); // normalized array
+  return SYLL_MATCH === 'any'
+    ? syls.some(s => syllCompare(s, targetSyl))
+    : syllCompare(syls[0], targetSyl);
+});
         const picks = pickNoRepeat(list, perCol);
         for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
@@ -1272,8 +1286,11 @@
           let ok = false;
           if (target.type === 'syll') {
             // CHANGE: support ?syllmatch=any for verification
-            const syls = syllablesNormalized(coreRaw);
-            ok = SYLL_MATCH === 'any' ? syls.includes(target.syll) : (syls[0] === target.syll);
+const syls = syllablesNormalized(coreRaw);
+ok = SYLL_MATCH === 'any'
+  ? syls.some(s => syllCompare(s, target.syll))
+  : syllCompare(syls[0], target.syll);
+
           } else {
             const initial = initialFromStem(coreRaw);
             ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
