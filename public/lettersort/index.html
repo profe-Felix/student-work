@@ -307,9 +307,10 @@
     const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
-    // NEW: syllable match mode ('initial' | 'any') and comparator ('equal' | 'contains')
-    const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
-    const SYLL_CMP   = (qs.get('syllcmp')   || 'equal').toLowerCase();
+// NEW: syllable match mode ('initial' | 'any') and comparator ('equals' | 'contains' | 'prefix' | 'suffix')
+const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
+const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
+
 
     // Row modes params
     const ROWS_RAW   = qs.get('rows') || ''; // e.g., "tigre:init;zapato:final" or "gato,pato~op1,op2;..."
@@ -474,11 +475,17 @@
       return syllabifyEs(pretty).map(normalizeMarkers);
     }
 
-    // Comparator for syllables: equality or "contains"/startsWith
-    function cmpSyll(a, b){
-      if(!a || !b) return false;
-      return (SYLL_CMP === 'contains') ? a.startsWith(b) : (a === b);
-    }
+// Comparator for syllables: equals | contains | prefix | suffix
+function cmpSyll(a, b){
+  if(!a || !b) return false;
+  switch (SYLL_CMP) {
+    case 'contains': return a.includes(b);
+    case 'prefix':   return a.startsWith(b);
+    case 'suffix':   return a.endsWith(b);
+    default:         return a === b; // 'equals'
+  }
+}
+
 
     /******** Public URL existence check (GET with Range) ********/
     async function publicUrlIfExists(bucket, path){
