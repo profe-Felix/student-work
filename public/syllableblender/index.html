@@ -152,7 +152,9 @@ const wordTitle    = document.getElementById('wordTitle');
 const pic          = document.getElementById('pic');
 const coverLayer   = document.getElementById('coverLayer');
 const slotsEl      = document.getElementById('slots');
-
+// ADD THIS:
+const wordSelectLabel = wordSelect.closest('label');
+ 
 /*** Marker ↔ accents helpers ***/
 function normalizeName(s){
   return (s||'').toLowerCase()
@@ -517,6 +519,11 @@ function revealAndPlay(){
 
   prevBtn.disabled = WORDS.length <= 1;
   nextBtn.disabled = WORDS.length <= 1;
+   // Hide the "Palabra: [select]" when ?hideWord=1/true/yes
+  if (HIDE_WORD && wordSelectLabel) {
+    wordSelectLabel.style.display = 'none';
+  }
+
 })();
 </script>
 </body>
