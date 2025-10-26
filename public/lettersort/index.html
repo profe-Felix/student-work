@@ -83,20 +83,16 @@
     /* Word chip for rowsyll mode — keep a wide, non-shrinking basis */
     .chip{
       user-select:none; touch-action:none; cursor:grab;
-
       display:inline-flex;
       align-items:center;
       justify-content:center;
-
       padding:6px 12px;
       border:1px solid #d1d5db;
       border-radius:14px;
       background:var(--drop);
-
       font-size:clamp(24px, 2.8vw, 40px);
       line-height:1.1;
       min-height:48px;
-
       flex:0 1 auto;
       max-width:26ch;
       white-space:normal;
@@ -112,8 +108,6 @@
       padding:12px;
       align-items:flex-start;
     }
-
-    /* keep visual size while dragging (don’t collapse like .card) */
     .chip.dragging{ width: auto !important; height:auto !important }
 
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
@@ -156,7 +150,6 @@
       padding:8px;
     }
 
-    /* twoCols grow — give horizontal space so chips can sit side-by-side */
     .rowLine.twoCols .rowDrop{
       width:100%;
       max-width:100%;
@@ -214,8 +207,7 @@
         <div class="brand">Clasificador de letras</div>
         <span id="soloPill" class="pill" style="display:none"></span>
         <div class="spacer"></div>
-        <!-- Hide the switch by default; reveal only when sync=true -->
-        <label class="switch hidden">
+        <label class="switch">
           <input id="modeToggle" type="checkbox" />
           <span>Modo Maestro</span>
         </label>
@@ -254,8 +246,8 @@
         </div>
       </div>
 
-      <!-- Estudiante: hide by default to prevent flash in solo -->
-      <div id="studentPanel" class="panel hidden">
+      <!-- Estudiante -->
+      <div id="studentPanel" class="panel">
         <div class="field inline">
           <input id="studentRoom" placeholder="Código de sesión" />
           <button id="btnStudentJoin" class="btn">Unirse</button>
@@ -277,6 +269,7 @@
 
     <!-- Row picture mode container -->
     <section id="rowMode" class="hidden"></section>
+    <!-- Kept in DOM but will remain hidden; we never unhide it in JS -->
     <div id="rowActions" class="bankActions hidden">
       <button id="rowVerify" class="btn outline">Verificar</button>
       <button id="rowReset" class="btn ghost">Reiniciar</button>
@@ -321,18 +314,6 @@
 
     // NEW: syllable match mode ('initial' | 'any')
     const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
-// NEW: syllable comparison mode ('eq' | 'prefix' | 'contains')
-// Also accepts legacy ?syllcontains=true (acts like 'prefix')
-const SYLL_CMP =
-  (qs.get('syllcmp') || '').toLowerCase() ||
-  ((qs.get('syllcontains') || '').toLowerCase() === 'true' ? 'prefix' : 'eq');
-
-function syllCompare(s, target){
-  if (!s || !target) return false;
-  if (SYLL_CMP === 'contains') return s.includes(target);
-  if (SYLL_CMP === 'prefix')   return s.startsWith(target);
-  return s === target; // 'eq'
-}
 
     // Row modes params
     const ROWS_RAW   = qs.get('rows') || ''; // e.g., "tigre:init;zapato:final" or "gato,pato~op1,op2;..."
@@ -340,7 +321,7 @@ function syllCompare(s, target){
 
     // Force SOLO by default. Only show teacher/student (session code) if ?sync=true is present.
     const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
-    // Hard-hide session UI unless explicitly sync=true (prevents flash)
+    // Hard-hide session UI unless explicitly sync=true
     if (!SYNC) {
       document.addEventListener('DOMContentLoaded', () => {
         teacherPanel.classList.add('hidden');
@@ -504,24 +485,6 @@ function syllCompare(s, target){
     function syllablesNormalized(coreWord){
       const pretty = markersToPretty(coreWord);
       return syllabifyEs(pretty).map(normalizeMarkers);
-    }
-    // Does a syllable match target initial + vowel (CV)?
-    function syllableMatchesCV(syllNorm, targetInitial){
-      if(!syllNorm) return false;
-
-      const VOWEL = /^[aeiou]/;
-
-      // handle digraph initials
-      const digraphs = ['ch','ll','rr'];
-      if (digraphs.includes(targetInitial)) {
-        if (!syllNorm.startsWith(targetInitial)) return false;
-        const rest = syllNorm.slice(targetInitial.length);
-        return rest.length > 0 && VOWEL.test(rest[0]); // must have a vowel immediately after
-      }
-
-      // single-letter initial
-      if (syllNorm[0] !== targetInitial) return false;
-      return syllNorm.length > 1 && VOWEL.test(syllNorm[1]);
     }
 
     /******** Public URL existence check (GET with Range) ********/
@@ -754,13 +717,12 @@ function syllCompare(s, target){
       const cards = [];
       for(const col of columns){
         const targetSyl = col.key.slice(5);
-        // CHANGE: support ?syllmatch=any
-const list = imageFiles.filter(f => {
-  const syls = syllablesNormalized(f.rawCore); // normalized array
-  return SYLL_MATCH === 'any'
-    ? syls.some(s => syllCompare(s, targetSyl))
-    : syllCompare(syls[0], targetSyl);
-});
+        const list = imageFiles.filter(f => {
+          const syls = syllablesNormalized(f.rawCore); // normalized array
+          return SYLL_MATCH === 'any'
+            ? syls.some(s => s === targetSyl)
+            : (syls[0] === targetSyl);
+        });
         const picks = pickNoRepeat(list, perCol);
         for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
@@ -980,7 +942,7 @@ const list = imageFiles.filter(f => {
       columnsEl.classList.add('hidden');
       rackSectionEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
-      rowActions.classList.remove('hidden');
+      // rowActions stays hidden on purpose
 
       const rows = parseRows(ROWS_RAW);
       rowData = [];
@@ -1043,7 +1005,7 @@ const list = imageFiles.filter(f => {
       columnsEl.classList.add('hidden');
       rackSectionEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
-      rowActions.classList.remove('hidden');
+      // rowActions stays hidden on purpose
 
       const groups = parseAlliGroups(ROWS_RAW);
       rowData = [];
@@ -1103,7 +1065,7 @@ const list = imageFiles.filter(f => {
       document.body.classList.remove('row-compact');
       columnsEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
-      rowActions.classList.remove('hidden');
+      // rowActions stays hidden on purpose
 
       // Show global bank at the bottom and fill with chips in typed order
       rackSectionEl.classList.remove('hidden');
@@ -1253,7 +1215,18 @@ const list = imageFiles.filter(f => {
             if (syls.length){
               const chosen = (how==='init') ? syls[0] : syls[syls.length-1];
               // require CV: initial (t/ch/ll/rr) immediately followed by a vowel
-              ok = syllableMatchesCV(chosen, tgt);
+              ok = (function syllableMatchesCV(syllNorm, targetInitial){
+                if(!syllNorm) return false;
+                const VOWEL = /^[aeiou]/;
+                const digraphs = ['ch','ll','rr'];
+                if (digraphs.includes(targetInitial)) {
+                  if (!syllNorm.startsWith(targetInitial)) return false;
+                  const rest = syllNorm.slice(targetInitial.length);
+                  return rest.length > 0 && VOWEL.test(rest[0]);
+                }
+                if (syllNorm[0] !== targetInitial) return false;
+                return syllNorm.length > 1 && VOWEL.test(syllNorm[1]);
+              })(chosen, tgt);
             }
 
             if (ok){
@@ -1285,12 +1258,11 @@ const list = imageFiles.filter(f => {
           const coreRaw = card.coreRaw;
           let ok = false;
           if (target.type === 'syll') {
-            // CHANGE: support ?syllmatch=any for verification
-const syls = syllablesNormalized(coreRaw);
-ok = SYLL_MATCH === 'any'
-  ? syls.some(s => syllCompare(s, target.syll))
-  : syllCompare(syls[0], target.syll);
-
+            const syls = syllablesNormalized(coreRaw);
+            ok = (function(sylsArr, target, mode){
+              if(mode==='any'){ return sylsArr.includes(target); }
+              return sylsArr[0] === target;
+            })(syls, target.syll, (SYLL_MATCH||'initial'));
           } else {
             const initial = initialFromStem(coreRaw);
             ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
@@ -1432,7 +1404,7 @@ ok = SYLL_MATCH === 'any'
       cardEl.replaceWith(clone);
     }
 
-    /******** Controls wiring (use existing refs; no duplicate consts) ********/
+    /******** Controls wiring ********/
     btnVerify.addEventListener('click', ()=> verifyNow(false));
     btnReset.addEventListener('click', resetRoundPlacements);
 
@@ -1549,7 +1521,7 @@ ok = SYLL_MATCH === 'any'
 
       currentMode = 'classic';
       rowModeEl.classList.add('hidden');
-      rowActions.classList.add('hidden');
+      // rowActions remains hidden
       columnsEl.classList.remove('hidden');
       rackSectionEl.classList.remove('hidden');
 
@@ -1574,8 +1546,6 @@ ok = SYLL_MATCH === 'any'
       isTeacher = false;
       teacherPanel.classList.add('hidden');
       studentPanel.classList.remove('hidden');
-      // Reveal the switch only in real sync mode (prevents flash in solo)
-      document.querySelector('.switch')?.classList.remove('hidden');
     })();
   </script>
 </body>
