@@ -330,6 +330,14 @@ body.row-compact .chip{
 
     // Force SOLO by default. Only show teacher/student (session code) if ?sync=true is present.
     const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
+// Hard-hide session UI unless explicitly sync=true
+if (!SYNC) {
+  document.addEventListener('DOMContentLoaded', () => {
+    teacherPanel.classList.add('hidden');
+    studentPanel.classList.add('hidden');
+    document.querySelector('.switch')?.classList.add('hidden');
+  });
+}
 
     // SOLO if NOT in sync mode, or any solo hints/row modes are present.
     const SOLO_MODE =
