@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="es">
 <head>
   <meta charset="utf-8" />
@@ -80,44 +80,41 @@
     .one-per .drop .card{width:100%}
     .card.dragging{width:150px !important; height:auto !important}
 
-/* Word chip for rowsyll mode */
-/* Word chip for rowsyll mode — keep a wide, non-shrinking basis */
-.chip{
-  user-select:none; touch-action:none; cursor:grab;
+    /* Word chip for rowsyll mode — keep a wide, non-shrinking basis */
+    .chip{
+      user-select:none; touch-action:none; cursor:grab;
 
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
 
-  padding:6px 12px;
-  border:1px solid #d1d5db;
-  border-radius:14px;
-  background:var(--drop);
+      padding:6px 12px;
+      border:1px solid #d1d5db;
+      border-radius:14px;
+      background:var(--drop);
 
-  font-size:clamp(24px, 2.8vw, 40px);
-  line-height:1.1;
-  min-height:48px;
+      font-size:clamp(24px, 2.8vw, 40px);
+      line-height:1.1;
+      min-height:48px;
 
-  flex:0 1 auto;
-  max-width:26ch;
-  white-space:normal;
-  word-break:break-word;
-}
-.chip:active{cursor:grabbing}
-.chip.ok{outline:3px solid var(--ok)}
-.chip.bad{outline:3px solid var(--bad)}
+      flex:0 1 auto;
+      max-width:26ch;
+      white-space:normal;
+      word-break:break-word;
+    }
+    .chip:active{cursor:grabbing}
+    .chip.ok{outline:3px solid var(--ok)}
+    .chip.bad{outline:3px solid var(--bad)}
 
-/* nicer spacing for the chip bank */
-.rack.chips{
-  gap:12px;
-  padding:12px;
-  align-items:flex-start;
-}
+    /* nicer spacing for the chip bank */
+    .rack.chips{
+      gap:12px;
+      padding:12px;
+      align-items:flex-start;
+    }
 
-/* keep visual size while dragging (don’t collapse like .card) */
-.chip.dragging{ width: auto !important; height:auto !important }
-
-
+    /* keep visual size while dragging (don’t collapse like .card) */
+    .chip.dragging{ width: auto !important; height:auto !important }
 
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
@@ -145,27 +142,27 @@
       align-items:start;
     }
 
-/* Base row drop — force horizontal flow and no stretching */
-.rowDrop{
-  min-height:160px;
-  background:var(--drop);
-  border:2px dashed #c7d2fe;
-  border-radius:12px;
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-  align-content:flex-start;
-  align-items:flex-start;
-  padding:8px;
-}
+    /* Base row drop — force horizontal flow and no stretching */
+    .rowDrop{
+      min-height:160px;
+      background:var(--drop);
+      border:2px dashed #c7d2fe;
+      border-radius:12px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      align-content:flex-start;
+      align-items:flex-start;
+      padding:8px;
+    }
 
-/* twoCols grow — give horizontal space so chips can sit side-by-side */
-.rowLine.twoCols .rowDrop{
-  width:100%;
-  max-width:100%;
-  min-width:0;
-  justify-content:flex-start;
-}
+    /* twoCols grow — give horizontal space so chips can sit side-by-side */
+    .rowLine.twoCols .rowDrop{
+      width:100%;
+      max-width:100%;
+      min-width:0;
+      justify-content:flex-start;
+    }
     .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
     .rowCard{width:150px}
     .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
@@ -200,13 +197,13 @@
     body.row-compact .rowCard{ width:120px; }
     body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
     body.row-compact .bankActions{ margin-top:6px; }
-body.row-compact .chip{
-  flex: 0 0 180px;
-  min-width:180px;
-  max-width:220px;
-  font-size:20px;
-  padding:10px 14px;
-}
+    body.row-compact .chip{
+      flex: 0 0 180px;
+      min-width:180px;
+      max-width:220px;
+      font-size:20px;
+      padding:10px 14px;
+    }
 
   </style>
 </head>
@@ -217,7 +214,8 @@ body.row-compact .chip{
         <div class="brand">Clasificador de letras</div>
         <span id="soloPill" class="pill" style="display:none"></span>
         <div class="spacer"></div>
-        <label class="switch">
+        <!-- Hide the switch by default; reveal only when sync=true -->
+        <label class="switch hidden">
           <input id="modeToggle" type="checkbox" />
           <span>Modo Maestro</span>
         </label>
@@ -256,8 +254,8 @@ body.row-compact .chip{
         </div>
       </div>
 
-      <!-- Estudiante -->
-      <div id="studentPanel" class="panel">
+      <!-- Estudiante: hide by default to prevent flash in solo -->
+      <div id="studentPanel" class="panel hidden">
         <div class="field inline">
           <input id="studentRoom" placeholder="Código de sesión" />
           <button id="btnStudentJoin" class="btn">Unirse</button>
@@ -330,14 +328,14 @@ body.row-compact .chip{
 
     // Force SOLO by default. Only show teacher/student (session code) if ?sync=true is present.
     const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
-// Hard-hide session UI unless explicitly sync=true
-if (!SYNC) {
-  document.addEventListener('DOMContentLoaded', () => {
-    teacherPanel.classList.add('hidden');
-    studentPanel.classList.add('hidden');
-    document.querySelector('.switch')?.classList.add('hidden');
-  });
-}
+    // Hard-hide session UI unless explicitly sync=true (prevents flash)
+    if (!SYNC) {
+      document.addEventListener('DOMContentLoaded', () => {
+        teacherPanel.classList.add('hidden');
+        studentPanel.classList.add('hidden');
+        document.querySelector('.switch')?.classList.add('hidden');
+      });
+    }
 
     // SOLO if NOT in sync mode, or any solo hints/row modes are present.
     const SOLO_MODE =
@@ -1417,26 +1415,19 @@ if (!SYNC) {
       cardEl.replaceWith(clone);
     }
 
-    /******** Controls wiring ********/
-    document.getElementById('btnVerify').addEventListener('click', ()=> verifyNow(false));
-    document.getElementById('btnReset').addEventListener('click', resetRoundPlacements);
+    /******** Controls wiring (use existing refs; no duplicate consts) ********/
+    btnVerify.addEventListener('click', ()=> verifyNow(false));
+    btnReset.addEventListener('click', resetRoundPlacements);
 
-    const soloVerifyBtn = document.getElementById('soloVerify');
-    const soloResetBtn = document.getElementById('soloReset');
     soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     soloResetBtn.addEventListener('click', resetRoundPlacements);
 
-    const inlineVerifyBtn = document.getElementById('inlineVerify');
-    const inlineResetBtn = document.getElementById('inlineReset');
     inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     inlineResetBtn.addEventListener('click', resetRoundPlacements);
 
-    const rowVerify = document.getElementById('rowVerify');
-    const rowReset = document.getElementById('rowReset');
     rowVerify.addEventListener('click', ()=> verifyNow(false));
     rowReset.addEventListener('click', resetRoundPlacements);
 
-    const btnNewRound = document.getElementById('btnNewRound');
     btnNewRound.addEventListener('click', async ()=>{
       if(!isTeacher) return;
       if(imageFiles.length===0){
@@ -1459,7 +1450,6 @@ if (!SYNC) {
       await channel.send({ type:'broadcast', event:'ROUND', payload });
     });
 
-    const modeToggle = document.getElementById('modeToggle');
     modeToggle.addEventListener('change', () => {
       isTeacher = modeToggle.checked;
       teacherPanel.classList.toggle('hidden', !isTeacher);
@@ -1567,6 +1557,8 @@ if (!SYNC) {
       isTeacher = false;
       teacherPanel.classList.add('hidden');
       studentPanel.classList.remove('hidden');
+      // Reveal the switch only in real sync mode (prevents flash in solo)
+      document.querySelector('.switch')?.classList.remove('hidden');
     })();
   </script>
 </body>
