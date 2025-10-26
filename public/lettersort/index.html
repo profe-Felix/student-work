@@ -270,7 +270,6 @@
     <!-- Row picture mode container -->
     <section id="rowMode" class="hidden"></section>
 
-
     <!-- Global rack (bank) -->
     <section id="rackSection" class="rackSection">
       <h3>Cartas</h3>
@@ -308,8 +307,9 @@
     const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
-    // NEW: syllable match mode ('initial' | 'any')
+    // NEW: syllable match mode ('initial' | 'any') and comparator ('equal' | 'contains')
     const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
+    const SYLL_CMP   = (qs.get('syllcmp')   || 'equal').toLowerCase();
 
     // Row modes params
     const ROWS_RAW   = qs.get('rows') || ''; // e.g., "tigre:init;zapato:final" or "gato,pato~op1,op2;..."
@@ -317,7 +317,6 @@
 
     // Force SOLO by default. Only show teacher/student (session code) if ?sync=true is present.
     const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
-    // Hard-hide session UI unless explicitly sync=true
     if (!SYNC) {
       document.addEventListener('DOMContentLoaded', () => {
         teacherPanel.classList.add('hidden');
@@ -470,14 +469,15 @@
       }
       return syl.filter(Boolean).map(s => s.trim());
     }
-    function firstSyllableNormalized(coreWord){
-      const pretty = markersToPretty(coreWord);
-      const first = syllabifyEs(pretty)[0] || '';
-      return normalizeMarkers(first);
-    }
     function syllablesNormalized(coreWord){
       const pretty = markersToPretty(coreWord);
       return syllabifyEs(pretty).map(normalizeMarkers);
+    }
+
+    // Comparator for syllables: equality or "contains"/startsWith
+    function cmpSyll(a, b){
+      if(!a || !b) return false;
+      return (SYLL_CMP === 'contains') ? a.startsWith(b) : (a === b);
     }
 
     /******** Public URL existence check (GET with Range) ********/
@@ -713,8 +713,8 @@
         const list = imageFiles.filter(f => {
           const syls = syllablesNormalized(f.rawCore); // normalized array
           return SYLL_MATCH === 'any'
-            ? syls.some(s => s === targetSyl)
-            : (syls[0] === targetSyl);
+            ? syls.some(s => cmpSyll(s, targetSyl))
+            : cmpSyll(syls[0], targetSyl);
         });
         const picks = pickNoRepeat(list, perCol);
         for(const f of picks){ usedSet.add(`${f.path}`); }
@@ -818,14 +818,11 @@
         rowData.forEach((r)=>{
           r.dropEl.innerHTML='';
         });
-        // For rowsyll, rebuild the bank chips in original order
         if (currentMode==='rowsyll'){
           rackEl.innerHTML = '';
-          rackEl.classList.add('chips');            // ← keep the wide layout after reset
+          rackEl.classList.add('chips');
           SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
         } else {
-
-          // row/rowalli had per-row racks; rebuild them
           rowData.forEach((r, idx)=>{
             if (r.rackEl && r.cards){
               r.rackEl.innerHTML='';
@@ -883,7 +880,6 @@
         });
         if (parts.every(p=>p.y > H+30)) {
           document.body.removeChild(cvs);
-          window.removeEventListener('resize', resize);
         } else { requestAnimationFrame(tick); }
       }
       requestAnimationFrame(tick);
@@ -902,7 +898,6 @@
     /* rowsyll parser: "word:init" or "word:final"; choices ignored (use global bank) */
     function parseRowSyllDefs(str){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
-        // allow "word:init" OR legacy "word:init~choices" (choices ignored)
         const [left] = seg.split('~');
         const [prompt, howRaw] = (left||'').split(':').map(s=>s.trim());
         const how = (howRaw||'init').toLowerCase()==='final' ? 'final' : 'init';
@@ -935,7 +930,6 @@
       columnsEl.classList.add('hidden');
       rackSectionEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
-      // rowActions stays hidden on purpose
 
       const rows = parseRows(ROWS_RAW);
       rowData = [];
@@ -991,14 +985,13 @@
       }
     }
 
-    /******** Row Alliteration: groups only (no prompt, no title) ********/
+    /******** Row Alliteration ********/
     async function buildRowAlliMode(){
       currentMode = 'rowalli';
       document.body.classList.add('row-compact');
       columnsEl.classList.add('hidden');
       rackSectionEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
-      // rowActions stays hidden on purpose
 
       const groups = parseAlliGroups(ROWS_RAW);
       rowData = [];
@@ -1051,22 +1044,19 @@
       }
     }
 
-    /******** Row Syllable (new): prompt image + shared bank of word chips ********/
+    /******** Row Syllable ********/
     async function buildRowSyllMode(){
       currentMode = 'rowsyll';
-      // rowsyll uses big chips → do NOT force compact
       document.body.classList.remove('row-compact');
       columnsEl.classList.add('hidden');
       rowModeEl.classList.remove('hidden');
-      // rowActions stays hidden on purpose
 
-      // Show global bank at the bottom and fill with chips in typed order
       rackSectionEl.classList.remove('hidden');
       rackEl.innerHTML = '';
-      rackEl.classList.add('chips');              // ← make the bank use chip spacing
+      rackEl.classList.add('chips');
       SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
 
-      const defs = parseRowSyllDefs(ROWS_RAW); // [{prompt, how:'init'|'final'}]
+      const defs = parseRowSyllDefs(ROWS_RAW);
       rowData = [];
       rowModeEl.innerHTML = '';
 
@@ -1076,7 +1066,6 @@
         if (!pImg) continue;
 
         const line = document.createElement('div');
-        // twoCols lets the drop grow horizontally to fit chips
         line.className = 'rowLine twoCols';
 
         const promptWrap = document.createElement('div');
@@ -1084,33 +1073,31 @@
         const pCard = document.createElement('div');
         pCard.className = 'card';
         pCard.innerHTML = `<img alt="" src="${pImg.url}"><div class="cap" style="display:${ROW_TITLE?'block':'none'}">${ROW_TITLE?markersToPretty(pImg.rawCore):'&nbsp;'}</div>`;
-        // No audio in rowsyll mode
         promptWrap.appendChild(pCard);
 
         const drop = document.createElement('div');
         drop.className = 'rowDrop';
         drop.dataset.row = String(i);
 
-        // Layout: [prompt] [drop] [blank spacer]
         const spacer = document.createElement('div');
-        spacer.className = 'rowRack'; // just keeps grid consistent, but empty
+        spacer.className = 'rowRack';
 
         line.appendChild(promptWrap);
         line.appendChild(drop);
         line.appendChild(spacer);
         rowModeEl.appendChild(line);
 
-        const promptSyls = syllablesNormalized(pImg.rawCore);               // ['za','pa','to'] for "zapato"
+        const promptSyls = syllablesNormalized(pImg.rawCore);
         const targetSyl = r.how === 'init'
           ? (promptSyls[0] || '')
           : (promptSyls[promptSyls.length - 1] || '');
-        const targetInitial = initialFromStem(targetSyl);                   // 'z' for init, 't' for final ("zapato")
+        const targetInitial = initialFromStem(targetSyl);
 
         rowData.push({
           type: 'rowsyll',
           dropEl: drop,
           prompt: pImg,
-          how: r.how,                  // 'init' or 'final'
+          how: r.how,
           targetInitial
         });
 
@@ -1133,19 +1120,12 @@
         return rowData.length>0;
       }
       if (currentMode === 'rowsyll') {
-        // 1) Bank must be empty
         const chipsInBank = rackEl.querySelectorAll('.chip').length;
         if (chipsInBank > 0) return false;
-
-        // 2) There must be placed chips
         const placed = rowModeEl.querySelectorAll('.rowDrop .chip').length;
         if (placed === 0) return false;
-
-        // 3) No incorrect chips showing red
         const anyBad = rowModeEl.querySelector('.rowDrop .chip.bad');
         if (anyBad) return false;
-
-        // 4) All placed chips must be locked (i.e., correct)
         const locked = rowModeEl.querySelectorAll('.rowDrop .chip.locked').length;
         return placed === locked;
       }
@@ -1201,17 +1181,15 @@
           [...r.dropEl.children].forEach(chipEl=>{
             const text = (chipEl.textContent || '').trim().toLowerCase();
 
-            // normalized syllables (diacritics removed)
-            const syls = syllablesNormalized(text);   // e.g., ['ti','gre'] or ['za','pa','to']
+            const syls = syllablesNormalized(text);
             let ok = false;
 
             if (syls.length){
               const chosen = (how==='init') ? syls[0] : syls[syls.length-1];
-              // require CV: initial (t/ch/ll/rr) immediately followed by a vowel
-              ok = (function syllableMatchesCV(syllNorm, targetInitial){
+              const VOWEL = /^[aeiou]/;
+              const digraphs = ['ch','ll','rr'];
+              const syllableMatchesCV = (syllNorm, targetInitial)=>{
                 if(!syllNorm) return false;
-                const VOWEL = /^[aeiou]/;
-                const digraphs = ['ch','ll','rr'];
                 if (digraphs.includes(targetInitial)) {
                   if (!syllNorm.startsWith(targetInitial)) return false;
                   const rest = syllNorm.slice(targetInitial.length);
@@ -1219,7 +1197,8 @@
                 }
                 if (syllNorm[0] !== targetInitial) return false;
                 return syllNorm.length > 1 && VOWEL.test(syllNorm[1]);
-              })(chosen, tgt);
+              };
+              ok = syllableMatchesCV(chosen, tgt);
             }
 
             if (ok){
@@ -1235,7 +1214,7 @@
         return;
       }
 
-      // Classic
+      // Classic (columns)
       const getTarget = key => {
         if (key.startsWith('not-')) return {type:'not', letter:key.slice(4)};
         if (key.startsWith('syll:')) return {type:'syll', syll:key.slice(5)};
@@ -1252,10 +1231,9 @@
           let ok = false;
           if (target.type === 'syll') {
             const syls = syllablesNormalized(coreRaw);
-            ok = (function(sylsArr, target, mode){
-              if(mode==='any'){ return sylsArr.includes(target); }
-              return sylsArr[0] === target;
-            })(syls, target.syll, (SYLL_MATCH||'initial'));
+            ok = (SYLL_MATCH==='any')
+              ? syls.some(s => cmpSyll(s, target.syll))
+              : cmpSyll(syls[0], target.syll);
           } else {
             const initial = initialFromStem(coreRaw);
             ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
@@ -1306,7 +1284,6 @@
       if(!drag.moved){
         drag.moved = true;
         drag.el.style.position='fixed';
-        // keep cards at 150px, but preserve actual width for chips
         if (drag.el.classList.contains('card')) {
           drag.el.style.width = '150px';
         } else {
@@ -1339,19 +1316,15 @@
 
       if (drop){
         if (drop.classList.contains('rowDrop')){
-          // row: only one; rowalli/rowsyll: unlimited
           if (currentMode==='row' && drop.children.length>=1){ drag.originParent.appendChild(el); }
           else { drop.appendChild(el); }
         } else if (drop.classList.contains('drop')){
-          // classic columns respect perCol capacity
           if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
           else { drop.appendChild(el); }
         } else {
-          // rack or rowRack — always accept
           drop.appendChild(el);
         }
       } else {
-        // not over any zone; put it back
         drag.originParent.appendChild(el);
       }
 
@@ -1377,10 +1350,9 @@
       el.style.width=''; el.style.height='';
     }
     function hitTestDrop(x, y, rowScope){
-      // Make .rack and .rowRack valid drop zones too
       const zones = Array.from(document.querySelectorAll('.drop, .rowDrop, .rack, .rowRack'));
       for (const d of zones){
-        if (rowScope != null && d.dataset.row && d.dataset.row !== rowScope) continue; // keep within row when needed
+        if (rowScope != null && d.dataset.row && d.dataset.row !== rowScope) continue;
         const r = d.getBoundingClientRect();
         if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return d;
       }
@@ -1390,7 +1362,6 @@
     function lockCard(cardEl, card){
       const clone = cardEl.cloneNode(true);
       clone.classList.add('locked');
-      // Only attach audio for picture cards, not chips
       if (cardEl.classList.contains('card') && card){
         clone.addEventListener('click', ()=> playWordAudio(card.coreRaw));
       }
@@ -1457,7 +1428,6 @@
       studentPanel.classList.add('hidden');
       document.querySelector('.switch').classList.add('hidden');
 
-      // In rowsyll we don't use one-per at all, but keep behavior same as others
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
       const per = SOLO_PER || 4;
@@ -1478,22 +1448,12 @@
 
     function startSoloRound(){
       usedSet = new Set();
-      rackEl.classList.remove('chips');         // ← reset, only rowsyll should set it
+      rackEl.classList.remove('chips');
 
-      if (MODE==='row'){
-        buildRowMode();
-        return;
-      }
-      if (MODE==='rowalli' || MODE==='allisort'){
-        buildRowAlliMode();
-        return;
-      }
-      if (MODE==='rowsyll'){
-        buildRowSyllMode();
-        return;
-      }
+      if (MODE==='row'){ buildRowMode(); return; }
+      if (MODE==='rowalli' || MODE==='allisort'){ buildRowAlliMode(); return; }
+      if (MODE==='rowsyll'){ buildRowSyllMode(); return; }
 
-      // leaving row modes: remove compact class if present
       document.body.classList.remove('row-compact');
 
       const hasSyll = SOLO_SYLLABLES.length > 0;
@@ -1511,7 +1471,6 @@
 
       currentMode = 'classic';
       rowModeEl.classList.add('hidden');
-      // rowActions remains hidden
       columnsEl.classList.remove('hidden');
       rackSectionEl.classList.remove('hidden');
 
@@ -1530,7 +1489,6 @@
         return;
       }
 
-      // default (teacher/student UI for classic grid only)
       currentMode = 'classic';
       modeToggle.checked = false;
       isTeacher = false;
