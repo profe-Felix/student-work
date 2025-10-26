@@ -269,11 +269,7 @@
 
     <!-- Row picture mode container -->
     <section id="rowMode" class="hidden"></section>
-    <!-- Kept in DOM but will remain hidden; we never unhide it in JS -->
-    <div id="rowActions" class="bankActions hidden">
-      <button id="rowVerify" class="btn outline">Verificar</button>
-      <button id="rowReset" class="btn ghost">Reiniciar</button>
-    </div>
+
 
     <!-- Global rack (bank) -->
     <section id="rackSection" class="rackSection">
@@ -369,9 +365,6 @@
 
     // Row mode refs
     const rowModeEl   = document.getElementById('rowMode');
-    const rowActions  = document.getElementById('rowActions');
-    const rowVerify   = document.getElementById('rowVerify');
-    const rowReset    = document.getElementById('rowReset');
 
     /******** State ********/
     let ROOM = null, channel = null, isTeacher = false;
@@ -1413,9 +1406,6 @@
 
     inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
     inlineResetBtn.addEventListener('click', resetRoundPlacements);
-
-    rowVerify.addEventListener('click', ()=> verifyNow(false));
-    rowReset.addEventListener('click', resetRoundPlacements);
 
     btnNewRound.addEventListener('click', async ()=>{
       if(!isTeacher) return;
