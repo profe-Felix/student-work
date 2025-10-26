@@ -122,8 +122,9 @@
 const qs = new URLSearchParams(location.search);
 const WORDS_OVERRIDE = (qs.get('words')||'').split(',').map(s=>s.trim()).filter(Boolean);
 const SOLO = WORDS_OVERRIDE.length > 0; // Solo mode = URL provided words
+const HIDE_WORD = /^(1|true|yes)$/i.test((qs.get('hideWord')||'').trim());
 
-// Supabase project (images + audio)
+/*** Supabase (images + audio) ***/
 const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
 const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
@@ -146,26 +147,11 @@ const prevBtn      = document.getElementById('prevBtn');
 const nextBtn      = document.getElementById('nextBtn');
 const rebuildBtn   = document.getElementById('rebuildBtn');
 const revealBtn    = document.getElementById('revealBtn');
-const revealBtn2   = document.getElementById('revealBtn2'); // new under-image button
+const revealBtn2   = document.getElementById('revealBtn2'); // under-image button
 const wordTitle    = document.getElementById('wordTitle');
 const pic          = document.getElementById('pic');
 const coverLayer   = document.getElementById('coverLayer');
 const slotsEl      = document.getElementById('slots');
-
-/*** State ***/
-let WORDS = [];
-let index = 0;
-let currentSyllables = [];
-let heard = [];
-let audioCache = []; // one Audio per syllable
-let wordAudio = null; // Audio for full word
-
-/*** UI Handlers ***/
-prevBtn.addEventListener('click', ()=>{ index=(index-1+WORDS.length)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
-nextBtn.addEventListener('click', ()=>{ index=(index+1)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
-rebuildBtn.addEventListener('click', ()=> buildForWord(WORDS[index]));
-revealBtn.addEventListener('click', ()=> revealAndPlay());
-revealBtn2.addEventListener('click', ()=> revealAndPlay()); // mirror action
 
 /*** Marker ↔ accents helpers ***/
 function normalizeName(s){
@@ -187,13 +173,12 @@ function prettyToMarkers(s){
 }
 
 /*** Filename helpers ***/
-const IMG_EXTS = new Set(['jpg']); // prioritize/limit to .jpg as requested
+const IMG_EXTS = new Set(['jpg']); // keep to .jpg variants
 function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
 function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
 function stripImageSuffix(t){ return t.replace(/_(pic|img|image|foto)$/i,''); }
 
-/*** List all images from the bucket (recursive) and build the word list
-     NOTE: We SKIP this entirely in SOLO mode. ***/
+/*** List all images (skip in SOLO mode) ***/
 async function listAll(bucket, prefix){
   const out = [];
   async function walk(dir){
@@ -235,12 +220,11 @@ async function loadWordsFromImages(){
   return Array.from(imageUrlByWord.keys()).sort((a,b)=>a.localeCompare(b,'es'));
 }
 
-/*** Image fallback (only for explicit WORDS list) ***/
-function imgCandidates(word){
-  const base = normalizeName(word);
-  // Only .jpg variants
-  const names = [`${word.toLowerCase()}_pic.jpg`, `${base}_pic.jpg`, `${word.toLowerCase()}.jpg`, `${base}.jpg`];
-  return names.map(n => IMAGES_PREFIX ? `${IMAGES_PREFIX.replace(/\/$/,'')}/${n}` : n);
+/*** Image fallback (for explicit WORDS) ***/
+function imgCandidates(wordPretty){
+  const base = normalizeName(wordPretty);
+  return [`${wordPretty.toLowerCase()}_pic.jpg`, `${base}_pic.jpg`, `${wordPretty.toLowerCase()}.jpg`, `${base}.jpg`]
+    .map(n => IMAGES_PREFIX ? `${IMAGES_PREFIX.replace(/\/$/,'')}/${n}` : n);
 }
 async function getPublicUrlIfExists(bucket, path){
   const { data } = supa.storage.from(bucket).getPublicUrl(path);
@@ -248,16 +232,16 @@ async function getPublicUrlIfExists(bucket, path){
   try{ const r = await fetch(data.publicUrl, { method:'HEAD' }); if(r.ok) return data.publicUrl; }catch{}
   return null;
 }
-async function getImageUrl(word){
-  if (imageUrlByWord.has(word.toLowerCase())) return imageUrlByWord.get(word.toLowerCase());
-  for(const path of imgCandidates(word)){
+async function getImageUrl(wordPretty){
+  if (imageUrlByWord.has(wordPretty.toLowerCase())) return imageUrlByWord.get(wordPretty.toLowerCase());
+  for(const path of imgCandidates(wordPretty)){
     const url = await getPublicUrlIfExists(IMAGES_BUCKET, path);
     if(url) return url;
   }
   return null;
 }
 
-/*** Syllabifier (mons-truo, qu/gu before e/i, í/ú hiatus) ***/
+/*** Syllabifier (Spanish rules incl. ch/ll/rr, qu/gu-e/i, í/ú hiatus) ***/
 function syllabifyEs(wordRaw){
   const word = (wordRaw || '').toLowerCase();
   const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
@@ -325,35 +309,29 @@ function syllabifyEs(wordRaw){
 const SYLLABLE_EXTS = ['webm'];
 const WORD_EXTS     = ['mp3'];
 
-/* --- Soft-r helper: if not first syllable AND starts with 'r', prefer '-syll' --- */
+/* Soft r context */
 function isSoftRContext(syll, idx){
   return idx > 0 && /^r/i.test(syll) && !/^rr/i.test(syll);
 }
 
-/* syllable files (SYLLABLE_AUDIO_BUCKET) */
-function audioPathsFor(word, syll, idx){
-  const wPlain = normalizeName(word);
-  const sPlain = normalizeName(syll);
-  const sMarker = prettyToMarkers(syll).toLowerCase();
-  const prefix = SYLLABLE_AUDIO_PREFIX ? SYLLABLE_AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
-
-  // If this is a soft-r onset, try the hyphen-prefixed versions FIRST
-  const hyphenPretty = '-'+syll;
-  const hyphenMarker = '-'+sMarker;
-  const hyphenPlain  = '-'+sPlain;
+/* syllable files */
+function audioPathsFor(wordPretty, syll, idx){
+  const wPlain   = normalizeName(wordPretty);
+  const sPlain   = normalizeName(syll);
+  const sMarker  = prettyToMarkers(syll).toLowerCase();
+  const prefix   = SYLLABLE_AUDIO_PREFIX ? SYLLABLE_AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
 
   const baseList = [];
 
   if (isSoftRContext(syll, idx)){
     baseList.push(
-      `${prefix}${hyphenMarker}`,
-      `${prefix}${wPlain}/${hyphenMarker}`,
-      `${prefix}${wPlain}__${hyphenPlain}`,
-      `${prefix}${hyphenPlain}`
+      `${prefix}-${sMarker}`,
+      `${prefix}${wPlain}/-${sMarker}`,
+      `${prefix}${wPlain}__-${sPlain}`,
+      `${prefix}-${sPlain}`
     );
   }
 
-  // Regular (fallbacks)
   baseList.push(
     `${prefix}${sMarker}`,
     `${prefix}${wPlain}/${sMarker}`,
@@ -367,9 +345,8 @@ function audioPathsFor(word, syll, idx){
   for (const b of baseList) for (const ext of SYLLABLE_EXTS) paths.push(`${b}.${ext}`);
   return paths;
 }
-
-async function resolveSyllableAudioUrl(word, syll, idx){
-  const paths = audioPathsFor(word, syll, idx);
+async function resolveSyllableAudioUrl(wordPretty, syll, idx){
+  const paths = audioPathsFor(wordPretty, syll, idx);
   for(const p of paths){
     const url = await getPublicUrlIfExists(SYLLABLE_AUDIO_BUCKET, p);
     if(url) return url;
@@ -377,10 +354,10 @@ async function resolveSyllableAudioUrl(word, syll, idx){
   return null;
 }
 
-/* whole-word file (WORD_AUDIO_BUCKET) — mp3 only */
-function wordAudioPaths(word){
-  const wPlain   = normalizeName(word);
-  const wMarker  = prettyToMarkers(word).toLowerCase();
+/* whole-word file — mp3 only */
+function wordAudioPaths(wordPretty){
+  const wPlain   = normalizeName(wordPretty);
+  const wMarker  = prettyToMarkers(wordPretty).toLowerCase();
   const prefix   = WORD_AUDIO_PREFIX ? WORD_AUDIO_PREFIX.replace(/\/$/,'')+'/' : '';
   const bases = [
     `${prefix}${wMarker}`,
@@ -392,8 +369,8 @@ function wordAudioPaths(word){
   for (const b of bases) for (const ext of WORD_EXTS) paths.push(`${b}.${ext}`);
   return paths;
 }
-async function resolveWordAudioUrl(word){
-  const paths = wordAudioPaths(word);
+async function resolveWordAudioUrl(wordPretty){
+  const paths = wordAudioPaths(wordPretty);
   for(const p of paths){
     const url = await getPublicUrlIfExists(WORD_AUDIO_BUCKET, p);
     if(url) return url;
@@ -401,28 +378,46 @@ async function resolveWordAudioUrl(word){
   return null;
 }
 
-/*** Build one word ***/
+/*** State ***/
+let WORDS = [];          // pretty display words (accents applied)
+let index = 0;
+let currentSyllables = [];
+let heard = [];
+let audioCache = [];     // one Audio per syllable
+let wordAudio = null;    // Audio for full word
+
+/*** UI Handlers ***/
+prevBtn.addEventListener('click', ()=>{ index=(index-1+WORDS.length)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
+nextBtn.addEventListener('click', ()=>{ index=(index+1)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
+rebuildBtn.addEventListener('click', ()=> buildForWord(WORDS[index]));
+revealBtn.addEventListener('click', ()=> revealAndPlay());
+revealBtn2.addEventListener('click', ()=> revealAndPlay());
+
+/*** Build one word (accepts pretty form) ***/
 function setRevealEnabled(yes){
   revealBtn.disabled = !yes;
   revealBtn2.disabled = !yes;
 }
 
-async function buildForWord(word){
-  wordTitle.textContent = word;
-  currentSyllables = syllabifyEs(word);
+async function buildForWord(wordPretty){
+  // Title display (or hidden via URL param)
+  wordTitle.textContent = wordPretty;
+  wordTitle.style.display = HIDE_WORD ? 'none' : '';
+
+  currentSyllables = syllabifyEs(wordPretty);
   heard = currentSyllables.map(()=>false);
   audioCache = new Array(currentSyllables.length).fill(null);
   setRevealEnabled(false);
   coverLayer.classList.remove('revealed');
 
   // Image
-  const imgUrl = await getImageUrl(word);
+  const imgUrl = await getImageUrl(wordPretty);
   pic.src = imgUrl || 'data:image/svg+xml;utf8,' + encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="100%" height="100%" fill="#fafafa"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="36" fill="#999">(${word})</text></svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="100%" height="100%" fill="#fafafa"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="36" fill="#999">(${wordPretty})</text></svg>`
   );
 
   // Preload word audio (mp3)
-  resolveWordAudioUrl(word).then(url=>{
+  resolveWordAudioUrl(wordPretty).then(url=>{
     if(url){
       const a = new Audio();
       a.preload = 'auto';
@@ -446,8 +441,7 @@ async function buildForWord(word){
     c.className = 'counter';
     c.title = `Escuchar: ${syll}`;
 
-    // syllable audio (.webm)
-    resolveSyllableAudioUrl(word, syll, i).then(url=>{
+    resolveSyllableAudioUrl(wordPretty, syll, i).then(url=>{
       if(url){
         const a = new Audio();
         a.preload = 'auto';
@@ -494,20 +488,20 @@ function revealAndPlay(){
 
 /*** BOOT ***/
 (async function boot(){
+  // Build pretty word list
   if (SOLO){
-    // SOLO: use only the URL-provided words; do NOT scan buckets
-    WORDS = WORDS_OVERRIDE;
+    // If URL provided markers (e.g., 'sofa..'), convert to pretty for display
+    WORDS = WORDS_OVERRIDE.map(w => markersToPretty(w));
   } else {
-    // Classroom/bucket mode: build from images as before
     try{
-      WORDS = await loadWordsFromImages();
+      WORDS = await loadWordsFromImages(); // already pretty-mapped by loader
     }catch(err){
       console.error('Error loading words from bucket:', err);
       WORDS = ['manzana','guitarra','camión','helado','caracol'];
     }
   }
 
-  // Populate select
+  // Populate select with pretty labels
   wordSelect.innerHTML = '';
   WORDS.forEach((w,i)=>{
     const opt=document.createElement('option');
