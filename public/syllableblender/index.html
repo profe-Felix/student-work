@@ -152,9 +152,9 @@ const wordTitle    = document.getElementById('wordTitle');
 const pic          = document.getElementById('pic');
 const coverLayer   = document.getElementById('coverLayer');
 const slotsEl      = document.getElementById('slots');
-// ADD THIS:
+// label that wraps the select (for hideWord)
 const wordSelectLabel = wordSelect.closest('label');
- 
+
 /*** Marker ↔ accents helpers ***/
 function normalizeName(s){
   return (s||'').toLowerCase()
@@ -213,7 +213,7 @@ async function loadWordsFromImages(){
     const ext = extOf(base);
     if(!IMG_EXTS.has(ext)) continue;
     const stem = stripImageSuffix(stemOf(base));
-    const pretty = markersToPretty(stem).toLowerCase();
+    const pretty = markersToPretty(stem).toLowerCase(); // map by pretty (e.g., "sofá")
     const { data } = supa.storage.from(IMAGES_BUCKET).getPublicUrl(f.fullpath);
     if (data?.publicUrl && !imageUrlByWord.has(pretty)) {
       imageUrlByWord.set(pretty, data.publicUrl);
@@ -222,21 +222,40 @@ async function loadWordsFromImages(){
   return Array.from(imageUrlByWord.keys()).sort((a,b)=>a.localeCompare(b,'es'));
 }
 
-/*** Image fallback (for explicit WORDS) ***/
-function imgCandidates(wordPretty){
-  const base = normalizeName(wordPretty);
-  return [`${wordPretty.toLowerCase()}_pic.jpg`, `${base}_pic.jpg`, `${wordPretty.toLowerCase()}.jpg`, `${base}.jpg`]
-    .map(n => IMAGES_PREFIX ? `${IMAGES_PREFIX.replace(/\/$/,'')}/${n}` : n);
+/*** Image fallback (for explicit WORDS) — STRICT: only marker & pretty, no plain ***/
+function imgCandidates(wordRaw){
+  const prefix = IMAGES_PREFIX ? IMAGES_PREFIX.replace(/\/$/,'')+'/' : '';
+
+  const markerLower = (wordRaw || '').toLowerCase();                  // e.g., "sofa.."
+  const prettyLower = markersToPretty(wordRaw || '').toLowerCase();   // e.g., "sofá"
+
+  const stems = Array.from(new Set([prettyLower, markerLower])); // NO unaccented plain form
+
+  const names = [];
+  for (const stem of stems){
+    for (const ext of IMG_EXTS){
+      names.push(`${stem}_pic.${ext}`);
+      names.push(`${stem}.${ext}`);
+    }
+  }
+  return names.map(n => prefix ? `${prefix}${n}` : n);
 }
+
 async function getPublicUrlIfExists(bucket, path){
   const { data } = supa.storage.from(bucket).getPublicUrl(path);
   if(!data?.publicUrl) return null;
   try{ const r = await fetch(data.publicUrl, { method:'HEAD' }); if(r.ok) return data.publicUrl; }catch{}
   return null;
 }
-async function getImageUrl(wordPretty){
-  if (imageUrlByWord.has(wordPretty.toLowerCase())) return imageUrlByWord.get(wordPretty.toLowerCase());
-  for(const path of imgCandidates(wordPretty)){
+
+async function getImageUrl(wordRaw){
+  const prettyKey = markersToPretty(wordRaw || '').toLowerCase();
+  const markerKey = (wordRaw || '').toLowerCase();
+
+  if (imageUrlByWord.has(prettyKey)) return imageUrlByWord.get(prettyKey);
+  if (imageUrlByWord.has(markerKey)) return imageUrlByWord.get(markerKey);
+
+  for(const path of imgCandidates(wordRaw)){
     const url = await getPublicUrlIfExists(IMAGES_BUCKET, path);
     if(url) return url;
   }
@@ -519,11 +538,11 @@ function revealAndPlay(){
 
   prevBtn.disabled = WORDS.length <= 1;
   nextBtn.disabled = WORDS.length <= 1;
-   // Hide the "Palabra: [select]" when ?hideWord=1/true/yes
+
+  // Hide the "Palabra: [select]" when ?hideWord=1/true/yes
   if (HIDE_WORD && wordSelectLabel) {
     wordSelectLabel.style.display = 'none';
   }
-
 })();
 </script>
 </body>
