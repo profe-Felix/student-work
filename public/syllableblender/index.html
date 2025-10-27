@@ -222,14 +222,16 @@ async function loadWordsFromImages(){
   return Array.from(imageUrlByWord.keys()).sort((a,b)=>a.localeCompare(b,'es'));
 }
 
-/*** Image fallback (for explicit WORDS) — STRICT: only marker & pretty, no plain ***/
+/*** Image fallback (for explicit WORDS) — try MARKER first, then PRETTY ***/
 function imgCandidates(wordRaw){
   const prefix = IMAGES_PREFIX ? IMAGES_PREFIX.replace(/\/$/,'')+'/' : '';
 
-  const markerLower = (wordRaw || '').toLowerCase();                  // e.g., "sofa.."
+  // derive both forms from whatever comes in
   const prettyLower = markersToPretty(wordRaw || '').toLowerCase();   // e.g., "sofá"
+  const markerLower = prettyToMarkers(wordRaw || '').toLowerCase();   // e.g., "sofa.."
 
-  const stems = Array.from(new Set([prettyLower, markerLower])); // NO unaccented plain form
+  // try marker first, then pretty; no plain/unaccented form
+  const stems = Array.from(new Set([markerLower, prettyLower]));
 
   const names = [];
   for (const stem of stems){
@@ -249,12 +251,14 @@ async function getPublicUrlIfExists(bucket, path){
 }
 
 async function getImageUrl(wordRaw){
+  // keys to check in preloaded map (when not SOLO)
   const prettyKey = markersToPretty(wordRaw || '').toLowerCase();
-  const markerKey = (wordRaw || '').toLowerCase();
+  const markerKey = prettyToMarkers(wordRaw || '').toLowerCase();
 
-  if (imageUrlByWord.has(prettyKey)) return imageUrlByWord.get(prettyKey);
   if (imageUrlByWord.has(markerKey)) return imageUrlByWord.get(markerKey);
+  if (imageUrlByWord.has(prettyKey)) return imageUrlByWord.get(prettyKey);
 
+  // otherwise probe storage
   for(const path of imgCandidates(wordRaw)){
     const url = await getPublicUrlIfExists(IMAGES_BUCKET, path);
     if(url) return url;
@@ -425,16 +429,18 @@ async function buildForWord(wordPretty){
   wordTitle.textContent = wordPretty;
   wordTitle.style.display = HIDE_WORD ? 'none' : '';
 
-  currentSyllables = syllabifyEs(wordPretty);
+  const syllablesSource = wordPretty; // pretty is fine for syllabifier
+  currentSyllables = syllabifyEs(syllablesSource);
   heard = currentSyllables.map(()=>false);
   audioCache = new Array(currentSyllables.length).fill(null);
   setRevealEnabled(false);
   coverLayer.classList.remove('revealed');
 
-  // Image
+  // Image — pass pretty, function will also try marker form internally
   const imgUrl = await getImageUrl(wordPretty);
+  // (If you also want to hide the word from the placeholder, you can add that tweak back here.)
   pic.src = imgUrl || 'data:image/svg+xml;utf8,' + encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="100%" height="100%" fill="#fafafa"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="36" fill="#999">(${wordPretty})</text></svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="100%" height="100%" fill="#fafafa"/></svg>`
   );
 
   // Preload word audio (mp3)
@@ -482,7 +488,6 @@ async function buildForWord(wordPretty){
           }
         });
       } else {
-        // no audio for this syllable: don’t block reveal
         c.classList.add('missing');
         heard[i] = true;
         checkAllHeard();
