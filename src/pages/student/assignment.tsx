@@ -18,8 +18,7 @@ import {
   type AutoFollowPayload,
   subscribeToGlobal,
   type TeacherPresenceState,
-  // room-scoped ink helpers
-  subscribeToInk,
+  // ⬇️ students no longer subscribe to ink; teacher does that on teacher page
   publishInk
 } from '../../lib/realtime'
 import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient'
@@ -505,7 +504,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
 
-  // ink subscription handle
+  // ink subscription handle (student no longer subscribes; keep ref for future)
   const inkSubRef = useRef<RealtimeChannel | null>(null)
 
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
@@ -916,12 +915,12 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
       const submission_id = await createSubmission(studentId, ids.assignment_id!, ids.page_id!)
 
       // 5.4 — Save strokes + media with canvas size
-const payloadForSave: PageArtifact = {
-  canvasWidth: canvasSize.w,
-  canvasHeight: canvasSize.h,
-  strokes: toTimelineStrokes(normalized.strokes),  // ✅ coerce to timeline strokes (t always a number)
-  media: media
-}
+      const payloadForSave: PageArtifact = {
+        canvasWidth: canvasSize.w,
+        canvasHeight: canvasSize.h,
+        strokes: toTimelineStrokes(normalized.strokes),  // ✅ coerce to timeline strokes (t always a number)
+        media: media
+      }
 
       await saveStrokes(submission_id, payloadForSave)
       localStorage.setItem(lastKey, encHash)
@@ -1107,7 +1106,6 @@ const payloadForSave: PageArtifact = {
     let cleanupArtifacts: (() => void) | null = null
     let pollId: number | null = null
     let mounted = true
-    let inkSub: RealtimeChannel | null = null
 
     ;(async () => {
       const ids = await resolveIds()
@@ -1141,46 +1139,16 @@ const payloadForSave: PageArtifact = {
         if (mounted) reloadFromServer()
       }, POLL_MS)
 
-      // ---- realtime ink (same student + same page only)
-      try {
-        inkSubRef.current?.unsubscribe?.()
-      } catch {}
-
-      const onInk = (u: any) => {
-        if (u?.studentId !== studentId) return
-        if (u.tool !== 'pen' && u.tool !== 'highlighter' && u.tool !== 'eraser') return
-        if ((!Array.isArray(u.pts) || u.pts.length === 0) && !u.done) return
-        drawRef.current?.applyRemote({
-          id: u.id,
-          color: u.color!,
-          size: u.size!,
-          tool: u.tool as 'pen' | 'highlighter' | 'eraser',
-          pts: (u.pts as any) || [],
-          done: !!u.done,
-        })
-        // 5.3 — absorb latest realtime point
-        try {
-          const last = (u.pts && u.pts.length) ? u.pts[u.pts.length-1] : undefined
-          if (last && typeof (last as any).t === 'number') absorbStrokePointT((last as any).t)
-        } catch {}
-      }
-
-      try {
-        inkSub = (subscribeToInk as any)(
-          { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-          onInk
-        )
-      } catch (e) {
-        console.warn('ink subscribe failed', e)
-      }
-
-      inkSubRef.current = inkSub
+      // ⛔️ Students do NOT subscribe to ink anymore (fan-out killer).
+      // Teacher page is the only subscriber/renderer of live ink.
+      // (No onInk handler, no subscribeToInk call here.)
     })()
 
     return () => {
       mounted = false
       if (cleanupArtifacts) cleanupArtifacts()
       if (pollId != null) window.clearInterval(pollId)
+      // ref kept for future; always null on student
       try {
         inkSubRef.current?.unsubscribe?.()
       } catch {}
@@ -1211,37 +1179,37 @@ const payloadForSave: PageArtifact = {
     })
   }
 
-async function handleRecordStart() {
-  // ensure page clock is running AND remember when the clip begins
-  markFirstAction()
-  try { recordStartRef.current = nowMs() } catch { recordStartRef.current = null }
-}
+  async function handleRecordStart() {
+    // ensure page clock is running AND remember when the clip begins
+    markFirstAction()
+    try { recordStartRef.current = nowMs() } catch { recordStartRef.current = null }
+  }
 
-async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
-  try {
-    const ids = currIds.current
-    // use the start time captured at onStart (fallback to now if missing)
-    const start = (recordStartRef.current ?? nowMs())
-    recordStartRef.current = null
+  async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
+    try {
+      const ids = currIds.current
+      // use the start time captured at onStart (fallback to now if missing)
+      const start = (recordStartRef.current ?? nowMs())
+      recordStartRef.current = null
 
-    if (!ids.assignment_id || !ids.page_id) {
+      if (!ids.assignment_id || !ids.page_id) {
+        const url = URL.createObjectURL(blob)
+        addAudioSegment(start, elapsedMs, mime, url)
+        showToast('Audio saved locally', 'ok', 1200)
+        return
+      }
+      const url = await uploadAudioBlob(studentId, ids.assignment_id, ids.page_id, blob, mime)
+      addAudioSegment(start, elapsedMs, mime, url)
+      showToast('Audio uploaded', 'ok', 1200)
+    } catch (e) {
+      console.warn('upload audio failed', e)
+      const start = (recordStartRef.current ?? nowMs())
+      recordStartRef.current = null
       const url = URL.createObjectURL(blob)
       addAudioSegment(start, elapsedMs, mime, url)
-      showToast('Audio saved locally', 'ok', 1200)
-      return
+      showToast('Upload failed — kept locally', 'err', 1600)
     }
-    const url = await uploadAudioBlob(studentId, ids.assignment_id, ids.page_id, blob, mime)
-    addAudioSegment(start, elapsedMs, mime, url)
-    showToast('Audio uploaded', 'ok', 1200)
-  } catch (e) {
-    console.warn('upload audio failed', e)
-    const start = (recordStartRef.current ?? nowMs())
-    recordStartRef.current = null
-    const url = URL.createObjectURL(blob)
-    addAudioSegment(start, elapsedMs, mime, url)
-    showToast('Upload failed — kept locally', 'err', 1600)
   }
-}
 
   function deleteAudio(id: string) {
     setMedia(prev => prev.filter(s => s.id !== id))
@@ -1386,14 +1354,14 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
           )}
 
           {/* Draw layer */}
-<div
-  style={{
-    position: 'absolute',
-    inset: 0,
-    zIndex: 10,
-    pointerEvents: (hasTask && !handMode) ? 'auto' : 'none',
-    touchAction: (hasTask && !handMode) ? 'none' : 'auto',
-  }}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 10,
+              pointerEvents: (hasTask && !handMode) ? 'auto' : 'none',
+              touchAction: (hasTask && !handMode) ? 'none' : 'auto',
+            }}
           >
             <DrawCanvas
               ref={drawRef}
@@ -1416,14 +1384,11 @@ async function handleRecordStop(blob: Blob, mime: string, elapsedMs: number) {
                 if (!ids.assignment_id || !ids.page_id) return
                 const payload = { ...u, studentId }
                 try {
-                  if (inkSubRef.current) {
-                    await publishInk(inkSubRef.current, payload)
-                  } else {
-                    await publishInk(
-                      { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-                      payload
-                    )
-                  }
+                  // Student publishes only; teacher is the sole subscriber.
+                  await publishInk(
+                    { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
+                    payload
+                  )
                 } catch (e) {
                   console.warn('publishInk failed', e)
                 }
