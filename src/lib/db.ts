@@ -177,7 +177,7 @@ export async function listLatestByPage(assignment_id: string, page_id: string) {
 }
 
 
-// --- CLASS STATE HELPERS ---
+// --- CLASS STATE HELPERS (legacy) ---
 export async function upsertClassState(
   classCode: string,
   assignmentId: string,
@@ -215,4 +215,77 @@ export async function fetchClassState(classCode: string) {
         updated_at: string
       }
     | null
+}
+
+/* =============================================================================
+   NEW: TABLE-DRIVEN TEACHER STATE (reduces realtime chatter)
+   - Teacher writes one row per (user_id, class_code)
+   - Students poll SELECT latest by updated_at for their class
+============================================================================= */
+
+export type TeacherStateRow = {
+  user_id: string
+  class_code: string
+  assignment_id: string
+  page_index: number
+  focus_on: boolean
+  auto_follow: boolean
+  allowed_pages: number[] | null
+  updated_at: string
+}
+
+/** Teacher: upsert current state (INSERT once, then UPDATE same row). */
+export async function upsertTeacherState(input: {
+  classCode: string
+  assignmentId: string
+  pageIndex?: number
+  focusOn?: boolean
+  autoFollow?: boolean
+  allowedPages?: number[] | null
+}) {
+  const {
+    classCode,
+    assignmentId,
+    pageIndex = 0,
+    focusOn = false,
+    autoFollow = false,
+    allowedPages = null,
+  } = input
+
+  const { data: me } = await supabase.auth.getUser()
+  const uid = me?.user?.id
+  if (!uid) throw new Error('Must be signed in to upsert teacher_state')
+
+  const { error } = await supabase
+    .from('teacher_state')
+    .upsert(
+      {
+        user_id: uid,
+        class_code: classCode,
+        assignment_id: assignmentId,
+        page_index: pageIndex,
+        focus_on: focusOn,
+        auto_follow: autoFollow,
+        allowed_pages: allowedPages,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,class_code' }
+    )
+
+  if (error) throw error
+}
+
+/** Student: fetch current teacher state for a class (latest row wins). */
+export async function fetchTeacherStateForClass(classCode: string): Promise<TeacherStateRow | null> {
+  const { data, error } = await supabase
+    .from('teacher_state')
+    .select('*')
+    .eq('class_code', classCode)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  // PGRST116 = no rows found for maybeSingle()
+  if (error && (error as any).code !== 'PGRST116') throw error
+  return (data as any) ?? null
 }
