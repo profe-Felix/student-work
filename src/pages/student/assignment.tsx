@@ -119,6 +119,7 @@ function normalizeStrokes(data: unknown): StrokesPayload {
 
   return { strokes }
 }
+
 // Coerce DrawCanvas strokes (t?: number) into timeline strokes (t: number required)
 function toTimelineStrokes(
   strokes: { color:string; size:number; tool:'pen'|'highlighter'|'eraser'; pts: {x:number;y:number;t?:number}[] }[]
@@ -501,7 +502,6 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
-
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
     if (!p) return
@@ -1256,7 +1256,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
       </div>
     </div>
   )
-  
+
   // 👇 Add this just before `return ( ... )`
   const pdfNode = useMemo(() => {
     if (!hasTask || !pdfUrl) return null
@@ -1266,6 +1266,18 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
       </div>
     )
   }, [pdfUrl, pageIndex, hasTask, onPdfReady])
+  // 2d — page navigation that auto-submits before changing pages (if enabled)
+  const goToPage = useCallback(async (i:number) => {
+    if (!Number.isFinite(i)) return
+    if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
+      try { await submitIfNeeded('page-change') } catch {}
+    }
+    setNavLocked(false)
+    setPageIndex(Math.max(0, i))
+  }, [submitIfNeeded])
+
+  const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
+  const goNext = useCallback(() => { void goToPage(pageIndex + 1) }, [goToPage, pageIndex])
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
@@ -1384,7 +1396,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
         }}
       >
         <button
-          onClick={()=>setPageIndex(Math.max(0, pageIndex-1))}
+          onClick={goPrev}
           disabled={!hasTask || saving || submitInFlight.current || navLocked || (autoFollow && teacherPageIndexRef.current!==null && Math.max(0, pageIndex-1)!==teacherPageIndexRef.current)}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
@@ -1394,7 +1406,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
           Page {pageIndex+1}
         </span>
         <button
-          onClick={()=>setPageIndex(pageIndex+1)}
+          onClick={goNext}
           disabled={!hasTask || saving || submitInFlight.current || navLocked || (autoFollow && teacherPageIndexRef.current!==null && (pageIndex+1)!==teacherPageIndexRef.current)}
           style={{ padding:'8px 12px', borderRadius:999, border:'1px solid #ddd', background:'#f9fafb' }}
         >
