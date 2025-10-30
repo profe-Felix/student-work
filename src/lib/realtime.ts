@@ -1,10 +1,9 @@
 // src/lib/realtime.ts
-// Realtime utilities (class-scoped with legacy compatibility)
-
+// Realtime utilities (class-scoped with legacy compatibility) — low-traffic edition
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase } from './supabaseClient'
 
-/** ---------- Types ---------- */
+/** ---------- Types (unchanged) ---------- */
 export interface SetPagePayload {
   pageId?: string
   pageIndex: number
@@ -31,20 +30,15 @@ export type TeacherPresenceState = {
   ts?: number
   [k: string]: any
 }
-
-/** NEW: Force submit payload (teacher-triggered or on teacher page-change) */
 export type ForceSubmitPayload = {
   reason: 'teacher-button' | 'page-change'
-  /** optional: submit-before-switch target page index */
   pageIndex?: number
-  /** optional: scope to one student; omit for whole class */
   studentId?: string
   ts?: number
 }
 
-/** ---------- Live ink updates ---------- */
+/** ---------- Live ink shapes (kept for compatibility) ---------- */
 export type InkPoint = { x: number; y: number; t?: number }
-
 export type InkUpdate = {
   id: string
   color?: string
@@ -56,36 +50,59 @@ export type InkUpdate = {
   roomKey?: string
 }
 
-/** ---------- Channel name helpers ---------- */
-const globalChan = (cls?: string) => (cls ? `global:${cls}` : 'global-class') // legacy fallback
+/** ---------- Channel name helpers (unchanged strings) ---------- */
+const globalChan = (cls?: string) => (cls ? `global:${cls}` : 'global-class')
 const assignmentChan = (cls: string | undefined, a: string) =>
-  cls ? `assignment:${cls}:${a}` : `assignment:${a}` // legacy fallback
+  cls ? `assignment:${cls}:${a}` : `assignment:${a}`
 const inkChan = (cls: string | undefined, a: string, p: string, s?: string) => {
-  const base = cls ? `ink:${cls}:${a}:${p}` : `ink:${a}:${p}` // legacy fallback
+  const base = cls ? `ink:${cls}:${a}:${p}` : `ink:${a}:${p}`
   return s ? `${base}:${s}` : base
 }
 
-/** ---------- Small utils ---------- */
-function isRealtimeChannel(x: any): x is RealtimeChannel {
-  return !!x && typeof x === 'object'
-    && typeof x.subscribe === 'function'
-    && typeof x.send === 'function'
-    && typeof x.unsubscribe === 'function'
+/** =========================================================================================
+ *  Channel CACHE (keyed by channel name) — prevents re-subscribe churn & ACKs disabled
+ *  ======================================================================================= */
+const cache = new Map<string, RealtimeChannel>()
+
+function getChannel(name: string): RealtimeChannel {
+  const hit = cache.get(name)
+  if (hit) return hit
+  const ch = supabase.channel(name, {
+    // ↓↓↓ turn off ACKs and self-echo to cut message volume
+    config: { broadcast: { ack: false, self: false } }
+  })
+  cache.set(name, ch)
+  return ch
 }
 
+function ensureJoined(ch: RealtimeChannel) {
+  if ((ch as any).state !== 'joined') ch.subscribe()
+}
+
+export function dropChannel(name: string) {
+  const ch = cache.get(name)
+  if (ch) {
+    try { ch.unsubscribe() } catch {}
+    cache.delete(name)
+  }
+}
+export function dropAllRealtimeChannels() {
+  for (const [k, ch] of cache) {
+    try { ch.unsubscribe() } catch {}
+    cache.delete(k)
+  }
+}
+
+/** ---------- Small utils (unchanged) ---------- */
 const N = (v: any) => {
   const x = typeof v === 'string' ? parseFloat(v) : v
   return Number.isFinite(x) ? x : 0
 }
-
-/** Normalize tool names (keep compatibility but unify internally). */
 function normalizeTool(tool: InkUpdate['tool']): 'pen' | 'highlighter' | 'eraser' {
   if (tool === 'eraser' || tool === 'eraserObject' || (tool as any) === 'erase') return 'eraser'
   if (tool === 'highlighter') return 'highlighter'
   return 'pen'
 }
-
-/** Normalize points: ensure numeric x/y; **preserve t** if provided. */
 function normalizePts(pts?: InkPoint[]): InkPoint[] | undefined {
   if (!Array.isArray(pts)) return undefined
   const out: InkPoint[] = []
@@ -99,67 +116,48 @@ function normalizePts(pts?: InkPoint[]): InkPoint[] | undefined {
   }
   return out.length ? out : undefined
 }
-
-/** Normalize an InkUpdate for transport/subscription. */
 function normalizeInkUpdate(u: InkUpdate): InkUpdate {
-  return {
-    ...u,
-    tool: normalizeTool(u.tool),
-    pts: normalizePts(u.pts),
-  }
+  return { ...u, tool: normalizeTool(u.tool), pts: normalizePts(u.pts) }
 }
 
 /** =========================================================================================
  *  GLOBAL (assignment handoff) — class scoped with legacy compatibility
  *  ======================================================================================= */
-
-/** Teacher announces the current assignment for a class.
- *   publishSetAssignment(classCode, assignmentId)
- * Legacy:
- *   publishSetAssignment(assignmentId)
- */
 export async function publishSetAssignment(a: string, b?: string) {
   const classCode = b ? a : undefined
   const assignmentId = b ?? a
-  const ch = supabase.channel(globalChan(classCode), { config: { broadcast: { ack: true } } })
-  await ch.subscribe()
+  const name = globalChan(classCode)
+  const ch = getChannel(name)
+  ensureJoined(ch)
   await ch.send({
     type: 'broadcast',
     event: 'set-assignment',
     payload: { assignmentId, ts: Date.now() },
   })
-  void ch.unsubscribe()
+  // no unsubscribe: channel stays warm
 }
 
-/** Students listen for assignment handoff.
- *   subscribeToGlobal(classCode, cb)
- * Legacy:
- *   subscribeToGlobal(cb)
- */
 export function subscribeToGlobal(a: string | ((id: string) => void), b?: (id: string) => void) {
   const classCode = typeof a === 'string' ? a : undefined
   const handler = (typeof a === 'function' ? a : b) as (id: string) => void
-  const ch = supabase
-    .channel(globalChan(classCode), { config: { broadcast: { ack: true } } })
+  const name = globalChan(classCode)
+  const ch = getChannel(name)
     .on('broadcast', { event: 'set-assignment' }, (msg: any) => {
       const id = msg?.payload?.assignmentId
       if (typeof id === 'string' && id) handler(id)
     })
-    .subscribe()
-  return () => { void ch.unsubscribe() }
+  ensureJoined(ch)
+  return () => { /* keep global channel cached; explicit drop via dropChannel(name) if needed */ }
 }
 
 /** =========================================================================================
  *  PER-ASSIGNMENT (page, focus, auto-follow, presence, force-submit)
  *  ======================================================================================= */
-
 function assignmentChannel(classCode: string | undefined, assignmentId: string) {
-  return supabase.channel(assignmentChan(classCode, assignmentId), { config: { broadcast: { ack: true } } })
+  return getChannel(assignmentChan(classCode, assignmentId))
 }
 
-/** subscribeToAssignment(classCode, assignmentId, handlers)
- *  Legacy: subscribeToAssignment(assignmentId, handlers)
- */
+/** Legacy-compatible signature shim preserved */
 export function subscribeToAssignment(
   a: string,
   b: any,
@@ -168,7 +166,6 @@ export function subscribeToAssignment(
     onFocus?: (p: FocusPayload) => void
     onAutoFollow?: (p: AutoFollowPayload) => void
     onPresence?: (p: TeacherPresenceState) => void
-    /** NEW: receive force-submit broadcasts */
     onForceSubmit?: (p: ForceSubmitPayload) => void
   }
 ) {
@@ -188,16 +185,11 @@ export function subscribeToAssignment(
     .on('broadcast', { event: 'auto-follow' }, (msg: any) => handlers.onAutoFollow?.(msg?.payload))
     .on('broadcast', { event: 'presence' }, (msg: any) => handlers.onPresence?.(msg?.payload))
     .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => handlers.onPresence?.(msg?.payload))
-    // NEW: force-submit listener
     .on('broadcast', { event: 'force-submit' }, (msg: any) => handlers.onForceSubmit?.(msg?.payload))
-    .subscribe()
-
+  ensureJoined(ch)
   return ch
 }
 
-/** publishSetPage(classCode, assignmentId, { pageIndex })
- *  Legacy: publishSetPage(assignmentId, { pageIndex }) / publishSetPage(assignmentId, pageIndex)
- */
 export async function publishSetPage(
   a: string,
   b: any,
@@ -206,25 +198,16 @@ export async function publishSetPage(
   const classCode = c !== undefined ? a : undefined
   const assignmentId = c !== undefined ? (b as string) : a
   const payloadOrIndex = (c !== undefined ? c : b) as SetPagePayload | number | string
-
   let payload: SetPagePayload
-  if (typeof payloadOrIndex === 'object') {
-    payload = payloadOrIndex
-  } else if (typeof payloadOrIndex === 'number') {
-    payload = { pageIndex: payloadOrIndex }
-  } else {
-    payload = { pageId: payloadOrIndex, pageIndex: 0 }
-  }
+  if (typeof payloadOrIndex === 'object') payload = payloadOrIndex
+  else if (typeof payloadOrIndex === 'number') payload = { pageIndex: payloadOrIndex }
+  else payload = { pageId: payloadOrIndex, pageIndex: 0 }
 
   const ch = assignmentChannel(classCode, assignmentId)
-  await ch.subscribe()
+  ensureJoined(ch)
   await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } })
-  void ch.unsubscribe()
 }
 
-/** publishFocus(classCode, assignmentId, payload)
- *  Legacy: publishFocus(assignmentId, payloadOrBoolean)
- */
 export async function publishFocus(
   a: string,
   b: any,
@@ -234,22 +217,16 @@ export async function publishFocus(
   const classCode = c !== undefined ? a : undefined
   const assignmentId = c !== undefined ? (b as string) : a
   const payloadOrOn = (c !== undefined ? c : b) as FocusPayload | boolean
-  const maybeLock = d
-
   const payload: FocusPayload =
     typeof payloadOrOn === 'boolean'
-      ? { on: payloadOrOn, lockNav: !!maybeLock }
+      ? { on: payloadOrOn, lockNav: !!d }
       : payloadOrOn
 
   const ch = assignmentChannel(classCode, assignmentId)
-  await ch.subscribe()
+  ensureJoined(ch)
   await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } })
-  void ch.unsubscribe()
 }
 
-/** publishAutoFollow(classCode, assignmentId, payload)
- *  Legacy: publishAutoFollow(assignmentId, payloadOrBoolean, allowed?, teacherIdx?)
- */
 export async function publishAutoFollow(
   a: string,
   b: any,
@@ -260,27 +237,20 @@ export async function publishAutoFollow(
   const classCode = c !== undefined ? a : undefined
   const assignmentId = c !== undefined ? (b as string) : a
   const payloadOrOn = (c !== undefined ? c : b) as AutoFollowPayload | boolean
-  const maybeAllowed = d
-  const maybeTeacherIdx = e
-
   const payload: AutoFollowPayload =
     typeof payloadOrOn === 'boolean'
       ? {
           on: payloadOrOn,
-          allowedPages: maybeAllowed ?? null,
-          teacherPageIndex: typeof maybeTeacherIdx === 'number' ? maybeTeacherIdx : undefined
+          allowedPages: d ?? null,
+          teacherPageIndex: typeof e === 'number' ? e : undefined
         }
       : payloadOrOn
 
   const ch = assignmentChannel(classCode, assignmentId)
-  await ch.subscribe()
+  ensureJoined(ch)
   await ch.send({ type: 'broadcast', event: 'auto-follow', payload: { ...payload, ts: Date.now() } })
-  void ch.unsubscribe()
 }
 
-/** NEW: broadcastForceSubmit(classCode, assignmentId, payload)
- *  Legacy: broadcastForceSubmit(assignmentId, payload)
- */
 export async function broadcastForceSubmit(
   a: string,
   b: any,
@@ -291,14 +261,10 @@ export async function broadcastForceSubmit(
   const payload = (c ?? b) as ForceSubmitPayload
 
   const ch = assignmentChannel(classCode, assignmentId)
-  await ch.subscribe()
+  ensureJoined(ch)
   await ch.send({ type: 'broadcast', event: 'force-submit', payload: { ...payload, ts: Date.now() } })
-  void ch.unsubscribe()
 }
 
-/** setTeacherPresence(classCode, assignmentId, snapshot)
- *  Legacy: setTeacherPresence(assignmentId, snapshot)
- */
 export async function setTeacherPresence(
   a: string,
   b: any,
@@ -307,17 +273,13 @@ export async function setTeacherPresence(
   const classCode = c ? a : undefined
   const assignmentId = c ? (b as string) : a
   const state = (c ?? b) as TeacherPresenceState
-
   const ch = assignmentChannel(classCode, assignmentId)
-  await ch.subscribe()
+  ensureJoined(ch)
   const payload: TeacherPresenceState = { role: 'teacher', ...state, ts: Date.now() }
   await ch.send({ type: 'broadcast', event: 'presence', payload })
-  void ch.unsubscribe()
 }
 
-/** teacherPresenceResponder(classCode, assignmentId, getSnapshot)
- *  Legacy: teacherPresenceResponder(assignmentId, getSnapshot)
- */
+/** Respond to 'hello' with a presence snapshot (unchanged API) */
 export function teacherPresenceResponder(
   a: string,
   b: any,
@@ -331,165 +293,66 @@ export function teacherPresenceResponder(
 ) {
   const classCode = c ? a : undefined
   const assignmentId = c ? (b as string) : a
-  const getSnapshot = (c ?? b) as () => {
-    autoFollow: boolean
-    focusOn?: boolean
-    lockNav?: boolean
-    allowedPages?: number[] | null
-    teacherPageIndex?: number
-  }
-
+  const getSnapshot = (c ?? b)!
   const ch = assignmentChannel(classCode, assignmentId)
-  ch.on('broadcast', { event: 'hello' }, async () => {
-    try {
-      const snap = getSnapshot?.() ?? {
-        autoFollow: false, focusOn: false, lockNav: false, allowedPages: null, teacherPageIndex: 0
-      }
-      await ch.send({ type: 'broadcast', event: 'presence-snapshot', payload: { ...snap, ts: Date.now() } })
-    } catch { /* ignore */ }
-  })
-  ch.subscribe()
-  return () => { void ch.unsubscribe() }
+    .on('broadcast', { event: 'hello' }, async () => {
+      try {
+        const snap = getSnapshot?.() ?? {
+          autoFollow: false, focusOn: false, lockNav: false, allowedPages: null, teacherPageIndex: 0
+        }
+        await ch.send({ type: 'broadcast', event: 'presence-snapshot', payload: { ...snap, ts: Date.now() } })
+      } catch {/* ignore */}
+    })
+  ensureJoined(ch)
+  return () => { /* keep channel warm; call dropChannel if you truly leave */ }
 }
 
 /** =========================================================================================
- *  INK (page or page+student) — class added to room names for isolation
+ *  INK fan-out — HARD DISABLED without breaking imports
+ *  We export the same functions, but they no-op (no subscribe, no send).
+ *  This removes the per-point realtime flood while letting code compile.
  *  ======================================================================================= */
-
-function makeRoomKey(classCode: string | undefined, assignmentId: string, pageId: string, studentCode?: string) {
-  return studentCode
-    ? `${classCode ?? 'legacy'}:${assignmentId}:${pageId}:${studentCode}`
-    : `${classCode ?? 'legacy'}:${assignmentId}:${pageId}`
-}
-
-function inkChannel(classCode: string | undefined, assignmentId: string, pageId: string, studentCode?: string) {
-  return supabase.channel(inkChan(classCode, assignmentId, pageId, studentCode), {
-    config: { broadcast: { ack: true } },
-  })
-}
-
-/** publishInk({ classCode?, assignmentId, pageId, studentCode? } | RealtimeChannel, update)
- *  Legacy rooms (without class) still work if classCode omitted.
- */
 export async function publishInk(
-  inkChOrIds:
+  _inkChOrIds:
     | RealtimeChannel
     | { classCode?: string; assignmentId: string; pageId: string; studentCode?: string },
-  update: InkUpdate
+  _update: InkUpdate
 ) {
-  if (!update || !update.id || !update.tool) return
-
-  let ch: RealtimeChannel | null
-  let temporary = false
-  let roomKey: string | undefined
-
-  // **Normalize before sending** so receivers get consistent data (and keep t)
-  const norm = normalizeInkUpdate(update)
-
-  if (isRealtimeChannel(inkChOrIds)) {
-    ch = inkChOrIds
-  } else {
-    const { classCode, assignmentId, pageId, studentCode } = inkChOrIds
-    ch = inkChannel(classCode, assignmentId, pageId, studentCode)
-    temporary = true
-    roomKey = makeRoomKey(classCode, assignmentId, pageId, studentCode)
-    await ch.subscribe()
-  }
-
-  const payload = roomKey ? { ...norm, roomKey } : { ...norm }
-  await ch.send({ type: 'broadcast', event: 'ink', payload })
-  if (temporary) { void ch.unsubscribe() }
+  // intentionally NO-OP (live ink disabled)
+  return
 }
 
-/** subscribeToInk — now supports object form (Option A) + legacy signatures.
- *
- * Object form:
- *   subscribeToInk({ classCode?, assignmentId, pageId, studentCode? }, onUpdate)
- *
- * Class-scoped positional:
- *   subscribeToInk(classCode, assignmentId, pageId, onUpdate)
- *
- * Legacy (no class in room name):
- *   subscribeToInk(assignmentId, pageId, onUpdate, studentCode?)
- */
+/** Returns a channel object that is never joined; callers can still call .unsubscribe() safely. */
 export function subscribeToInk(
   ids: { classCode?: string; assignmentId: string; pageId: string; studentCode?: string },
-  onUpdate: (u: InkUpdate) => void
+  _onUpdate: (u: InkUpdate) => void
 ): RealtimeChannel
 export function subscribeToInk(
   classCode: string,
   assignmentId: string,
   pageId: string,
-  onUpdate: (u: InkUpdate) => void
+  _onUpdate: (u: InkUpdate) => void
 ): RealtimeChannel
 export function subscribeToInk(
   assignmentId: string,
   pageId: string,
-  onUpdate: (u: InkUpdate) => void,
+  _onUpdate: (u: InkUpdate) => void,
   studentCode?: string
 ): RealtimeChannel
 export function subscribeToInk(a: any, b?: any, c?: any, d?: any): RealtimeChannel {
-  // ---- Object form (Option A)
+  // derive room name exactly as before, but DO NOT subscribe to avoid traffic
+  let name: string
   if (typeof a === 'object' && a && 'assignmentId' in a) {
-    const { classCode, assignmentId, pageId, studentCode } =
-      a as { classCode?: string; assignmentId: string; pageId: string; studentCode?: string }
-    const onUpdate = b as (u: InkUpdate) => void
-
-    const roomKey = makeRoomKey(classCode, assignmentId, pageId, studentCode)
-    const ch = inkChannel(classCode, assignmentId, pageId, studentCode)
-      .on('broadcast', { event: 'ink' }, (msg: any) => {
-        const raw = msg?.payload as InkUpdate
-        if (!raw || !raw.id || !raw.tool) return
-        if ((!Array.isArray(raw.pts) || raw.pts.length === 0) && !raw.done) return
-        if (raw.roomKey && raw.roomKey !== roomKey) return
-        // **Normalize on receive** to preserve t and unify tool
-        onUpdate(normalizeInkUpdate(raw))
-      })
-      .subscribe()
-    return ch
-  }
-
-  // ---- Positional handling (kept for compatibility)
-  let classCode: string | undefined
-  let assignmentId: string
-  let pageId: string
-  let onUpdate: (u: InkUpdate) => void
-  let studentCode: string | undefined
-
-  // 4 args => (classCode, assignmentId, pageId, onUpdate)
-  if (typeof d === 'function' && typeof a === 'string' && typeof b === 'string' && typeof c === 'string') {
-    classCode = a
-    assignmentId = b
-    pageId = c
-    onUpdate = d
+    const { classCode, assignmentId, pageId, studentCode } = a
+    name = inkChan(classCode, assignmentId, pageId, studentCode)
+  } else if (typeof d === 'function' && typeof a === 'string' && typeof b === 'string' && typeof c === 'string') {
+    name = inkChan(a as string, b as string, c as string, undefined)
   } else if (typeof c === 'function' && typeof a === 'string' && typeof b === 'string') {
-    // 3 args => legacy (assignmentId, pageId, onUpdate) [no classCode]
-    classCode = undefined
-    assignmentId = a
-    pageId = b
-    onUpdate = c
-  } else if (typeof c === 'string' && typeof b === 'string' && typeof d !== 'string' && typeof d !== 'function') {
-    // defensive no-op path
-    throw new Error('subscribeToInk: invalid arguments')
+    name = inkChan(undefined, a as string, b as string, undefined)
   } else {
-    // Fallback to previous heuristic (rare edge cases)
-    const isLegacy = typeof b === 'string' && typeof c === 'function'
-    classCode = isLegacy ? undefined : a
-    assignmentId = isLegacy ? a : b
-    pageId = isLegacy ? (c as any) : c
-    onUpdate = (isLegacy ? d : d) || (typeof c === 'function' ? c : (() => {}))
-    if (typeof onUpdate !== 'function') throw new Error('subscribeToInk: onUpdate must be a function')
+    name = inkChan(undefined, String(a), String(b), typeof studentCode === 'string' ? studentCode : undefined)
   }
-
-  const roomKey = makeRoomKey(classCode, assignmentId, pageId, studentCode)
-  const ch = inkChannel(classCode, assignmentId, pageId, studentCode)
-    .on('broadcast', { event: 'ink' }, (msg: any) => {
-      const raw = msg?.payload as InkUpdate
-      if (!raw || !raw.id || !raw.tool) return
-      if ((!Array.isArray(raw.pts) || raw.pts.length === 0) && !raw.done) return
-      if (raw.roomKey && raw.roomKey !== roomKey) return
-      onUpdate(normalizeInkUpdate(raw)) // **preserve t**, unify tool
-    })
-    .subscribe()
+  const ch = getChannel(name)
+  // IMPORTANT: we don't .on(...) and don't join — zero realtime cost
   return ch
 }
