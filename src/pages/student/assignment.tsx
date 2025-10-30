@@ -154,6 +154,42 @@ function loadSubmittedCache(student:string, assignmentUid:string, pageUid:string
 function clearSubmittedCache(student:string, assignmentUid:string, pageUid:string){
   try { localStorage.removeItem(submittedKey(student, assignmentUid, pageUid)) } catch {}
 }
+/** ---------- Presence cache with TTL (prevents sticky focus/autofollow) ---------- */
+const PRESENCE_TTL_MS = 15_000; // 15s is enough to avoid stickiness but keep snappy boots
+
+type CachedPresenceEnvelope = {
+  ts: number;
+  presence: TeacherPresenceState;
+};
+
+function setCachedPresence(classCode: string, assignmentId: string, p: TeacherPresenceState) {
+  try {
+    const key = presenceKey(classCode, assignmentId);
+    const env: CachedPresenceEnvelope = { ts: Date.now(), presence: p };
+    localStorage.setItem(key, JSON.stringify(env));
+  } catch {}
+}
+
+function getCachedPresence(classCode: string, assignmentId: string): TeacherPresenceState | null {
+  try {
+    const key = presenceKey(classCode, assignmentId);
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const env = JSON.parse(raw) as CachedPresenceEnvelope;
+    if (!env || typeof env.ts !== 'number' || !env.presence) return null;
+    if (Date.now() - env.ts > PRESENCE_TTL_MS) return null; // stale → ignore
+    return env.presence;
+  } catch {
+    return null;
+  }
+}
+
+function clearCachedPresence(classCode: string, assignmentId: string) {
+  try {
+    const key = presenceKey(classCode, assignmentId);
+    localStorage.removeItem(key);
+  } catch {}
+}
 
 async function hashStrokes(strokes:any): Promise<string> {
   const enc = new TextEncoder().encode(JSON.stringify(strokes || {}))
@@ -201,17 +237,17 @@ async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
 /* ---------- initial page index from cached presence (best effort) ---------- */
 function initialPageIndexFromPresence(classCode: string): number {
   try {
-    const cachedAssignmentId = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || ''
-    if (!cachedAssignmentId) return 0
-    const raw = localStorage.getItem(presenceKey(classCode, cachedAssignmentId))
-    if (!raw) return 0
-    const p = JSON.parse(raw) as TeacherPresenceState
+    const cachedAssignmentId = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '';
+    if (!cachedAssignmentId) return 0;
+    const p = getCachedPresence(classCode, cachedAssignmentId);
     if (p && p.autoFollow && typeof p.teacherPageIndex === 'number') {
-      return p.teacherPageIndex
+      return p.teacherPageIndex;
     }
   } catch {/* ignore */}
-  return 0
+  return 0;
 }
+
+
 
 /* ---------- server fallback to get teacher presence snapshot ---------- */
 async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPresenceState | null> {
@@ -503,38 +539,63 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
-  const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
-    if (!p) return
-    setAutoFollow(!!p.autoFollow)
-    setAllowedPages(p.allowedPages ?? null)
-    setFocusOn(!!p.focusOn)
-    setNavLocked(!!p.focusOn && !!p.lockNav)
-    if (typeof p.teacherPageIndex === 'number') {
-      teacherPageIndexRef.current = p.teacherPageIndex
-      const shouldSnap = (opts?.snap ?? true) && !!p.autoFollow && !initialSnappedRef.current
+  const applyPresenceSnapshot = (
+    p: TeacherPresenceState | null | undefined,
+    opts?: { snap?: boolean; assignmentId?: string }
+  ) => {
+    if (!p) return;
+
+    // 1) Update local UI state from snapshot
+    const auto = !!p.autoFollow;
+    const focus = !!p.focusOn;
+    const lock  = !!p.lockNav;
+    const tpi   = (typeof p.teacherPageIndex === 'number') ? p.teacherPageIndex : undefined;
+
+    setAutoFollow(auto);
+    setAllowedPages(p.allowedPages ?? null);
+    setFocusOn(focus);
+    setNavLocked(focus && lock); // lock only while focused
+
+    if (typeof tpi === 'number') {
+      teacherPageIndexRef.current = tpi;
+
+      // Snap only if: caller requested snap, autoFollow is on, and we haven't snapped yet in this boot
+      const shouldSnap = (opts?.snap ?? true) && auto && !initialSnappedRef.current;
       if (shouldSnap) {
-        setPageIndex(p.teacherPageIndex)
-        initialSnappedRef.current = true
+        setPageIndex(tpi);
+        initialSnappedRef.current = true;
       }
     }
-  }
+
+    // 2) Write-through cache with TTL if we know the assignment id
+    if (opts?.assignmentId) {
+      setCachedPresence(classCode, opts.assignmentId, {
+        autoFollow: auto,
+        allowedPages: p.allowedPages ?? null,
+        focusOn: focus,
+        lockNav: lock,
+        teacherPageIndex: teacherPageIndexRef.current ?? tpi
+      });
+    }
+  };
+
 
   const snapToTeacherIfAvailable = (assignmentId: string) => {
     try {
-      const raw = localStorage.getItem(presenceKey(classCode, assignmentId))
-      if (!raw) return
-      const p = JSON.parse(raw) as TeacherPresenceState
-      applyPresenceSnapshot(p, { snap: true })
+      const p = getCachedPresence(classCode, assignmentId);
+      if (p) {
+        applyPresenceSnapshot(p, { snap: true, assignmentId });
+      }
     } catch {/* ignore */}
   }
 
   const ensurePresenceFromServer = async (assignmentId: string) => {
-    const cached = localStorage.getItem(presenceKey(classCode, assignmentId))
+    const cached = getCachedPresence(classCode, assignmentId);
     if (!cached) {
-      const p = await fetchPresenceSnapshot(assignmentId)
+      const p = await fetchPresenceSnapshot(assignmentId);
       if (p) {
-        try { localStorage.setItem(presenceKey(classCode, assignmentId), JSON.stringify(p)) } catch {}
-        applyPresenceSnapshot(p, { snap: true })
+        setCachedPresence(classCode, assignmentId, p);
+        applyPresenceSnapshot(p, { snap: true, assignmentId });
       }
     }
   }
@@ -590,24 +651,24 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
     })()
   }, [classBootDone, rtAssignmentId])
 
-  useEffect(() => {
-    if (!rtAssignmentId) return
-    try {
-      const raw = localStorage.getItem(presenceKey(classCode, rtAssignmentId))
-      if (raw) {
-        const p = JSON.parse(raw) as TeacherPresenceState
-        applyPresenceSnapshot(p, { snap: true })
-      } else {
-        ;(async () => {
-          const p = await fetchPresenceSnapshot(rtAssignmentId)
-          if (p) {
-            try { localStorage.setItem(presenceKey(classCode, rtAssignmentId), JSON.stringify(p)) } catch {}
-            applyPresenceSnapshot(p, { snap: true })
-          }
-        })()
-      }
-    } catch {}
-  }, [classCode, rtAssignmentId])
+useEffect(() => {
+  if (!rtAssignmentId) return
+  try {
+    const p = getCachedPresence(classCode, rtAssignmentId);
+    if (p) {
+      applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
+    } else {
+      ;(async () => {
+        const s = await fetchPresenceSnapshot(rtAssignmentId);
+        if (s) {
+          setCachedPresence(classCode, rtAssignmentId, s);
+          applyPresenceSnapshot(s, { snap: true, assignmentId: rtAssignmentId });
+        }
+      })();
+    }
+  } catch { /* ignore */ }
+}, [classCode, rtAssignmentId])
+
 
   /* ---------- Hello → presence-snapshot handshake ---------- */
   useEffect(() => {
@@ -617,8 +678,8 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
       .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
         const p = msg?.payload as TeacherPresenceState | undefined
         if (!p) return
-        try { localStorage.setItem(presenceKey(classCode, rtAssignmentId), JSON.stringify(p)) } catch {}
-        applyPresenceSnapshot(p, { snap: true })
+        setCachedPresence(classCode, rtAssignmentId, p);
+        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
       })
       .subscribe()
 
@@ -1007,24 +1068,49 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
         }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
-        setFocusOn(!!on)
-        setNavLocked(!!on && !!lockNav)
+        const focus = !!on;
+        const lock  = !!on && !!lockNav;
+
+        // update local state
+        setFocusOn(focus);
+        setNavLocked(lock);
+
+        // build a coherent snapshot using current autoFollow/allowedPages/teacherPageIndex
+        const snapshot: TeacherPresenceState = {
+          autoFollow,
+          allowedPages,
+          focusOn: focus,
+          lockNav: lock,
+          teacherPageIndex: teacherPageIndexRef.current ?? undefined
+        };
+
+        try { setCachedPresence(classCode, rtAssignmentId, snapshot) } catch {}
+        // don’t snap pages on focus toggles to avoid surprise jumps
+        applyPresenceSnapshot(snapshot, { snap: false });
+
       },
       onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
-        setAutoFollow(!!on)
-        setAllowedPages(allowedPages ?? null)
-        if (typeof teacherPageIndex === 'number') teacherPageIndexRef.current = teacherPageIndex
-        applyPresenceSnapshot({
+        const snapshot: TeacherPresenceState = {
           autoFollow: !!on,
           allowedPages: allowedPages ?? null,
-          focusOn,
+          focusOn: focusOn,
           lockNav: navLocked,
-          teacherPageIndex: teacherPageIndexRef.current ?? undefined
-        } as TeacherPresenceState, { snap: true })
+          teacherPageIndex: (typeof teacherPageIndex === 'number')
+            ? teacherPageIndex
+            : (teacherPageIndexRef.current ?? undefined)
+        };
+        // persist + apply
+        setAutoFollow(snapshot.autoFollow);
+        setAllowedPages(snapshot.allowedPages ?? null);
+        if (typeof snapshot.teacherPageIndex === 'number') {
+          teacherPageIndexRef.current = snapshot.teacherPageIndex;
+        }
+        try { setCachedPresence(classCode, rtAssignmentId, snapshot) } catch {}
+        applyPresenceSnapshot(snapshot, { snap: true });
       },
       onPresence: (p: TeacherPresenceState) => {
-        try { localStorage.setItem(presenceKey(classCode, rtAssignmentId), JSON.stringify(p)) } catch {}
-        applyPresenceSnapshot(p, { snap: true })
+        try { setCachedPresence(classCode, rtAssignmentId, p) } catch {}
+        applyPresenceSnapshot(p, { snap: true });
       },
 
       // NEW: force-submit → submit immediately (scoped or all)
