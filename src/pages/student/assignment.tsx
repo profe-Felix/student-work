@@ -1363,30 +1363,8 @@ setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : n
       </div>
     )
   }, [pdfUrl, pageIndex, hasTask, onPdfReady])
-  // 2d — page navigation that auto-submits before changing pages (if enabled)
-const goToPage = useCallback(async (i:number) => {
-  if (!Number.isFinite(i)) return
-  const target = Math.max(0, i)
-
-  // Respect teacher constraints
-  if (!canMoveTo(target)) {
-    showToast('Navegación limitada por el/la docente en este momento', 'err', 1400)
-    return
-  }
-
-  if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
-    try { await submitIfNeeded('page-change') } catch {}
-  }
-
-  // Do NOT force-unlock here; leave lock state to focus handlers
-  setPageIndex(target)
-}, [canMoveTo, submitIfNeeded])
-
-
-  const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
-  const goNext = useCallback(() => { void goToPage(pageIndex + 1) }, [goToPage, pageIndex])
-
-  // ---- Step 3 guards: centralized navigation permission ----
+  
+// ---- Step 3 guards: centralized navigation permission ----
 const canMoveTo = useCallback((target: number) => {
   // Hard stop if UI is locked (e.g., focus+lock)
   if (navLocked) return false
@@ -1406,12 +1384,33 @@ const canMoveTo = useCallback((target: number) => {
   return true
 }, [navLocked, autoFollow, allowedPages])
 
-  
-  
+// 2d — page navigation that auto-submits before changing pages (if enabled)
+const goToPage = useCallback(async (i:number) => {
+  if (!Number.isFinite(i)) return
+  const target = Math.max(0, i)
+
+  // Respect teacher constraints
+  if (!canMoveTo(target)) {
+    showToast('Navegación limitada por el/la docente en este momento', 'err', 1400)
+    return
+  }
+
+  if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
+    try { await submitIfNeeded('page-change') } catch {}
+  }
+
+  // Do NOT force-unlock here; leave lock state to focus handlers
+  setPageIndex(target)
+}, [canMoveTo, submitIfNeeded])
+
+const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
+const goNext = useCallback(() => { void goToPage(pageIndex + 1) }, [goToPage, pageIndex])
+
 // === Step 3 — Pager guards (uses same centralized canMoveTo) ===
 const baseOk = hasTask && !saving && !submitInFlight.current
 const canPrev = baseOk && canMoveTo(Math.max(0, pageIndex - 1))
 const canNext = baseOk && canMoveTo(pageIndex + 1)
+
 
 
   return (
