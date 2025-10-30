@@ -18,11 +18,9 @@ import {
   type AutoFollowPayload,
   subscribeToGlobal,
   type TeacherPresenceState,
-  // ⬇️ students no longer subscribe to ink; teacher does that on teacher page
-  publishInk
+  // ⛔️ students no longer publish or subscribe to live ink
 } from '../../lib/realtime'
 import { ensureSaveWorker, attachBeforeUnloadSave } from '../../lib/swClient'
-import type { RealtimeChannel } from '@supabase/supabase-js'
 // 🔎 realtime meter
 import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
 
@@ -503,9 +501,6 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
-
-  // ink subscription handle (student no longer subscribes; keep ref for future)
-  const inkSubRef = useRef<RealtimeChannel | null>(null)
 
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (p: TeacherPresenceState | null | undefined, opts?: { snap?: boolean }) => {
@@ -1103,7 +1098,6 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   useEffect(() => {
     if (!classBootDone || !rtAssignmentId) return
 
-    let cleanupArtifacts: (() => void) | null = null
     let pollId: number | null = null
     let mounted = true
 
@@ -1111,48 +1105,15 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
       const ids = await resolveIds()
       if (!ids) return
 
-      // ---- artifacts realtime + polling
-      try {
-        const ch = supabase
-          .channel(`art-strokes-${ids.page_id}`)
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'artifacts',
-              filter: `page_id=eq.${ids.page_id},kind=eq.strokes`,
-            },
-            () => reloadFromServer()
-          )
-          .subscribe()
-        cleanupArtifacts = () => {
-          try {
-            ch.unsubscribe()
-          } catch {}
-        }
-      } catch (e) {
-        console.error('realtime subscribe failed', e)
-      }
-
+      // ---- polling only (no artifacts realtime channel)
       pollId = window.setInterval(() => {
         if (mounted) reloadFromServer()
       }, POLL_MS)
-
-      // ⛔️ Students do NOT subscribe to ink anymore (fan-out killer).
-      // Teacher page is the only subscriber/renderer of live ink.
-      // (No onInk handler, no subscribeToInk call here.)
     })()
 
     return () => {
       mounted = false
-      if (cleanupArtifacts) cleanupArtifacts()
       if (pollId != null) window.clearInterval(pollId)
-      // ref kept for future; always null on student
-      try {
-        inkSubRef.current?.unsubscribe?.()
-      } catch {}
-      inkSubRef.current = null
     }
   }, [classBootDone, classCode, studentId, pageIndex, rtAssignmentId])
 
@@ -1373,25 +1334,13 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
               tool={tool}
               selfId={studentId}
               onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
-                // 5.3 — clock kick + absorb latest t
+                // 5.3 — clock kick + absorb latest t (local only)
                 try { markFirstAction() } catch {}
                 try {
                   const pLast = (u.pts && u.pts.length) ? u.pts[u.pts.length - 1] : undefined
                   if (pLast && typeof (pLast as any).t === 'number') absorbStrokePointT((pLast as any).t)
                 } catch {}
-
-                const ids = currIds.current
-                if (!ids.assignment_id || !ids.page_id) return
-                const payload = { ...u, studentId }
-                try {
-                  // Student publishes only; teacher is the sole subscriber.
-                  await publishInk(
-                    { classCode, assignmentId: ids.assignment_id, pageId: ids.page_id },
-                    payload
-                  )
-                } catch (e) {
-                  console.warn('publishInk failed', e)
-                }
+                // ⛔️ no live publish from students
               }}
             />
           </div>
