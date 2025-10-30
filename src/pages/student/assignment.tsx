@@ -551,10 +551,11 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
     const lock  = !!p.lockNav;
     const tpi   = (typeof p.teacherPageIndex === 'number') ? p.teacherPageIndex : undefined;
 
-    setAutoFollow(auto);
-    setAllowedPages(p.allowedPages ?? null);
-    setFocusOn(focus);
-    setNavLocked(focus && lock); // lock only while focused
+setAutoFollow(!!auto);
+setAllowedPages(Array.isArray(p.allowedPages) ? p.allowedPages : null);
+setFocusOn(!!focus);
+setNavLocked(!!(focus && lock));
+
 
     if (typeof tpi === 'number') {
       teacherPageIndexRef.current = tpi;
@@ -1072,8 +1073,9 @@ useEffect(() => {
         const lock  = !!on && !!lockNav;
 
         // update local state
-        setFocusOn(focus);
-        setNavLocked(lock);
+// update local state
+setFocusOn(!!focus);
+setNavLocked(!!lock);
 
         // build a coherent snapshot using current autoFollow/allowedPages/teacherPageIndex
         const snapshot: TeacherPresenceState = {
@@ -1100,8 +1102,9 @@ useEffect(() => {
             : (teacherPageIndexRef.current ?? undefined)
         };
         // persist + apply
-        setAutoFollow(snapshot.autoFollow);
-        setAllowedPages(snapshot.allowedPages ?? null);
+setAutoFollow(!!snapshot.autoFollow);
+setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : null);
+
         if (typeof snapshot.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = snapshot.teacherPageIndex;
         }
