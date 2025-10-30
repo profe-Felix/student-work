@@ -342,17 +342,26 @@ export function subscribeToInk(
 export function subscribeToInk(a: any, b?: any, c?: any, d?: any): RealtimeChannel {
   // derive room name exactly as before, but DO NOT subscribe to avoid traffic
   let name: string
+  let sc: string | undefined = undefined
+
   if (typeof a === 'object' && a && 'assignmentId' in a) {
     const { classCode, assignmentId, pageId, studentCode } = a
+    sc = studentCode
     name = inkChan(classCode, assignmentId, pageId, studentCode)
   } else if (typeof d === 'function' && typeof a === 'string' && typeof b === 'string' && typeof c === 'string') {
+    // (classCode, assignmentId, pageId, onUpdate)
     name = inkChan(a as string, b as string, c as string, undefined)
   } else if (typeof c === 'function' && typeof a === 'string' && typeof b === 'string') {
+    // legacy (assignmentId, pageId, onUpdate)
     name = inkChan(undefined, a as string, b as string, undefined)
   } else {
-    name = inkChan(undefined, String(a), String(b), typeof studentCode === 'string' ? studentCode : undefined)
+    // fallback (assignmentId, pageId, onUpdate, studentCode?)
+    sc = typeof d === 'string' ? d : undefined
+    name = inkChan(undefined, String(a), String(b), sc)
   }
+
   const ch = getChannel(name)
   // IMPORTANT: we don't .on(...) and don't join — zero realtime cost
   return ch
 }
+
