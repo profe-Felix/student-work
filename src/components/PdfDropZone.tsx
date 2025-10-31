@@ -136,11 +136,12 @@ export default function PdfDropZone({
 }
 
 async function countPdfPages(objectUrl: string): Promise<number> {
-  const pdfjs = await import('pdfjs-dist/build/pdf')
-  ;(pdfjs as any).GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.min.js',
-    import.meta.url
-  ).toString()
+  // Use the ESM build + the same worker URL approach as PdfCanvas
+  const pdfjs = await import('pdfjs-dist')
+  const { default: workerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+  ;(pdfjs as any).GlobalWorkerOptions.workerSrc = workerUrl
+
   const pdf = await (pdfjs as any).getDocument(objectUrl).promise
   return (pdf as any).numPages as number
 }
+
