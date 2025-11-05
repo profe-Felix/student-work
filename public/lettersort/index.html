@@ -102,7 +102,6 @@
     .chip.ok{outline:3px solid var(--ok)}
     .chip.bad{outline:3px solid var(--bad)}
 
-    /* nicer spacing for the chip bank */
     .rack.chips{
       gap:12px;
       padding:12px;
@@ -130,13 +129,11 @@
       box-shadow:0 4px 14px rgba(0,0,0,.05)
     }
 
-    /* Row Alliteration: two columns (DROP grows with content) */
     .rowLine.twoCols{
       grid-template-columns: minmax(220px, max-content) 1fr;
       align-items:start;
     }
 
-    /* Base row drop — force horizontal flow and no stretching */
     .rowDrop{
       min-height:160px;
       background:var(--drop);
@@ -160,7 +157,6 @@
     .rowCard{width:150px}
     .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
 
-    /* ---------- Compact tweaks (mobile) ---------- */
     body.row-compact .wrap { padding-top:6px; }
     body.row-compact header { border-bottom-width:1px; }
     body.row-compact .soloBar { padding:6px; }
@@ -294,7 +290,7 @@
 
     // URL params
     const qs = new URLSearchParams(location.search);
-    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'rowsyll', or classic
+    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'rowsyll', 'syllcount', or classic
     const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
     const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
     const IP = qs.get('ip') || DEFAULT_IMAGES_PREFIX;
@@ -307,16 +303,30 @@
     const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
-// NEW: syllable match mode ('initial' | 'any') and comparator ('equals' | 'contains' | 'prefix' | 'suffix')
-const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
-const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
+    // NEW: syllable match mode ('initial' | 'any') and comparator ('equals' | 'contains' | 'prefix' | 'suffix')
+    const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
+    const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
 
+    // NEW: syllable-count columns via ?counts=1-3 or ?syllcount=1,2,3
+    function parseCountsParam(v){
+      const raw = (v||'').trim();
+      if(!raw) return [];
+      if(/^\d+\s*-\s*\d+$/.test(raw)){
+        const [a,b] = raw.split('-').map(x=>parseInt(x.trim(),10));
+        if(Number.isFinite(a) && Number.isFinite(b)){
+          const lo = Math.min(a,b), hi = Math.max(a,b);
+          return Array.from({length: hi-lo+1}, (_,i)=> lo+i);
+        }
+      }
+      return raw.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n) && n>0);
+    }
+    const SOLO_SYLLCOUNT = parseCountsParam(qs.get('counts') || qs.get('syllcount'));
 
     // Row modes params
-    const ROWS_RAW   = qs.get('rows') || ''; // e.g., "tigre:init;zapato:final" or "gato,pato~op1,op2;..."
+    const ROWS_RAW   = qs.get('rows') || '';
     const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
 
-    // Force SOLO by default. Only show teacher/student (session code) if ?sync=true is present.
+    // Force SOLO by default unless ?sync=true
     const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
     if (!SYNC) {
       document.addEventListener('DOMContentLoaded', () => {
@@ -326,11 +336,11 @@ const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
       });
     }
 
-    // SOLO if NOT in sync mode, or any solo hints/row modes are present.
+    // SOLO conditions
     const SOLO_MODE =
       !SYNC ||
-      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'rowsyll' ||
-      (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0);
+      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'rowsyll' || MODE === 'syllcount' ||
+      (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -369,8 +379,7 @@ const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
     /******** State ********/
     let ROOM = null, channel = null, isTeacher = false;
 
-    // imageFiles entry:
-    // { name, path, url, stem, rawCore, core, initial }
+    // imageFiles entry: { name, path, url, stem, rawCore, core, initial }
     let imageFiles = [];
     // audio map and cache
     const audioUrlByRawCore = new Map();     // rawCore -> mp3 URL
@@ -474,18 +483,20 @@ const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
       const pretty = markersToPretty(coreWord);
       return syllabifyEs(pretty).map(normalizeMarkers);
     }
+    function syllableCount(coreWord){
+      return syllablesNormalized(coreWord).length;
+    }
 
-// Comparator for syllables: equals | contains | prefix | suffix
-function cmpSyll(a, b){
-  if(!a || !b) return false;
-  switch (SYLL_CMP) {
-    case 'contains': return a.includes(b);
-    case 'prefix':   return a.startsWith(b);
-    case 'suffix':   return a.endsWith(b);
-    default:         return a === b; // 'equals'
-  }
-}
-
+    // Comparator for syllables: equals | contains | prefix | suffix
+    function cmpSyll(a, b){
+      if(!a || !b) return false;
+      switch (SYLL_CMP) {
+        case 'contains': return a.includes(b);
+        case 'prefix':   return a.startsWith(b);
+        case 'suffix':   return a.endsWith(b);
+        default:         return a === b; // 'equals'
+      }
+    }
 
     /******** Public URL existence check (GET with Range) ********/
     async function publicUrlIfExists(bucket, path){
@@ -613,7 +624,7 @@ function cmpSyll(a, b){
     async function ensureStorageLoaded(){
       try{
         imageFiles = [];
-        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort' || MODE==='rowsyll'){
+        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort' || MODE==='rowsyll' || MODE==='syllcount'){
           imageFiles = await listAllImagesJpg();
         } else if (SOLO_WORDS.length){
           const found = [];
@@ -678,8 +689,16 @@ function cmpSyll(a, b){
     function buildColumnsForSyllables(sylls){
       return sylls.map(s => ({ label: s, key:`syll:${normalizeMarkers(s)}`, display:s }));
     }
+    // NEW: columns for syllable counts
+    function buildColumnsForSyllCount(counts){
+      return counts.map(n => ({
+        label: `${n} ${n===1?'sílaba':'sílabas'}`,
+        key: `count:${n}`,
+        display: `${n}`
+      }));
+    }
 
-    /******** Round building (classic) ********/
+    /******** Round building ********/
     function pickNoRepeat(arr, n){
       const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
       pool.sort(()=>Math.random()-0.5);
@@ -693,7 +712,14 @@ function cmpSyll(a, b){
     }
     function buildRoundFromLetters(activeLetters, perCol){
       const columns = buildColumnsForLetters(activeLetters);
-      const byInitial = (()=>{const m=new Map(); for(const f of imageFiles){(m.get(f.initial)||m.set(f.initial,[]).get(f.initial)).push(f);} return m;})();
+      const byInitial = (()=>{
+        const m=new Map();
+        for(const f of imageFiles){
+          if(!m.has(f.initial)) m.set(f.initial, []);
+          m.get(f.initial).push(f);
+        }
+        return m;
+      })();
       const everything = [...imageFiles];
       const cards = [];
       for(const col of columns){
@@ -718,7 +744,7 @@ function cmpSyll(a, b){
       for(const col of columns){
         const targetSyl = col.key.slice(5);
         const list = imageFiles.filter(f => {
-          const syls = syllablesNormalized(f.rawCore); // normalized array
+          const syls = syllablesNormalized(f.rawCore);
           return SYLL_MATCH === 'any'
             ? syls.some(s => cmpSyll(s, targetSyl))
             : cmpSyll(syls[0], targetSyl);
@@ -731,12 +757,47 @@ function cmpSyll(a, b){
       }
       return { columns, cards };
     }
+    // NEW: round from syllable counts
+    function buildRoundFromSyllCount(counts, perCol){
+      const columns = buildColumnsForSyllCount(counts);
+      const cards = [];
+      for(const col of columns){
+        const need = parseInt(col.key.slice(6),10); // after 'count:'
+        const list = imageFiles.filter(f => syllableCount(f.rawCore) === need);
+        const picks = pickNoRepeat(list, perCol);
+        for(const f of picks){ usedSet.add(`${f.path}`); }
+        for(const f of picks){
+          cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
+        }
+      }
+      return { columns, cards };
+    }
+    // Existing words list (letters/sylls)
     function buildRoundFromWordList(activeLetters, sylls, wordsList){
       const columns = (sylls && sylls.length)
         ? buildColumnsForSyllables(sylls)
         : buildColumnsForLetters(activeLetters);
 
       const indexNorm = new Map(); // normalized core -> file
+      for(const f of imageFiles){
+        const k = normalizeMarkers(f.rawCore);
+        if(!indexNorm.has(k)) indexNorm.set(k, f);
+      }
+
+      const cards = [];
+      for(const wRaw of wordsList){
+        const k = normalizeMarkers(wRaw);
+        const f = indexNorm.get(k);
+        if(!f) continue;
+        cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
+      }
+      return { columns, cards };
+    }
+    // NEW: words list + syllable counts
+    function buildRoundFromWordListWithCounts(counts, wordsList){
+      const columns = buildColumnsForSyllCount(counts);
+
+      const indexNorm = new Map();
       for(const f of imageFiles){
         const k = normalizeMarkers(f.rawCore);
         if(!indexNorm.has(k)) indexNorm.set(k, f);
@@ -760,6 +821,12 @@ function cmpSyll(a, b){
         if (HIDE_TITLE) return '';
         const text = (col.display || '').toLowerCase();
         return `<div class="syllTile" aria-hidden="true">${text}</div>`;
+      }
+      if (col.key.startsWith('count:')){
+        if (HIDE_TITLE) return '';
+        const n = parseInt(col.display || col.key.slice(6),10);
+        const label = `${n} ${n===1?'sílaba':'sílabas'}`;
+        return `<div class="syllTile" aria-hidden="true">${label}</div>`;
       }
       return `<h2>${col.label}</h2>`;
     }
@@ -892,7 +959,7 @@ function cmpSyll(a, b){
       requestAnimationFrame(tick);
     }
 
-    /******** Row helpers ********/
+    /******** Row helpers (unchanged) ********/
     function parseRows(str){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const [left, right] = seg.split('~');
@@ -901,8 +968,6 @@ function cmpSyll(a, b){
         return { prompt, choices };
       }).filter(r=>r.prompt && r.choices.length);
     }
-
-    /* rowsyll parser: "word:init" or "word:final"; choices ignored (use global bank) */
     function parseRowSyllDefs(str){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const [left] = seg.split('~');
@@ -911,14 +976,12 @@ function cmpSyll(a, b){
         return { prompt, how };
       }).filter(r=>r.prompt);
     }
-
     function parseAlliGroups(str){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const items = seg.split(',').map(s=>s.trim()).filter(Boolean);
         return items;
       }).filter(items=>items.length>=2);
     }
-
     function majorityInitial(rawCores){
       const m = new Map();
       for (const rc of rawCores){
@@ -930,7 +993,7 @@ function cmpSyll(a, b){
       return { initial: bestI || '', count: bestC<0 ? 0 : bestC };
     }
 
-    /******** Row: prompt+choices ********/
+    /******** Row modes (unchanged) ********/
     async function buildRowMode(){
       currentMode = 'row';
       document.body.classList.add('row-compact');
@@ -992,7 +1055,6 @@ function cmpSyll(a, b){
       }
     }
 
-    /******** Row Alliteration ********/
     async function buildRowAlliMode(){
       currentMode = 'rowalli';
       document.body.classList.add('row-compact');
@@ -1051,7 +1113,6 @@ function cmpSyll(a, b){
       }
     }
 
-    /******** Row Syllable ********/
     async function buildRowSyllMode(){
       currentMode = 'rowsyll';
       document.body.classList.remove('row-compact');
@@ -1107,7 +1168,6 @@ function cmpSyll(a, b){
           how: r.how,
           targetInitial
         });
-
       }
     }
 
@@ -1221,10 +1281,11 @@ function cmpSyll(a, b){
         return;
       }
 
-      // Classic (columns)
+      // Classic (columns) — now includes 'count:' target
       const getTarget = key => {
-        if (key.startsWith('not-')) return {type:'not', letter:key.slice(4)};
-        if (key.startsWith('syll:')) return {type:'syll', syll:key.slice(5)};
+        if (key.startsWith('not-'))   return {type:'not', letter:key.slice(4)};
+        if (key.startsWith('syll:'))  return {type:'syll', syll:key.slice(5)};
+        if (key.startsWith('count:')) return {type:'count', n: parseInt(key.slice(6),10)};
         return {type:'is', letter:key};
       };
 
@@ -1241,6 +1302,8 @@ function cmpSyll(a, b){
             ok = (SYLL_MATCH==='any')
               ? syls.some(s => cmpSyll(s, target.syll))
               : cmpSyll(syls[0], target.syll);
+          } else if (target.type === 'count') {
+            ok = syllableCount(coreRaw) === target.n;
           } else {
             const initial = initialFromStem(coreRaw);
             ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
@@ -1391,18 +1454,23 @@ function cmpSyll(a, b){
         await ensureStorageLoaded();
         if(imageFiles.length===0){ alert('No hay imágenes disponibles.'); return; }
       }
-      const hasSyll = SOLO_SYLLABLES.length > 0;
-      const activeLetters = hasSyll ? [] : [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
-      if(!hasSyll && activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
+      const hasSyll  = SOLO_SYLLABLES.length > 0;
+      const hasCount = SOLO_SYLLCOUNT.length > 0;
+      const activeLetters = (hasSyll || hasCount) ? [] : [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
+      if(!hasSyll && !hasCount && activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
       const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
       const useWords = SOLO_WORDS.length > 0;
 
       const payload =
         useWords
-          ? buildRoundFromWordList(activeLetters, SOLO_SYLLABLES, SOLO_WORDS)
-          : (hasSyll
-              ? buildRoundFromSyllables(SOLO_SYLLABLES, perCol)
-              : buildRoundFromLetters(activeLetters, perCol));
+          ? (hasCount
+              ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
+              : buildRoundFromWordList(activeLetters, SOLO_SYLLABLES, SOLO_WORDS))
+          : (hasCount
+              ? buildRoundFromSyllCount(SOLO_SYLLCOUNT, perCol)
+              : (hasSyll
+                  ? buildRoundFromSyllables(SOLO_SYLLABLES, perCol)
+                  : buildRoundFromLetters(activeLetters, perCol)));
 
       await channel.send({ type:'broadcast', event:'ROUND', payload });
     });
@@ -1439,9 +1507,10 @@ function cmpSyll(a, b){
 
       const per = SOLO_PER || 4;
       const modeTxt =
-        (MODE==='row')     ? `modo filas` :
+        (MODE==='row')       ? `modo filas` :
         (MODE==='rowalli' || MODE==='allisort') ? `aliteración por filas` :
-        (MODE==='rowsyll') ? `sílabas (inicio/final) por filas` :
+        (MODE==='rowsyll')   ? `sílabas (inicio/final) por filas` :
+        (MODE==='syllcount' || SOLO_SYLLCOUNT.length) ? `conteo de sílabas (${(SOLO_SYLLCOUNT.join(', ')||'1+')})` :
         (SOLO_SYLLABLES.length
           ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
           : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras'));
@@ -1463,13 +1532,18 @@ function cmpSyll(a, b){
 
       document.body.classList.remove('row-compact');
 
-      const hasSyll = SOLO_SYLLABLES.length > 0;
+      const hasSyll  = SOLO_SYLLABLES.length > 0;
+      const hasCount = SOLO_SYLLCOUNT.length > 0;
       const per = SOLO_PER || 4;
       document.body.classList.toggle('one-per', per === 1);
 
       let payload;
       if (SOLO_WORDS.length > 0) {
-        payload = buildRoundFromWordList(hasSyll ? [] : SOLO_LETTERS, SOLO_SYLLABLES, SOLO_WORDS);
+        payload = hasCount
+          ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
+          : buildRoundFromWordList(hasSyll ? [] : SOLO_LETTERS, SOLO_SYLLABLES, SOLO_WORDS);
+      } else if (hasCount) {
+        payload = buildRoundFromSyllCount(SOLO_SYLLCOUNT, per);
       } else if (hasSyll) {
         payload = buildRoundFromSyllables(SOLO_SYLLABLES, per);
       } else {
@@ -1490,7 +1564,7 @@ function cmpSyll(a, b){
       if (SOLO_MODE) {
         setPanelsForSolo();
         await ensureStorageLoaded();
-        if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' && MODE!=='rowsyll') return;
+        if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' && MODE!=='rowsyll' && MODE!=='syllcount') return;
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
