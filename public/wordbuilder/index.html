@@ -15,11 +15,12 @@
     --bg:#fafbff; --grid:#eef1f7; --ink:#111; --muted:#6b7280; --brand:#2563eb;
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
     --trash:#fee2e2; --danger:#ef4444;
-    --gap:12px;            /* gap between boxes */
-    --inner-gap:10px;      /* gap inside a box (between tiles) */
+    --gap:12px;            /* gap between word boxes */
+    --inner-gap:10px;      /* gap inside a word box (between tiles) */
     --tile-min-w:48px;     /* palette tile base size */
     --tile-h:48px;
     --tile-fs:28px;
+    --tray-cols: 10;       /* default items per row in palettes (can be overridden by URL) */
   }
   html,body{height:100%}
   body{
@@ -53,11 +54,10 @@
     border-radius:12px;
     padding:12px;
   }
-
-  /* ===== Slots now hug their content ===== */
+  /* Word slots hug their content */
   .slots{
     display:grid;
-    grid-template-columns:repeat(var(--cols,4), max-content); /* columns sized by content */
+    grid-template-columns:repeat(var(--cols,4), max-content);
     gap:var(--gap);
     align-items:start;
   }
@@ -65,32 +65,37 @@
     background:#fff;
     border:2px solid var(--drop-border);
     border-radius:12px;
-    padding:6px 8px;                 /* tighter padding */
+    padding:6px 8px;
     display:flex; gap:var(--inner-gap);
     align-items:center; flex-wrap:nowrap; justify-content:flex-start;
-    width:max-content;               /* shrink to fit */
-    max-width:100%;
-    /* Keep a visible target when empty */
+    width:max-content; max-width:100%;
     position:relative;
   }
   .slot:empty::before{
     content:""; display:block;
-    width:8ch;                       /* small placeholder width */
-    height:clamp(40px, 6vh, 64px);   /* placeholder height ~ tile height */
+    width:8ch; height:clamp(40px, 6vh, 64px);
   }
 
-  .row-bottom{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
+  /* Bottom area: note + trash stacked, left-aligned */
+  .row-bottom{margin-top:12px}
+  .note-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
   .trash{
-    display:flex;align-items:center;gap:8px;
+    display:inline-flex;align-items:center;gap:8px;
     background:var(--trash);border:2px dashed var(--danger);color:#991b1b;
-    padding:8px 12px;border-radius:12px;font-size:16px;user-select:none
+    padding:6px 10px;border-radius:12px;font-size:16px;user-select:none
   }
 
-  /* Palettes */
+  /* Palettes (right) */
   .palettes{display:grid;grid-template-columns:1fr;gap:14px}
   .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
   .card h2{margin:0 0 8px;font-size:18px}
-  .tray{display:flex;flex-wrap:wrap;gap:8px}
+
+  /* NEW: grid palettes with controllable columns */
+  .tray{
+    display:grid;
+    grid-template-columns: repeat(var(--tray-cols), max-content);
+    gap:8px;
+  }
 
   /* Tiles (palette & dragging) */
   .tile{
@@ -113,17 +118,13 @@
 
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-  /* ===== In-slot: word look (no inner box) ===== */
+  /* In-slot: word look (no inner box) */
   .slot .tile.in-slot{
-    flex:0 0 auto;
-    min-width:0;
-    height:clamp(40px, 6vh, 64px);     /* smaller, matches slot placeholder */
+    flex:0 0 auto; min-width:0;
+    height:clamp(40px, 6vh, 64px);
     font-size:clamp(26px, 3.4vw, 56px);
     padding:0 6px;
-    background:transparent;
-    border:none;
-    border-radius:0;
-    box-shadow:none;
+    background:transparent; border:none; border-radius:0; box-shadow:none;
   }
   .slot .tile.in-slot .x{ top:-6px; right:-6px; }
 </style>
@@ -149,9 +150,13 @@
 <main>
   <section class="board">
     <div id="slots" class="slots" style="--cols:4"></div>
+
+    <!-- NOTE + TRASH stacked so trash doesn't take horizontal room -->
     <div class="row-bottom">
-      <small class="note">Consejo: suelta sobre la papelera para borrar.</small>
-      <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
+      <div class="note-wrap">
+        <small class="note">Consejo: suelta sobre la papelera para borrar.</small>
+        <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
+      </div>
     </div>
   </section>
 
@@ -171,6 +176,10 @@
   /* ===== URL options ===== */
   const qs = new URLSearchParams(location.search);
   const BOXES = clampInt(qs.get('boxes') ?? qs.get('drops'), 4, 1, 12);
+
+  // NEW: items per row for palettes
+  const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
+  if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
 
   function clampInt(val, fallback, min, max){
     const n = parseInt(val, 10);
