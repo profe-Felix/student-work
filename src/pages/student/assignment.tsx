@@ -30,6 +30,9 @@ import AudioRecordButton from '../../components/AudioRecordButton'
 import TimelineBar from '../../components/TimelineBar'
 import type { AudioSeg, PageArtifact } from '../../types/timeline'
 
+// NEW: subscribe to teacher color policy from db.ts (avoid name clash)
+import { subscribeToGlobal as subscribeToGlobalColors } from '../../lib/db'
+
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily' // legacy purge helper
 const AUTO_SUBMIT_ON_PAGE_CHANGE = true
@@ -332,12 +335,31 @@ export default function StudentAssignment(){
   const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence(classCode))
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
+  // NEW: teacher color policy
+  const [allowColors, setAllowColors] = useState<boolean>(true)
+
   const [color, setColor] = useState('#1F75FE')
   const [size,  setSize]  = useState(6)
   const [handMode, setHandMode] = useState(true)
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
+
+  // Lock color to black whenever teacher disables colors
+  useEffect(() => {
+    if (!allowColors) setColor('#111111')
+  }, [allowColors])
+
+  // Subscribe to teacher's 'setAllowColors' broadcast
+  useEffect(() => {
+    const off = subscribeToGlobalColors((msg: { type: string; payload?: any }) => {
+      if (msg?.type === 'setAllowColors') {
+        const next = !!msg?.payload?.allowColors
+        setAllowColors(next)
+      }
+    })
+    return () => { try { off?.() } catch {} }
+  }, [])
 
   // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
@@ -1321,22 +1343,32 @@ setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : n
           style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
       </div>
 
-      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
-        <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
-          {CRAYOLA_24.map(c=>(
-            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
-              style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
-          ))}
+      {/* Color palettes — shown only if allowed */}
+      {allowColors ? (
+        <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
+          <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+            {CRAYOLA_24.map(c=>(
+              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+            ))}
+          </div>
+          <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+            {SKIN_TONES.map(c=>(
+              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+            ))}
+          </div>
         </div>
-        <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
-          {SKIN_TONES.map(c=>(
-            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
-              style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
-          ))}
+      ) : (
+        <div style={{
+          fontSize:12, fontWeight:700, textAlign:'center', padding:'10px 8px',
+          border:'1px dashed #e5e7eb', borderRadius:8, color:'#6b7280', background:'#fafafa'
+        }}>
+          Colors off by teacher
         </div>
-      </div>
+      )}
 
       {/* 5.6 — record + submit */}
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
@@ -1474,7 +1506,7 @@ const canNext = baseOk && canMoveTo(pageIndex + 1)
               ref={drawRef}
               width={canvasSize.w}
               height={canvasSize.h}
-              color={color}
+              color={allowColors ? color : '#111111'}
               size={size}
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
