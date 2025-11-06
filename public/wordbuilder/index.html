@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Construye palabras — Letras & Sílabas</title>
+<title>Construye palabras — Letras, Sílabas, Palabras & Imágenes</title>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,12 +15,13 @@
     --bg:#fafbff; --grid:#eef1f7; --ink:#111; --muted:#6b7280; --brand:#2563eb;
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
     --trash:#fee2e2; --danger:#ef4444;
-    --gap:12px;            /* gap between word boxes */
-    --inner-gap:10px;      /* gap inside a word box (between tiles) */
-    --tile-min-w:48px;     /* palette tile base size */
+    --gap:12px;              /* gap between word boxes */
+    --inner-gap:10px;        /* gap inside a word box (between tiles) */
+    --tile-min-w:48px;       /* palette text tile base size */
     --tile-h:48px;
     --tile-fs:28px;
-    --tray-cols: 10;       /* default items per row in palettes (can be overridden by URL) */
+    --tray-cols: 10;         /* items per row in right palettes (URL-overridable) */
+    --space-w: 1ch;          /* width of space when dropped */
   }
   html,body{height:100%}
   body{
@@ -54,7 +55,6 @@
     border-radius:12px;
     padding:12px;
   }
-  /* Word slots hug their content */
   .slots{
     display:grid;
     grid-template-columns:repeat(var(--cols,4), max-content);
@@ -71,12 +71,9 @@
     width:max-content; max-width:100%;
     position:relative;
   }
-  .slot:empty::before{
-    content:""; display:block;
-    width:8ch; height:clamp(40px, 6vh, 64px);
-  }
+  .slot:empty::before{ content:""; display:block; width:8ch; height:clamp(40px, 6vh, 64px); }
 
-  /* Bottom area: note + trash stacked, left-aligned */
+  /* Bottom: note + trash stacked on the left */
   .row-bottom{margin-top:12px}
   .note-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
   .trash{
@@ -85,19 +82,18 @@
     padding:6px 10px;border-radius:12px;font-size:16px;user-select:none
   }
 
-  /* Palettes (right) */
+  /* Right palettes */
   .palettes{display:grid;grid-template-columns:1fr;gap:14px}
   .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
   .card h2{margin:0 0 8px;font-size:18px}
-
-  /* NEW: grid palettes with controllable columns */
+  .card small{color:var(--muted)}
   .tray{
     display:grid;
     grid-template-columns: repeat(var(--tray-cols), max-content);
     gap:8px;
   }
 
-  /* Tiles (palette & dragging) */
+  /* Text tiles */
   .tile{
     user-select:none; -webkit-user-drag:none; touch-action:none;
     display:inline-flex; align-items:center; justify-content:center;
@@ -109,16 +105,15 @@
   .tile:active{cursor:grabbing; transform:scale(.98)}
   .tile .x{
     position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:999px;
-    background:#fff; border:2px solid var(--danger); color:var(--danger); font-size:14px; display:none;
+    background:#fff; border:2px solid var(--danger); color:#ef4444; font-size:14px; display:none;
     align-items:center; justify-content:center; cursor:pointer
   }
   .tile.clone .x{display:flex}
   .dragging{opacity:.9; box-shadow:0 8px 24px rgba(0,0,0,.15)}
   .highlight{outline:3px solid #a5b4fc; outline-offset:2px}
-
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-  /* In-slot: word look (no inner box) */
+  /* In-slot compact look (remove inner box) */
   .slot .tile.in-slot{
     flex:0 0 auto; min-width:0;
     height:clamp(40px, 6vh, 64px);
@@ -127,6 +122,31 @@
     background:transparent; border:none; border-radius:0; box-shadow:none;
   }
   .slot .tile.in-slot .x{ top:-6px; right:-6px; }
+
+  /* Image tiles */
+  .tile.img{ padding:4px 6px; min-width:auto; }
+  .tile.img img{ display:block; max-height:var(--tile-h); height:auto; width:auto; max-width:160px; }
+  .slot .tile.img.in-slot{ background:transparent; border:none; padding:0 4px; }
+  .slot .tile.img.in-slot img{ max-height:clamp(40px, 6vh, 64px); border-radius:6px; }
+
+  /* Space tile */
+  .tile.space{
+    border-style:dashed;
+    background:#f3f4f6;
+    min-width:auto;
+    padding:0 10px;
+    font-size:16px;
+  }
+  .tile.space::after{ content:"␣"; }
+  .slot .tile.space.in-slot{
+    width:var(--space-w);
+    min-width:var(--space-w);
+    padding:0;
+    height:clamp(40px, 6vh, 64px);
+    font-size:0;                 /* invisible label */
+    background:transparent;
+    border:none;
+  }
 </style>
 </head>
 <body>
@@ -148,10 +168,9 @@
 </header>
 
 <main>
+  <!-- LEFT: Word building board -->
   <section class="board">
     <div id="slots" class="slots" style="--cols:4"></div>
-
-    <!-- NOTE + TRASH stacked so trash doesn't take horizontal room -->
     <div class="row-bottom">
       <div class="note-wrap">
         <small class="note">Consejo: suelta sobre la papelera para borrar.</small>
@@ -160,7 +179,12 @@
     </div>
   </section>
 
+  <!-- RIGHT: Palettes -->
   <aside class="palettes">
+    <div class="card" id="spaceCard">
+      <h2>Espacio</h2>
+      <div id="spaceTray" class="tray"></div>
+    </div>
     <div class="card" id="lettersCard">
       <h2>Letras</h2>
       <div id="lettersTray" class="tray"></div>
@@ -168,6 +192,15 @@
     <div class="card" id="syllCard">
       <h2>Sílabas</h2>
       <div id="syllTray" class="tray"></div>
+    </div>
+    <div class="card" id="wordsCard">
+      <h2>Palabras</h2>
+      <div id="wordsTray" class="tray"></div>
+    </div>
+    <div class="card" id="picsCard">
+      <h2>Imágenes</h2>
+      <small>Arrastra imágenes (o pégalos) aquí. También puedes precargar con <code>?imgs=URL1,URL2</code>.</small>
+      <div id="picsTray" class="tray"></div>
     </div>
   </aside>
 </main>
@@ -177,9 +210,15 @@
   const qs = new URLSearchParams(location.search);
   const BOXES = clampInt(qs.get('boxes') ?? qs.get('drops'), 4, 1, 12);
 
-  // NEW: items per row for palettes
   const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
   if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
+
+  const spaceParam = (qs.get('space') ?? 'on').toLowerCase();
+  const SPACE_ON = !['0','off','false','none','no'].includes(spaceParam);
+  const spaceW = parseFloat(qs.get('spacew'));
+  if (!isNaN(spaceW) && spaceW > 0 && spaceW < 5) {
+    document.documentElement.style.setProperty('--space-w', `${spaceW}ch`);
+  }
 
   function clampInt(val, fallback, min, max){
     const n = parseInt(val, 10);
@@ -206,49 +245,104 @@
     'é','e','ll','k','w','x'
   ];
   const DEFAULT_SYLL = ['ma','me','mi','mo','mu','la','le','li','lo','lu','pa','pe','pi','po','pu','sa','se','si','so','su','bra','bre','bri','bro','bru','cha','che','chi','cho','chu','que','qui'];
+  const DEFAULT_WORDS = ['yo','tú','mi','la','el','un','una','me','te','va','no','sí'];
 
   const LETTERS = getList('letters', DEFAULT_LETTERS);
   const SYLL = getList(['syll','syllables'], DEFAULT_SYLL);
+  const WORDS = getList(['words','word'], DEFAULT_WORDS);
+  const IMG_URLS = getList(['imgs','images','pics','pictures'], []); // optional
 
   /* ===== DOM refs ===== */
   const slotsEl = document.getElementById('slots');
   const trashEl = document.getElementById('trash');
+
+  const spaceCard = document.getElementById('spaceCard');
+  const spaceTray = document.getElementById('spaceTray');
+
   const lettersTray = document.getElementById('lettersTray');
   const syllTray = document.getElementById('syllTray');
+  const wordsTray = document.getElementById('wordsTray');
+  const picsTray = document.getElementById('picsTray');
+
   const lettersCard = document.getElementById('lettersCard');
-  const syllCard = document.getElementById('syllCard');
+  const syllCard   = document.getElementById('syllCard');
+  const wordsCard  = document.getElementById('wordsCard');
+  const picsCard   = document.getElementById('picsCard');
+
   const boxesInput = document.getElementById('boxesInput');
   const applyBoxes = document.getElementById('applyBoxes');
-  const validateBtn = document.getElementById('validateBtn');
-
+  const validateBtn= document.getElementById('validateBtn');
   boxesInput.value = BOXES;
 
-  /* ===== Helpers ===== */
-  function makeTile(text, isClone=false){
+  /* ===== Tile makers ===== */
+  function makeTextTile(text, isClone=false){
     const div = document.createElement('div');
     div.className = 'tile' + (isClone ? ' clone' : '');
     div.textContent = text;
+    div.dataset.kind = 'text';
     div.dataset.text = text;
 
     if(isClone){
       const x = document.createElement('div');
-      x.className = 'x';
-      x.textContent = '×';
-      x.title = 'Eliminar';
+      x.className = 'x'; x.textContent = '×'; x.title = 'Eliminar';
       x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
       x.addEventListener('click', (e)=>{
         e.preventDefault(); e.stopImmediatePropagation();
-        const p = div.parentElement;
-        div.remove();
+        const p = div.parentElement; div.remove();
         if(p?.classList?.contains('slot')) relayoutSlot(p);
       });
       div.appendChild(x);
     }
-
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
 
+  function makeImageTile(url, isClone=false){
+    const div = document.createElement('div');
+    div.className = 'tile img' + (isClone ? ' clone' : '');
+    div.dataset.kind = 'img';
+    div.dataset.src = url;
+
+    const im = document.createElement('img');
+    im.src = url; im.alt = 'img';
+    div.appendChild(im);
+
+    if(isClone){
+      const x = document.createElement('div');
+      x.className = 'x'; x.textContent = '×'; x.title = 'Eliminar';
+      x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
+      x.addEventListener('click', (e)=>{
+        e.preventDefault(); e.stopImmediatePropagation();
+        const p = div.parentElement; div.remove();
+        if(p?.classList?.contains('slot')) relayoutSlot(p);
+      });
+      div.appendChild(x);
+    }
+    makeDraggable(div, { cloneOnDrag: !isClone });
+    return div;
+  }
+
+  function makeSpaceTile(isClone=false){
+    const div = document.createElement('div');
+    div.className = 'tile space' + (isClone ? ' clone' : '');
+    div.dataset.kind = 'space';
+    div.dataset.text = ' ';
+    if(isClone){
+      const x = document.createElement('div');
+      x.className = 'x'; x.textContent = '×'; x.title = 'Eliminar';
+      x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
+      x.addEventListener('click', (e)=>{
+        e.preventDefault(); e.stopImmediatePropagation();
+        const p = div.parentElement; div.remove();
+        if(p?.classList?.contains('slot')) relayoutSlot(p);
+      });
+      div.appendChild(x);
+    }
+    makeDraggable(div, { cloneOnDrag: !isClone });
+    return div;
+  }
+
+  /* ===== Build board & palettes ===== */
   function buildSlots(n){
     slotsEl.style.setProperty('--cols', n);
     slotsEl.innerHTML = '';
@@ -261,13 +355,30 @@
   }
 
   function fillPalettes(){
+    // Space (its own small card)
+    spaceTray.innerHTML = '';
+    spaceCard.style.display = SPACE_ON ? '' : 'none';
+    if (SPACE_ON) spaceTray.appendChild(makeSpaceTile(false));
+
+    // Letters
     lettersTray.innerHTML = '';
     lettersCard.style.display = LETTERS.length ? '' : 'none';
-    LETTERS.forEach(t => lettersTray.appendChild(makeTile(t, false)));
+    LETTERS.forEach(t => lettersTray.appendChild(makeTextTile(t, false)));
 
+    // Syllables
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
-    SYLL.forEach(t => syllTray.appendChild(makeTile(t, false)));
+    SYLL.forEach(t => syllTray.appendChild(makeTextTile(t, false)));
+
+    // Words
+    wordsTray.innerHTML = '';
+    wordsCard.style.display = WORDS.length ? '' : 'none';
+    WORDS.forEach(w => wordsTray.appendChild(makeTextTile(w, false)));
+
+    // Pictures
+    picsTray.innerHTML = '';
+    picsCard.style.display = '';
+    IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
   }
 
   /* ===== Layout inside slots ===== */
@@ -291,8 +402,15 @@
       if (e.target && e.target.closest && e.target.closest('.x')) return; // clicking ✕ → no drag
 
       const src = e.currentTarget;
-      const isPalette = src.parentElement === lettersTray || src.parentElement === syllTray;
-      const dragEl = (cloneOnDrag && isPalette) ? makeTile(src.dataset.text, true) : src;
+      const isPalette = [spaceTray, lettersTray, syllTray, wordsTray, picsTray].includes(src.parentElement);
+      let dragEl;
+      if (cloneOnDrag && isPalette){
+        if (src.dataset.kind === 'img') dragEl = makeImageTile(src.dataset.src, true);
+        else if (src.dataset.kind === 'space') dragEl = makeSpaceTile(true);
+        else dragEl = makeTextTile(src.dataset.text, true);
+      } else {
+        dragEl = src;
+      }
 
       if(dragEl !== src && isPalette){
         document.body.appendChild(dragEl);
@@ -385,12 +503,43 @@
     drag = null;
   }
 
+  /* ===== Pics: drop/paste images into the Pictures tray ===== */
+  ;['dragenter','dragover'].forEach(ev=>{
+    picsTray.addEventListener(ev, e=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; });
+  });
+  picsTray.addEventListener('drop', async e=>{
+    e.preventDefault();
+    const files = [...(e.dataTransfer?.files||[])].filter(f=>f.type.startsWith('image/'));
+    for(const f of files){
+      const url = URL.createObjectURL(f);
+      picsTray.appendChild(makeImageTile(url, false));
+    }
+  });
+  window.addEventListener('paste', e=>{
+    const items = [...(e.clipboardData?.items||[])];
+    items.forEach(it=>{
+      if(it.type && it.type.startsWith('image/')){
+        const file = it.getAsFile();
+        if(file){
+          const url = URL.createObjectURL(file);
+          picsTray.appendChild(makeImageTile(url, false));
+        }
+      }
+    });
+  });
+
   /* ===== Validate ===== */
   validateBtn.addEventListener('click', ()=>{
     const result = [];
     document.querySelectorAll('.slot').forEach(slot=>{
-      const word = [...slot.querySelectorAll('.tile')].map(t=>t.dataset.text).join('');
-      result.push(word);
+      let s = '';
+      [...slot.querySelectorAll('.tile')].forEach(t=>{
+        const k = t.dataset.kind;
+        if (k === 'text') s += t.dataset.text ?? '';
+        else if (k === 'space') s += ' ';
+        else if (k === 'img') s += (s.endsWith(' ') ? '' : ' ') + '[img]' + ' ';
+      });
+      result.push(s.trim());
     });
     alert('Cajas:\n' + result.map((w,i)=>`#${i+1}: ${w || '—'}`).join('\n'));
   });
