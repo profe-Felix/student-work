@@ -328,7 +328,9 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       redraw()
 
       // Only block default when we actually started drawing with a finger
-      if (e.pointerType !== 'pen') ;(e as any).preventDefault?.()
+      if (e.pointerType !== 'pen') {
+        ;(e as any).preventDefault?.()
+      }
     }
 
     const onPointerMove = (e: PointerEvent) => {
@@ -353,7 +355,9 @@ export default forwardRef<DrawCanvasHandle, Props>(function DrawCanvas(
       })
       redraw()
 
-      if (e.pointerType !== 'pen') ;(e as any).preventDefault?.()
+      if (e.pointerType !== 'pen') {
+        ;(e as any).preventDefault?.()
+      }
     }
 
     const onPointerUp = (e: PointerEvent) => {
