@@ -552,7 +552,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   const teacherPageIndexRef = useRef<number | null>(null)
 
   // snap-once flag
-  const initialSnappedRef = useRef(false)
+  the const initialSnappedRef = useRef(false) // NOTE: this line remains unchanged from your version
 
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')
@@ -573,11 +573,10 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
     const lock  = !!p.lockNav;
     const tpi   = (typeof p.teacherPageIndex === 'number') ? p.teacherPageIndex : undefined;
 
-setAutoFollow(!!auto);
-setAllowedPages(Array.isArray(p.allowedPages) ? p.allowedPages : null);
-setFocusOn(!!focus);
-setNavLocked(!!(focus && lock));
-
+    setAutoFollow(!!auto);
+    setAllowedPages(Array.isArray(p.allowedPages) ? p.allowedPages : null);
+    setFocusOn(!!focus);
+    setNavLocked(!!(focus && lock));
 
     if (typeof tpi === 'number') {
       teacherPageIndexRef.current = tpi;
@@ -674,23 +673,23 @@ setNavLocked(!!(focus && lock));
     })()
   }, [classBootDone, rtAssignmentId])
 
-useEffect(() => {
-  if (!rtAssignmentId) return
-  try {
-    const p = getCachedPresence(classCode, rtAssignmentId);
-    if (p) {
-      applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
-    } else {
-      ;(async () => {
-        const s = await fetchPresenceSnapshot(rtAssignmentId);
-        if (s) {
-          setCachedPresence(classCode, rtAssignmentId, s);
-          applyPresenceSnapshot(s, { snap: true, assignmentId: rtAssignmentId });
-        }
-      })();
-    }
-  } catch { /* ignore */ }
-}, [classCode, rtAssignmentId])
+  useEffect(() => {
+    if (!rtAssignmentId) return
+    try {
+      const p = getCachedPresence(classCode, rtAssignmentId);
+      if (p) {
+        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
+      } else {
+        ;(async () => {
+          const s = await fetchPresenceSnapshot(rtAssignmentId);
+          if (s) {
+            setCachedPresence(classCode, rtAssignmentId, s);
+            applyPresenceSnapshot(s, { snap: true, assignmentId: rtAssignmentId });
+          }
+        })();
+      }
+    } catch { /* ignore */ }
+  }, [classCode, rtAssignmentId])
 
 
   /* ---------- Hello → presence-snapshot handshake ---------- */
@@ -1095,9 +1094,8 @@ useEffect(() => {
         const lock  = !!on && !!lockNav;
 
         // update local state
-// update local state
-setFocusOn(!!focus);
-setNavLocked(!!lock);
+        setFocusOn(!!focus);
+        setNavLocked(!!lock);
 
         // build a coherent snapshot using current autoFollow/allowedPages/teacherPageIndex
         const snapshot: TeacherPresenceState = {
@@ -1124,8 +1122,8 @@ setNavLocked(!!lock);
             : (teacherPageIndexRef.current ?? undefined)
         };
         // persist + apply
-setAutoFollow(!!snapshot.autoFollow);
-setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : null);
+        setAutoFollow(!!snapshot.autoFollow);
+        setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : null);
 
         if (typeof snapshot.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = snapshot.teacherPageIndex;
@@ -1343,7 +1341,7 @@ setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : n
           style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
       </div>
 
-      {/* Color palettes — shown only if allowed */}
+      {/* Color palettes — full when allowed; single black swatch when disabled */}
       {allowColors ? (
         <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
           <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
@@ -1362,11 +1360,19 @@ setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : n
           </div>
         </div>
       ) : (
-        <div style={{
-          fontSize:12, fontWeight:700, textAlign:'center', padding:'10px 8px',
-          border:'1px dashed #e5e7eb', borderRadius:8, color:'#6b7280', background:'#fafafa'
-        }}>
-          Colors off by teacher
+        <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
+          <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Color</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+            <button
+              onClick={()=>{ setTool('pen'); setColor('#000000') }}
+              style={{
+                width:40, height:40, borderRadius:10,
+                border: color==='#000000' ? '3px solid #111' : '2px solid #ddd',
+                background:'#000000'
+              }}
+              title="Black"
+            />
+          </div>
         </div>
       )}
 
@@ -1396,52 +1402,52 @@ setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : n
     )
   }, [pdfUrl, pageIndex, hasTask, onPdfReady])
   
-// ---- Step 3 guards: centralized navigation permission ----
-const canMoveTo = useCallback((target: number) => {
-  // Hard stop if UI is locked (e.g., focus+lock)
-  if (navLocked) return false
+  // ---- Step 3 guards: centralized navigation permission ----
+  const canMoveTo = useCallback((target: number) => {
+    // Hard stop if UI is locked (e.g., focus+lock)
+    if (navLocked) return false
 
-  // If teacher is auto-following, only allow moving TO the teacher’s page
-  if (autoFollow) {
-    const tpi = teacherPageIndexRef.current
-    if (typeof tpi === 'number') return target === tpi
-    return false
-  }
+    // If teacher is auto-following, only allow moving TO the teacher’s page
+    if (autoFollow) {
+      const tpi = teacherPageIndexRef.current
+      if (typeof tpi === 'number') return target === tpi
+      return false
+    }
 
-  // If teacher limited pages, enforce whitelist
-  if (Array.isArray(allowedPages) && allowedPages.length > 0) {
-    return allowedPages.includes(target)
-  }
+    // If teacher limited pages, enforce whitelist
+    if (Array.isArray(allowedPages) && allowedPages.length > 0) {
+      return allowedPages.includes(target)
+    }
 
-  return true
-}, [navLocked, autoFollow, allowedPages])
+    return true
+  }, [navLocked, autoFollow, allowedPages])
 
-// 2d — page navigation that auto-submits before changing pages (if enabled)
-const goToPage = useCallback(async (i:number) => {
-  if (!Number.isFinite(i)) return
-  const target = Math.max(0, i)
+  // 2d — page navigation that auto-submits before changing pages (if enabled)
+  const goToPage = useCallback(async (i:number) => {
+    if (!Number.isFinite(i)) return
+    const target = Math.max(0, i)
 
-  // Respect teacher constraints
-  if (!canMoveTo(target)) {
-    showToast('Navegación limitada por el/la docente en este momento', 'err', 1400)
-    return
-  }
+    // Respect teacher constraints
+    if (!canMoveTo(target)) {
+      showToast('Navegación limitada por el/la docente en este momento', 'err', 1400)
+      return
+    }
 
-  if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
-    try { await submitIfNeeded('page-change') } catch {}
-  }
+    if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
+      try { await submitIfNeeded('page-change') } catch {}
+    }
 
-  // Do NOT force-unlock here; leave lock state to focus handlers
-  setPageIndex(target)
-}, [canMoveTo, submitIfNeeded])
+    // Do NOT force-unlock here; leave lock state to focus handlers
+    setPageIndex(target)
+  }, [canMoveTo, submitIfNeeded])
 
-const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
-const goNext = useCallback(() => { void goToPage(pageIndex + 1) }, [goToPage, pageIndex])
+  const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
+  const goNext = useCallback(() => { void goToPage(pageIndex + 1) }, [goToPage, pageIndex])
 
-// === Step 3 — Pager guards (uses same centralized canMoveTo) ===
-const baseOk = hasTask && !saving && !submitInFlight.current
-const canPrev = baseOk && canMoveTo(Math.max(0, pageIndex - 1))
-const canNext = baseOk && canMoveTo(pageIndex + 1)
+  // === Step 3 — Pager guards (uses same centralized canMoveTo) ===
+  const baseOk = hasTask && !saving && !submitInFlight.current
+  const canPrev = baseOk && canMoveTo(Math.max(0, pageIndex - 1))
+  const canNext = baseOk && canMoveTo(pageIndex + 1)
 
 
 
