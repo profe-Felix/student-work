@@ -305,7 +305,7 @@ export function subscribeToGlobal(
   const ch = supabase.channel('global', { config: { broadcast: { self: false } } })
 
   // Add any other global events here as you expand features
-  ch.on('broadcast', { event: 'setAllowColors' }, (m) => {
+  ch.on('broadcast', { event: 'setAllowColors' }, (m: { event: string; payload: any }) => {
     onMessage({ type: 'setAllowColors', payload: m.payload })
   })
 
@@ -318,7 +318,7 @@ export function subscribeToGlobal(
 // Teacher triggers this to broadcast the policy (no DB writes needed).
 export async function setAllowColors(allow: boolean) {
   const ch = supabase.channel('global', { config: { broadcast: { self: true } } })
-  await ch.subscribe((status) => {
+  await ch.subscribe((status: 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT') => {
     if (status === 'SUBSCRIBED') {
       ch.send({
         type: 'broadcast',
