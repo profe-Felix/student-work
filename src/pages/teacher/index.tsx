@@ -755,17 +755,18 @@ export default function TeacherDashboard() {
         </button>
       </div>
 
-      {/* Only render TeacherSyncBar when DB writes are allowed */}
-      {assignmentId && pageId && authed && ALLOW_DB_WRITES && (
-        <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
-          <TeacherSyncBar
-            classCode={classCode}
-            assignmentId={assignmentId}
-            pageId={pageId}
-            pageIndex={pageIndex}
-          />
-        </div>
-      )}
+{/* Always show TeacherSyncBar — even when anonymous */}
+{assignmentId && pageId && (
+  <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
+    <TeacherSyncBar
+      classCode={classCode}
+      assignmentId={assignmentId}
+      pageId={pageId}
+      pageIndex={pageIndex}
+    />
+  </div>
+)}
+
 
       <div
         style={{
