@@ -95,6 +95,7 @@ export default function TeacherDashboard() {
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
 
   const lastAnnouncedAssignment = useRef<string>('')
+  const lastAnnounced = lastAnnouncedAssignment
 
   const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
@@ -244,7 +245,6 @@ export default function TeacherDashboard() {
   // Students will poll teacher_state (Step 3).
 
   // initial assignment broadcast (CLASS-SCOPED handoff is still fine)
-  const lastAnnounced = lastAnnouncedAssignment
   useEffect(() => {
     if (!assignmentId) return
     if (lastAnnounced.current === assignmentId) return
