@@ -1,10 +1,13 @@
+// src/components/TeacherSyncBar.tsx
 import { useEffect, useRef, useState } from 'react'
-import { supabase, upsertTeacherState } from '../lib/db'
+import { upsertTeacherState } from '../lib/db'
 import {
   publishAutoFollow,
   publishFocus,
   publishSetPage,
   setTeacherPresence,
+  publishAllowColors,
+  teacherPresenceResponder,
 } from '../lib/realtime'
 
 type Props = {
@@ -14,9 +17,6 @@ type Props = {
   pageIndex: number
   className?: string
 }
-
-// Supabase Realtime channel status union (kept local to avoid extra imports)
-type ChannelStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR'
 
 // "1-3,5,8-9" (1-based) -> [0,1,2,4,7,8] (0-based)
 function parseRanges(input: string): number[] {
@@ -45,13 +45,10 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
   const [rangeText, setRangeText] = useState('')
   const allowedRef = useRef<number[] | null>(null)
 
-  // NEW — allow colors
+  // Allow-colors policy (realtime only; no DB write needed)
   const [allowColors, setAllowColors] = useState<boolean>(true)
-  const colorChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
-  const colorReadyRef = useRef<Promise<void> | null>(null)
-  const helloChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
-  // Build the current presence snapshot we want to advertise
+  // Build the presence snapshot we advertise to students
   const currentPresence = () => ({
     autoFollow,
     allowedPages: allowedRef.current ?? null,
@@ -60,64 +57,26 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     lockNav,
   })
 
-  // Lazy-init a warm channel for the color policy (low traffic; no ACK/self echo)
-  function ensureColorChannel() {
-    if (colorChanRef.current) return colorChanRef.current
-    const name = `colors:${classCode}:${assignmentId}`
-    const ch = supabase.channel(name, { config: { broadcast: { ack: false, self: false } } })
-    colorReadyRef.current = new Promise<void>((resolve) => {
-      ch.subscribe((status: ChannelStatus) => {
-        if (status === 'SUBSCRIBED') resolve()
-      })
-    })
-    colorChanRef.current = ch
-    return ch
-  }
-
-  async function broadcastAllowColors(next: boolean) {
-    try {
-      const ch = ensureColorChannel()
-      await (colorReadyRef.current ?? Promise.resolve())
-      await ch.send({
-        type: 'broadcast',
-        event: 'set-allow-colors',
-        payload: { allow: !!next, ts: Date.now() }
-      })
-    } catch {/* ignore */}
-  }
-
-  // Respond to student "hello" by sending a presence-snapshot
+  /** ──────────────────────────────────────────────────────────────
+   * Respond to student “hello” with a presence snapshot (realtime)
+   * ────────────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!assignmentId) return
-    const name = `assignment:${classCode}:${assignmentId}`
-    const ch = supabase
-      .channel(name, { config: { broadcast: { ack: false, self: false } } })
-      .on('broadcast', { event: 'hello' }, async () => {
-        try {
-          await ch.send({
-            type: 'broadcast',
-            event: 'presence-snapshot',
-            payload: currentPresence()
-          })
-        } catch {/* ignore */}
-      })
-      .subscribe()
-    helloChanRef.current = ch
-    return () => { try { supabase.removeChannel(ch) } catch {} }
+    const stop = teacherPresenceResponder(classCode, assignmentId, () => currentPresence())
+    return () => { try { stop?.() } catch {} }
   }, [classCode, assignmentId, autoFollow, focus, lockNav, pageIndex])
 
-  // Broadcast initial presence on mount
+  /** Broadcast initial presence on mount (class-scoped) */
   useEffect(() => {
     if (!assignmentId) return
     void setTeacherPresence(classCode, assignmentId, currentPresence())
-  }, [assignmentId])
+  }, [assignmentId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Rebroadcast presence when toggles/pageIndex change + write through to table
+  /** Rebroadcast presence when toggles/pageIndex change + write-through to table (anon-safe) */
   useEffect(() => {
     if (!assignmentId) return
     const presence = currentPresence()
     void setTeacherPresence(classCode, assignmentId, presence)
-    // direct upsert — anon allowed now
     void upsertTeacherState({
       classCode,
       assignmentId,
@@ -125,10 +84,11 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
       focusOn: presence.focusOn ?? false,
       autoFollow: presence.autoFollow ?? false,
       allowedPages: presence.allowedPages ?? null,
+      // intentionally not persisting colors in DB to avoid schema mismatch
     })
   }, [classCode, assignmentId, autoFollow, focus, lockNav, pageIndex])
 
-  // When auto-follow is ON, rebroadcast current page on change
+  /** When auto-follow is ON, rebroadcast current page on change (snap students) */
   useEffect(() => {
     if (!assignmentId || !pageId) return
     if (autoFollow) void publishSetPage(classCode, assignmentId, pageIndex)
@@ -142,6 +102,7 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     const allowed = next ? parseRanges(rangeText) : null
     allowedRef.current = allowed
 
+    // 1) presence row (snapshot)
     await setTeacherPresence(classCode, assignmentId, {
       autoFollow: next,
       allowedPages: allowed ?? null,
@@ -150,9 +111,11 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
       lockNav,
     })
 
+    // 2) live broadcast
     await publishAutoFollow(classCode, assignmentId, next, allowed ?? null, pageIndex)
     if (next) await publishSetPage(classCode, assignmentId, pageIndex)
 
+    // 3) DB write-through (anon-safe)
     await upsertTeacherState({
       classCode,
       assignmentId,
@@ -167,14 +130,20 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     if (!assignmentId) return
     const next = !focus
     setFocus(next)
+
+    // Ensure lockNav false is sent when ending focus to free students
+    const nextLock = next ? lockNav : false
+
     await setTeacherPresence(classCode, assignmentId, {
       autoFollow,
       allowedPages: allowedRef.current ?? null,
       teacherPageIndex: pageIndex,
       focusOn: next,
-      lockNav,
+      lockNav: nextLock,
     })
-    await publishFocus(classCode, assignmentId, next, lockNav)
+
+    await publishFocus(classCode, assignmentId, next, nextLock)
+
     await upsertTeacherState({
       classCode,
       assignmentId,
@@ -188,15 +157,9 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
   async function toggleAllowColors() {
     const next = !allowColors
     setAllowColors(next)
-    await broadcastAllowColors(next)
+    // pure realtime broadcast; students listen via subscribeToAssignment(... onAllowColors)
+    await publishAllowColors(classCode, assignmentId, { allow: next })
   }
-
-  // Cleanup color channel
-  useEffect(() => {
-    return () => {
-      try { if (colorChanRef.current) supabase.removeChannel(colorChanRef.current) } catch {}
-    }
-  }, [])
 
   return (
     <div className={`flex flex-wrap items-center gap-2 p-2 bg-white/80 rounded-xl shadow border ${className ?? ''}`}>
