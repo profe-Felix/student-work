@@ -30,8 +30,8 @@ import AudioRecordButton from '../../components/AudioRecordButton'
 import TimelineBar from '../../components/TimelineBar'
 import type { AudioSeg, PageArtifact } from '../../types/timeline'
 
-// NEW: subscribe to teacher color policy from db.ts (avoid name clash)
-import { subscribeToGlobal as subscribeToGlobalColors } from '../../lib/db'
+// ❌ REMOVED dead color-policy import
+// import { subscribeToGlobal as subscribeToGlobalColors } from '../../lib/db'
 
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily' // legacy purge helper
@@ -251,6 +251,7 @@ function initialPageIndexFromPresence(classCode: string): number {
 }
 
 /* ---------- server fallback to get teacher presence snapshot ---------- */
+// ⬇️ OPTIONAL persistence hook: if row has allow_colors/allowColors, attach it to snapshot
 async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPresenceState | null> {
   try {
     const { data, error } = await supabase
@@ -272,12 +273,17 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
         ? p.teacher_page_index
         : (typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : undefined),
     }
+    const allowColorsFromRow =
+      typeof p.allow_colors === 'boolean' ? p.allow_colors :
+      (typeof p.allowColors === 'boolean' ? p.allowColors : undefined)
+    if (typeof allowColorsFromRow === 'boolean') {
+      ;(snapshot as any).allowColors = allowColorsFromRow
+    }
     return snapshot
   } catch {
     return null
   }
 }
-
 export default function StudentAssignment(){
   // 🔎 enable realtime meter once
   useEffect(() => { enableRealtimeMeter() }, [])
@@ -333,7 +339,7 @@ export default function StudentAssignment(){
   const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence(classCode))
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
-  // NEW: teacher color policy
+  // ✅ NEW: teacher color policy state
   const [allowColors, setAllowColors] = useState<boolean>(true)
 
   const [color, setColor] = useState('#1F75FE')
@@ -353,16 +359,21 @@ export default function StudentAssignment(){
     if (!allowColors && tool === 'highlighter') setTool('pen')
   }, [allowColors, tool])
 
-  // Subscribe to teacher's 'setAllowColors' broadcast
+  // ✅ NEW: Subscribe to teacher color policy via Supabase realtime channel
+  // Teacher should broadcast: event='set-allow-colors', payload: { allow: boolean }
   useEffect(() => {
-    const off = subscribeToGlobalColors((msg: { type: string; payload?: any }) => {
-      if (msg?.type === 'setAllowColors') {
-        const next = !!msg?.payload?.allowColors
+    if (!rtAssignmentId) return
+    const ch = supabase
+      .channel(`colors:${classCode}:${rtAssignmentId}`, { config: { broadcast: { ack: false } } })
+      .on('broadcast', { event: 'set-allow-colors' }, (msg: any) => {
+        const next = !!msg?.payload?.allow
         setAllowColors(next)
-      }
-    })
-    return () => { try { off?.() } catch {} }
-  }, [])
+      })
+    ;(async () => { try { await ch.subscribe() } catch {} })()
+    return () => { try { ch.unsubscribe() } catch {} }
+  }, [classCode, rtAssignmentId])
+
+  // ❌ REMOVED the old global subscription that listened for { type:'setAllowColors' } messages
 
   // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
@@ -570,6 +581,10 @@ export default function StudentAssignment(){
   ) => {
     if (!p) return
 
+    // ✅ Apply allowColors if present on snapshot (optional persistence)
+    const allowC = (p as any)?.allowColors ?? (p as any)?.allow_colors
+    if (typeof allowC === 'boolean') setAllowColors(allowC)
+
     // 1) Update local UI state from snapshot
     const auto = !!p.autoFollow
     const focus = !!p.focusOn
@@ -623,7 +638,6 @@ export default function StudentAssignment(){
       }
     }
   }
-
   useEffect(() => {
     if (!classCode) return
     const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
@@ -1320,102 +1334,6 @@ useEffect(() => {
     setMedia(prev => prev.filter(s => s.id !== id))
   }
 
-  /* ---------- UI ---------- */
-  const Toolbar = (
-    <div
-      style={{
-        position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
-        zIndex:10010, width:120, maxHeight:'80vh',
-        display:'flex', flexDirection:'column', gap:10,
-        padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
-        WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none', overflow:'hidden'
-      }}
-      onTouchStart={(e)=> e.stopPropagation()}
-    >
-      <div style={{ display:'flex', gap:6 }}>
-        <button onClick={()=> setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })} title="Flip toolbar side"
-          style={{ flex:1, background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0' }}>⇄</button>
-        <button onClick={()=>setHandMode(m=>!m)}
-          style={{ flex:1, background: handMode?'#f3f4f6':'#34d399', color: handMode?'#111827':'#064e3b',
-            border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0', fontWeight:600 }}>
-          {handMode ? '✋' : '✍️'}
-        </button>
-      </div>
-
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-        {([
-          {label:'Pen',  icon:'✏️', val:'pen' as const},
-          ...(allowColors ? [{label:'Hi', icon:'🖍️', val:'highlighter' as const}] : []),
-          {label:'Erase',icon:'🧽', val:'eraser' as const},
-          {label:'Obj',  icon:'🗑️', val:'eraserObject' as const},
-        ]).map(t=>(
-          <button
-            key={t.val}
-            onClick={() => setTool(prev => (!allowColors && t.val === 'highlighter' ? 'pen' : t.val))}
-            style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
-              background: tool===t.val ? '#111' : '#fff', color: tool===t.val ? '#fff' : '#111' }}
-            title={t.label}
-          >
-            {t.icon}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6 }}>
-        {[{label:'S',val:3},{label:'M',val:6},{label:'L',val:10}].map(s=>(
-          <button key={s.label} onClick={()=>setSize(s.val)}
-            style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
-              background: size===s.val ? '#111' : '#fff', color: size===s.val ? '#fff' : '#111' }}>
-            {s.label}
-          </button>
-        ))}
-        <button onClick={()=>drawRef.current?.undo()}
-          style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
-      </div>
-
-      {/* Color palettes — shown only if allowed */}
-      {allowColors ? (
-        <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
-          <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
-            {CRAYOLA_24.map(c=>(
-              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
-                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
-            ))}
-          </div>
-          <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
-            {SKIN_TONES.map(c=>(
-              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
-                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div style={{
-          fontSize:12, fontWeight:700, textAlign:'center', padding:'10px 8px',
-          border:'1px dashed #e5e7eb', borderRadius:8, color:'#6b7280', background:'#fafafa'
-        }}>
-          Colors off by teacher
-        </div>
-      )}
-
-      {/* 5.6 — record + submit */}
-      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-        <AudioRecordButton
-          onStart={handleRecordStart}
-          onStop={handleRecordStop}
-          onLongHint={(ms)=> showToast(`Long recording (${Math.round(ms/1000)}s)…`, 'ok', 1200)}
-        />
-        <button onClick={submit}
-          style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
-            color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving || !hasTask}>
-          {saving ? 'Saving…' : 'Submit'}
-        </button>
-      </div>
-    </div>
-  )
-
   // 👇 Add this just before `return ( ... )`
   const pdfNode = useMemo(() => {
     if (!hasTask || !pdfUrl) return null
@@ -1466,7 +1384,7 @@ useEffect(() => {
   }, [canMoveTo, submitIfNeeded])
 
   const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
-  const goNext = useCallback(() => { void goToPage(pageIndex + 1) }, [goToPage, pageIndex])
+  const goNext = useCallback(() => { void goToPage(pageIndex + 1)) }, [goToPage, pageIndex]) // ⚠️ Ensure your editor keeps this line intact
 
   // === Step 3 — Pager guards (uses same centralized canMoveTo) ===
   const baseOk = hasTask && !saving && !submitInFlight.current
