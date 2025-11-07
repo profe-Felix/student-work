@@ -26,6 +26,9 @@ import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
 // colors policy (DB bootstrap + realtime persistence)
 import type { PostgrestSingleResponse } from '@supabase/supabase-js'
 
+// Supabase Realtime channel status union (local copy)
+type ChannelStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR'
+
 type LatestCell = {
   submission_id: string
   hasStrokes: boolean
@@ -91,6 +94,7 @@ export default function TeacherDashboard() {
   // NEW — teacher color policy (mirrors DB + rebroadcasts)
   const [allowColors, setAllowColors] = useState<boolean>(true)
   const colorChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  const colorReadyRef = useRef<Promise<void> | null>(null) // gate sends until SUBSCRIBED
 
   const lastAnnouncedAssignment = useRef<string>('')
 
@@ -152,15 +156,19 @@ export default function TeacherDashboard() {
     }
   }
 
-  // ── colors: warm a channel that receives own broadcasts (self:true)
+  // ── colors: warm a channel that receives own broadcasts (self:true), with SUBSCRIBED gate
   function ensureColorChannel() {
     if (colorChanRef.current) return colorChanRef.current
     if (!assignmentId) return null
     const name = `colors:${classCode}:${assignmentId}`
     const ch = supabase.channel(name, { config: { broadcast: { ack: false, self: true } } })
-    ch.subscribe().catch(() => {
-      /* ignore transient join errors */
+
+    colorReadyRef.current = new Promise<void>((resolve) => {
+      ch.subscribe((status: ChannelStatus) => {
+        if (status === 'SUBSCRIBED') resolve()
+      })
     })
+
     colorChanRef.current = ch
     return ch
   }
@@ -373,14 +381,16 @@ export default function TeacherDashboard() {
 
         if (!cancelled) setAllowColors(dbVal)
 
-        // Best-effort: rebroadcast so students snap to this on load
         const ch = ensureColorChannel()
+        // wait until SUBSCRIBED before sending to avoid REST fallback warning
+        await (colorReadyRef.current ?? Promise.resolve())
         if (ch) {
           await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload: { allow: dbVal, ts: Date.now() } })
         }
       } catch (e) {
         // if fetch fails, keep default true and still broadcast that
         const ch = ensureColorChannel()
+        await (colorReadyRef.current ?? Promise.resolve())
         if (ch) {
           await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload: { allow: true, ts: Date.now() } })
         }
