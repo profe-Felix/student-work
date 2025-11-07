@@ -9,17 +9,13 @@ import {
   type PageRow,
   supabase,
   upsertClassState,
-  // NEW: write-the-truth snapshot for students to poll
-  upsertTeacherState,
+  upsertTeacherState, // DB "truth" students can poll
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
 import {
   publishSetAssignment,
-  // ⛔️ removed: publishSetPage
-  // ⛔️ removed: setTeacherPresence
-  // ⛔️ removed: teacherPresenceResponder
-  // Rare, acceptable realtime event:
+  teacherPresenceResponder, // ✅ RESTORED: replies to 'hello' with presence-snapshot
   broadcastForceSubmit,
 } from '../../lib/realtime'
 import PlaybackDrawer from '../../components/PlaybackDrawer'
@@ -36,7 +32,6 @@ type LatestCell = {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // ONE-TIME SAFETY: normalize stroke payloads to { strokes:[{ pts:[{x,y,t?}] }] }
-// Accepts strings or objects; prefers s.pts, falls back to s.points.
 // ──────────────────────────────────────────────────────────────────────────────
 function normalizeStrokeShape(payload: any) {
   try {
@@ -60,7 +55,6 @@ function normalizeStrokeShape(payload: any) {
 }
 
 export default function TeacherDashboard() {
-  // enable RT meter once per page load
   useEffect(() => { enableRealtimeMeter() }, [])
 
   // --- class code from URL (?class=A); default 'A'
@@ -86,8 +80,7 @@ export default function TeacherDashboard() {
   const [pages, setPages] = useState<PageRow[]>([])
   const [pageId, setPageId] = useState<string>('')
 
-  // We keep a local "truth" for teacher UI; students will poll teacher_state
-  // Defaults: autoFollow true; focus off; no gating.
+  // Local teacher UI state (mirrors what students should see)
   const [focusOn, setFocusOn] = useState<boolean>(false)
   const [autoFollow, setAutoFollow] = useState<boolean>(true)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
@@ -142,7 +135,36 @@ export default function TeacherDashboard() {
   }, [pageId, pages])
   // ===== END =====
 
-  // fetch helper
+  // helper: get latest with artifacts per student for this page
+  async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
+    const { data: sub, error: se } = await supabase
+      .from('submissions')
+      .select('id, student_id, created_at, artifacts(id,kind,strokes_json,storage_path,created_at)')
+      .eq('assignment_id', assignment_id)
+      .eq('page_id', page_id)
+      .eq('student_id', student_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (se) {
+      console.error('per-student latest fetch error', se)
+      return null
+    }
+    return sub as unknown as {
+      id: string
+      student_id: string
+      created_at: string
+      artifacts: Array<{
+        id: string
+        kind: string
+        strokes_json?: any
+        storage_path?: string
+        created_at: string
+      }>
+    } | null
+  }
+
+  // ===== Dashboard grid refresh (batched) =====
   const refreshGrid = useRef<(why?: string) => Promise<void>>(async () => {})
   refreshGrid.current = async (_why?: string) => {
     if (!assignmentId || !pageId) return
@@ -156,7 +178,6 @@ export default function TeacherDashboard() {
             const latest = await listLatestByPageForStudent(assignmentId, pageId, sid)
             if (!latest) return [sid, null] as const
 
-            // Look for strokes artifact (new world: audio segments are inside strokes_json.media[])
             const strokesArt = latest.artifacts?.find(
               (a: any) => a.kind === 'strokes' && a.strokes_json
             ) as any | undefined
@@ -175,7 +196,6 @@ export default function TeacherDashboard() {
             if (mediaIn.length > 0 && typeof mediaIn[0]?.url === 'string' && mediaIn[0]!.url) {
               audioUrl = mediaIn[0]!.url
             } else {
-              // LEGACY FALLBACK: separate audio artifact
               const audioArt = latest.artifacts?.find(
                 (a: any) => a.kind === 'audio' && a.storage_path
               )
@@ -210,7 +230,7 @@ export default function TeacherDashboard() {
     }, delay)
   }
 
-  // initial loads
+  // initial loads: assignments, then pages
   useEffect(() => {
     (async () => {
       try {
@@ -238,10 +258,9 @@ export default function TeacherDashboard() {
     })()
   }, [assignmentId])
 
-  // ⛔️ Removed teacherPresenceResponder (no broadcast responder).
-  // Students will poll teacher_state (Step 3).
+  // ===== Presence paths students rely on =====
 
-  // initial assignment broadcast (CLASS-SCOPED handoff is still fine)
+  // 1) CLASS-SCOPED handoff (assignment id) + initial teacher_state + teacher_presence row
   const lastAnnounced = lastAnnouncedAssignment
   useEffect(() => {
     if (!assignmentId) return
@@ -250,29 +269,50 @@ export default function TeacherDashboard() {
       try {
         await publishSetAssignment(classCode, assignmentId)
         lastAnnounced.current = assignmentId
-
-        // Also write the teacher_state snapshot so students can poll immediately.
-        await safeUpsertTeacherState()
+        await safeUpsertTeacherState()          // students poll teacher_state
+        await safeUpsertTeacherPresenceRow()    // students may poll teacher_presence
       } catch (err) {
         console.error('initial announce / teacher_state write failed', err)
       }
     })()
   }, [classCode, assignmentId])
 
-  // Keep DB "class_state" in sync for cold start (unchanged)
+  // 2) Keep DB "class_state" in sync for cold start
   useEffect(() => {
     if (!classCode || !assignmentId || !pageId) return
     upsertClassState(classCode, assignmentId, pageId, pageIndex)
       .catch(err => console.error('upsertClassState failed', err))
   }, [classCode, assignmentId, pageId, pageIndex])
 
+  // 3) Presence responder: answers student 'hello' with a presence-snapshot
+  useEffect(() => {
+    if (!assignmentId) return
+    const stop = teacherPresenceResponder(classCode, assignmentId, () => ({
+      autoFollow: !!autoFollow,
+      focusOn: !!focusOn,
+      lockNav: !!focusOn,            // lock nav when focused; simple heuristic
+      allowedPages: allowedPages ?? null,
+      teacherPageIndex: pageIndex,
+    }))
+    return () => { try { stop?.() } catch {} }
+  }, [classCode, assignmentId, autoFollow, focusOn, allowedPages, pageIndex])
+
+  // 4) Also write through to teacher_presence whenever key state changes
+  useEffect(() => {
+    if (!assignmentId) return
+    ;(async () => {
+      await safeUpsertTeacherState()
+      await safeUpsertTeacherPresenceRow()
+    })()
+  }, [assignmentId, pageIndex, autoFollow, focusOn, allowedPages])
+
+  // ===== Grid + realtime watchers =====
   useEffect(() => {
     if (!assignmentId || !pageId) return
     setGrid({})
     refreshGrid.current('page change')
   }, [assignmentId, pageId, STUDENTS])
 
-  // realtime refreshers for teacher dashboard tiles (submissions/artifacts)
   useEffect(() => {
     if (!pageId) return
 
@@ -296,35 +336,6 @@ export default function TeacherDashboard() {
     }
   }, [pageId])
 
-  // helper: get latest with artifacts per student for this page
-  async function listLatestByPageForStudent(assignment_id: string, page_id: string, student_id: string) {
-    const { data: sub, error: se } = await supabase
-      .from('submissions')
-      .select('id, student_id, created_at, artifacts(id,kind,strokes_json,storage_path,created_at)')
-      .eq('assignment_id', assignment_id)
-      .eq('page_id', page_id)
-      .eq('student_id', student_id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if (se) {
-      console.error('per-student latest fetch error', se)
-      return null
-    }
-    return sub as unknown as {
-      id: string
-      student_id: string
-      created_at: string
-      artifacts: Array<{
-        id: string
-        kind: string
-        strokes_json?: any
-        storage_path?: string
-        created_at: string
-      }>
-    } | null
-  }
-
   // --- Teacher state writers (single row; no broadcast fanout)
   async function safeUpsertTeacherState(optional?: Partial<{ pageIndex: number; focusOn: boolean; autoFollow: boolean; allowedPages: number[] | null }>) {
     if (!classCode || !assignmentId) return
@@ -343,6 +354,28 @@ export default function TeacherDashboard() {
       })
     } catch (e) {
       console.error('upsertTeacherState failed', e)
+    }
+  }
+
+  // NEW: Write-through row that students' fetchPresenceSnapshot() reads
+  async function safeUpsertTeacherPresenceRow() {
+    if (!classCode || !assignmentId) return
+    try {
+      await supabase
+        .from('teacher_presence')
+        .upsert({
+          assignment_id: assignmentId,
+          class_code: classCode,
+          teacher_page_index: pageIndex,
+          focus_on: focusOn,
+          lock_nav: !!focusOn,           // match responder heuristic
+          auto_follow: autoFollow,
+          allowed_pages: allowedPages ?? null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'assignment_id' })
+    } catch (e) {
+      // Non-fatal: students still have the responder + teacher_state
+      console.warn('upsert teacher_presence failed', e)
     }
   }
 
@@ -381,7 +414,6 @@ export default function TeacherDashboard() {
 
       setPreview({
         studentId: sid,
-        // keep raw for now; we'll normalize right before rendering the drawer
         strokes: strokesArt?.strokes_json ?? null,
         audioUrl
       })
@@ -440,24 +472,19 @@ export default function TeacherDashboard() {
       <div style={{ margin: '12px 0 16px' }}>
         <PdfDropZone
           onCreated={async (newId: string, title: string) => {
-            // Show it immediately in the dropdown
             setAssignments((prev) => {
               if (prev.some((a) => a.id === newId)) return prev
               return [{ id: newId, title }, ...prev]
             })
-
-            // Select it
             setAssignmentId(newId)
 
             try {
-              // CLASS-SCOPED handoff
               await publishSetAssignment(classCode, newId)
               lastAnnounced.current = newId
 
-              // write the teacher_state snapshot right away
               await safeUpsertTeacherState()
+              await safeUpsertTeacherPresenceRow()
 
-              // snapshot to class_state (best effort)
               if (classCode && pageId) {
                 await upsertClassState(classCode, newId, pageId, pageIndex)
               }
@@ -477,14 +504,10 @@ export default function TeacherDashboard() {
               const next = e.target.value
               setAssignmentId(next)
               try {
-                // CLASS-SCOPED handoff
                 await publishSetAssignment(classCode, next)
                 lastAnnounced.current = next
-
-                // also persist the current teacher state for students polling
                 await safeUpsertTeacherState()
-
-                // snapshot to class_state (best-effort)
+                await safeUpsertTeacherPresenceRow()
                 if (classCode && pageId) {
                   await upsertClassState(classCode, next, pageId, pageIndex)
                 }
@@ -511,22 +534,19 @@ export default function TeacherDashboard() {
 
               setChangingPage(true)
               try {
-                // Ask all students to submit *before* switching pages (rare realtime; OK)
                 await broadcastForceSubmit(classCode, assignmentId, {
                   reason: 'page-change',
                   pageIndex: nextIndex
                 })
 
-                // switch selection locally
                 setPageId(nextPageId)
 
-                // keep DB snapshot up-to-date for cold start
                 if (classCode) {
                   await upsertClassState(classCode, assignmentId, nextPageId, nextIndex)
                 }
 
-                // 🟢 Single source of truth for students: teacher_state row
                 await safeUpsertTeacherState({ pageIndex: nextIndex })
+                await safeUpsertTeacherPresenceRow()
               } catch (err) {
                 console.error('submit-before-switch / upsertTeacherState failed', err)
               } finally {
@@ -589,9 +609,6 @@ export default function TeacherDashboard() {
 
       {assignmentId && pageId && (
         <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
-          {/* IMPORTANT: the bar should call back to this page to change flags,
-              and in those callbacks we should call safeUpsertTeacherState().
-              (If TeacherSyncBar currently broadcasts, we’ll refactor it in Step 2D.) */}
           <TeacherSyncBar
             classCode={classCode}
             assignmentId={assignmentId}
@@ -662,7 +679,6 @@ export default function TeacherDashboard() {
           student={preview?.studentId ?? ''}
           pdfUrl={previewPdfUrl}
           pageIndex={currentPage?.page_index ?? 0}
-          // 👇 Normalize here so PlaybackDrawer always gets {strokes:[{pts:...}]}
           strokesPayload={preview?.strokes ? normalizeStrokeShape(preview.strokes) : { strokes: [] }}
           audioUrl={preview?.audioUrl}
         />
