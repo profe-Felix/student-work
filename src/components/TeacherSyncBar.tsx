@@ -47,6 +47,7 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
   // NEW — allow colors
   const [allowColors, setAllowColors] = useState<boolean>(true)
   const colorChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  const colorReadyRef = useRef<Promise<void> | null>(null) // <-- ready gate for subscribe
   const helloChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
   // Build the current presence snapshot we want to advertise
@@ -63,7 +64,12 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     if (colorChanRef.current) return colorChanRef.current
     const name = `colors:${classCode}:${assignmentId}`
     const ch = supabase.channel(name, { config: { broadcast: { ack: false, self: false } } })
-    ch.subscribe().catch(() => {/* ignore join errors; transient */})
+    // Supabase v2: subscribe takes a callback; no promise is returned.
+    colorReadyRef.current = new Promise<void>((resolve) => {
+      ch.subscribe((status) => {
+        if (status === 'SUBSCRIBED') resolve()
+      })
+    })
     colorChanRef.current = ch
     return ch
   }
@@ -71,7 +77,13 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
   async function broadcastAllowColors(next: boolean) {
     try {
       const ch = ensureColorChannel()
-      await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload: { allow: !!next, ts: Date.now() } })
+      // Wait until the channel is SUBSCRIBED to avoid REST fallback warning
+      await (colorReadyRef.current ?? Promise.resolve())
+      await ch.send({
+        type: 'broadcast',
+        event: 'set-allow-colors',
+        payload: { allow: !!next, ts: Date.now() }
+      })
     } catch {/* ignore */}
   }
 
