@@ -554,7 +554,7 @@ export default function StudentAssignment(){
   const teacherPageIndexRef = useRef<number | null>(null)
 
   // snap-once flag
-  the initialSnappedRef = useRef(false)
+  const initialSnappedRef = useRef(false)
 
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')
