@@ -10,6 +10,8 @@ import {
   listPages,
   supabase,
   fetchClassState,
+  // 🎛 ALLOW COLORS — boot-time source of truth
+  fetchTeacherStateForClass,
 } from '../../lib/db'
 import {
   subscribeToAssignment,
@@ -332,12 +334,20 @@ export default function StudentAssignment(){
   const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence(classCode))
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
+  // 🎛 ALLOW COLORS — policy state (default ON unless teacher turns it off)
+  const [allowColors, setAllowColors] = useState<boolean>(true)
+
   const [color, setColor] = useState('#1F75FE')
   const [size,  setSize]  = useState(6)
   const [handMode, setHandMode] = useState(true)
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
+
+  // Force pen color to black whenever policy is OFF
+  useEffect(() => {
+    if (!allowColors && color !== '#000000') setColor('#000000')
+  }, [allowColors, color])
 
   // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
@@ -693,6 +703,23 @@ useEffect(() => {
     const t = window.setTimeout(() => { try { ch.unsubscribe() } catch {} }, 4000)
     return () => { try { ch.unsubscribe() } catch {}; window.clearTimeout(t) }
   }, [classCode, rtAssignmentId])
+
+  // 🎛 ALLOW COLORS — boot-time fetch (teacher_state)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const row = await fetchTeacherStateForClass(classCode)
+        if (!cancelled && row) {
+          // treat null/undefined as "true"
+          const allow = row.allow_colors !== false
+          setAllowColors(allow)
+          if (!allow) setColor('#000000')
+        }
+      } catch {/* ignore */}
+    })()
+    return () => { cancelled = true }
+  }, [classCode])
 
   // Resolve assignment/page
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
@@ -1073,9 +1100,8 @@ useEffect(() => {
         const lock  = !!on && !!lockNav;
 
         // update local state
-// update local state
-setFocusOn(!!focus);
-setNavLocked(!!lock);
+        setFocusOn(!!focus);
+        setNavLocked(!!lock);
 
         // build a coherent snapshot using current autoFollow/allowedPages/teacherPageIndex
         const snapshot: TeacherPresenceState = {
@@ -1102,8 +1128,8 @@ setNavLocked(!!lock);
             : (teacherPageIndexRef.current ?? undefined)
         };
         // persist + apply
-setAutoFollow(!!snapshot.autoFollow);
-setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : null);
+        setAutoFollow(!!snapshot.autoFollow);
+        setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : null);
 
         if (typeof snapshot.teacherPageIndex === 'number') {
           teacherPageIndexRef.current = snapshot.teacherPageIndex;
@@ -1128,6 +1154,13 @@ setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : n
         } catch (e) {
           console.warn('force-submit handler failed', e)
         }
+      },
+
+      // 🎛 ALLOW COLORS — realtime handler
+      onAllowColors: (p?: { allow?: boolean }) => {
+        const allow = p?.allow !== false
+        setAllowColors(allow)
+        if (!allow) setColor('#000000')
       }
     })
     return () => { try { ch?.unsubscribe?.() } catch {} }
@@ -1321,22 +1354,35 @@ setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : n
           style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
       </div>
 
-      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
-        <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
-          {CRAYOLA_24.map(c=>(
-            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
-              style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
-          ))}
+      {/* 🎛 ALLOW COLORS — palette region */}
+      {allowColors ? (
+        <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
+          <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+            {CRAYOLA_24.map(c=>(
+              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+            ))}
+          </div>
+          <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+            {SKIN_TONES.map(c=>(
+              <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+                style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+            ))}
+          </div>
         </div>
-        <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
-          {SKIN_TONES.map(c=>(
-            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
-              style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
-          ))}
+      ) : (
+        <div style={{ padding:6, border:'1px dashed #ddd', borderRadius:10, textAlign:'center' }}>
+          <div style={{ fontSize:12, fontWeight:700, marginBottom:6 }}>Color bloqueado</div>
+          <button
+            onClick={()=>{ setTool('pen'); setColor('#000000') }}
+            style={{ width:'100%', height:40, borderRadius:10, border: color==='#000000'?'3px solid #111':'2px solid #ddd', background:'#000000' }}
+            title="Negro"
+          />
+          <div style={{ fontSize:11, color:'#6b7280', marginTop:6 }}>Docente: solo negro</div>
         </div>
-      </div>
+      )}
 
       {/* 5.6 — record + submit */}
       <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
@@ -1474,7 +1520,7 @@ const canNext = baseOk && canMoveTo(pageIndex + 1)
               ref={drawRef}
               width={canvasSize.w}
               height={canvasSize.h}
-              color={color}
+              color={allowColors ? color : '#000000' /* hard-enforce */}
               size={size}
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
