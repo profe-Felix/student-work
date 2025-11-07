@@ -63,6 +63,20 @@ function normalizeStrokeShape(payload: any) {
 export default function TeacherDashboard() {
   useEffect(() => { enableRealtimeMeter() }, [])
 
+  // ── AUTH: only write to DB if signed in (avoids RLS 400s)
+  const [authed, setAuthed] = useState(false)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const { data } = await supabase.auth.getSession()
+      if (alive) setAuthed(!!data.session)
+    })()
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+      setAuthed(!!session)
+    })
+    return () => { sub.subscription.unsubscribe(); alive = false }
+  }, [])
+
   // --- class code from URL (?class=A); default 'A'
   const location = useLocation()
   const params = new URLSearchParams(location.search)
@@ -131,8 +145,9 @@ export default function TeacherDashboard() {
     return k
   }
 
-  // ── colors: table write (best-effort; succeeds only if allow_colors column exists)
+  // ── colors: table write (best-effort; skip if anon)
   async function persistAllowColors(next: boolean) {
+    if (!authed) return
     if (!classCode || !assignmentId) return
     try {
       await supabase
@@ -322,20 +337,23 @@ export default function TeacherDashboard() {
       try {
         await publishSetAssignment(classCode, assignmentId)
         lastAnnounced.current = assignmentId
-        await safeUpsertTeacherState()          // students poll teacher_state
-        await safeUpsertTeacherPresenceRow()    // students may poll teacher_presence
+        if (authed) {
+          await safeUpsertTeacherState()          // students poll teacher_state
+          await safeUpsertTeacherPresenceRow()    // students may poll teacher_presence
+        }
       } catch (err) {
         console.error('initial announce / teacher_state write failed', err)
       }
     })()
-  }, [classCode, assignmentId])
+  }, [classCode, assignmentId, authed])
 
   // 2) Keep DB "class_state" in sync for cold start
   useEffect(() => {
+    if (!authed) return
     if (!classCode || !assignmentId || !pageId) return
     upsertClassState(classCode, assignmentId, pageId, pageIndex)
       .catch(err => console.error('upsertClassState failed', err))
-  }, [classCode, assignmentId, pageId, pageIndex])
+  }, [classCode, assignmentId, pageId, pageIndex, authed])
 
   // 3) Presence responder: answers student 'hello' with a presence-snapshot
   useEffect(() => {
@@ -352,12 +370,12 @@ export default function TeacherDashboard() {
 
   // 4) Also write through to teacher_presence whenever key state changes
   useEffect(() => {
-    if (!assignmentId) return
+    if (!assignmentId || !authed) return
     ;(async () => {
       await safeUpsertTeacherState()
       await safeUpsertTeacherPresenceRow()
     })()
-  }, [assignmentId, pageIndex, autoFollow, focusOn, allowedPages])
+  }, [assignmentId, pageIndex, autoFollow, focusOn, allowedPages, authed])
 
   // ── BOOTSTRAP colors from DB, then rebroadcast for students
   useEffect(() => {
@@ -366,18 +384,20 @@ export default function TeacherDashboard() {
 
     ;(async () => {
       try {
-        const resp: PostgrestSingleResponse<any> = await supabase
-          .from('teacher_state')
-          .select('allow_colors')
-          .eq('class_code', classCode)
-          .eq('assignment_id', assignmentId)
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        const dbVal = (resp?.data && typeof resp.data.allow_colors === 'boolean')
-          ? !!resp.data.allow_colors
-          : true // default ON
+        const dbVal = await (async () => {
+          if (!authed) return true // default when anon
+          const resp: PostgrestSingleResponse<any> = await supabase
+            .from('teacher_state')
+            .select('allow_colors')
+            .eq('class_code', classCode)
+            .eq('assignment_id', assignmentId)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          return (resp?.data && typeof resp.data.allow_colors === 'boolean')
+            ? !!resp.data.allow_colors
+            : true
+        })()
 
         if (!cancelled) setAllowColors(dbVal)
 
@@ -398,7 +418,7 @@ export default function TeacherDashboard() {
     })()
 
     return () => { cancelled = true }
-  }, [classCode, assignmentId])
+  }, [classCode, assignmentId, authed])
 
   // ── LISTEN for color policy changes (including our own) and persist to DB
   useEffect(() => {
@@ -450,6 +470,7 @@ export default function TeacherDashboard() {
 
   // --- Teacher state writers (single row; no broadcast fanout)
   async function safeUpsertTeacherState(optional?: Partial<{ pageIndex: number; focusOn: boolean; autoFollow: boolean; allowedPages: number[] | null }>) {
+    if (!authed) return
     if (!classCode || !assignmentId) return
     const idx = (optional?.pageIndex ?? pageIndex)
     const f   = (optional?.focusOn ?? focusOn)
@@ -471,6 +492,7 @@ export default function TeacherDashboard() {
 
   // NEW: Write-through row that students' fetchPresenceSnapshot() reads
   async function safeUpsertTeacherPresenceRow() {
+    if (!authed) return
     if (!classCode || !assignmentId) return
     try {
       await supabase
@@ -484,7 +506,7 @@ export default function TeacherDashboard() {
           auto_follow: autoFollow,
           allowed_pages: allowedPages ?? null,
           updated_at: new Date().toISOString(),
-        }, { onConflict: 'assignment_id' })
+        }, { onConflict: 'assignment_id,class_code' }) // ← composite target
     } catch (e) {
       // Non-fatal: students still have the responder + teacher_state
       console.warn('upsert teacher_presence failed', e)
@@ -594,10 +616,12 @@ export default function TeacherDashboard() {
               await publishSetAssignment(classCode, newId)
               lastAnnounced.current = newId
 
-              await safeUpsertTeacherState()
-              await safeUpsertTeacherPresenceRow()
+              if (authed) {
+                await safeUpsertTeacherState()
+                await safeUpsertTeacherPresenceRow()
+              }
 
-              if (classCode && pageId) {
+              if (classCode && pageId && authed) {
                 await upsertClassState(classCode, newId, pageId, pageIndex)
               }
             } catch (err) {
@@ -618,9 +642,11 @@ export default function TeacherDashboard() {
               try {
                 await publishSetAssignment(classCode, next)
                 lastAnnounced.current = next
-                await safeUpsertTeacherState()
-                await safeUpsertTeacherPresenceRow()
-                if (classCode && pageId) {
+                if (authed) {
+                  await safeUpsertTeacherState()
+                  await safeUpsertTeacherPresenceRow()
+                }
+                if (classCode && pageId && authed) {
                   await upsertClassState(classCode, next, pageId, pageIndex)
                 }
               } catch (err) {
@@ -653,12 +679,14 @@ export default function TeacherDashboard() {
 
                 setPageId(nextPageId)
 
-                if (classCode) {
+                if (classCode && authed) {
                   await upsertClassState(classCode, assignmentId, nextPageId, nextIndex)
                 }
 
-                await safeUpsertTeacherState({ pageIndex: nextIndex })
-                await safeUpsertTeacherPresenceRow()
+                if (authed) {
+                  await safeUpsertTeacherState({ pageIndex: nextIndex })
+                  await safeUpsertTeacherPresenceRow()
+                }
               } catch (err) {
                 console.error('submit-before-switch / upsertTeacherState failed', err)
               } finally {
