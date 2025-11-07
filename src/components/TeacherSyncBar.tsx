@@ -64,13 +64,15 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     if (!assignmentId) return
     const stop = teacherPresenceResponder(classCode, assignmentId, () => currentPresence())
     return () => { try { stop?.() } catch {} }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classCode, assignmentId, autoFollow, focus, lockNav, pageIndex])
 
   /** Broadcast initial presence on mount (class-scoped) */
   useEffect(() => {
     if (!assignmentId) return
     void setTeacherPresence(classCode, assignmentId, currentPresence())
-  }, [assignmentId]) // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignmentId])
 
   /** Rebroadcast presence when toggles/pageIndex change + write-through to table (anon-safe) */
   useEffect(() => {
@@ -93,6 +95,30 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     if (!assignmentId || !pageId) return
     if (autoFollow) void publishSetPage(classCode, assignmentId, pageIndex)
   }, [classCode, assignmentId, pageId, pageIndex, autoFollow])
+
+  /** NEW: if Auto-Follow is ON and the teacher edits Allow pages, live-apply the range */
+  const rangeDebounce = useRef<number | null>(null)
+  useEffect(() => {
+    if (!assignmentId || !autoFollow) return
+    const allowed = parseRanges(rangeText)
+    allowedRef.current = allowed
+    if (rangeDebounce.current) window.clearTimeout(rangeDebounce.current)
+    rangeDebounce.current = window.setTimeout(async () => {
+      try {
+        await setTeacherPresence(classCode, assignmentId, {
+          autoFollow: true,
+          allowedPages: allowed ?? null,
+          teacherPageIndex: pageIndex,
+          focusOn: focus,
+          lockNav,
+        })
+        await publishAutoFollow(classCode, assignmentId, true, allowed ?? null, pageIndex)
+      } catch {}
+    }, 250)
+    return () => {
+      if (rangeDebounce.current) window.clearTimeout(rangeDebounce.current)
+    }
+  }, [assignmentId, classCode, autoFollow, rangeText, pageIndex, focus, lockNav])
 
   async function toggleAutoFollow() {
     if (!assignmentId) return
@@ -178,7 +204,7 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
           placeholder="e.g. 1-3,5"
           value={rangeText}
           onChange={e => setRangeText(e.target.value)}
-          disabled={autoFollow}
+          disabled={false /* allow edits anytime; live-applied only when Sync is ON */}
           style={{ minWidth: 120 }}
         />
       </label>
