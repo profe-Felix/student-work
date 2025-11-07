@@ -24,7 +24,7 @@ import PlaybackDrawer from '../../components/PlaybackDrawer'
 import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
 
 // colors policy (DB bootstrap + realtime persistence)
-import type { PostgrestSingleResponse } from '@supabase/supabase-js'
+import type { PostgrestSingleResponse, AuthChangeEvent, Session } from '@supabase/supabase-js'
 
 // Supabase Realtime channel status union (local copy)
 type ChannelStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR'
@@ -71,9 +71,11 @@ export default function TeacherDashboard() {
       const { data } = await supabase.auth.getSession()
       if (alive) setAuthed(!!data.session)
     })()
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setAuthed(!!session)
-    })
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (_evt: AuthChangeEvent, session: Session | null) => {
+        setAuthed(!!session)
+      }
+    )
     return () => { sub.subscription.unsubscribe(); alive = false }
   }, [])
 
