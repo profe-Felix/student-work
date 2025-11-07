@@ -1,4 +1,4 @@
-//src/pages/teacher/index.tsx 
+//src/pages/teacher/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
@@ -11,8 +11,6 @@ import {
   upsertClassState,
   // NEW: write-the-truth snapshot for students to poll
   upsertTeacherState,
-  // NEW: global broadcast to control student color palette
-  setAllowColors,
 } from '../../lib/db'
 import TeacherSyncBar from '../../components/TeacherSyncBar'
 import PdfDropZone from '../../components/PdfDropZone'
@@ -95,7 +93,6 @@ export default function TeacherDashboard() {
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
 
   const lastAnnouncedAssignment = useRef<string>('')
-  const lastAnnounced = lastAnnouncedAssignment
 
   const pageIndex = useMemo(
     () => pages.find((p) => p.id === pageId)?.page_index ?? 0,
@@ -245,6 +242,7 @@ export default function TeacherDashboard() {
   // Students will poll teacher_state (Step 3).
 
   // initial assignment broadcast (CLASS-SCOPED handoff is still fine)
+  const lastAnnounced = lastAnnouncedAssignment
   useEffect(() => {
     if (!assignmentId) return
     if (lastAnnounced.current === assignmentId) return
@@ -345,23 +343,6 @@ export default function TeacherDashboard() {
       })
     } catch (e) {
       console.error('upsertTeacherState failed', e)
-    }
-  }
-
-  // ===== Student color policy toggle (broadcasts via supabase realtime) =====
-  const [allowColors, setAllowColorsLocal] = useState<boolean>(() => {
-    try { return localStorage.getItem('teacher:allowColors') !== 'false' } catch { return true }
-  })
-  async function toggleStudentColors() {
-    const next = !allowColors
-    setAllowColorsLocal(next)
-    try { localStorage.setItem('teacher:allowColors', String(next)) } catch {}
-    try {
-      await setAllowColors(next) // 🔊 broadcast to students
-    } catch (e) {
-      console.error('setAllowColors failed', e)
-      // optional: revert UI
-      setAllowColorsLocal(!next)
     }
   }
 
@@ -584,26 +565,6 @@ export default function TeacherDashboard() {
           Show RT usage
         </button>
 
-        {/* 🎨 Student colors toggle (broadcast) */}
-        <div style={{ display:'flex', gap:8, alignItems:'center', padding:'4px 8px', border:'1px solid #e5e7eb', borderRadius:8, background:'#fff' }}>
-          <span style={{ fontSize:12, color:'#555' }}>Student colors</span>
-          <button
-            onClick={toggleStudentColors}
-            style={{
-              padding:'6px 10px',
-              borderRadius:8,
-              border:'1px solid #e5e7eb',
-              background: allowColors ? '#22c55e' : '#ef4444',
-              color:'#fff',
-              fontWeight:700,
-              minWidth:92
-            }}
-            title="Toggle whether students can use multiple colors (Off = black only)"
-          >
-            {allowColors ? 'Allowed' : 'Off'}
-          </button>
-        </div>
-
         {/* Rare realtime: Force submit button (all students) */}
         <button
           onClick={async () => {
@@ -628,6 +589,9 @@ export default function TeacherDashboard() {
 
       {assignmentId && pageId && (
         <div style={{ position: 'sticky', top: 8, zIndex: 10, marginBottom: 12 }}>
+          {/* IMPORTANT: the bar should call back to this page to change flags,
+              and in those callbacks we should call safeUpsertTeacherState().
+              (If TeacherSyncBar currently broadcasts, we’ll refactor it in Step 2D.) */}
           <TeacherSyncBar
             classCode={classCode}
             assignmentId={assignmentId}

@@ -26,12 +26,9 @@ import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
 
 // 5.1 — imports for timeline/audio/clock
 import { usePageClock } from '../../hooks/usePageClock'
-/* removed unused import: AudioRecordButton */
+import AudioRecordButton from '../../components/AudioRecordButton'
 import TimelineBar from '../../components/TimelineBar'
 import type { AudioSeg, PageArtifact } from '../../types/timeline'
-
-// ❌ REMOVED dead color-policy import
-// import { subscribeToGlobal as subscribeToGlobalColors } from '../../lib/db'
 
 /** Constants */
 const assignmentTitle = 'Handwriting - Daily' // legacy purge helper
@@ -39,7 +36,7 @@ const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
 
-/* ---------- Colors (kept for future but not required) ---------- */
+/* ---------- Colors ---------- */
 const CRAYOLA_24 = [
   { name:'Red',hex:'#EE204D' },{ name:'Yellow',hex:'#FCE883' },
   { name:'Blue',hex:'#1F75FE' },{ name:'Green',hex:'#1CAC78' },
@@ -240,18 +237,19 @@ async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
 /* ---------- initial page index from cached presence (best effort) ---------- */
 function initialPageIndexFromPresence(classCode: string): number {
   try {
-    const cachedAssignmentId = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || ''
-    if (!cachedAssignmentId) return 0
-    const p = getCachedPresence(classCode, cachedAssignmentId)
+    const cachedAssignmentId = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '';
+    if (!cachedAssignmentId) return 0;
+    const p = getCachedPresence(classCode, cachedAssignmentId);
     if (p && p.autoFollow && typeof p.teacherPageIndex === 'number') {
-      return p.teacherPageIndex
+      return p.teacherPageIndex;
     }
   } catch {/* ignore */}
-  return 0
+  return 0;
 }
 
+
+
 /* ---------- server fallback to get teacher presence snapshot ---------- */
-// ⬇️ OPTIONAL persistence hook: if row has allow_colors/allowColors, attach it to snapshot
 async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPresenceState | null> {
   try {
     const { data, error } = await supabase
@@ -272,12 +270,6 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
       teacherPageIndex: typeof p.teacher_page_index === 'number'
         ? p.teacher_page_index
         : (typeof p.teacherPageIndex === 'number' ? p.teacherPageIndex : undefined),
-    }
-    const allowColorsFromRow =
-      typeof p.allow_colors === 'boolean' ? p.allow_colors :
-      (typeof p.allowColors === 'boolean' ? p.allowColors : undefined)
-    if (typeof allowColorsFromRow === 'boolean') {
-      ;(snapshot as any).allowColors = allowColorsFromRow
     }
     return snapshot
   } catch {
@@ -340,45 +332,12 @@ export default function StudentAssignment(){
   const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence(classCode))
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
-  // ✅ NEW: teacher color policy state
-  const [allowColors, setAllowColors] = useState<boolean>(true)
-
   const [color, setColor] = useState('#1F75FE')
   const [size,  setSize]  = useState(6)
   const [handMode, setHandMode] = useState(true)
   const [tool, setTool] = useState<Tool>('pen')
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
-
-  // assignment/page ids for realtime
-  const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
-
-  // Persist assignment id from teacher (or DB fallback)
-  const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
-
-  // Lock color to black whenever teacher disables colors
-  useEffect(() => {
-    if (!allowColors) setColor('#111111')
-  }, [allowColors])
-
-  // ⛔ If colors are off, never allow 'highlighter' to be active
-  useEffect(() => {
-    if (!allowColors && tool === 'highlighter') setTool('pen')
-  }, [allowColors, tool])
-
-  // ✅ Subscribe to teacher color policy via Supabase realtime channel
-  useEffect(() => {
-    if (!rtAssignmentId) return
-    const ch = supabase
-      .channel(`colors:${classCode}:${rtAssignmentId}`, { config: { broadcast: { ack: false } } })
-      .on('broadcast', { event: 'set-allow-colors' }, (msg: any) => {
-        const next = !!msg?.payload?.allow
-        setAllowColors(next)
-        if (!next) { setTool(t => (t === 'highlighter' ? 'pen' : t)); setColor('#111111') }
-      })
-    ;(async () => { try { await ch.subscribe() } catch {} })()
-    return () => { try { ch.unsubscribe() } catch {} }
-  }, [classCode, rtAssignmentId])
 
   // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
@@ -473,21 +432,22 @@ export default function StudentAssignment(){
   }
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
-  // When PDF is ready, remember its canvas and sync size immediately
-  const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
-    pdfCanvasEl.current = canvas
-    if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
-      const w = Math.max(1, Math.round(dims.cssW))
-      const h = Math.max(1, Math.round(dims.cssH))
-      setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
-    }
-    try {
-      const dpr = (window.devicePixelRatio || 1)
-      if (canvas.width && !canvas.style.width)  canvas.style.width  = `${Math.round(canvas.width / dpr)}px`
-      if (canvas.height && !canvas.style.height) canvas.style.height = `${Math.round(canvas.height / dpr)}px`
-    } catch {}
-    syncFromPdfCanvas()
-  }, []) // 👈 stable reference
+// When PDF is ready, remember its canvas and sync size immediately
+const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
+  pdfCanvasEl.current = canvas
+  if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
+    const w = Math.max(1, Math.round(dims.cssW))
+    const h = Math.max(1, Math.round(dims.cssH))
+    setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
+  }
+  try {
+    const dpr = (window.devicePixelRatio || 1)
+    if (canvas.width && !canvas.style.width)  canvas.style.width  = `${Math.round(canvas.width / dpr)}px`
+    if (canvas.height && !canvas.style.height) canvas.style.height = `${Math.round(canvas.height / dpr)}px`
+  } catch {}
+  syncFromPdfCanvas()
+}, []); // 👈 stable reference; won’t change when tool/color/handMode change
+
 
   // Keep overlay size synced to PDF canvas + parent size changes and zoom/orientation
   useEffect(() => {
@@ -530,7 +490,11 @@ export default function StudentAssignment(){
     }
   }, [pdfUrl, pageIndex])
 
+  // assignment/page ids for realtime
+  const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
+  // Persist assignment id from teacher (or DB fallback)
+  const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
 
   // flag to sequence boot: wait for class snapshot before using "latest"
   const [classBootDone, setClassBootDone] = useState(false)
@@ -574,37 +538,33 @@ export default function StudentAssignment(){
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
-
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (
     p: TeacherPresenceState | null | undefined,
     opts?: { snap?: boolean; assignmentId?: string }
   ) => {
-    if (!p) return
-
-    // ✅ Apply allowColors if present on snapshot (optional persistence)
-    const allowC = (p as any)?.allowColors ?? (p as any)?.allow_colors
-    if (typeof allowC === 'boolean') setAllowColors(allowC)
+    if (!p) return;
 
     // 1) Update local UI state from snapshot
-    const auto = !!p.autoFollow
-    const focus = !!p.focusOn
-    const lock  = !!p.lockNav
-    const tpi   = (typeof p.teacherPageIndex === 'number') ? p.teacherPageIndex : undefined
+    const auto = !!p.autoFollow;
+    const focus = !!p.focusOn;
+    const lock  = !!p.lockNav;
+    const tpi   = (typeof p.teacherPageIndex === 'number') ? p.teacherPageIndex : undefined;
 
-    setAutoFollow(auto)
-    setAllowedPages(Array.isArray(p.allowedPages) ? p.allowedPages : null)
-    setFocusOn(focus)
-    setNavLocked(!!(focus && lock))
+setAutoFollow(!!auto);
+setAllowedPages(Array.isArray(p.allowedPages) ? p.allowedPages : null);
+setFocusOn(!!focus);
+setNavLocked(!!(focus && lock));
+
 
     if (typeof tpi === 'number') {
-      teacherPageIndexRef.current = tpi
+      teacherPageIndexRef.current = tpi;
 
       // Snap only if: caller requested snap, autoFollow is on, and we haven't snapped yet in this boot
-      const shouldSnap = (opts?.snap ?? true) && auto && !initialSnappedRef.current
+      const shouldSnap = (opts?.snap ?? true) && auto && !initialSnappedRef.current;
       if (shouldSnap) {
-        setPageIndex(tpi)
-        initialSnappedRef.current = true
+        setPageIndex(tpi);
+        initialSnappedRef.current = true;
       }
     }
 
@@ -616,36 +576,38 @@ export default function StudentAssignment(){
         focusOn: focus,
         lockNav: lock,
         teacherPageIndex: teacherPageIndexRef.current ?? tpi
-      })
+      });
     }
-  }
+  };
+
 
   const snapToTeacherIfAvailable = (assignmentId: string) => {
     try {
-      const p = getCachedPresence(classCode, assignmentId)
+      const p = getCachedPresence(classCode, assignmentId);
       if (p) {
-        applyPresenceSnapshot(p, { snap: true, assignmentId })
+        applyPresenceSnapshot(p, { snap: true, assignmentId });
       }
     } catch {/* ignore */}
   }
 
   const ensurePresenceFromServer = async (assignmentId: string) => {
-    const cached = getCachedPresence(classCode, assignmentId)
+    const cached = getCachedPresence(classCode, assignmentId);
     if (!cached) {
-      const p = await fetchPresenceSnapshot(assignmentId)
+      const p = await fetchPresenceSnapshot(assignmentId);
       if (p) {
-        setCachedPresence(classCode, assignmentId, p)
-        applyPresenceSnapshot(p, { snap: true, assignmentId })
+        setCachedPresence(classCode, assignmentId, p);
+        applyPresenceSnapshot(p, { snap: true, assignmentId });
       }
     }
   }
+
   useEffect(() => {
     if (!classCode) return
     const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
       snapToTeacherIfAvailable(nextAssignmentId)
-      void ensurePresenceFromServer(nextAssignmentId)
+      ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
     })
     return off
@@ -676,7 +638,7 @@ export default function StudentAssignment(){
     if (!classBootDone) return
     if (rtAssignmentId) {
       snapToTeacherIfAvailable(rtAssignmentId)
-      void ensurePresenceFromServer(rtAssignmentId)
+      ensurePresenceFromServer(rtAssignmentId)
       return
     }
     ;(async () => {
@@ -685,77 +647,52 @@ export default function StudentAssignment(){
         setRtAssignmentId(latest)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
         snapToTeacherIfAvailable(latest)
-        void ensurePresenceFromServer(latest)
+        ensurePresenceFromServer(latest)
       }
     })()
   }, [classBootDone, rtAssignmentId])
 
-  useEffect(() => {
-    if (!rtAssignmentId) return
-    try {
-      const p = getCachedPresence(classCode, rtAssignmentId)
-      if (p) {
-        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId })
-      } else {
-        ;(async () => {
-          const s = await fetchPresenceSnapshot(rtAssignmentId)
-          if (s) {
-            setCachedPresence(classCode, rtAssignmentId, s)
-            applyPresenceSnapshot(s, { snap: true, assignmentId: rtAssignmentId })
-          }
-        })()
-      }
-    } catch { /* ignore */ }
-  }, [classCode, rtAssignmentId])
+useEffect(() => {
+  if (!rtAssignmentId) return
+  try {
+    const p = getCachedPresence(classCode, rtAssignmentId);
+    if (p) {
+      applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
+    } else {
+      ;(async () => {
+        const s = await fetchPresenceSnapshot(rtAssignmentId);
+        if (s) {
+          setCachedPresence(classCode, rtAssignmentId, s);
+          applyPresenceSnapshot(s, { snap: true, assignmentId: rtAssignmentId });
+        }
+      })();
+    }
+  } catch { /* ignore */ }
+}, [classCode, rtAssignmentId])
+
 
   /* ---------- Hello → presence-snapshot handshake ---------- */
   useEffect(() => {
-    if (!rtAssignmentId) return;
-
-    // Create a short-lived channel to request a presence snapshot
+    if (!rtAssignmentId) return
     const ch = supabase
-      .channel(`assignment:${classCode}:${rtAssignmentId}`, {
-        config: { broadcast: { ack: true } },
-      })
+      .channel(`assignment:${classCode}:${rtAssignmentId}`, { config: { broadcast: { ack: true } } })
       .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
-        const p = msg?.payload as TeacherPresenceState | undefined;
-        if (!p) return;
-        try {
-          setCachedPresence(classCode, rtAssignmentId, p);
-        } catch {}
+        const p = msg?.payload as TeacherPresenceState | undefined
+        if (!p) return
+        setCachedPresence(classCode, rtAssignmentId, p);
         applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
-      });
+      })
+      .subscribe()
 
-    const subscribeAndHello = async () => {
+    ;(async () => {
       try {
-        await ch.subscribe();
-        // Fire a "hello" to prompt the teacher app to broadcast a snapshot
-        await ch.send({
-          type: 'broadcast',
-          event: 'hello',
-          payload: { ts: Date.now() },
-        });
-      } catch {
-        // ignore
-      }
-    };
+        await ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } })
+      } catch {/* ignore */}
+    })()
 
-    void subscribeAndHello();
-
-    // Auto-unsubscribe after a few seconds (short-lived hand-shake)
-    const t = window.setTimeout(() => {
-      try {
-        ch.unsubscribe();
-      } catch {}
-    }, 4000);
-
-    return () => {
-      try {
-        ch.unsubscribe();
-      } catch {}
-      window.clearTimeout(t);
-    };
-  }, [classCode, rtAssignmentId]); // 👈 keep deps minimal
+    const t = window.setTimeout(() => { try { ch.unsubscribe() } catch {} }, 4000)
+    return () => { try { ch.unsubscribe() } catch {}; window.clearTimeout(t) }
+  }, [classCode, rtAssignmentId])
 
   // Resolve assignment/page
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
@@ -1068,7 +1005,7 @@ export default function StudentAssignment(){
     return { hasInk, current }
   }
 
-  const submitIfNeeded = async () => {
+  const submitIfNeeded = async (_reason: string) => {
     const { hasInk } = hasInkOrAudio()
     if (!hasInk) return
     try {
@@ -1132,12 +1069,13 @@ export default function StudentAssignment(){
         }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
-        const focus = !!on
-        const lock  = !!on && !!lockNav
+        const focus = !!on;
+        const lock  = !!on && !!lockNav;
 
         // update local state
-        setFocusOn(focus)
-        setNavLocked(lock)
+// update local state
+setFocusOn(!!focus);
+setNavLocked(!!lock);
 
         // build a coherent snapshot using current autoFollow/allowedPages/teacherPageIndex
         const snapshot: TeacherPresenceState = {
@@ -1146,11 +1084,12 @@ export default function StudentAssignment(){
           focusOn: focus,
           lockNav: lock,
           teacherPageIndex: teacherPageIndexRef.current ?? undefined
-        }
+        };
 
         try { setCachedPresence(classCode, rtAssignmentId, snapshot) } catch {}
         // don’t snap pages on focus toggles to avoid surprise jumps
-        applyPresenceSnapshot(snapshot, { snap: false })
+        applyPresenceSnapshot(snapshot, { snap: false });
+
       },
       onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
         const snapshot: TeacherPresenceState = {
@@ -1161,20 +1100,20 @@ export default function StudentAssignment(){
           teacherPageIndex: (typeof teacherPageIndex === 'number')
             ? teacherPageIndex
             : (teacherPageIndexRef.current ?? undefined)
-        }
+        };
         // persist + apply
-        setAutoFollow(!!snapshot.autoFollow)
-        setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : null)
+setAutoFollow(!!snapshot.autoFollow);
+setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : null);
 
         if (typeof snapshot.teacherPageIndex === 'number') {
-          teacherPageIndexRef.current = snapshot.teacherPageIndex
+          teacherPageIndexRef.current = snapshot.teacherPageIndex;
         }
         try { setCachedPresence(classCode, rtAssignmentId, snapshot) } catch {}
-        applyPresenceSnapshot(snapshot, { snap: true })
+        applyPresenceSnapshot(snapshot, { snap: true });
       },
       onPresence: (p: TeacherPresenceState) => {
         try { setCachedPresence(classCode, rtAssignmentId, p) } catch {}
-        applyPresenceSnapshot(p, { snap: true })
+        applyPresenceSnapshot(p, { snap: true });
       },
 
       // NEW: force-submit → submit immediately (scoped or all)
@@ -1265,7 +1204,7 @@ export default function StudentAssignment(){
 
       // ---- polling only (no artifacts realtime channel)
       pollId = window.setInterval(() => {
-        if (mounted) void reloadFromServer()
+        if (mounted) reloadFromServer()
       }, POLL_MS)
     })()
 
@@ -1334,7 +1273,88 @@ export default function StudentAssignment(){
     setMedia(prev => prev.filter(s => s.id !== id))
   }
 
-  // 👇 Pdf node
+  /* ---------- UI ---------- */
+  const Toolbar = (
+    <div
+      style={{
+        position:'fixed', right: toolbarOnRight?8:undefined, left: !toolbarOnRight?8:undefined, top:'50%', transform:'translateY(-50%)',
+        zIndex:10010, width:120, maxHeight:'80vh',
+        display:'flex', flexDirection:'column', gap:10,
+        padding:10, background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, boxShadow:'0 6px 16px rgba(0,0,0,0.15)',
+        WebkitUserSelect:'none', userSelect:'none', WebkitTouchCallout:'none', overflow:'hidden'
+      }}
+      onTouchStart={(e)=> e.stopPropagation()}
+    >
+      <div style={{ display:'flex', gap:6 }}>
+        <button onClick={()=> setToolbarOnRight(r=>{ const next=!r; try{ localStorage.setItem('toolbarSide', next?'right':'left') }catch{}; return next })} title="Flip toolbar side"
+          style={{ flex:1, background:'#f3f4f6', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0' }}>⇄</button>
+        <button onClick={()=>setHandMode(m=>!m)}
+          style={{ flex:1, background: handMode?'#f3f4f6':'#34d399', color: handMode?'#111827':'#064e3b',
+            border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 0', fontWeight:600 }}>
+          {handMode ? '✋' : '✍️'}
+        </button>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+        {[
+          {label:'Pen',  icon:'✏️', val:'pen'},
+          {label:'Hi',   icon:'🖍️', val:'highlighter'},
+          {label:'Erase',icon:'🧽', val:'eraser'},
+          {label:'Obj',  icon:'🗑️', val:'eraserObject'},
+        ].map(t=>(
+          <button key={t.val} onClick={()=>setTool(t.val as Tool)}
+            style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
+              background: tool===t.val ? '#111' : '#fff', color: tool===t.val ? '#fff' : '#111' }}
+            title={t.label}>{t.icon}</button>
+        ))}
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6 }}>
+        {[{label:'S',val:3},{label:'M',val:6},{label:'L',val:10}].map(s=>(
+          <button key={s.label} onClick={()=>setSize(s.val)}
+            style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
+              background: size===s.val ? '#111' : '#fff', color: size===s.val ? '#fff' : '#111' }}>
+            {s.label}
+          </button>
+        ))}
+        <button onClick={()=>drawRef.current?.undo()}
+          style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
+      </div>
+
+      <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
+        <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+          {CRAYOLA_24.map(c=>(
+            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+              style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+          ))}
+        </div>
+        <div style={{ fontSize:12, fontWeight:600, margin:'10px 0 4px' }}>Skin</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
+          {SKIN_TONES.map(c=>(
+            <button key={c.hex} onClick={()=>{ setTool('pen'); setColor(c.hex) }}
+              style={{ width:40, height:40, borderRadius:10, border: color===c.hex?'3px solid #111':'2px solid #ddd', background:c.hex }} />
+          ))}
+        </div>
+      </div>
+
+      {/* 5.6 — record + submit */}
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        <AudioRecordButton
+          onStart={handleRecordStart}
+          onStop={handleRecordStop}
+          onLongHint={(ms)=> showToast(`Long recording (${Math.round(ms/1000)}s)…`, 'ok', 1200)}
+        />
+        <button onClick={submit}
+          style={{ background: saving ? '#16a34a' : '#22c55e', opacity: saving?0.8:1,
+            color:'#fff', padding:'8px 10px', borderRadius:10, border:'none' }} disabled={saving || !hasTask}>
+          {saving ? 'Saving…' : 'Submit'}
+        </button>
+      </div>
+    </div>
+  )
+
+  // 👇 Add this just before `return ( ... )`
   const pdfNode = useMemo(() => {
     if (!hasTask || !pdfUrl) return null
     return (
@@ -1343,84 +1363,55 @@ export default function StudentAssignment(){
       </div>
     )
   }, [pdfUrl, pageIndex, hasTask, onPdfReady])
+  
+// ---- Step 3 guards: centralized navigation permission ----
+const canMoveTo = useCallback((target: number) => {
+  // Hard stop if UI is locked (e.g., focus+lock)
+  if (navLocked) return false
 
-  // ---- Step 3 guards: centralized navigation permission ----
-  const canMoveTo = useCallback((target: number) => {
-    if (navLocked) return false
-    if (autoFollow) {
-      const tpi = teacherPageIndexRef.current
-      if (typeof tpi === 'number') return target === tpi
-      return false
-    }
-    if (Array.isArray(allowedPages) && allowedPages.length > 0) {
-      return allowedPages.includes(target)
-    }
-    return true
-  }, [navLocked, autoFollow, allowedPages])
+  // If teacher is auto-following, only allow moving TO the teacher’s page
+  if (autoFollow) {
+    const tpi = teacherPageIndexRef.current
+    if (typeof tpi === 'number') return target === tpi
+    return false
+  }
 
-  // 2d — page navigation that auto-submits before changing pages (if enabled)
-  const goToPage = useCallback(async (i:number) => {
-    if (!Number.isFinite(i)) return
-    const target = Math.max(0, i)
-    if (!canMoveTo(target)) {
-      showToast('Navegación limitada por el/la docente en este momento', 'err', 1400)
-      return
-    }
-    if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
-      try { await submitIfNeeded() } catch {}
-    }
-    setPageIndex(target)
-  }, [canMoveTo, submitIfNeeded])
+  // If teacher limited pages, enforce whitelist
+  if (Array.isArray(allowedPages) && allowedPages.length > 0) {
+    return allowedPages.includes(target)
+  }
 
-  const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
-  // ✅ FIXED: removed extra parenthesis
-  const goNext = useCallback(() => { void goToPage(pageIndex + 1) }, [goToPage, pageIndex])
+  return true
+}, [navLocked, autoFollow, allowedPages])
 
-  // === Step 3 — Pager guards (uses same centralized canMoveTo) ===
-  const baseOk = hasTask && !saving && !submitInFlight.current
-  const canPrev = baseOk && canMoveTo(Math.max(0, pageIndex - 1))
-  const canNext = baseOk && canMoveTo(pageIndex + 1)
+// 2d — page navigation that auto-submits before changing pages (if enabled)
+const goToPage = useCallback(async (i:number) => {
+  if (!Number.isFinite(i)) return
+  const target = Math.max(0, i)
 
-  /* ---------- Minimal Toolbar Node (replaces undefined {Toolbar}) ---------- */
-  const toolbarNode = useMemo(() => (
-    <div style={{
-      position:'fixed',
-      top:12,
-      [toolbarOnRight ? 'right' : 'left']: 12,
-      zIndex:10030
-    } as React.CSSProperties}>
-      <div style={{background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, padding:8, display:'grid', gap:6, width: 236}}>
-        <div style={{display:'flex', gap:6}}>
-          <button onClick={()=>{ setHandMode(false); setTool('pen') }} style={{padding:'6px 10px'}}>✏️ Pen</button>
-          <button onClick={()=>{ setHandMode(false); setTool('eraser') }} style={{padding:'6px 10px'}}>🧽 Eraser</button>
-          <button onClick={()=> setHandMode(true)} style={{padding:'6px 10px'}}>✋ Pan</button>
-        </div>
-        <div style={{display:'flex', gap:6, alignItems:'center'}}>
-          <label style={{minWidth:40}}>Size</label>
-          <input type="range" min={2} max={16} value={size} onChange={e=> setSize(Number(e.target.value))} style={{flex:1}}/>
-        </div>
-        <div style={{display:'flex', gap:6, alignItems:'center'}}>
-          <label style={{minWidth:40}}>Color</label>
-          <input type="color" value={allowColors ? color : '#111111'} disabled={!allowColors} onChange={e=> setColor(e.target.value)} />
-          <label style={{marginLeft:'auto', fontSize:12}}>
-            Side:
-            <select
-              value={toolbarOnRight ? 'right' : 'left'}
-              onChange={e=>{
-                const right = e.target.value === 'right'
-                setToolbarOnRight(right)
-                try { localStorage.setItem('toolbarSide', right ? 'right' : 'left') } catch {}
-              }}
-              style={{marginLeft:6}}
-            >
-              <option value="left">left</option>
-              <option value="right">right</option>
-            </select>
-          </label>
-        </div>
-      </div>
-    </div>
-  ), [allowColors, color, size, toolbarOnRight])
+  // Respect teacher constraints
+  if (!canMoveTo(target)) {
+    showToast('Navegación limitada por el/la docente en este momento', 'err', 1400)
+    return
+  }
+
+  if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
+    try { await submitIfNeeded('page-change') } catch {}
+  }
+
+  // Do NOT force-unlock here; leave lock state to focus handlers
+  setPageIndex(target)
+}, [canMoveTo, submitIfNeeded])
+
+const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
+const goNext = useCallback(() => { void goToPage(pageIndex + 1) }, [goToPage, pageIndex])
+
+// === Step 3 — Pager guards (uses same centralized canMoveTo) ===
+const baseOk = hasTask && !saving && !submitInFlight.current
+const canPrev = baseOk && canMoveTo(Math.max(0, pageIndex - 1))
+const canNext = baseOk && canMoveTo(pageIndex + 1)
+
+
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
@@ -1483,15 +1474,13 @@ export default function StudentAssignment(){
               ref={drawRef}
               width={canvasSize.w}
               height={canvasSize.h}
-              color={allowColors ? color : '#111111'}
+              color={color}
               size={size}
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
-              /** 🔒 Hard lock at the engine: always enforce black + pen when colors are off */
-              enforceColor={!allowColors ? '#111111' : undefined}
-              enforceTool={!allowColors ? 'pen' : undefined}
               selfId={studentId}
               onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
+                // 5.3 — clock kick + absorb latest t (local only)
                 try { markFirstAction() } catch {}
                 try {
                   const pLast = (u.pts && u.pts.length) ? u.pts[u.pts.length - 1] : undefined
@@ -1560,7 +1549,7 @@ export default function StudentAssignment(){
       </div>
 
       {/* Toolbar & toasts */}
-      {toolbarNode}
+      {Toolbar}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
 
       {/* Focus overlay */}
