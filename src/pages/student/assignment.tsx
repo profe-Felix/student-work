@@ -26,7 +26,7 @@ import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
 
 // 5.1 — imports for timeline/audio/clock
 import { usePageClock } from '../../hooks/usePageClock'
-import AudioRecordButton from '../../components/AudioRecordButton'
+/* removed unused import: AudioRecordButton */
 import TimelineBar from '../../components/TimelineBar'
 import type { AudioSeg, PageArtifact } from '../../types/timeline'
 
@@ -39,7 +39,7 @@ const AUTO_SUBMIT_ON_PAGE_CHANGE = true
 const DRAFT_INTERVAL_MS = 4000
 const POLL_MS = 5000
 
-/* ---------- Colors ---------- */
+/* ---------- Colors (kept for future but not required) ---------- */
 const CRAYOLA_24 = [
   { name:'Red',hex:'#EE204D' },{ name:'Yellow',hex:'#FCE883' },
   { name:'Blue',hex:'#1F75FE' },{ name:'Green',hex:'#1CAC78' },
@@ -284,6 +284,7 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
     return null
   }
 }
+
 export default function StudentAssignment(){
   // 🔎 enable realtime meter once
   useEffect(() => { enableRealtimeMeter() }, [])
@@ -359,8 +360,7 @@ export default function StudentAssignment(){
     if (!allowColors && tool === 'highlighter') setTool('pen')
   }, [allowColors, tool])
 
-  // ✅ NEW: Subscribe to teacher color policy via Supabase realtime channel
-  // Teacher should broadcast: event='set-allow-colors', payload: { allow: boolean }
+  // ✅ Subscribe to teacher color policy via Supabase realtime channel
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = supabase
@@ -368,12 +368,11 @@ export default function StudentAssignment(){
       .on('broadcast', { event: 'set-allow-colors' }, (msg: any) => {
         const next = !!msg?.payload?.allow
         setAllowColors(next)
+        if (!next) { setTool(t => (t === 'highlighter' ? 'pen' : t)); setColor('#111111') }
       })
     ;(async () => { try { await ch.subscribe() } catch {} })()
     return () => { try { ch.unsubscribe() } catch {} }
   }, [classCode, rtAssignmentId])
-
-  // ❌ REMOVED the old global subscription that listened for { type:'setAllowColors' } messages
 
   // toolbar side (persisted)
   const [toolbarOnRight, setToolbarOnRight] = useState<boolean>(()=>{ try{ return localStorage.getItem('toolbarSide')!=='left' }catch{return true} })
@@ -468,7 +467,7 @@ export default function StudentAssignment(){
   }
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
-// When PDF is ready, remember its canvas and sync size immediately
+  // When PDF is ready, remember its canvas and sync size immediately
   const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
     pdfCanvasEl.current = canvas
     if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
@@ -707,55 +706,54 @@ export default function StudentAssignment(){
     } catch { /* ignore */ }
   }, [classCode, rtAssignmentId])
 
-/* ---------- Hello → presence-snapshot handshake ---------- */
-useEffect(() => {
-  if (!rtAssignmentId) return;
+  /* ---------- Hello → presence-snapshot handshake ---------- */
+  useEffect(() => {
+    if (!rtAssignmentId) return;
 
-  // Create a short-lived channel to request a presence snapshot
-  const ch = supabase
-    .channel(`assignment:${classCode}:${rtAssignmentId}`, {
-      config: { broadcast: { ack: true } },
-    })
-    .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
-      const p = msg?.payload as TeacherPresenceState | undefined;
-      if (!p) return;
-      try {
-        setCachedPresence(classCode, rtAssignmentId, p);
-      } catch {}
-      applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
-    });
-
-  const subscribeAndHello = async () => {
-    try {
-      await ch.subscribe();
-      // Fire a "hello" to prompt the teacher app to broadcast a snapshot
-      await ch.send({
-        type: 'broadcast',
-        event: 'hello',
-        payload: { ts: Date.now() },
+    // Create a short-lived channel to request a presence snapshot
+    const ch = supabase
+      .channel(`assignment:${classCode}:${rtAssignmentId}`, {
+        config: { broadcast: { ack: true } },
+      })
+      .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
+        const p = msg?.payload as TeacherPresenceState | undefined;
+        if (!p) return;
+        try {
+          setCachedPresence(classCode, rtAssignmentId, p);
+        } catch {}
+        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
       });
-    } catch {
-      // ignore
-    }
-  };
 
-  void subscribeAndHello();
+    const subscribeAndHello = async () => {
+      try {
+        await ch.subscribe();
+        // Fire a "hello" to prompt the teacher app to broadcast a snapshot
+        await ch.send({
+          type: 'broadcast',
+          event: 'hello',
+          payload: { ts: Date.now() },
+        });
+      } catch {
+        // ignore
+      }
+    };
 
-  // Auto-unsubscribe after a few seconds (short-lived hand-shake)
-  const t = window.setTimeout(() => {
-    try {
-      ch.unsubscribe();
-    } catch {}
-  }, 4000);
+    void subscribeAndHello();
 
-  return () => {
-    try {
-      ch.unsubscribe();
-    } catch {}
-    window.clearTimeout(t);
-  };
-}, [classCode, rtAssignmentId]); // 👈 keep deps minimal
+    // Auto-unsubscribe after a few seconds (short-lived hand-shake)
+    const t = window.setTimeout(() => {
+      try {
+        ch.unsubscribe();
+      } catch {}
+    }, 4000);
 
+    return () => {
+      try {
+        ch.unsubscribe();
+      } catch {}
+      window.clearTimeout(t);
+    };
+  }, [classCode, rtAssignmentId]); // 👈 keep deps minimal
 
   // Resolve assignment/page
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
@@ -1334,7 +1332,7 @@ useEffect(() => {
     setMedia(prev => prev.filter(s => s.id !== id))
   }
 
-  // 👇 Add this just before `return ( ... )`
+  // 👇 Pdf node
   const pdfNode = useMemo(() => {
     if (!hasTask || !pdfUrl) return null
     return (
@@ -1343,24 +1341,18 @@ useEffect(() => {
       </div>
     )
   }, [pdfUrl, pageIndex, hasTask, onPdfReady])
-  
+
   // ---- Step 3 guards: centralized navigation permission ----
   const canMoveTo = useCallback((target: number) => {
-    // Hard stop if UI is locked (e.g., focus+lock)
     if (navLocked) return false
-
-    // If teacher is auto-following, only allow moving TO the teacher’s page
     if (autoFollow) {
       const tpi = teacherPageIndexRef.current
       if (typeof tpi === 'number') return target === tpi
       return false
     }
-
-    // If teacher limited pages, enforce whitelist
     if (Array.isArray(allowedPages) && allowedPages.length > 0) {
       return allowedPages.includes(target)
     }
-
     return true
   }, [navLocked, autoFollow, allowedPages])
 
@@ -1368,28 +1360,65 @@ useEffect(() => {
   const goToPage = useCallback(async (i:number) => {
     if (!Number.isFinite(i)) return
     const target = Math.max(0, i)
-
-    // Respect teacher constraints
     if (!canMoveTo(target)) {
       showToast('Navegación limitada por el/la docente en este momento', 'err', 1400)
       return
     }
-
     if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
       try { await submitIfNeeded() } catch {}
     }
-
-    // Do NOT force-unlock here; leave lock state to focus handlers
     setPageIndex(target)
   }, [canMoveTo, submitIfNeeded])
 
   const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
-  const goNext = useCallback(() => { void goToPage(pageIndex + 1)) }, [goToPage, pageIndex]) // ⚠️ Ensure your editor keeps this line intact
+  // ✅ FIXED: removed extra parenthesis
+  const goNext = useCallback(() => { void goToPage(pageIndex + 1) }, [goToPage, pageIndex])
 
   // === Step 3 — Pager guards (uses same centralized canMoveTo) ===
   const baseOk = hasTask && !saving && !submitInFlight.current
   const canPrev = baseOk && canMoveTo(Math.max(0, pageIndex - 1))
   const canNext = baseOk && canMoveTo(pageIndex + 1)
+
+  /* ---------- Minimal Toolbar Node (replaces undefined {Toolbar}) ---------- */
+  const toolbarNode = useMemo(() => (
+    <div style={{
+      position:'fixed',
+      top:12,
+      [toolbarOnRight ? 'right' : 'left']: 12,
+      zIndex:10030
+    } as React.CSSProperties}>
+      <div style={{background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, padding:8, display:'grid', gap:6, width: 236}}>
+        <div style={{display:'flex', gap:6}}>
+          <button onClick={()=>{ setHandMode(false); setTool('pen') }} style={{padding:'6px 10px'}}>✏️ Pen</button>
+          <button onClick={()=>{ setHandMode(false); setTool('eraser') }} style={{padding:'6px 10px'}}>🧽 Eraser</button>
+          <button onClick={()=> setHandMode(true)} style={{padding:'6px 10px'}}>✋ Pan</button>
+        </div>
+        <div style={{display:'flex', gap:6, alignItems:'center'}}>
+          <label style={{minWidth:40}}>Size</label>
+          <input type="range" min={2} max={16} value={size} onChange={e=> setSize(Number(e.target.value))} style={{flex:1}}/>
+        </div>
+        <div style={{display:'flex', gap:6, alignItems:'center'}}>
+          <label style={{minWidth:40}}>Color</label>
+          <input type="color" value={allowColors ? color : '#111111'} disabled={!allowColors} onChange={e=> setColor(e.target.value)} />
+          <label style={{marginLeft:'auto', fontSize:12}}>
+            Side:
+            <select
+              value={toolbarOnRight ? 'right' : 'left'}
+              onChange={e=>{
+                const right = e.target.value === 'right'
+                setToolbarOnRight(right)
+                try { localStorage.setItem('toolbarSide', right ? 'right' : 'left') } catch {}
+              }}
+              style={{marginLeft:6}}
+            >
+              <option value="left">left</option>
+              <option value="right">right</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </div>
+  ), [allowColors, color, size, toolbarOnRight])
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
@@ -1461,7 +1490,6 @@ useEffect(() => {
               enforceTool={!allowColors ? 'pen' : undefined}
               selfId={studentId}
               onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
-                // 5.3 — clock kick + absorb latest t (local only)
                 try { markFirstAction() } catch {}
                 try {
                   const pLast = (u.pts && u.pts.length) ? u.pts[u.pts.length - 1] : undefined
@@ -1530,7 +1558,7 @@ useEffect(() => {
       </div>
 
       {/* Toolbar & toasts */}
-      {Toolbar}
+      {toolbarNode}
       {toast && <Toast text={toast.msg} kind={toast.kind} />}
 
       {/* Focus overlay */}
