@@ -350,6 +350,12 @@ export default function StudentAssignment(){
   const [saving, setSaving] = useState(false)
   const submitInFlight = useRef(false)
 
+  // assignment/page ids for realtime
+  const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
+
+  // Persist assignment id from teacher (or DB fallback)
+  const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
+
   // Lock color to black whenever teacher disables colors
   useEffect(() => {
     if (!allowColors) setColor('#111111')
@@ -524,11 +530,7 @@ export default function StudentAssignment(){
     }
   }, [pdfUrl, pageIndex])
 
-  // assignment/page ids for realtime
-  const currIds = useRef<{assignment_id?:string, page_id?:string}>({})
 
-  // Persist assignment id from teacher (or DB fallback)
-  const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
 
   // flag to sequence boot: wait for class snapshot before using "latest"
   const [classBootDone, setClassBootDone] = useState(false)
