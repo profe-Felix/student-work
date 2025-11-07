@@ -64,7 +64,7 @@ export default function TeacherDashboard() {
   useEffect(() => { enableRealtimeMeter() }, [])
 
   // Hard switch to disable *all* DB writes when you're not signed in
-  const ALLOW_DB_WRITES = false
+  const ALLOW_DB_WRITES = true
 
   // ── AUTH: keep a flag but force false unless you flip ALLOW_DB_WRITES
   const [authed, setAuthed] = useState(false)
