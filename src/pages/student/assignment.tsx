@@ -240,17 +240,15 @@ async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
 /* ---------- initial page index from cached presence (best effort) ---------- */
 function initialPageIndexFromPresence(classCode: string): number {
   try {
-    const cachedAssignmentId = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || '';
-    if (!cachedAssignmentId) return 0;
-    const p = getCachedPresence(classCode, cachedAssignmentId);
+    const cachedAssignmentId = localStorage.getItem(ASSIGNMENT_CACHE_KEY) || ''
+    if (!cachedAssignmentId) return 0
+    const p = getCachedPresence(classCode, cachedAssignmentId)
     if (p && p.autoFollow && typeof p.teacherPageIndex === 'number') {
-      return p.teacherPageIndex;
+      return p.teacherPageIndex
     }
   } catch {/* ignore */}
-  return 0;
+  return 0
 }
-
-
 
 /* ---------- server fallback to get teacher presence snapshot ---------- */
 async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPresenceState | null> {
@@ -455,21 +453,20 @@ export default function StudentAssignment(){
   useEffect(()=>()=>{ if (toastTimer.current) window.clearTimeout(toastTimer.current) }, [])
 
 // When PDF is ready, remember its canvas and sync size immediately
-const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
-  pdfCanvasEl.current = canvas
-  if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
-    const w = Math.max(1, Math.round(dims.cssW))
-    const h = Math.max(1, Math.round(dims.cssH))
-    setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
-  }
-  try {
-    const dpr = (window.devicePixelRatio || 1)
-    if (canvas.width && !canvas.style.width)  canvas.style.width  = `${Math.round(canvas.width / dpr)}px`
-    if (canvas.height && !canvas.style.height) canvas.style.height = `${Math.round(canvas.height / dpr)}px`
-  } catch {}
-  syncFromPdfCanvas()
-}, []); // 👈 stable reference; won’t change when tool/color/handMode change
-
+  const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:number; cssH:number})=>{
+    pdfCanvasEl.current = canvas
+    if (dims && typeof dims.cssW === 'number' && typeof dims.cssH === 'number') {
+      const w = Math.max(1, Math.round(dims.cssW))
+      const h = Math.max(1, Math.round(dims.cssH))
+      setCanvasSize(prev => (prev.w===w && prev.h===h) ? prev : { w, h })
+    }
+    try {
+      const dpr = (window.devicePixelRatio || 1)
+      if (canvas.width && !canvas.style.width)  canvas.style.width  = `${Math.round(canvas.width / dpr)}px`
+      if (canvas.height && !canvas.style.height) canvas.style.height = `${Math.round(canvas.height / dpr)}px`
+    } catch {}
+    syncFromPdfCanvas()
+  }, []) // 👈 stable reference
 
   // Keep overlay size synced to PDF canvas + parent size changes and zoom/orientation
   useEffect(() => {
@@ -552,7 +549,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   const teacherPageIndexRef = useRef<number | null>(null)
 
   // snap-once flag
-  the const initialSnappedRef = useRef(false) // NOTE: this line remains unchanged from your version
+  const initialSnappedRef = useRef(false)
 
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')
@@ -560,32 +557,33 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   const localDirty = useRef<boolean>(false)
   const dirtySince = useRef<number>(0)
   const justSavedAt = useRef<number>(0)
+
   /* ---------- apply a presence snapshot and (optionally) snap ---------- */
   const applyPresenceSnapshot = (
     p: TeacherPresenceState | null | undefined,
     opts?: { snap?: boolean; assignmentId?: string }
   ) => {
-    if (!p) return;
+    if (!p) return
 
     // 1) Update local UI state from snapshot
-    const auto = !!p.autoFollow;
-    const focus = !!p.focusOn;
-    const lock  = !!p.lockNav;
-    const tpi   = (typeof p.teacherPageIndex === 'number') ? p.teacherPageIndex : undefined;
+    const auto = !!p.autoFollow
+    const focus = !!p.focusOn
+    const lock  = !!p.lockNav
+    const tpi   = (typeof p.teacherPageIndex === 'number') ? p.teacherPageIndex : undefined
 
-    setAutoFollow(!!auto);
-    setAllowedPages(Array.isArray(p.allowedPages) ? p.allowedPages : null);
-    setFocusOn(!!focus);
-    setNavLocked(!!(focus && lock));
+    setAutoFollow(auto)
+    setAllowedPages(Array.isArray(p.allowedPages) ? p.allowedPages : null)
+    setFocusOn(focus)
+    setNavLocked(!!(focus && lock))
 
     if (typeof tpi === 'number') {
-      teacherPageIndexRef.current = tpi;
+      teacherPageIndexRef.current = tpi
 
       // Snap only if: caller requested snap, autoFollow is on, and we haven't snapped yet in this boot
-      const shouldSnap = (opts?.snap ?? true) && auto && !initialSnappedRef.current;
+      const shouldSnap = (opts?.snap ?? true) && auto && !initialSnappedRef.current
       if (shouldSnap) {
-        setPageIndex(tpi);
-        initialSnappedRef.current = true;
+        setPageIndex(tpi)
+        initialSnappedRef.current = true
       }
     }
 
@@ -597,27 +595,26 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
         focusOn: focus,
         lockNav: lock,
         teacherPageIndex: teacherPageIndexRef.current ?? tpi
-      });
+      })
     }
-  };
-
+  }
 
   const snapToTeacherIfAvailable = (assignmentId: string) => {
     try {
-      const p = getCachedPresence(classCode, assignmentId);
+      const p = getCachedPresence(classCode, assignmentId)
       if (p) {
-        applyPresenceSnapshot(p, { snap: true, assignmentId });
+        applyPresenceSnapshot(p, { snap: true, assignmentId })
       }
     } catch {/* ignore */}
   }
 
   const ensurePresenceFromServer = async (assignmentId: string) => {
-    const cached = getCachedPresence(classCode, assignmentId);
+    const cached = getCachedPresence(classCode, assignmentId)
     if (!cached) {
-      const p = await fetchPresenceSnapshot(assignmentId);
+      const p = await fetchPresenceSnapshot(assignmentId)
       if (p) {
-        setCachedPresence(classCode, assignmentId, p);
-        applyPresenceSnapshot(p, { snap: true, assignmentId });
+        setCachedPresence(classCode, assignmentId, p)
+        applyPresenceSnapshot(p, { snap: true, assignmentId })
       }
     }
   }
@@ -628,7 +625,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       setRtAssignmentId(nextAssignmentId)
       snapToTeacherIfAvailable(nextAssignmentId)
-      ensurePresenceFromServer(nextAssignmentId)
+      void ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
     })
     return off
@@ -659,7 +656,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
     if (!classBootDone) return
     if (rtAssignmentId) {
       snapToTeacherIfAvailable(rtAssignmentId)
-      ensurePresenceFromServer(rtAssignmentId)
+      void ensurePresenceFromServer(rtAssignmentId)
       return
     }
     ;(async () => {
@@ -668,7 +665,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
         setRtAssignmentId(latest)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, latest) } catch {}
         snapToTeacherIfAvailable(latest)
-        ensurePresenceFromServer(latest)
+        void ensurePresenceFromServer(latest)
       }
     })()
   }, [classBootDone, rtAssignmentId])
@@ -676,21 +673,20 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   useEffect(() => {
     if (!rtAssignmentId) return
     try {
-      const p = getCachedPresence(classCode, rtAssignmentId);
+      const p = getCachedPresence(classCode, rtAssignmentId)
       if (p) {
-        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
+        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId })
       } else {
         ;(async () => {
-          const s = await fetchPresenceSnapshot(rtAssignmentId);
+          const s = await fetchPresenceSnapshot(rtAssignmentId)
           if (s) {
-            setCachedPresence(classCode, rtAssignmentId, s);
-            applyPresenceSnapshot(s, { snap: true, assignmentId: rtAssignmentId });
+            setCachedPresence(classCode, rtAssignmentId, s)
+            applyPresenceSnapshot(s, { snap: true, assignmentId: rtAssignmentId })
           }
-        })();
+        })()
       }
     } catch { /* ignore */ }
   }, [classCode, rtAssignmentId])
-
 
   /* ---------- Hello → presence-snapshot handshake ---------- */
   useEffect(() => {
@@ -700,8 +696,8 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
       .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
         const p = msg?.payload as TeacherPresenceState | undefined
         if (!p) return
-        setCachedPresence(classCode, rtAssignmentId, p);
-        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
+        setCachedPresence(classCode, rtAssignmentId, p)
+        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId })
       })
       .subscribe()
 
@@ -1026,7 +1022,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
     return { hasInk, current }
   }
 
-  const submitIfNeeded = async (_reason: string) => {
+  const submitIfNeeded = async () => {
     const { hasInk } = hasInkOrAudio()
     if (!hasInk) return
     try {
@@ -1090,12 +1086,12 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
         }
       },
       onFocus: ({ on, lockNav }: FocusPayload) => {
-        const focus = !!on;
-        const lock  = !!on && !!lockNav;
+        const focus = !!on
+        const lock  = !!on && !!lockNav
 
         // update local state
-        setFocusOn(!!focus);
-        setNavLocked(!!lock);
+        setFocusOn(focus)
+        setNavLocked(lock)
 
         // build a coherent snapshot using current autoFollow/allowedPages/teacherPageIndex
         const snapshot: TeacherPresenceState = {
@@ -1104,12 +1100,11 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
           focusOn: focus,
           lockNav: lock,
           teacherPageIndex: teacherPageIndexRef.current ?? undefined
-        };
+        }
 
         try { setCachedPresence(classCode, rtAssignmentId, snapshot) } catch {}
         // don’t snap pages on focus toggles to avoid surprise jumps
-        applyPresenceSnapshot(snapshot, { snap: false });
-
+        applyPresenceSnapshot(snapshot, { snap: false })
       },
       onAutoFollow: ({ on, allowedPages, teacherPageIndex }: AutoFollowPayload) => {
         const snapshot: TeacherPresenceState = {
@@ -1120,20 +1115,20 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
           teacherPageIndex: (typeof teacherPageIndex === 'number')
             ? teacherPageIndex
             : (teacherPageIndexRef.current ?? undefined)
-        };
+        }
         // persist + apply
-        setAutoFollow(!!snapshot.autoFollow);
-        setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : null);
+        setAutoFollow(!!snapshot.autoFollow)
+        setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : null)
 
         if (typeof snapshot.teacherPageIndex === 'number') {
-          teacherPageIndexRef.current = snapshot.teacherPageIndex;
+          teacherPageIndexRef.current = snapshot.teacherPageIndex
         }
         try { setCachedPresence(classCode, rtAssignmentId, snapshot) } catch {}
-        applyPresenceSnapshot(snapshot, { snap: true });
+        applyPresenceSnapshot(snapshot, { snap: true })
       },
       onPresence: (p: TeacherPresenceState) => {
         try { setCachedPresence(classCode, rtAssignmentId, p) } catch {}
-        applyPresenceSnapshot(p, { snap: true });
+        applyPresenceSnapshot(p, { snap: true })
       },
 
       // NEW: force-submit → submit immediately (scoped or all)
@@ -1224,7 +1219,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
 
       // ---- polling only (no artifacts realtime channel)
       pollId = window.setInterval(() => {
-        if (mounted) reloadFromServer()
+        if (mounted) void reloadFromServer()
       }, POLL_MS)
     })()
 
@@ -1341,7 +1336,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
           style={{ gridColumn:'span 3', padding:'6px 0', borderRadius:8, border:'1px solid #ddd', background:'#fff' }}>⟲ Undo</button>
       </div>
 
-      {/* Color palettes — full when allowed; single black swatch when disabled */}
+      {/* Color palettes — shown only if allowed */}
       {allowColors ? (
         <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
           <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Crayons</div>
@@ -1360,19 +1355,11 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
           </div>
         </div>
       ) : (
-        <div style={{ overflowY:'auto', overflowX:'hidden', paddingRight:4, maxHeight:'42vh' }}>
-          <div style={{ fontSize:12, fontWeight:600, margin:'6px 0 4px' }}>Color</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 40px)', gap:8 }}>
-            <button
-              onClick={()=>{ setTool('pen'); setColor('#000000') }}
-              style={{
-                width:40, height:40, borderRadius:10,
-                border: color==='#000000' ? '3px solid #111' : '2px solid #ddd',
-                background:'#000000'
-              }}
-              title="Black"
-            />
-          </div>
+        <div style={{
+          fontSize:12, fontWeight:700, textAlign:'center', padding:'10px 8px',
+          border:'1px dashed #e5e7eb', borderRadius:8, color:'#6b7280', background:'#fafafa'
+        }}>
+          Colors off by teacher
         </div>
       )}
 
@@ -1434,7 +1421,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
     }
 
     if (AUTO_SUBMIT_ON_PAGE_CHANGE) {
-      try { await submitIfNeeded('page-change') } catch {}
+      try { await submitIfNeeded() } catch {}
     }
 
     // Do NOT force-unlock here; leave lock state to focus handlers
@@ -1448,8 +1435,6 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
   const baseOk = hasTask && !saving && !submitInFlight.current
   const canPrev = baseOk && canMoveTo(Math.max(0, pageIndex - 1))
   const canNext = baseOk && canMoveTo(pageIndex + 1)
-
-
 
   return (
     <div style={{ minHeight:'100vh', padding:12, paddingBottom:12,
