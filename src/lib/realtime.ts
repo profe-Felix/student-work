@@ -75,20 +75,8 @@ function getChannel(name: string): RealtimeChannel {
   return ch
 }
 
-// ⬇️ FIXED: await until SUBSCRIBED with fast-path if already joined
-function ensureJoined(ch: RealtimeChannel): Promise<void> {
-  // fast paths
-  const st = (ch as any).state
-  if (st === 'joined' || st === 'SUBSCRIBED') return Promise.resolve()
-
-  return new Promise<void>((resolve) => {
-    const ret = ch.subscribe((status: any) => {
-      if (status === 'SUBSCRIBED') resolve()
-    })
-    // some adapters return an already-joined channel immediately
-    const st2 = (ret as any)?.state
-    if (st2 === 'joined' || st2 === 'SUBSCRIBED') resolve()
-  })
+function ensureJoined(ch: RealtimeChannel) {
+  if ((ch as any).state !== 'joined') ch.subscribe()
 }
 
 export function dropChannel(name: string) {
@@ -140,7 +128,7 @@ export async function publishSetAssignment(a: string, b?: string) {
   const assignmentId = b ?? a
   const name = globalChan(classCode)
   const ch = getChannel(name)
-  await ensureJoined(ch)
+  ensureJoined(ch)
   await ch.send({
     type: 'broadcast',
     event: 'set-assignment',
@@ -158,13 +146,12 @@ export function subscribeToGlobal(a: string | ((id: string) => void), b?: (id: s
       const id = msg?.payload?.assignmentId
       if (typeof id === 'string' && id) handler(id)
     })
-  // subscriber path: ensure join so we actually receive broadcasts
-  void ensureJoined(ch)
+  ensureJoined(ch)
   return () => { /* keep global channel cached; explicit drop via dropChannel(name) if needed */ }
 }
 
 /** =========================================================================================
- *  PER-ASSIGNMENT (page, focus, auto-follow, presence, force-submit, allow-colors)
+ *  PER-ASSIGNMENT (page, focus, auto-follow, presence, force-submit)
  *  ======================================================================================= */
 function assignmentChannel(classCode: string | undefined, assignmentId: string) {
   return getChannel(assignmentChan(classCode, assignmentId))
@@ -180,8 +167,6 @@ export function subscribeToAssignment(
     onAutoFollow?: (p: AutoFollowPayload) => void
     onPresence?: (p: TeacherPresenceState) => void
     onForceSubmit?: (p: ForceSubmitPayload) => void
-    /** NEW: color policy handler */
-    onAllowColors?: (p: { allow?: boolean }) => void
   }
 ) {
   const classCode = c ? a : undefined
@@ -192,7 +177,6 @@ export function subscribeToAssignment(
     onAutoFollow?: (p: AutoFollowPayload) => void
     onPresence?: (p: TeacherPresenceState) => void
     onForceSubmit?: (p: ForceSubmitPayload) => void
-    onAllowColors?: (p: { allow?: boolean }) => void
   }
 
   const ch = assignmentChannel(classCode, assignmentId)
@@ -202,10 +186,7 @@ export function subscribeToAssignment(
     .on('broadcast', { event: 'presence' }, (msg: any) => handlers.onPresence?.(msg?.payload))
     .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => handlers.onPresence?.(msg?.payload))
     .on('broadcast', { event: 'force-submit' }, (msg: any) => handlers.onForceSubmit?.(msg?.payload))
-    // NEW: teacher color policy
-    .on('broadcast', { event: 'set-allow-colors' }, (msg: any) => handlers.onAllowColors?.(msg?.payload))
-  // subscriber path: make sure we actually join to receive events
-  void ensureJoined(ch)
+  ensureJoined(ch)
   return ch
 }
 
@@ -223,7 +204,7 @@ export async function publishSetPage(
   else payload = { pageId: payloadOrIndex, pageIndex: 0 }
 
   const ch = assignmentChannel(classCode, assignmentId)
-  await ensureJoined(ch)
+  ensureJoined(ch)
   await ch.send({ type: 'broadcast', event: 'set-page', payload: { ...payload, ts: Date.now() } })
 }
 
@@ -242,7 +223,7 @@ export async function publishFocus(
       : payloadOrOn
 
   const ch = assignmentChannel(classCode, assignmentId)
-  await ensureJoined(ch)
+  ensureJoined(ch)
   await ch.send({ type: 'broadcast', event: 'focus', payload: { ...payload, ts: Date.now() } })
 }
 
@@ -266,7 +247,7 @@ export async function publishAutoFollow(
       : payloadOrOn
 
   const ch = assignmentChannel(classCode, assignmentId)
-  await ensureJoined(ch)
+  ensureJoined(ch)
   await ch.send({ type: 'broadcast', event: 'auto-follow', payload: { ...payload, ts: Date.now() } })
 }
 
@@ -280,7 +261,7 @@ export async function broadcastForceSubmit(
   const payload = (c ?? b) as ForceSubmitPayload
 
   const ch = assignmentChannel(classCode, assignmentId)
-  await ensureJoined(ch)
+  ensureJoined(ch)
   await ch.send({ type: 'broadcast', event: 'force-submit', payload: { ...payload, ts: Date.now() } })
 }
 
@@ -293,7 +274,7 @@ export async function setTeacherPresence(
   const assignmentId = c ? (b as string) : a
   const state = (c ?? b) as TeacherPresenceState
   const ch = assignmentChannel(classCode, assignmentId)
-  await ensureJoined(ch)
+  ensureJoined(ch)
   const payload: TeacherPresenceState = { role: 'teacher', ...state, ts: Date.now() }
   await ch.send({ type: 'broadcast', event: 'presence', payload })
 }
@@ -319,27 +300,11 @@ export function teacherPresenceResponder(
         const snap = getSnapshot?.() ?? {
           autoFollow: false, focusOn: false, lockNav: false, allowedPages: null, teacherPageIndex: 0
         }
-        await ensureJoined(ch) // <-- critical: ensure joined before replying
         await ch.send({ type: 'broadcast', event: 'presence-snapshot', payload: { ...snap, ts: Date.now() } })
-      } catch { /* ignore */ }
+      } catch {/* ignore */}
     })
-  // make sure we actually join to receive the 'hello'
-  void ensureJoined(ch)
+  ensureJoined(ch)
   return () => { /* keep channel warm; call dropChannel if you truly leave */ }
-}
-
-/** ---------- NEW: Allow-colors publisher ---------- */
-export async function publishAllowColors(
-  a: string,
-  b: any,
-  c?: { allow: boolean }
-) {
-  const classCode = c ? a : undefined
-  const assignmentId = c ? (b as string) : a
-  const payload = (c ?? b) as { allow: boolean }
-  const ch = assignmentChannel(classCode, assignmentId)
-  await ensureJoined(ch)
-  await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload: { ...payload, ts: Date.now() } })
 }
 
 /** =========================================================================================
@@ -399,3 +364,4 @@ export function subscribeToInk(a: any, b?: any, c?: any, d?: any): RealtimeChann
   // IMPORTANT: we don't .on(...) and don't join — zero realtime cost
   return ch
 }
+
