@@ -63,17 +63,17 @@ function normalizeStrokeShape(payload: any) {
 export default function TeacherDashboard() {
   useEffect(() => { enableRealtimeMeter() }, [])
 
-  // ── AUTH: only write to DB if signed in (avoids RLS 400s)
+  // ── AUTH: force "not signed in" to avoid any teacher_state writes
   const [authed, setAuthed] = useState(false)
   useEffect(() => {
+    // Keep the effect (so your structure stays intact), but pin authed=false
     let alive = true
     ;(async () => {
-      const { data } = await supabase.auth.getSession()
-      if (alive) setAuthed(!!data.session)
+      if (alive) setAuthed(false)
     })()
     const { data: sub } = supabase.auth.onAuthStateChange(
-      (_evt: AuthChangeEvent, session: Session | null) => {
-        setAuthed(!!session)
+      (_evt: AuthChangeEvent, _session: Session | null) => {
+        setAuthed(false)
       }
     )
     return () => { sub.subscription.unsubscribe(); alive = false }
@@ -339,19 +339,18 @@ export default function TeacherDashboard() {
       try {
         await publishSetAssignment(classCode, assignmentId)
         lastAnnounced.current = assignmentId
-        if (authed) {
-          await safeUpsertTeacherState()          // students poll teacher_state
-          await safeUpsertTeacherPresenceRow()    // students may poll teacher_presence
-        }
+        // ⛔️ do NOT write teacher_state when not authed
+        // if (authed) { await safeUpsertTeacherState() }
+        // ✅ always keep presence row fresh (anon-friendly)
+        await safeUpsertTeacherPresenceRow()
       } catch (err) {
         console.error('initial announce / teacher_state write failed', err)
       }
     })()
   }, [classCode, assignmentId, authed])
 
-  // 2) Keep DB "class_state" in sync for cold start
+  // 2) Keep DB "class_state" in sync for cold start  ✅ allow without auth
   useEffect(() => {
-    if (!authed) return
     if (!classCode || !assignmentId || !pageId) return
     upsertClassState(classCode, assignmentId, pageId, pageIndex)
       .catch(err => console.error('upsertClassState failed', err))
@@ -370,11 +369,11 @@ export default function TeacherDashboard() {
     return () => { try { stop?.() } catch {} }
   }, [classCode, assignmentId, autoFollow, focusOn, allowedPages, pageIndex])
 
-  // 4) Also write through to teacher_presence whenever key state changes
+  // 4) Also write through to teacher_presence whenever key state changes  ✅ allow without auth
   useEffect(() => {
-    if (!assignmentId || !authed) return
+    if (!assignmentId) return
     ;(async () => {
-      await safeUpsertTeacherState()
+      // if (authed) await safeUpsertTeacherState()
       await safeUpsertTeacherPresenceRow()
     })()
   }, [assignmentId, pageIndex, autoFollow, focusOn, allowedPages, authed])
@@ -431,7 +430,7 @@ export default function TeacherDashboard() {
     ch.on('broadcast', { event: 'set-allow-colors' }, async (msg: any) => {
       const allow = msg?.payload?.allow !== false
       setAllowColors(allow)
-      await persistAllowColors(allow)
+      await persistAllowColors(allow) // no-op when !authed
     })
 
     return () => {
@@ -439,36 +438,6 @@ export default function TeacherDashboard() {
       colorChanRef.current = null
     }
   }, [classCode, assignmentId])
-
-  // ===== Grid + realtime watchers =====
-  useEffect(() => {
-    if (!assignmentId || !pageId) return
-    setGrid({})
-    refreshGrid.current('page change')
-  }, [assignmentId, pageId, STUDENTS])
-
-  useEffect(() => {
-    if (!pageId) return
-
-    const ch1 = supabase.channel(`tgrid-subs-${pageId}`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'submissions',
-        filter: `page_id=eq.${pageId}`
-      }, () => debouncedRefresh(200))
-      .subscribe()
-
-    const ch2 = supabase.channel(`tgrid-arts`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'artifacts'
-      }, () => debouncedRefresh(300))
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(ch1)
-      supabase.removeChannel(ch2)
-      if (debTimer.current) { window.clearTimeout(debTimer.current); debTimer.current = null }
-    }
-  }, [pageId])
 
   // --- Teacher state writers (single row; no broadcast fanout)
   async function safeUpsertTeacherState(optional?: Partial<{ pageIndex: number; focusOn: boolean; autoFollow: boolean; allowedPages: number[] | null }>) {
@@ -494,7 +463,7 @@ export default function TeacherDashboard() {
 
   // NEW: Write-through row that students' fetchPresenceSnapshot() reads
   async function safeUpsertTeacherPresenceRow() {
-    if (!authed) return
+    // Allow without auth — assumes RLS permits anon write for this row
     if (!classCode || !assignmentId) return
     try {
       await supabase
@@ -618,12 +587,12 @@ export default function TeacherDashboard() {
               await publishSetAssignment(classCode, newId)
               lastAnnounced.current = newId
 
-              if (authed) {
-                await safeUpsertTeacherState()
-                await safeUpsertTeacherPresenceRow()
-              }
+              // if (authed) {
+              //   await safeUpsertTeacherState()
+              // }
+              await safeUpsertTeacherPresenceRow()
 
-              if (classCode && pageId && authed) {
+              if (classCode && pageId) {
                 await upsertClassState(classCode, newId, pageId, pageIndex)
               }
             } catch (err) {
@@ -644,11 +613,9 @@ export default function TeacherDashboard() {
               try {
                 await publishSetAssignment(classCode, next)
                 lastAnnounced.current = next
-                if (authed) {
-                  await safeUpsertTeacherState()
-                  await safeUpsertTeacherPresenceRow()
-                }
-                if (classCode && pageId && authed) {
+                // if (authed) { await safeUpsertTeacherState() }
+                await safeUpsertTeacherPresenceRow()
+                if (classCode && pageId) {
                   await upsertClassState(classCode, next, pageId, pageIndex)
                 }
               } catch (err) {
@@ -681,14 +648,14 @@ export default function TeacherDashboard() {
 
                 setPageId(nextPageId)
 
-                if (classCode && authed) {
+                if (classCode) {
                   await upsertClassState(classCode, assignmentId, nextPageId, nextIndex)
                 }
 
-                if (authed) {
-                  await safeUpsertTeacherState({ pageIndex: nextIndex })
-                  await safeUpsertTeacherPresenceRow()
-                }
+                // if (authed) {
+                //   await safeUpsertTeacherState({ pageIndex: nextIndex })
+                // }
+                await safeUpsertTeacherPresenceRow()
               } catch (err) {
                 console.error('submit-before-switch / upsertTeacherState failed', err)
               } finally {
