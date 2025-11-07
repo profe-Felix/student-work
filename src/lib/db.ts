@@ -256,9 +256,9 @@ export async function upsertTeacherState(input: {
     allowColors = true,
   } = input
 
+  // try to read current auth user, fallback to "anon" mode
   const { data: me } = await supabase.auth.getUser()
-  const uid = me?.user?.id
-  if (!uid) throw new Error('Must be signed in to upsert teacher_state')
+  const uid = me?.user?.id || 'anon-teacher'
 
   const { error } = await supabase
     .from('teacher_state')
@@ -271,7 +271,7 @@ export async function upsertTeacherState(input: {
         focus_on: focusOn,
         auto_follow: autoFollow,
         allowed_pages: allowedPages,
-        allow_colors: allowColors, // <-- NEW
+        allow_colors: allowColors,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id,class_code' }
@@ -279,6 +279,7 @@ export async function upsertTeacherState(input: {
 
   if (error) throw error
 }
+
 
 /**
  * Teacher: PATCH-style update that only touches provided fields.
