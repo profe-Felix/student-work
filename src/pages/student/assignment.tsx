@@ -704,6 +704,46 @@ useEffect(() => {
     return () => { try { ch.unsubscribe() } catch {}; window.clearTimeout(t) }
   }, [classCode, rtAssignmentId])
 
+  /* ---------- Allow Colors — realtime broadcast listener ---------- */
+/* Teacher sends: event='set-allow-colors', payload: { allow: boolean } */
+useEffect(() => {
+  if (!rtAssignmentId) return
+
+  const channelName = `colors:${classCode}:${rtAssignmentId}`
+
+  const ch = supabase
+    .channel(channelName, { config: { broadcast: { ack: false, self: false } } })
+    .on('broadcast', { event: 'set-allow-colors' }, (msg: any) => {
+      const allow = msg?.payload?.allow !== false
+      setAllowColors(allow)
+      if (!allow) {
+        // hard-enforce black + pen to avoid sneaky hi/eraser color states
+        setTool('pen')
+        setColor('#000000')
+      }
+      // remember per-class+assignment so reconnects match teacher intent instantly
+      try { localStorage.setItem(`allowColors:${classCode}:${rtAssignmentId}`, allow ? '1' : '0') } catch {}
+    })
+    .subscribe()
+
+  return () => { try { ch.unsubscribe() } catch {} }
+}, [classCode, rtAssignmentId])
+
+/* ---------- Allow Colors — read last policy from localStorage immediately ---------- */
+useEffect(() => {
+  if (!rtAssignmentId) return
+  try {
+    const v = localStorage.getItem(`allowColors:${classCode}:${rtAssignmentId}`)
+    if (v === '0') {
+      setAllowColors(false)
+      setTool('pen')
+      setColor('#000000')
+    } else if (v === '1') {
+      setAllowColors(true)
+    }
+  } catch {}
+}, [classCode, rtAssignmentId])
+
   // 🎛 ALLOW COLORS — boot-time fetch (teacher_state)
   useEffect(() => {
     let cancelled = false
