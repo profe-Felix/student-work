@@ -348,6 +348,11 @@ export default function StudentAssignment(){
     if (!allowColors) setColor('#111111')
   }, [allowColors])
 
+  // ⛔ If colors are off, never allow 'highlighter' to be active
+  useEffect(() => {
+    if (!allowColors && tool === 'highlighter') setTool('pen')
+  }, [allowColors, tool])
+
   // Subscribe to teacher's 'setAllowColors' broadcast
   useEffect(() => {
     const off = subscribeToGlobalColors((msg: { type: string; payload?: any }) => {
@@ -549,7 +554,7 @@ export default function StudentAssignment(){
   const teacherPageIndexRef = useRef<number | null>(null)
 
   // snap-once flag
-  const initialSnappedRef = useRef(false)
+  the initialSnappedRef = useRef(false)
 
   // hashes/dirty tracking
   const lastAppliedServerHash = useRef<string>('')
@@ -1311,16 +1316,21 @@ export default function StudentAssignment(){
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-        {[
-          {label:'Pen',  icon:'✏️', val:'pen'},
-          {label:'Hi',   icon:'🖍️', val:'highlighter'},
-          {label:'Erase',icon:'🧽', val:'eraser'},
-          {label:'Obj',  icon:'🗑️', val:'eraserObject'},
-        ].map(t=>(
-          <button key={t.val} onClick={()=>setTool(t.val as Tool)}
+        {([
+          {label:'Pen',  icon:'✏️', val:'pen' as const},
+          ...(allowColors ? [{label:'Hi', icon:'🖍️', val:'highlighter' as const}] : []),
+          {label:'Erase',icon:'🧽', val:'eraser' as const},
+          {label:'Obj',  icon:'🗑️', val:'eraserObject' as const},
+        ]).map(t=>(
+          <button
+            key={t.val}
+            onClick={() => setTool(prev => (!allowColors && t.val === 'highlighter' ? 'pen' : t.val))}
             style={{ padding:'6px 0', borderRadius:8, border:'1px solid #ddd',
               background: tool===t.val ? '#111' : '#fff', color: tool===t.val ? '#fff' : '#111' }}
-            title={t.label}>{t.icon}</button>
+            title={t.label}
+          >
+            {t.icon}
+          </button>
         ))}
       </div>
 
@@ -1501,6 +1511,9 @@ export default function StudentAssignment(){
               size={size}
               mode={handMode || !hasTask ? 'scroll' : 'draw'}
               tool={tool}
+              /** 🔒 Hard lock at the engine: always enforce black + pen when colors are off */
+              enforceColor={!allowColors ? '#111111' : undefined}
+              enforceTool={!allowColors ? 'pen' : undefined}
               selfId={studentId}
               onStrokeUpdate={async (u: RemoteStrokeUpdate) => {
                 // 5.3 — clock kick + absorb latest t (local only)
