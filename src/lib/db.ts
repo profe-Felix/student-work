@@ -1,4 +1,4 @@
-//src/lib/db.ts
+// src/lib/db.ts
 import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL!
@@ -221,6 +221,7 @@ export async function fetchClassState(classCode: string) {
    NEW: TABLE-DRIVEN TEACHER STATE (reduces realtime chatter)
    - Teacher writes one row per (user_id, class_code)
    - Students poll SELECT latest by updated_at for their class
+   - Added: allow_colors (persist teacher color policy)
 ============================================================================= */
 
 export type TeacherStateRow = {
@@ -231,6 +232,7 @@ export type TeacherStateRow = {
   focus_on: boolean
   auto_follow: boolean
   allowed_pages: number[] | null
+  allow_colors?: boolean | null   // <-- NEW: persisted color policy
   updated_at: string
 }
 
@@ -242,6 +244,7 @@ export async function upsertTeacherState(input: {
   focusOn?: boolean
   autoFollow?: boolean
   allowedPages?: number[] | null
+  allowColors?: boolean | null
 }) {
   const {
     classCode,
@@ -250,6 +253,7 @@ export async function upsertTeacherState(input: {
     focusOn = false,
     autoFollow = false,
     allowedPages = null,
+    allowColors = true,
   } = input
 
   const { data: me } = await supabase.auth.getUser()
@@ -267,12 +271,52 @@ export async function upsertTeacherState(input: {
         focus_on: focusOn,
         auto_follow: autoFollow,
         allowed_pages: allowedPages,
+        allow_colors: allowColors, // <-- NEW
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id,class_code' }
     )
 
   if (error) throw error
+}
+
+/**
+ * Teacher: PATCH-style update that only touches provided fields.
+ * Prevents accidentally resetting other state (e.g., flipping autoFollow on).
+ */
+export async function patchTeacherState(classCode: string, partial: {
+  assignmentId?: string
+  pageIndex?: number
+  focusOn?: boolean
+  autoFollow?: boolean
+  allowedPages?: number[] | null
+  allowColors?: boolean | null
+}) {
+  const { data: me } = await supabase.auth.getUser()
+  const uid = me?.user?.id
+  if (!uid) throw new Error('Must be signed in to update teacher_state')
+
+  // Build an update object with only defined keys
+  const update: Record<string, any> = { updated_at: new Date().toISOString() }
+  if (partial.assignmentId !== undefined) update.assignment_id = partial.assignmentId
+  if (partial.pageIndex !== undefined) update.page_index = partial.pageIndex
+  if (partial.focusOn !== undefined) update.focus_on = partial.focusOn
+  if (partial.autoFollow !== undefined) update.auto_follow = partial.autoFollow
+  if (partial.allowedPages !== undefined) update.allowed_pages = partial.allowedPages
+  if (partial.allowColors !== undefined) update.allow_colors = partial.allowColors
+
+  const { error } = await supabase
+    .from('teacher_state')
+    .update(update)
+    .eq('user_id', uid)
+    .eq('class_code', classCode)
+
+  if (error) throw error
+}
+
+/** Convenience: set only the allow_colors policy without touching other toggles. */
+export async function setTeacherAllowColors(classCode: string, allow: boolean) {
+  await patchTeacherState(classCode, { allowColors: allow })
 }
 
 /** Student: fetch current teacher state for a class (latest row wins). */
