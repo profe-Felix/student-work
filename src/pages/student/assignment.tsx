@@ -693,28 +693,55 @@ export default function StudentAssignment(){
     } catch { /* ignore */ }
   }, [classCode, rtAssignmentId])
 
-  /* ---------- Hello → presence-snapshot handshake ---------- */
-  useEffect(() => {
-    if (!rtAssignmentId) return
-    const ch = supabase
-      .channel(`assignment:${classCode}:${rtAssignmentId}`, { config: { broadcast: { ack: true } } })
-      .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
-        const p = msg?.payload as TeacherPresenceState | undefined
-        if (!p) return
-        setCachedPresence(classCode, rtAssignmentId, p)
-        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId })
-      })
-      .subscribe()
+/* ---------- Hello → presence-snapshot handshake ---------- */
+useEffect(() => {
+  if (!rtAssignmentId) return;
 
-    ;(async () => {
+  // Create a short-lived channel to request a presence snapshot
+  const ch = supabase
+    .channel(`assignment:${classCode}:${rtAssignmentId}`, {
+      config: { broadcast: { ack: true } },
+    })
+    .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => {
+      const p = msg?.payload as TeacherPresenceState | undefined;
+      if (!p) return;
       try {
-        await ch.send({ type: 'broadcast', event: 'hello', payload: { ts: Date.now() } })
-      } catch {/* ignore */}
-    })()
+        setCachedPresence(classCode, rtAssignmentId, p);
+      } catch {}
+      applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
+    });
 
-    const t = window.setTimeout(() => { try { ch.unsubscribe() } catch {} }, 4000)
-    return () => { try { ch.unsubscribe() } catch {}; window.clearTimeout(t) }
-  }, [classCode, rtAssignmentId])
+  const subscribeAndHello = async () => {
+    try {
+      await ch.subscribe();
+      // Fire a "hello" to prompt the teacher app to broadcast a snapshot
+      await ch.send({
+        type: 'broadcast',
+        event: 'hello',
+        payload: { ts: Date.now() },
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  void subscribeAndHello();
+
+  // Auto-unsubscribe after a few seconds (short-lived hand-shake)
+  const t = window.setTimeout(() => {
+    try {
+      ch.unsubscribe();
+    } catch {}
+  }, 4000);
+
+  return () => {
+    try {
+      ch.unsubscribe();
+    } catch {}
+    window.clearTimeout(t);
+  };
+}, [classCode, rtAssignmentId]); // 👈 keep deps minimal
+
 
   // Resolve assignment/page
   async function resolveIds(): Promise<{ assignment_id: string, page_id: string } | null> {
