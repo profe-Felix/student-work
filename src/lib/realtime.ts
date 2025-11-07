@@ -75,13 +75,19 @@ function getChannel(name: string): RealtimeChannel {
   return ch
 }
 
-// ⬇️ NEW: await until SUBSCRIBED so first send doesn't REST-fallback/drop
+// ⬇️ FIXED: await until SUBSCRIBED with fast-path if already joined
 function ensureJoined(ch: RealtimeChannel): Promise<void> {
+  // fast paths
+  const st = (ch as any).state
+  if (st === 'joined' || st === 'SUBSCRIBED') return Promise.resolve()
+
   return new Promise<void>((resolve) => {
-    // supabase-js v2: subscribe(callback) invokes with status changes
-    ch.subscribe((status: any) => {
+    const ret = ch.subscribe((status: any) => {
       if (status === 'SUBSCRIBED') resolve()
     })
+    // some adapters return an already-joined channel immediately
+    const st2 = (ret as any)?.state
+    if (st2 === 'joined' || st2 === 'SUBSCRIBED') resolve()
   })
 }
 
@@ -152,7 +158,7 @@ export function subscribeToGlobal(a: string | ((id: string) => void), b?: (id: s
       const id = msg?.payload?.assignmentId
       if (typeof id === 'string' && id) handler(id)
     })
-  // fire and forget here (subscriber path)
+  // subscriber path: ensure join so we actually receive broadcasts
   void ensureJoined(ch)
   return () => { /* keep global channel cached; explicit drop via dropChannel(name) if needed */ }
 }
@@ -198,7 +204,7 @@ export function subscribeToAssignment(
     .on('broadcast', { event: 'force-submit' }, (msg: any) => handlers.onForceSubmit?.(msg?.payload))
     // NEW: teacher color policy
     .on('broadcast', { event: 'set-allow-colors' }, (msg: any) => handlers.onAllowColors?.(msg?.payload))
-  // subscriber path: no need to await
+  // subscriber path: make sure we actually join to receive events
   void ensureJoined(ch)
   return ch
 }
@@ -313,10 +319,11 @@ export function teacherPresenceResponder(
         const snap = getSnapshot?.() ?? {
           autoFollow: false, focusOn: false, lockNav: false, allowedPages: null, teacherPageIndex: 0
         }
+        await ensureJoined(ch) // <-- critical: ensure joined before replying
         await ch.send({ type: 'broadcast', event: 'presence-snapshot', payload: { ...snap, ts: Date.now() } })
-      } catch {/* ignore */}
+      } catch { /* ignore */ }
     })
-  // subscriber path: no need to await
+  // make sure we actually join to receive the 'hello'
   void ensureJoined(ch)
   return () => { /* keep channel warm; call dropChannel if you truly leave */ }
 }
@@ -332,7 +339,7 @@ export async function publishAllowColors(
   const payload = (c ?? b) as { allow: boolean }
   const ch = assignmentChannel(classCode, assignmentId)
   await ensureJoined(ch)
-  await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload })
+  await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload: { ...payload, ts: Date.now() } })
 }
 
 /** =========================================================================================
