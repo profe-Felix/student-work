@@ -17,6 +17,9 @@ type Props = {
   className?: string
 }
 
+// Supabase Realtime channel status union (kept local to avoid extra imports)
+type ChannelStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR'
+
 // "1-3,5,8-9" (1-based) -> [0,1,2,4,7,8] (0-based)
 function parseRanges(input: string): number[] {
   const out = new Set<number>()
@@ -47,7 +50,7 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
   // NEW — allow colors
   const [allowColors, setAllowColors] = useState<boolean>(true)
   const colorChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
-  const colorReadyRef = useRef<Promise<void> | null>(null) // <-- ready gate for subscribe
+  const colorReadyRef = useRef<Promise<void> | null>(null) // ready gate for subscribe
   const helloChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
   // Build the current presence snapshot we want to advertise
@@ -66,7 +69,7 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     const ch = supabase.channel(name, { config: { broadcast: { ack: false, self: false } } })
     // Supabase v2: subscribe takes a callback; no promise is returned.
     colorReadyRef.current = new Promise<void>((resolve) => {
-      ch.subscribe((status) => {
+      ch.subscribe((status: ChannelStatus) => {
         if (status === 'SUBSCRIBED') resolve()
       })
     })
