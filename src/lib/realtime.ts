@@ -151,7 +151,7 @@ export function subscribeToGlobal(a: string | ((id: string) => void), b?: (id: s
 }
 
 /** =========================================================================================
- *  PER-ASSIGNMENT (page, focus, auto-follow, presence, force-submit)
+ *  PER-ASSIGNMENT (page, focus, auto-follow, presence, force-submit, allow-colors)
  *  ======================================================================================= */
 function assignmentChannel(classCode: string | undefined, assignmentId: string) {
   return getChannel(assignmentChan(classCode, assignmentId))
@@ -167,6 +167,8 @@ export function subscribeToAssignment(
     onAutoFollow?: (p: AutoFollowPayload) => void
     onPresence?: (p: TeacherPresenceState) => void
     onForceSubmit?: (p: ForceSubmitPayload) => void
+    /** NEW: color policy handler */
+    onAllowColors?: (p: { allow?: boolean }) => void
   }
 ) {
   const classCode = c ? a : undefined
@@ -177,6 +179,7 @@ export function subscribeToAssignment(
     onAutoFollow?: (p: AutoFollowPayload) => void
     onPresence?: (p: TeacherPresenceState) => void
     onForceSubmit?: (p: ForceSubmitPayload) => void
+    onAllowColors?: (p: { allow?: boolean }) => void
   }
 
   const ch = assignmentChannel(classCode, assignmentId)
@@ -186,6 +189,8 @@ export function subscribeToAssignment(
     .on('broadcast', { event: 'presence' }, (msg: any) => handlers.onPresence?.(msg?.payload))
     .on('broadcast', { event: 'presence-snapshot' }, (msg: any) => handlers.onPresence?.(msg?.payload))
     .on('broadcast', { event: 'force-submit' }, (msg: any) => handlers.onForceSubmit?.(msg?.payload))
+    // NEW: teacher color policy
+    .on('broadcast', { event: 'set-allow-colors' }, (msg: any) => handlers.onAllowColors?.(msg?.payload))
   ensureJoined(ch)
   return ch
 }
@@ -307,6 +312,20 @@ export function teacherPresenceResponder(
   return () => { /* keep channel warm; call dropChannel if you truly leave */ }
 }
 
+/** ---------- NEW: Allow-colors publisher ---------- */
+export async function publishAllowColors(
+  a: string,
+  b: any,
+  c?: { allow: boolean }
+) {
+  const classCode = c ? a : undefined
+  const assignmentId = c ? (b as string) : a
+  const payload = (c ?? b) as { allow: boolean }
+  const ch = assignmentChannel(classCode, assignmentId)
+  ensureJoined(ch)
+  await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload })
+}
+
 /** =========================================================================================
  *  INK fan-out — HARD DISABLED without breaking imports
  *  We export the same functions, but they no-op (no subscribe, no send).
@@ -364,4 +383,3 @@ export function subscribeToInk(a: any, b?: any, c?: any, d?: any): RealtimeChann
   // IMPORTANT: we don't .on(...) and don't join — zero realtime cost
   return ch
 }
-
