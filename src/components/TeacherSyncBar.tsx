@@ -1,11 +1,13 @@
 //src/components/TeacherSyncBar.tsx
 import { useEffect, useRef, useState } from 'react'
+import { supabase } from '../lib/db'
 import {
   publishAutoFollow,
   publishFocus,
   publishSetPage,
   setTeacherPresence,
 } from '../lib/realtime'
+import { upsertTeacherState } from '../lib/db'
 
 type Props = {
   classCode: string
@@ -42,6 +44,27 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
   const [rangeText, setRangeText] = useState('')
   const allowedRef = useRef<number[] | null>(null)
 
+  // NEW — allow colors
+  const [allowColors, setAllowColors] = useState<boolean>(true)
+  const colorChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+
+  // Lazy-init a warm channel for the color policy (low traffic; no ACK/self echo)
+  function ensureColorChannel() {
+    if (colorChanRef.current) return colorChanRef.current
+    const name = `colors:${classCode}:${assignmentId}`
+    const ch = supabase.channel(name, { config: { broadcast: { ack: false, self: false } } })
+    ch.subscribe().catch(() => {/* ignore join errors; transient */})
+    colorChanRef.current = ch
+    return ch
+  }
+
+  async function broadcastAllowColors(next: boolean) {
+    try {
+      const ch = ensureColorChannel()
+      await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload: { allow: !!next, ts: Date.now() } })
+    } catch {/* ignore */}
+  }
+
   // Broadcast initial presence on mount (class-scoped)
   useEffect(() => {
     if (!assignmentId) return
@@ -55,15 +78,25 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignmentId])
 
-  // Rebroadcast presence when toggles/pageIndex change
+  // Rebroadcast presence when toggles/pageIndex change + write through to table
   useEffect(() => {
     if (!assignmentId) return
+    const allowed = allowedRef.current ?? null
     void setTeacherPresence(classCode, assignmentId, {
       autoFollow,
-      allowedPages: allowedRef.current ?? null,
+      allowedPages: allowed,
       teacherPageIndex: pageIndex,
       focusOn: focus,
       lockNav,
+    })
+    // table-driven presence for late joiners (no schema change)
+    void upsertTeacherState({
+      classCode,
+      assignmentId,
+      pageIndex,
+      focusOn: focus,
+      autoFollow,
+      allowedPages: allowed,
     })
   }, [classCode, assignmentId, autoFollow, focus, lockNav, pageIndex])
 
@@ -97,6 +130,16 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     if (next) {
       await publishSetPage(classCode, assignmentId, pageIndex)
     }
+
+    // write-through to table
+    await upsertTeacherState({
+      classCode,
+      assignmentId,
+      pageIndex,
+      focusOn: focus,
+      autoFollow: next,
+      allowedPages: allowed ?? null,
+    })
   }
 
   async function toggleFocus() {
@@ -111,6 +154,23 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
       lockNav,
     })
     await publishFocus(classCode, assignmentId, next, lockNav)
+
+    await upsertTeacherState({
+      classCode,
+      assignmentId,
+      pageIndex,
+      focusOn: next,
+      autoFollow,
+      allowedPages: allowedRef.current ?? null,
+    })
+  }
+
+  async function toggleAllowColors() {
+    const next = !allowColors
+    setAllowColors(next)
+    // realtime broadcast only (students will subscribe)
+    await broadcastAllowColors(next)
+    // no DB write (we didn't add schema for this)
   }
 
   return (
@@ -153,6 +213,20 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
       >
         {focus ? 'End Focus' : 'Start Focus'}
       </button>
+
+      <span className="mx-1 h-5 w-px bg-gray-300" />
+
+      {/* NEW: Allow Colors toggle */}
+      <label className="flex items-center gap-2 text-sm">
+        <span className="text-gray-600">Allow colors</span>
+        <button
+          className={`px-3 py-1 rounded ${allowColors ? 'bg-emerald-600 text-white' : 'bg-gray-100'}`}
+          onClick={toggleAllowColors}
+          title="When OFF, students are forced to draw in black only."
+        >
+          {allowColors ? 'ON' : 'OFF'}
+        </button>
+      </label>
     </div>
   )
 }
