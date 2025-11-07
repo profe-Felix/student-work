@@ -14,7 +14,6 @@ function makeClient() {
       detectSessionInUrl: false,
     },
     realtime: {
-      // Gentle throttle so we don't burst during joins
       params: { eventsPerSecond: 10 },
     },
   })
@@ -24,14 +23,14 @@ function makeClient() {
 export const supabase =
   (globalThis as any).__sb_client__ ?? ((globalThis as any).__sb_client__ = makeClient())
 
-// === Types (teacher page imports some of these) ===
+// === Types ===
 export type AssignmentRow = { id: string; title: string }
 export type PageRow = { id: string; assignment_id: string; page_index: number; pdf_path: string | null }
 
-const ASSIGNMENT_TITLE = 'Handwriting - Daily'      // keep in sync with student page
-const PDF_PATH_DEFAULT = 'pdfs/aprende-m2.pdf'      // just for sanity checks in SELECT
+const ASSIGNMENT_TITLE = 'Handwriting - Daily'
+const PDF_PATH_DEFAULT = 'pdfs/aprende-m2.pdf'
 
-// ----- SELECT-ONLY helpers (no inserts to assignments/pages from browser) -----
+// ---------------- SELECT HELPERS ----------------
 export async function getAssignmentIdByTitle(title: string = ASSIGNMENT_TITLE): Promise<string> {
   const { data, error } = await supabase
     .from('assignments')
@@ -39,9 +38,8 @@ export async function getAssignmentIdByTitle(title: string = ASSIGNMENT_TITLE): 
     .eq('title', title)
     .limit(1)
     .maybeSingle()
-
   if (error) throw error
-  if (!data?.id) throw new Error(`Assignment "${title}" not found. Create it once in SQL.`)
+  if (!data?.id) throw new Error(`Assignment "${title}" not found.`)
   return data.id
 }
 
@@ -53,21 +51,18 @@ export async function getPageId(assignment_id: string, page_index: number): Prom
     .eq('page_index', page_index)
     .limit(1)
     .maybeSingle()
-
   if (error) throw error
-  if (!data?.id) throw new Error(`Page ${page_index} not found for assignment ${assignment_id}. Seed pages in SQL.`)
+  if (!data?.id) throw new Error(`Page ${page_index} not found for assignment ${assignment_id}.`)
   return data.id
 }
 
-// Backwards-compatible wrapper used by student/assignment.tsx
 export async function upsertAssignmentWithPage(title: string, _pdf_path: string, page_index: number) {
-  // NOTE: no “upsert” anymore — just SELECT.
   const assignment_id = await getAssignmentIdByTitle(title)
   const page_id = await getPageId(assignment_id, page_index)
   return { assignment_id, page_id }
 }
 
-// ----- Submissions & artifacts (allowed by RLS) -----
+// ---------------- SUBMISSIONS ----------------
 export async function createSubmission(student_id: string, assignment_id: string, page_id: string): Promise<string> {
   const { data, error } = await supabase
     .from('submissions')
@@ -85,9 +80,8 @@ export async function saveStrokes(submission_id: string, strokes_json: any) {
   if (error) throw error
 }
 
-// ===== audio bucket hard-coded to "student-audio" + signed URL support =====
 export async function saveAudio(submission_id: string, blob: Blob) {
-  const bucket = 'student-audio' // your bucket
+  const bucket = 'student-audio'
   const key = `${submission_id}/${Date.now()}.webm`
 
   const { error: upErr } = await supabase.storage.from(bucket).upload(key, blob, {
@@ -105,21 +99,15 @@ export async function saveAudio(submission_id: string, blob: Blob) {
 export async function getAudioUrl(storage_path: string) {
   const [bucket, ...rest] = storage_path.split('/')
   const path = rest.join('/')
-
-  // Try a signed URL (works with private buckets); fall back to public URL
   try {
     const { data: signed, error: signErr } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60)
     if (!signErr && signed?.signedUrl) return signed.signedUrl
-  } catch {
-    // ignore and try public
-  }
+  } catch {}
   const { data } = supabase.storage.from(bucket).getPublicUrl(path)
   return data.publicUrl
 }
 
-// Latest submission (with joined artifacts) for a page
 export async function loadLatestSubmission(assignment_id: string, page_id: string, student_id: string) {
-  // get latest submission id for this student/page
   const { data: sub, error: se } = await supabase
     .from('submissions')
     .select('id, created_at')
@@ -132,23 +120,18 @@ export async function loadLatestSubmission(assignment_id: string, page_id: strin
   if (se) throw se
   if (!sub?.id) return null
 
-  // pull artifacts
   const { data: arts, error: ae } = await supabase
     .from('artifacts')
     .select('id, kind, strokes_json, storage_path, created_at')
     .eq('submission_id', sub.id)
     .order('created_at', { ascending: true })
   if (ae) throw ae
-
   return { submission: sub, artifacts: arts || [] }
 }
 
-// ----- Teacher helpers (select-only) -----
+// ---------------- TEACHER HELPERS ----------------
 export async function listAssignments(): Promise<AssignmentRow[]> {
-  const { data, error } = await supabase
-    .from('assignments')
-    .select('id,title')
-    .order('title', { ascending: true })
+  const { data, error } = await supabase.from('assignments').select('id,title').order('title', { ascending: true })
   if (error) throw error
   return data as AssignmentRow[]
 }
@@ -176,14 +159,8 @@ export async function listLatestByPage(assignment_id: string, page_id: string) {
   return data
 }
 
-
-// --- CLASS STATE HELPERS (legacy) ---
-export async function upsertClassState(
-  classCode: string,
-  assignmentId: string,
-  pageId: string,
-  pageIndex: number
-) {
+// ---------------- CLASS STATE ----------------
+export async function upsertClassState(classCode: string, assignmentId: string, pageId: string, pageIndex: number) {
   const { error } = await supabase
     .from('class_state')
     .upsert(
@@ -194,36 +171,20 @@ export async function upsertClassState(
         page_index: pageIndex,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'class_code' } // upsert by PK
+      { onConflict: 'class_code' }
     )
   if (error) throw error
 }
 
 export async function fetchClassState(classCode: string) {
-  const { data, error } = await supabase
-    .from('class_state')
-    .select('*')
-    .eq('class_code', classCode)
-    .maybeSingle()
+  const { data, error } = await supabase.from('class_state').select('*').eq('class_code', classCode).maybeSingle()
   if (error) throw error
   return data as
-    | {
-        class_code: string
-        assignment_id: string
-        page_id: string
-        page_index: number
-        updated_at: string
-      }
+    | { class_code: string; assignment_id: string; page_id: string; page_index: number; updated_at: string }
     | null
 }
 
-/* =============================================================================
-   NEW: TABLE-DRIVEN TEACHER STATE (reduces realtime chatter)
-   - Teacher writes one row per (user_id, class_code)
-   - Students poll SELECT latest by updated_at for their class
-   - Added: allow_colors (persist teacher color policy)
-============================================================================= */
-
+// ---------------- TEACHER STATE ----------------
 export type TeacherStateRow = {
   user_id: string
   class_code: string
@@ -232,11 +193,11 @@ export type TeacherStateRow = {
   focus_on: boolean
   auto_follow: boolean
   allowed_pages: number[] | null
-  allow_colors?: boolean | null   // <-- NEW: persisted color policy
+  allow_colors?: boolean | null
   updated_at: string
 }
 
-/** Teacher: upsert current state (INSERT once, then UPDATE same row). */
+// ✅ FIXED: safe UUID fallback for anon mode
 export async function upsertTeacherState(input: {
   classCode: string
   assignmentId: string
@@ -256,9 +217,8 @@ export async function upsertTeacherState(input: {
     allowColors = true,
   } = input
 
-  // try to read current auth user, fallback to "anon" mode
   const { data: me } = await supabase.auth.getUser()
-  const uid = me?.user?.id || 'anon-teacher'
+  const uid = me?.user?.id || '00000000-0000-0000-0000-000000000000' // valid UUID fallback
 
   const { error } = await supabase
     .from('teacher_state')
@@ -280,24 +240,20 @@ export async function upsertTeacherState(input: {
   if (error) throw error
 }
 
-
-/**
- * Teacher: PATCH-style update that only touches provided fields.
- * Prevents accidentally resetting other state (e.g., flipping autoFollow on).
- */
-export async function patchTeacherState(classCode: string, partial: {
-  assignmentId?: string
-  pageIndex?: number
-  focusOn?: boolean
-  autoFollow?: boolean
-  allowedPages?: number[] | null
-  allowColors?: boolean | null
-}) {
+export async function patchTeacherState(
+  classCode: string,
+  partial: {
+    assignmentId?: string
+    pageIndex?: number
+    focusOn?: boolean
+    autoFollow?: boolean
+    allowedPages?: number[] | null
+    allowColors?: boolean | null
+  }
+) {
   const { data: me } = await supabase.auth.getUser()
-  const uid = me?.user?.id
-  if (!uid) throw new Error('Must be signed in to update teacher_state')
+  const uid = me?.user?.id || '00000000-0000-0000-0000-000000000000'
 
-  // Build an update object with only defined keys
   const update: Record<string, any> = { updated_at: new Date().toISOString() }
   if (partial.assignmentId !== undefined) update.assignment_id = partial.assignmentId
   if (partial.pageIndex !== undefined) update.page_index = partial.pageIndex
@@ -315,12 +271,10 @@ export async function patchTeacherState(classCode: string, partial: {
   if (error) throw error
 }
 
-/** Convenience: set only the allow_colors policy without touching other toggles. */
 export async function setTeacherAllowColors(classCode: string, allow: boolean) {
   await patchTeacherState(classCode, { allowColors: allow })
 }
 
-/** Student: fetch current teacher state for a class (latest row wins). */
 export async function fetchTeacherStateForClass(classCode: string): Promise<TeacherStateRow | null> {
   const { data, error } = await supabase
     .from('teacher_state')
@@ -329,8 +283,6 @@ export async function fetchTeacherStateForClass(classCode: string): Promise<Teac
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle()
-
-  // PGRST116 = no rows found for maybeSingle()
   if (error && (error as any).code !== 'PGRST116') throw error
   return (data as any) ?? null
 }
