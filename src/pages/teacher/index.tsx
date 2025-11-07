@@ -23,6 +23,9 @@ import PlaybackDrawer from '../../components/PlaybackDrawer'
 // 🔎 realtime meter
 import { enableRealtimeMeter, logRealtimeUsage } from '../../lib/rtMeter'
 
+// colors policy (DB bootstrap + realtime persistence)
+import type { PostgrestSingleResponse } from '@supabase/supabase-js'
+
 type LatestCell = {
   submission_id: string
   hasStrokes: boolean
@@ -48,9 +51,9 @@ function normalizeStrokeShape(payload: any) {
       color: s?.color,
       size: s?.size,
       tool: s?.tool,
-      pts: Array.isArray(s?.pts) ? s.pts : (Array.isArray(s?.points) ? s.points : [])
+      pts: Array.isArray(s?.pts) ? s.pts : (Array.isArray(s?.points) ? s.points : []),
     })),
-    media
+    media,
   }
 }
 
@@ -85,6 +88,10 @@ export default function TeacherDashboard() {
   const [autoFollow, setAutoFollow] = useState<boolean>(true)
   const [allowedPages, setAllowedPages] = useState<number[] | null>(null)
 
+  // NEW — teacher color policy (mirrors DB + rebroadcasts)
+  const [allowColors, setAllowColors] = useState<boolean>(true)
+  const colorChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+
   const lastAnnouncedAssignment = useRef<string>('')
 
   const pageIndex = useMemo(
@@ -118,6 +125,44 @@ export default function TeacherDashboard() {
     k = k.replace(/^public\//, '')
     k = k.replace(/^pdfs\//, '')
     return k
+  }
+
+  // ── colors: table write (best-effort; succeeds only if allow_colors column exists)
+  async function persistAllowColors(next: boolean) {
+    if (!classCode || !assignmentId) return
+    try {
+      await supabase
+        .from('teacher_state')
+        .upsert(
+          {
+            class_code: classCode,
+            assignment_id: assignmentId,
+            page_index: pages.find((p) => p.id === pageId)?.page_index ?? 0,
+            focus_on: !!focusOn,
+            auto_follow: !!autoFollow,
+            allowed_pages: allowedPages ?? null,
+            allow_colors: !!next, // <── the new column
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'assignment_id' }
+        )
+    } catch (e) {
+      // non-fatal; students still get realtime broadcast
+      console.warn('persistAllowColors failed (non-fatal)', e)
+    }
+  }
+
+  // ── colors: warm a channel that receives own broadcasts (self:true)
+  function ensureColorChannel() {
+    if (colorChanRef.current) return colorChanRef.current
+    if (!assignmentId) return null
+    const name = `colors:${classCode}:${assignmentId}`
+    const ch = supabase.channel(name, { config: { broadcast: { ack: false, self: true } } })
+    ch.subscribe().catch(() => {
+      /* ignore transient join errors */
+    })
+    colorChanRef.current = ch
+    return ch
   }
 
   useEffect(() => {
@@ -305,6 +350,63 @@ export default function TeacherDashboard() {
       await safeUpsertTeacherPresenceRow()
     })()
   }, [assignmentId, pageIndex, autoFollow, focusOn, allowedPages])
+
+  // ── BOOTSTRAP colors from DB, then rebroadcast for students
+  useEffect(() => {
+    let cancelled = false
+    if (!classCode || !assignmentId) return
+
+    ;(async () => {
+      try {
+        const resp: PostgrestSingleResponse<any> = await supabase
+          .from('teacher_state')
+          .select('allow_colors')
+          .eq('class_code', classCode)
+          .eq('assignment_id', assignmentId)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        const dbVal = (resp?.data && typeof resp.data.allow_colors === 'boolean')
+          ? !!resp.data.allow_colors
+          : true // default ON
+
+        if (!cancelled) setAllowColors(dbVal)
+
+        // Best-effort: rebroadcast so students snap to this on load
+        const ch = ensureColorChannel()
+        if (ch) {
+          await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload: { allow: dbVal, ts: Date.now() } })
+        }
+      } catch (e) {
+        // if fetch fails, keep default true and still broadcast that
+        const ch = ensureColorChannel()
+        if (ch) {
+          await ch.send({ type: 'broadcast', event: 'set-allow-colors', payload: { allow: true, ts: Date.now() } })
+        }
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [classCode, assignmentId])
+
+  // ── LISTEN for color policy changes (including our own) and persist to DB
+  useEffect(() => {
+    if (!assignmentId) return
+    const ch = ensureColorChannel()
+    if (!ch) return
+
+    ch.on('broadcast', { event: 'set-allow-colors' }, async (msg: any) => {
+      const allow = msg?.payload?.allow !== false
+      setAllowColors(allow)
+      await persistAllowColors(allow)
+    })
+
+    return () => {
+      try { ch.unsubscribe() } catch {}
+      colorChanRef.current = null
+    }
+  }, [classCode, assignmentId])
 
   // ===== Grid + realtime watchers =====
   useEffect(() => {
