@@ -38,6 +38,14 @@ function parseRanges(input: string): number[] {
   return Array.from(out.values()).sort((a, b) => a - b)
 }
 
+type Snapshot = {
+  pageIndex: number
+  autoFollow: boolean
+  focusOn: boolean
+  lockNav: boolean
+  allowedPages: number[] | null
+}
+
 export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIndex, className }: Props) {
   const [autoFollow, setAutoFollow] = useState(false)
   const [focus, setFocus] = useState(false)
@@ -48,8 +56,19 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
   // Allow-colors policy (realtime only; no DB write needed)
   const [allowColors, setAllowColors] = useState<boolean>(true)
 
-  // Build the presence snapshot we advertise to students
-  const currentPresence = () => ({
+  // Last DB-upserted snapshot (used to avoid duplicate writes)
+  const lastSavedRef = useRef<Snapshot | null>(null)
+  const upsertDebounceRef = useRef<number | null>(null)
+
+  const snapshot = (): Snapshot => ({
+    pageIndex,
+    autoFollow,
+    focusOn: focus,
+    lockNav,
+    allowedPages: allowedRef.current ?? null,
+  })
+
+  const presence = () => ({
     autoFollow,
     allowedPages: allowedRef.current ?? null,
     teacherPageIndex: pageIndex,
@@ -57,78 +76,99 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
     lockNav,
   })
 
-  /** ──────────────────────────────────────────────────────────────
-   * Respond to student “hello” with a presence snapshot (realtime)
-   * ────────────────────────────────────────────────────────────── */
+  const shallowEqualSnap = (a: Snapshot | null, b: Snapshot | null) => {
+    if (!a || !b) return false
+    if (
+      a.pageIndex !== b.pageIndex ||
+      a.autoFollow !== b.autoFollow ||
+      a.focusOn !== b.focusOn ||
+      a.lockNav !== b.lockNav
+    ) return false
+    const A = a.allowedPages ?? null
+    const B = b.allowedPages ?? null
+    if (A === null || B === null) return A === B
+    if (A.length !== B.length) return false
+    for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false
+    return true
+  }
+
+  /** Reply to student “hello” with a presence snapshot */
   useEffect(() => {
     if (!assignmentId) return
-    const stop = teacherPresenceResponder(classCode, assignmentId, () => currentPresence())
+    const stop = teacherPresenceResponder(classCode, assignmentId, () => presence())
     return () => { try { stop?.() } catch {} }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classCode, assignmentId, autoFollow, focus, lockNav, pageIndex])
 
-  /** Broadcast initial presence on mount (class-scoped) */
+  /** Initial realtime presence on mount */
   useEffect(() => {
     if (!assignmentId) return
-    void setTeacherPresence(classCode, assignmentId, currentPresence())
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignmentId])
+    void setTeacherPresence(classCode, assignmentId, presence())
+  }, [assignmentId]) // keep mount-only behavior
 
-  /** Rebroadcast presence when toggles/pageIndex change + write-through to table (anon-safe) */
+  /** Keep realtime presence fresh when toggles/page change (NO DB write here) */
   useEffect(() => {
     if (!assignmentId) return
-    const presence = currentPresence()
-    void setTeacherPresence(classCode, assignmentId, presence)
-    void upsertTeacherState({
-      classCode,
-      assignmentId,
-      pageIndex: presence.teacherPageIndex ?? 0,
-      focusOn: presence.focusOn ?? false,
-      autoFollow: presence.autoFollow ?? false,
-      allowedPages: presence.allowedPages ?? null,
-      // intentionally not persisting colors in DB to avoid schema mismatch
-    })
+    void setTeacherPresence(classCode, assignmentId, presence())
   }, [classCode, assignmentId, autoFollow, focus, lockNav, pageIndex])
 
-  /** When auto-follow is ON, rebroadcast current page on change (snap students) */
+  /** Debounced DB write-through (greatly reduces teacher_state traffic) */
+  useEffect(() => {
+    if (!assignmentId) return
+    const next = snapshot()
+    if (shallowEqualSnap(lastSavedRef.current, next)) return
+
+    if (upsertDebounceRef.current) window.clearTimeout(upsertDebounceRef.current)
+    upsertDebounceRef.current = window.setTimeout(async () => {
+      try {
+        await upsertTeacherState({
+          classCode,
+          assignmentId,
+          pageIndex: next.pageIndex,
+          focusOn: next.focusOn,
+          autoFollow: next.autoFollow,
+          allowedPages: next.allowedPages ?? null,
+        })
+        lastSavedRef.current = next
+      } catch {
+        // ignore
+      }
+    }, 600) // debounce DB writes
+    return () => { if (upsertDebounceRef.current) window.clearTimeout(upsertDebounceRef.current) }
+  }, [classCode, assignmentId, autoFollow, focus, lockNav, pageIndex, rangeText])
+
+  /** When Auto-Follow is ON, rebroadcast page snaps */
   useEffect(() => {
     if (!assignmentId || !pageId) return
     if (autoFollow) void publishSetPage(classCode, assignmentId, pageIndex)
   }, [classCode, assignmentId, pageId, pageIndex, autoFollow])
 
-  /** NEW: if Auto-Follow is ON and the teacher edits Allow pages, live-apply the range */
-  const rangeDebounce = useRef<number | null>(null)
+  /** If Auto-Follow is ON and the teacher edits "Allow pages", live-apply the range (realtime only) */
+  const rangeRebroadcastDebounce = useRef<number | null>(null)
   useEffect(() => {
     if (!assignmentId || !autoFollow) return
     const allowed = parseRanges(rangeText)
     allowedRef.current = allowed
-    if (rangeDebounce.current) window.clearTimeout(rangeDebounce.current)
-    rangeDebounce.current = window.setTimeout(async () => {
+    if (rangeRebroadcastDebounce.current) window.clearTimeout(rangeRebroadcastDebounce.current)
+    rangeRebroadcastDebounce.current = window.setTimeout(async () => {
       try {
         await setTeacherPresence(classCode, assignmentId, {
-          autoFollow: true,
+          ...presence(),
           allowedPages: allowed ?? null,
-          teacherPageIndex: pageIndex,
-          focusOn: focus,
-          lockNav,
         })
         await publishAutoFollow(classCode, assignmentId, true, allowed ?? null, pageIndex)
       } catch {}
     }, 250)
-    return () => {
-      if (rangeDebounce.current) window.clearTimeout(rangeDebounce.current)
-    }
+    return () => { if (rangeRebroadcastDebounce.current) window.clearTimeout(rangeRebroadcastDebounce.current) }
   }, [assignmentId, classCode, autoFollow, rangeText, pageIndex, focus, lockNav])
 
   async function toggleAutoFollow() {
     if (!assignmentId) return
     const next = !autoFollow
     setAutoFollow(next)
-
     const allowed = next ? parseRanges(rangeText) : null
     allowedRef.current = allowed
 
-    // 1) presence row (snapshot)
+    // Realtime snapshot + broadcast
     await setTeacherPresence(classCode, assignmentId, {
       autoFollow: next,
       allowedPages: allowed ?? null,
@@ -136,28 +176,16 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
       focusOn: focus,
       lockNav,
     })
-
-    // 2) live broadcast
     await publishAutoFollow(classCode, assignmentId, next, allowed ?? null, pageIndex)
     if (next) await publishSetPage(classCode, assignmentId, pageIndex)
 
-    // 3) DB write-through (anon-safe)
-    await upsertTeacherState({
-      classCode,
-      assignmentId,
-      pageIndex,
-      focusOn: focus,
-      autoFollow: next,
-      allowedPages: allowed ?? null,
-    })
+    // DB write is handled by debounced effect (no immediate upsert here)
   }
 
   async function toggleFocus() {
     if (!assignmentId) return
     const next = !focus
     setFocus(next)
-
-    // Ensure lockNav false is sent when ending focus to free students
     const nextLock = next ? lockNav : false
 
     await setTeacherPresence(classCode, assignmentId, {
@@ -167,23 +195,13 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
       focusOn: next,
       lockNav: nextLock,
     })
-
     await publishFocus(classCode, assignmentId, next, nextLock)
-
-    await upsertTeacherState({
-      classCode,
-      assignmentId,
-      pageIndex,
-      focusOn: next,
-      autoFollow,
-      allowedPages: allowedRef.current ?? null,
-    })
+    // DB write handled by debounced effect
   }
 
   async function toggleAllowColors() {
     const next = !allowColors
     setAllowColors(next)
-    // pure realtime broadcast; students listen via subscribeToAssignment(... onAllowColors)
     await publishAllowColors(classCode, assignmentId, { allow: next })
   }
 
@@ -204,7 +222,7 @@ export default function TeacherSyncBar({ classCode, assignmentId, pageId, pageIn
           placeholder="e.g. 1-3,5"
           value={rangeText}
           onChange={e => setRangeText(e.target.value)}
-          disabled={false /* allow edits anytime; live-applied only when Sync is ON */}
+          disabled={false}
           style={{ minWidth: 120 }}
         />
       </label>
