@@ -56,22 +56,34 @@
     padding:12px;
   }
   .slots{
-    display:grid;
-    grid-template-columns:repeat(var(--box-cols,4), max-content);
-    gap:var(--gap);
-    align-items:start;
+  display:inline-flex;               /* <-- change from grid */
+  flex-wrap:wrap;                    /* allow multiple rows */
+  gap:var(--gap);
+  align-items:flex-start;
+  justify-content:flex-start;
+  max-width:100%;
   }
   .slot{
-    background:#fff;
-    border:2px solid var(--drop-border);
-    border-radius:12px;
-    padding:6px 8px;
-    display:flex; gap:var(--inner-gap);
-    align-items:center; flex-wrap:nowrap; justify-content:flex-start;
-    width:max-content; max-width:100%;
-    position:relative;
+  background:#fff;
+  border:2px solid var(--drop-border);
+  border-radius:12px;
+  padding:6px 8px;
+  display:inline-flex;               /* tighter natural sizing */
+  gap:var(--inner-gap);
+  align-items:center;
+  justify-content:flex-start;
+  flex-wrap:nowrap;
+  min-width:max(6ch, 80px);          /* keeps minimum shape */
+  width:auto;                        /* shrink to fit contents */
+  position:relative;
+  vertical-align:top;
   }
-  .slot:empty::before{ content:""; display:block; width:8ch; height:clamp(40px, 6vh, 64px); }
+  .slot:empty::before{ 
+  content:"";
+  display:block;
+  width:8ch;
+  height:clamp(40px, 6vh, 64px); 
+  }
 
   /* Bottom: note + trash stacked on the left */
   .row-bottom{margin-top:12px}
