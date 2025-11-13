@@ -57,7 +57,7 @@
   }
   .slots{
     display:grid;
-    grid-template-columns:repeat(var(--cols,4), max-content);
+    grid-template-columns:repeat(var(--box-cols,4), max-content);
     gap:var(--gap);
     align-items:start;
   }
@@ -105,7 +105,7 @@
   .tile:active{cursor:grabbing; transform:scale(.98)}
   .tile .x{
     position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:999px;
-    background:#fff; border:2px solid var(--danger); color:#ef4444; font-size:14px; display:none;
+    background:#fff; border:2px solid #ef4444; color:#ef4444; font-size:14px; display:none;
     align-items:center; justify-content:center; cursor:pointer
   }
   .tile.clone .x{display:flex}
@@ -160,6 +160,9 @@
         <label>Cajas:
           <input id="boxesInput" type="number" min="1" max="12" value="4"/>
         </label>
+        <label>Filas:
+          <input id="rowsInput" type="number" min="1" max="50" value="1"/>
+        </label>
         <button id="applyBoxes" class="btn ghost">Aplicar</button>
         <button id="validateBtn" class="btn">Validar</button>
       </div>
@@ -170,7 +173,7 @@
 <main>
   <!-- LEFT: Word building board -->
   <section class="board">
-    <div id="slots" class="slots" style="--cols:4"></div>
+    <div id="slots" class="slots"></div>
     <div class="row-bottom">
       <div class="note-wrap">
         <small class="note">Consejo: suelta sobre la papelera para borrar.</small>
@@ -208,11 +211,29 @@
 <script>
   /* ===== URL options ===== */
   const qs = new URLSearchParams(location.search);
+
+  /* Old single-number param kept for backward compat (not used by the grid builder) */
   const BOXES = clampInt(qs.get('boxes') ?? qs.get('drops'), 4, 1, 12);
 
+  /* New: grid controls for multiple rows or a fixed count */
+  const BOX_COLS = clampInt(
+    qs.get('boxCols') ?? qs.get('boxes') ?? qs.get('drops') ?? qs.get('columns'),
+    4, 1, 12
+  );
+  const BOX_ROWS = clampInt(
+    qs.get('boxRows') ?? qs.get('rows') ?? qs.get('r'),
+    1, 1, 50
+  );
+  const BOX_COUNT = clampInt(
+    qs.get('boxCount') ?? qs.get('count'),
+    null, 1, 500
+  );
+
+  /* Palettes per-row */
   const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
   if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
 
+  /* Space tile options */
   const spaceParam = (qs.get('space') ?? 'on').toLowerCase();
   const SPACE_ON = !['0','off','false','none','no'].includes(spaceParam);
   const spaceW = parseFloat(qs.get('spacew'));
@@ -270,9 +291,13 @@
   const picsCard   = document.getElementById('picsCard');
 
   const boxesInput = document.getElementById('boxesInput');
+  const rowsInput  = document.getElementById('rowsInput');
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn= document.getElementById('validateBtn');
-  boxesInput.value = BOXES;
+
+  /* reflect current columns/rows */
+  boxesInput.value = BOX_COLS;
+  rowsInput.value  = BOX_ROWS;
 
   /* ===== Tile makers ===== */
   function makeTextTile(text, isClone=false){
@@ -343,10 +368,11 @@
   }
 
   /* ===== Build board & palettes ===== */
-  function buildSlots(n){
-    slotsEl.style.setProperty('--cols', n);
+  function buildSlotsGrid(cols, rows, countOverride){
+    const total = countOverride ?? (cols * rows);
+    slotsEl.style.setProperty('--box-cols', cols);
     slotsEl.innerHTML = '';
-    for(let i=0;i<n;i++){
+    for(let i=0;i<total;i++){
       const s = document.createElement('div');
       s.className = 'slot';
       s.dataset.index = i;
@@ -390,7 +416,7 @@
     document.querySelectorAll('.slot').forEach(relayoutSlot);
   }
 
-  /* ===== Drag & Drop ===== */
+  /* ===== Drag & Drop (with insert-between) ===== */
   let drag = null;
 
   function makeDraggable(el, opts){
@@ -450,6 +476,21 @@
     trashEl.classList.toggle('highlight', !!t?.closest?.('#trash'));
   }
 
+  // Insert el into slot at the position nearest to clientX
+  function insertAtPointer(slot, el, clientX){
+    const kids = [...slot.querySelectorAll('.tile')].filter(k => k !== el);
+    if (kids.length === 0){
+      slot.appendChild(el);
+      return;
+    }
+    const before = kids.find(k => {
+      const r = k.getBoundingClientRect();
+      return (r.left + r.width/2) >= clientX;
+    });
+    if (before) slot.insertBefore(el, before);
+    else slot.appendChild(el);
+  }
+
   function onUp(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
 
@@ -467,14 +508,16 @@
       const prev = drag.el.parentElement;
       drag.el.remove();
       if(prev?.classList.contains('slot')) relayoutSlot(prev);
+
     } else if(slot){
       const prev = drag.el.parentElement;
-      if(prev?.classList.contains('slot') && prev!==slot){
-        prev.removeChild(drag.el);
-        relayoutSlot(prev);
+      if(prev?.classList?.contains('slot') && prev !== slot){
+        try { prev.removeChild(drag.el); } catch {}
       }
-      slot.appendChild(drag.el);
+      insertAtPointer(slot, drag.el, e.clientX);
       relayoutSlot(slot);
+      if(prev && prev !== slot && prev.classList.contains('slot')) relayoutSlot(prev);
+
     } else {
       if(drag.fromPalette){
         drag.el.remove();
@@ -544,14 +587,16 @@
     alert('Cajas:\n' + result.map((w,i)=>`#${i+1}: ${w || '—'}`).join('\n'));
   });
 
+  /* Aplicar: now changes columns AND rows live; count becomes cols*rows */
   applyBoxes.addEventListener('click', ()=>{
-    const n = clampInt(boxesInput.value, 4, 1, 12);
-    buildSlots(n);
+    const cols = clampInt(boxesInput.value, BOX_COLS, 1, 12);
+    const rows = clampInt(rowsInput.value,  BOX_ROWS, 1, 50);
+    buildSlotsGrid(cols, rows, null);
     relayoutAllSlots();
   });
 
   /* ===== Boot ===== */
-  buildSlots(BOXES);
+  buildSlotsGrid(BOX_COLS, BOX_ROWS, BOX_COUNT);
   fillPalettes();
   relayoutAllSlots();
 </script>
