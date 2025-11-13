@@ -15,7 +15,7 @@
     --bg:#fafbff; --grid:#eef1f7; --ink:#111; --muted:#6b7280; --brand:#2563eb;
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
     --trash:#fee2e2; --danger:#ef4444;
-    --gap:12px;              /* gap between word boxes */
+    --gap:12px;              /* gap between word boxes / rows */
     --inner-gap:10px;        /* gap inside a word box (between tiles) */
     --tile-min-w:48px;       /* palette text tile base size */
     --tile-h:48px;
@@ -55,33 +55,44 @@
     border-radius:12px;
     padding:12px;
   }
+
+  /* Rows-based board (no CSS grid) */
   .slots{
-  display:grid;                                   /* back to grid */
-  grid-template-columns:repeat(var(--box-cols,4), max-content);
-  gap:var(--gap);
-  align-items:start;
-  justify-content:start;                          /* pack left */
+    display:flex;
+    flex-direction:column;
+    gap:var(--gap);
+    align-items:stretch;
+    justify-content:flex-start;
   }
+  .line{
+    display:flex;
+    gap:var(--gap);
+    align-items:flex-start;
+    justify-content:flex-start;
+    flex-wrap:nowrap;
+    width:100%;
+  }
+
   .slot{
-  background:#fff;
-  border:2px solid var(--drop-border);
-  border-radius:12px;
-  padding:6px 8px;
-  display:inline-flex;               /* tighter natural sizing */
-  gap:var(--inner-gap);
-  align-items:center;
-  justify-content:flex-start;
-  flex-wrap:nowrap;
-  min-width:max(6ch, 80px);          /* keeps minimum shape */
-  width:auto;                        /* shrink to fit contents */
-  position:relative;
-  vertical-align:top;
+    background:#fff;
+    border:2px solid var(--drop-border);
+    border-radius:12px;
+    padding:6px 8px;
+    display:inline-flex;               /* tighter natural sizing */
+    gap:var(--inner-gap);
+    align-items:center;
+    justify-content:flex-start;
+    flex-wrap:nowrap;
+    min-width:max(6ch, 80px);          /* keeps minimum shape */
+    width:auto;                        /* shrink to fit contents */
+    position:relative;
+    vertical-align:top;
   }
-  .slot:empty::before{ 
-  content:"";
-  display:block;
-  width:8ch;
-  height:clamp(40px, 6vh, 64px); 
+  .slot:empty::before{
+    content:"";
+    display:block;
+    width:8ch;                         /* nice default syllable width */
+    height:clamp(40px, 6vh, 64px);
   }
 
   /* Bottom: note + trash stacked on the left */
@@ -116,7 +127,7 @@
   .tile:active{cursor:grabbing; transform:scale(.98)}
   .tile .x{
     position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:999px;
-    background:#fff; border:2px solid #ef4444; color:#ef4444; font-size:14px; display:none;
+    background:#fff; border:2px solid var(--danger); color:#ef4444; font-size:14px; display:none;
     align-items:center; justify-content:center; cursor:pointer
   }
   .tile.clone .x{display:flex}
@@ -223,41 +234,12 @@
   /* ===== URL options ===== */
   const qs = new URLSearchParams(location.search);
 
-  /* Old single-number param kept for backward compat (not used by the grid builder) */
-  const BOXES = clampInt(qs.get('boxes') ?? qs.get('drops'), 4, 1, 12);
-
-  /* New: grid controls for multiple rows or a fixed count */
-  const BOX_COLS = clampInt(
-    qs.get('boxCols') ?? qs.get('boxes') ?? qs.get('drops') ?? qs.get('columns'),
-    4, 1, 12
-  );
-  const BOX_ROWS = clampInt(
-    qs.get('boxRows') ?? qs.get('rows') ?? qs.get('r'),
-    1, 1, 50
-  );
-  const BOX_COUNT = clampInt(
-    qs.get('boxCount') ?? qs.get('count'),
-    null, 1, 500
-  );
-
-  /* Palettes per-row */
-  const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
-  if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
-
-  /* Space tile options */
-  const spaceParam = (qs.get('space') ?? 'on').toLowerCase();
-  const SPACE_ON = !['0','off','false','none','no'].includes(spaceParam);
-  const spaceW = parseFloat(qs.get('spacew'));
-  if (!isNaN(spaceW) && spaceW > 0 && spaceW < 5) {
-    document.documentElement.style.setProperty('--space-w', `${spaceW}ch`);
-  }
-
+  /* Helpers */
   function clampInt(val, fallback, min, max){
     const n = parseInt(val, 10);
     if (Number.isFinite(n)) return Math.max(min, Math.min(max, n));
     return fallback;
   }
-
   // Omit → defaults; blank/off/false/0/none → []; otherwise split by comma
   function getList(keys, defaults){
     const key = (Array.isArray(keys) ? keys.find(k => qs.has(k)) : keys) ?? null;
@@ -266,6 +248,41 @@
     const lo = raw.toLowerCase();
     if (raw === '' || lo === 'off' || lo === 'false' || lo === '0' || lo === 'none') return [];
     return raw.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  function getToggle(keys, defaultOn=true){
+    const key = (Array.isArray(keys) ? keys.find(k => qs.has(k)) : keys) ?? null;
+    if (!key) return defaultOn;
+    const lo = (qs.get(key) ?? '').trim().toLowerCase();
+    return !['0','off','false','none','no'].includes(lo);
+  }
+
+  /* Old single-number (kept for compat; unused by builder now) */
+  const BOXES = clampInt(qs.get('boxes') ?? qs.get('drops'), 4, 1, 12);
+
+  /* Rows-based controls: boxes per row + number of rows */
+  const BOXES_PER_ROW = clampInt(
+    qs.get('boxCols') ?? qs.get('boxes') ?? qs.get('columns'),
+    4, 1, 12
+  );
+  const NUM_ROWS = clampInt(
+    qs.get('boxRows') ?? qs.get('rows') ?? qs.get('r'),
+    1, 1, 50
+  );
+
+  /* Optional fixed total (still supported) */
+  const BOX_COUNT = clampInt(qs.get('boxCount') ?? qs.get('count'), null, 1, 500);
+
+  /* Palettes per-row */
+  const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
+  if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
+
+  /* Space + Images toggles */
+  const SPACE_ON = getToggle('space', true);
+  const IMAGES_ON = getToggle(['images','imgs','pics','pictures'], true);
+
+  const spaceW = parseFloat(qs.get('spacew'));
+  if (!isNaN(spaceW) && spaceW > 0 && spaceW < 5) {
+    document.documentElement.style.setProperty('--space-w', `${spaceW}ch`);
   }
 
   /* ===== Data ===== */
@@ -306,9 +323,9 @@
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn= document.getElementById('validateBtn');
 
-  /* reflect current columns/rows */
-  boxesInput.value = BOX_COLS;
-  rowsInput.value  = BOX_ROWS;
+  /* reflect current inputs */
+  boxesInput.value = BOXES_PER_ROW;
+  rowsInput.value  = NUM_ROWS;
 
   /* ===== Tile makers ===== */
   function makeTextTile(text, isClone=false){
@@ -379,15 +396,29 @@
   }
 
   /* ===== Build board & palettes ===== */
-  function buildSlotsGrid(cols, rows, countOverride){
-    const total = countOverride ?? (cols * rows);
-    slotsEl.style.setProperty('--box-cols', cols);
+  function buildRows(boxesPerRow, numRows, countOverride){
+    // If a fixed count is provided, compute rows/boxes from it
+    let rows = numRows, boxes = boxesPerRow;
+    if (Number.isFinite(countOverride)) {
+      rows = Math.max(1, Math.ceil(countOverride / boxesPerRow));
+    }
+
     slotsEl.innerHTML = '';
-    for(let i=0;i<total;i++){
-      const s = document.createElement('div');
-      s.className = 'slot';
-      s.dataset.index = i;
-      slotsEl.appendChild(s);
+    let index = 0;
+    for (let r = 0; r < rows; r++){
+      const line = document.createElement('div');
+      line.className = 'line';
+      const boxesThisRow = Number.isFinite(countOverride)
+        ? Math.min(boxesPerRow, Math.max(0, countOverride - r*boxesPerRow))
+        : boxesPerRow;
+
+      for (let c = 0; c < boxesThisRow; c++){
+        const s = document.createElement('div');
+        s.className = 'slot';
+        s.dataset.index = index++;
+        line.appendChild(s);
+      }
+      slotsEl.appendChild(line);
     }
   }
 
@@ -412,10 +443,12 @@
     wordsCard.style.display = WORDS.length ? '' : 'none';
     WORDS.forEach(w => wordsTray.appendChild(makeTextTile(w, false)));
 
-    // Pictures
+    // Pictures (toggleable)
     picsTray.innerHTML = '';
-    picsCard.style.display = '';
-    IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
+    picsCard.style.display = IMAGES_ON ? '' : 'none';
+    if (IMAGES_ON) {
+      IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
+    }
   }
 
   /* ===== Layout inside slots ===== */
@@ -598,16 +631,16 @@
     alert('Cajas:\n' + result.map((w,i)=>`#${i+1}: ${w || '—'}`).join('\n'));
   });
 
-  /* Aplicar: now changes columns AND rows live; count becomes cols*rows */
+  /* Aplicar: rebuild rows live */
   applyBoxes.addEventListener('click', ()=>{
-    const cols = clampInt(boxesInput.value, BOX_COLS, 1, 12);
-    const rows = clampInt(rowsInput.value,  BOX_ROWS, 1, 50);
-    buildSlotsGrid(cols, rows, null);
+    const boxesPer = clampInt(boxesInput.value, BOXES_PER_ROW, 1, 12);
+    const rows = clampInt(rowsInput.value,  NUM_ROWS, 1, 50);
+    buildRows(boxesPer, rows, null);
     relayoutAllSlots();
   });
 
   /* ===== Boot ===== */
-  buildSlotsGrid(BOX_COLS, BOX_ROWS, BOX_COUNT);
+  buildRows(BOXES_PER_ROW, NUM_ROWS, BOX_COUNT);
   fillPalettes();
   relayoutAllSlots();
 </script>
