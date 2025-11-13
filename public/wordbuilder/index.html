@@ -56,12 +56,11 @@
     padding:12px;
   }
   .slots{
-  display:inline-flex;               /* <-- change from grid */
-  flex-wrap:wrap;                    /* allow multiple rows */
+  display:grid;                                   /* back to grid */
+  grid-template-columns:repeat(var(--box-cols,4), max-content);
   gap:var(--gap);
-  align-items:flex-start;
-  justify-content:flex-start;
-  max-width:100%;
+  align-items:start;
+  justify-content:start;                          /* pack left */
   }
   .slot{
   background:#fff;
