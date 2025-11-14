@@ -290,7 +290,7 @@
 
     // URL params
     const qs = new URLSearchParams(location.search);
-    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'rowsyll', 'syllcount', or classic
+    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'allisyll', 'rowsyll', 'syllcount', or classic
     const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
     const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
     const IP = qs.get('ip') || DEFAULT_IMAGES_PREFIX;
@@ -339,7 +339,7 @@
     // SOLO conditions
     const SOLO_MODE =
       !SYNC ||
-      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'rowsyll' || MODE === 'syllcount' ||
+      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'syllcount' ||
       (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -624,7 +624,7 @@
     async function ensureStorageLoaded(){
       try{
         imageFiles = [];
-        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort' || MODE==='rowsyll' || MODE==='syllcount'){
+        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort' || MODE==='allisyll' || MODE==='rowsyll' || MODE==='syllcount'){
           imageFiles = await listAllImagesJpg();
         } else if (SOLO_WORDS.length){
           const found = [];
@@ -888,7 +888,7 @@
     }
     function resetRoundPlacements(){
       document.querySelectorAll('.card, .chip').forEach(c=> c.classList.remove('ok','bad','locked') );
-      if (currentMode==='row' || currentMode==='rowalli' || currentMode==='rowsyll'){
+      if (currentMode==='row' || currentMode==='rowalli' || currentMode==='allisyll' || currentMode==='rowsyll'){
         rowData.forEach((r)=>{
           r.dropEl.innerHTML='';
         });
@@ -959,7 +959,7 @@
       requestAnimationFrame(tick);
     }
 
-    /******** Row helpers (unchanged) ********/
+    /******** Row helpers ********/
     function parseRows(str){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const [left, right] = seg.split('~');
@@ -992,8 +992,26 @@
       for (const [k,v] of m){ if (v>bestC){ bestC=v; bestI=k; } }
       return { initial: bestI || '', count: bestC<0 ? 0 : bestC };
     }
+    // NEW: majority initial syllable (normalized)
+    function majorityInitialSyll(rawCores){
+      const m = new Map();
+      for (const rc of rawCores){
+        const syls = syllablesNormalized(rc);
+        const s0 = syls[0] || '';
+        if (!s0) continue;
+        m.set(s0, (m.get(s0) || 0) + 1);
+      }
+      let bestS = null, bestC = -1;
+      for (const [k,v] of m){
+        if (v > bestC){
+          bestC = v;
+          bestS = k;
+        }
+      }
+      return { syll: bestS || '', count: bestC<0 ? 0 : bestC };
+    }
 
-    /******** Row modes (unchanged) ********/
+    /******** Row modes ********/
     async function buildRowMode(){
       currentMode = 'row';
       document.body.classList.add('row-compact');
@@ -1113,6 +1131,65 @@
       }
     }
 
+    // NEW: row alliteration by initial syllable (allisyll)
+    async function buildRowAlliSyllMode(){
+      currentMode = 'allisyll';
+      document.body.classList.add('row-compact');
+      columnsEl.classList.add('hidden');
+      rackSectionEl.classList.add('hidden');
+      rowModeEl.classList.remove('hidden');
+
+      const groups = parseAlliGroups(ROWS_RAW);
+      rowData = [];
+      rowModeEl.innerHTML = '';
+
+      for (let i=0;i<groups.length;i++){
+        const names = groups[i];
+
+        const imgs = [];
+        for (const w of names){
+          const f = await resolveImageForWord(w);
+          if (f) imgs.push(f);
+        }
+        if (imgs.length < 2) continue;
+
+        const { syll: majSyl, count: majCount } = majorityInitialSyll(imgs.map(x=>x.rawCore));
+
+        await preloadAudioForCores(imgs.map(x=>x.rawCore));
+
+        const line = document.createElement('div');
+        line.className = 'rowLine twoCols';
+
+        const drop = document.createElement('div');
+        drop.className = 'rowDrop';
+        drop.dataset.row = String(i);
+
+        const rack = document.createElement('div');
+        rack.className = 'rowRack';
+        rack.dataset.row = String(i);
+
+        line.appendChild(drop);
+        line.appendChild(rack);
+        rowModeEl.appendChild(line);
+
+        const cards = imgs.map(ci => ({
+          id: crypto.randomUUID(),
+          imgUrl: ci.url,
+          coreRaw: ci.rawCore
+        }));
+        cards.forEach(c=> rack.appendChild(renderCard(c,{rowCard:true,rowIndex:i,rowScope:true})));
+
+        rowData.push({
+          type:'allisyll',
+          dropEl: drop,
+          rackEl: rack,
+          cards,
+          expectedCount: majCount,
+          majSyl
+        });
+      }
+    }
+
     async function buildRowSyllMode(){
       currentMode = 'rowsyll';
       document.body.classList.remove('row-compact');
@@ -1186,6 +1263,13 @@
         }
         return rowData.length>0;
       }
+      if (currentMode==='allisyll'){
+        for (const r of rowData){
+          const locked = r.dropEl.querySelectorAll('.card.locked').length;
+          if (locked !== r.expectedCount) return false;
+        }
+        return rowData.length>0;
+      }
       if (currentMode === 'rowsyll') {
         const chipsInBank = rackEl.querySelectorAll('.chip').length;
         if (chipsInBank > 0) return false;
@@ -1234,6 +1318,25 @@
             const ok = (ini === r.majInitial);
             if(ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
             else { cardEl.classList.add('bad'); setTimeout(()=> { cardEl.classList.remove('bad'); r.rackEl.appendChild(cardEl); }, 300); }
+          });
+        });
+        if (everythingCorrect()) celebrate();
+        return;
+      }
+
+      if (currentMode==='allisyll'){
+        rowData.forEach((r)=>{
+          [...r.dropEl.children].forEach(cardEl=>{
+            const card = r.cards.find(c=>c.id===cardEl.dataset.id);
+            if (!card) return;
+            const syls = syllablesNormalized(card.coreRaw);
+            const firstSyl = syls[0] || '';
+            const ok = cmpSyll(firstSyl, r.majSyl);
+            if (ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
+            else {
+              cardEl.classList.add('bad');
+              setTimeout(()=> { cardEl.classList.remove('bad'); r.rackEl.appendChild(cardEl); }, 300);
+            }
           });
         });
         if (everythingCorrect()) celebrate();
@@ -1509,6 +1612,7 @@
       const modeTxt =
         (MODE==='row')       ? `modo filas` :
         (MODE==='rowalli' || MODE==='allisort') ? `aliteración por filas` :
+        (MODE==='allisyll')  ? `sílabas iniciales por filas` :
         (MODE==='rowsyll')   ? `sílabas (inicio/final) por filas` :
         (MODE==='syllcount' || SOLO_SYLLCOUNT.length) ? `conteo de sílabas (${(SOLO_SYLLCOUNT.join(', ')||'1+')})` :
         (SOLO_SYLLABLES.length
@@ -1528,6 +1632,7 @@
 
       if (MODE==='row'){ buildRowMode(); return; }
       if (MODE==='rowalli' || MODE==='allisort'){ buildRowAlliMode(); return; }
+      if (MODE==='allisyll'){ buildRowAlliSyllMode(); return; }
       if (MODE==='rowsyll'){ buildRowSyllMode(); return; }
 
       document.body.classList.remove('row-compact');
@@ -1564,7 +1669,7 @@
       if (SOLO_MODE) {
         setPanelsForSolo();
         await ensureStorageLoaded();
-        if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' && MODE!=='rowsyll' && MODE!=='syllcount') return;
+        if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' && MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='syllcount') return;
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
