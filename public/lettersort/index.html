@@ -1493,40 +1493,45 @@
       drag.el.style.left=(e.clientX-70)+'px';
       drag.el.style.top =(e.clientY-70)+'px';
     }
-    function onDrop(e){
-      if(!drag || e.pointerId!==drag.pointerId) return;
-      cleanupPointer(e.pointerId);
-      const el = drag.el;
+function onDrop(e){
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  cleanupPointer(e.pointerId);
+  const el = drag.el;
 
-      if(!drag.moved){
-        resetDraggedStyles(el);
-        drag = null;
-        return;
-      }
+  if (!drag.moved) {
+    resetDraggedStyles(el);
+    drag = null;
+    return;
+  }
 
-      resetDraggedStyles(el);
+  resetDraggedStyles(el);
 
-      const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
-      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
-      document.body.classList.toggle('one-per', perCol === 1);
+  const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
 
-      if (drop){
-        if (drop.classList.contains('rowDrop')){
-          if (currentMode==='row' && drop.children.length>=1){ drag.originParent.appendChild(el); }
-          else { drop.appendChild(el); }
-        } else if (drop.classList.contains('drop')){
-          if(drop.children.length>=perCol){ drag.originParent.appendChild(el); }
-          else { drop.appendChild(el); }
-        } else {
-          drop.appendChild(el);
-        }
-      } else {
+  // Keep one-per visual style for teacher mode only
+  const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value || '4', 10)));
+  document.body.classList.toggle('one-per', perCol === 1);
+
+  if (drop) {
+    if (drop.classList.contains('rowDrop')) {
+      // Row mode: still allow only 1 in the answer slot
+      if (currentMode === 'row' && drop.children.length >= 1) {
         drag.originParent.appendChild(el);
+      } else {
+        drop.appendChild(el);
       }
-
-      lastDragEndedAt = Date.now();
-      drag = null;
+    } else {
+      // For normal .drop and .rack: NO CAP on number of children
+      drop.appendChild(el);
     }
+  } else {
+    drag.originParent.appendChild(el);
+  }
+
+  lastDragEndedAt = Date.now();
+  drag = null;
+}
+
     function onCancel(e){
       if(!drag || e.pointerId!==drag.pointerId) return;
       cleanupPointer(e.pointerId);
