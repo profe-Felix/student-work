@@ -321,6 +321,12 @@
       return raw.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n) && n>0);
     }
     const SOLO_SYLLCOUNT = parseCountsParam(qs.get('counts') || qs.get('syllcount'));
+    
+    // Optional custom column titles: ?titles=sí,no,maybe
+    const COL_TITLES = (qs.get('titles') || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
 
     // Row modes params
     const ROWS_RAW   = qs.get('rows') || '';
@@ -675,6 +681,16 @@
       }
       return type==='is' ? `Empieza con /${letter}/` : `No empieza con /${letter}/`;
     }
+
+    // Apply ?titles=... overrides by index, without changing keys/logic
+    function applyTitleOverrides(cols){
+      if (!COL_TITLES.length) return cols;
+      return cols.map((c, idx) => ({
+        ...c,
+        label: COL_TITLES[idx] || c.label
+      }));
+    }
+
     function buildColumnsForLetters(activeLetters){
       const columns = [];
       if(activeLetters.length===1){
@@ -684,19 +700,23 @@
       } else {
         activeLetters.forEach(L=> columns.push({label:labelTextFor(L,'is'), key:`${L}`}));
       }
-      return columns;
+      return applyTitleOverrides(columns);
     }
+
     function buildColumnsForSyllables(sylls){
-      return sylls.map(s => ({ label: s, key:`syll:${normalizeMarkers(s)}`, display:s }));
+      const cols = sylls.map(s => ({ label: s, key:`syll:${normalizeMarkers(s)}`, display:s }));
+      return applyTitleOverrides(cols);
     }
     // NEW: columns for syllable counts
     function buildColumnsForSyllCount(counts){
-      return counts.map(n => ({
+      const cols = counts.map(n => ({
         label: `${n} ${n===1?'sílaba':'sílabas'}`,
         key: `count:${n}`,
         display: `${n}`
       }));
+      return applyTitleOverrides(cols);
     }
+
 
     /******** Round building ********/
     function pickNoRepeat(arr, n){
@@ -819,17 +839,20 @@
     function renderHeaderHTML(col){
       if (col.key.startsWith('syll:')) {
         if (HIDE_TITLE) return '';
-        const text = (col.display || '').toLowerCase();
+        const fallback = (col.display || '').toLowerCase();
+        const text = col.label || fallback;
         return `<div class="syllTile" aria-hidden="true">${text}</div>`;
       }
       if (col.key.startsWith('count:')){
         if (HIDE_TITLE) return '';
         const n = parseInt(col.display || col.key.slice(6),10);
-        const label = `${n} ${n===1?'sílaba':'sílabas'}`;
-        return `<div class="syllTile" aria-hidden="true">${label}</div>`;
+        const defaultLabel = `${n} ${n===1?'sílaba':'sílabas'}`;
+        const text = col.label || defaultLabel;
+        return `<div class="syllTile" aria-hidden="true">${text}</div>`;
       }
       return `<h2>${col.label}</h2>`;
     }
+
     function buildColumns(columns){
       currentCols = columns;
       columnsEl.innerHTML='';
