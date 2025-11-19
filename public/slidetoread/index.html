@@ -1,1 +1,454 @@
-a
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spanish Reading Game</title>
+  
+  <!-- Andika Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Andika&display=swap" rel="stylesheet">
+  <style>
+    body {
+      background-color: white;
+      font-family: 'Andika', sans-serif;
+      text-align: center;
+      user-select: none;
+      margin-top: 20px;
+    }
+    canvas {
+      border: 1px solid #ddd;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+      margin-bottom: 15px;
+      display: inline-block;
+      max-width: 100%;
+      height: auto; /* responsive */
+    }
+    select, button {
+      font-size: 18px;
+      padding: 5px 10px;
+      margin: 5px;
+    }
+    #controls { margin-top: 15px; }
+  </style>
+</head>
+<body>
+  <h2>Spanish Reading Game</h2>
+
+  <select id="wordListSelect">
+    <option value="" selected disabled>Selecciona una lista</option>
+    <option value="1. sílabas">1. sílabas</option>
+    <option value="2. palabras">2. palabras</option>
+    <option value="cvc">cvc</option>
+    <option value="inversas">inversas</option>
+    <option value="trabadas">trabadas</option>
+  </select>
+
+  <div id="controls">
+    <!-- Play audio -->
+    <button id="playAudio" disabled>🔊 Play Audio</button>
+    <button id="prevWord">⟵ Prev</button>
+    <button id="nextWord">Next ⟶</button>
+  </div>
+
+  <canvas id="wordCanvas" width="768" height="432"></canvas>
+
+  <div id="recording-controls">
+    <button id="startRecording">🎙 Start Recording</button>
+    <button id="stopRecording" disabled>⏹ Stop Recording</button>
+  </div>
+  
+  <div id="readyMessage" style="font-size: 24px; margin-top: 10px; color: #555;"></div>
+  <div id="previewContainer"></div>
+
+<script>
+/* Ensure this exists before first draw */
+if (window.allowSliderDraw === undefined) {
+  window.allowSliderDraw = true;
+}
+
+/* ==================== Canvas + responsive scaling ==================== */
+const canvas = document.getElementById("wordCanvas");
+const ctx = canvas.getContext("2d");
+
+let words = [], currentWordIndex = 0;
+let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
+let letters = [];
+
+const DPR = window.devicePixelRatio || 1;
+const BASE_W = 768, BASE_H = 432, BASE_AR = BASE_H / BASE_W;
+
+function resizeCanvas() {
+  const maxWidth = 768;
+  const width = Math.min(window.innerWidth * 0.95, maxWidth);
+  const height = Math.round(width * BASE_AR);
+
+  canvas.style.width = width + "px";
+  canvas.style.height = height + "px";
+
+  canvas.width = Math.round(width * DPR);
+  canvas.height = Math.round(height * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  if (words.length) {
+    setupWord(words[currentWordIndex]);
+  } else {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+window.addEventListener("resize", () => requestAnimationFrame(resizeCanvas));
+window.addEventListener("orientationchange", () => requestAnimationFrame(resizeCanvas));
+document.addEventListener("DOMContentLoaded", resizeCanvas);
+
+/* ==================== UI & Data ==================== */
+const playBtn = document.getElementById("playAudio");
+
+document.getElementById("wordListSelect").addEventListener("change", loadWordList);
+document.getElementById("nextWord").addEventListener("click", () => changeWord(1));
+document.getElementById("prevWord").addEventListener("click", () => changeWord(-1));
+
+playBtn.addEventListener("click", () => {
+  if (!words.length) return;
+  playWordAudio(words[currentWordIndex]);
+});
+
+async function loadWordList() {
+  const listName = document.getElementById("wordListSelect").value; // e.g., "1. sílabas"
+  const url = `wordlists/${encodeURIComponent(listName)}.txt`;      // encode spaces/accents
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`No encontrado: ${url}`);
+    const data = await response.text();
+    words = data.trim().split("\n").map(w => w.trim()).sort(() => Math.random() - 0.5);
+    currentWordIndex = 0;
+
+    document.fonts.ready.then(() => {
+      setupWord(words[currentWordIndex]);
+      playBtn.disabled = false;
+    });
+  } catch (err) {
+    console.warn(err);
+    alert(`No pude cargar "${url}". Verifica el nombre y las mayúsculas/minúsculas en GitHub Pages.`);
+  }
+}
+
+function changeWord(direction) {
+  if (!words.length) return;
+  currentWordIndex = (currentWordIndex + direction + words.length) % words.length;
+  document.fonts.ready.then(() => {
+    setupWord(words[currentWordIndex]);
+    playBtn.disabled = false;
+  });
+}
+
+/* ==================== Layout & Drawing ==================== */
+function setupWord(word) {
+  const baseFont = 80;
+  const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
+  const fontPx = Math.max(36, Math.min(96, scaledFont));
+  ctx.font = `bold ${fontPx}px Andika`;
+
+  letters = parseWord(word);
+
+  const padding = 10;
+  const em = fontPx;
+  const minPill = Math.max(18, em * 0.55);
+  const innerPad = Math.max(4, Math.round(em * 0.06));
+
+  letters.forEach(l => {
+    const gw = ctx.measureText(l.text).width;
+    l.gw = gw;
+    l.w  = Math.max(gw + innerPad * 2, minPill);
+  });
+
+  const totalWidth = letters.reduce((s, l) => s + l.w, 0) + padding * (letters.length - 1);
+
+  sliderStart = (canvas.clientWidth - totalWidth) / 2;
+  sliderEnd   = sliderStart + totalWidth;
+
+  sliderX = sliderStart;
+  drawCanvas();
+}
+
+function parseWord(word) {
+  const digraphs = ["ch", "ll", "rr", "qu"];
+  const out = [];
+  for (let i = 0; i < word.length;) {
+    let digraph = digraphs.find(d => word.startsWith(d, i));
+    if (digraph) {
+      out.push({text: digraph, soundType: getSoundType(digraph)});
+      i += digraph.length;
+    } else {
+      out.push({text: word[i], soundType: getSoundType(word[i], word[i+1])});
+      i++;
+    }
+  }
+  return out;
+}
+
+function getSoundType(letter, nextLetter = "") {
+  if (letter === "c") return /[ei]/.test(nextLetter) ? "continuous" : "stop";
+  if (["p","t","k","b","d","g","ch"].includes(letter)) return "stop";
+  if (letter === "h") return "silent";
+  return "continuous";
+}
+
+function drawCanvas() {
+  if (!window.allowSliderDraw) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const baseFont = 80;
+  const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
+  const fontPx = Math.max(36, Math.min(96, scaledFont));
+  ctx.font = `bold ${fontPx}px Andika`;
+  ctx.textAlign = "center";
+
+  const padding = 10;
+  const pillH = Math.max(16, Math.round(fontPx * 0.25));
+  const textY = Math.round(fontPx * 1.25);
+  const pillY = textY + Math.max(16, Math.round(fontPx * 0.5));
+
+  function pillRadius(w, h) {
+    return Math.max(2, Math.min(10, h / 2, w / 2 - 1));
+  }
+
+  let x = sliderStart;
+
+  letters.forEach(letter => {
+    const pillW = letter.w;
+
+    ctx.fillStyle = (sliderX >= x + 1) ? "black" : "lightgrey";
+    if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
+
+    ctx.fillText(letter.text, x + pillW / 2, textY);
+
+    ctx.strokeStyle = letter.soundType === "silent" ? "#aaa"
+                     : letter.soundType === "stop" ? "red" : "green";
+    ctx.lineWidth = 3;
+    ctx.fillStyle = (sliderX >= x + 1) ? ctx.strokeStyle : "white";
+
+    const r = pillRadius(pillW, pillH);
+    roundRect(x, pillY, pillW, pillH, r, true, true);
+
+    x += pillW + padding;
+  });
+
+  const lineY = pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "#ccc";
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(sliderStart, lineY);
+  ctx.lineTo(sliderEnd, lineY);
+  ctx.stroke();
+
+  ctx.strokeStyle = "#007bff";
+  ctx.beginPath();
+  ctx.moveTo(sliderStart, lineY);
+  ctx.lineTo(sliderX, lineY);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.fillStyle = "#007bff";
+  ctx.arc(sliderX, lineY, 10, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+canvas.addEventListener("pointerdown", (e)=> {isDragging=true; moveSlider(e);});
+canvas.addEventListener("pointermove", (e)=> {if(isDragging){moveSlider(e);}});
+canvas.addEventListener("pointerup", ()=>isDragging=false);
+canvas.addEventListener("pointerleave", ()=>isDragging=false);
+
+function moveSlider(e){
+  const rect = canvas.getBoundingClientRect();
+  sliderX = Math.min(Math.max(e.clientX - rect.left, sliderStart), sliderEnd);
+  drawCanvas();
+}
+
+function roundRect(x, y, w, h, r, fill, stroke) {
+  r = Math.max(0, Math.min(r, w/2, h/2));
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  if (fill) ctx.fill();
+  if (stroke) ctx.stroke();
+}
+
+/* ==================== AUDIO: use /audio, fallback to first syllable ==================== */
+function normalizeName(s) {
+  return s
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zñü]+/g, '');
+}
+function isVowel(ch) { return /[aeiouáéíóú]/i.test(ch); }
+function firstSyllable(word) {
+  const w = (word || "").toLowerCase();
+  if (!w) return "";
+  const digraphs = ["ch","ll","rr","qu"];
+  for (const d of digraphs) {
+    if (w.startsWith(d)) {
+      const next = w[d.length] || "";
+      if (isVowel(next)) return d + next; // e.g. "qu"+"e" => "que"
+      return d;
+    }
+  }
+  const a = w[0] || "", b = w[1] || "";
+  if (isVowel(a)) return a;             // V...
+  if (a && b && !isVowel(a) && isVowel(b)) return a + b; // CV...
+  return w.slice(0, Math.min(2, w.length));
+}
+
+function playWordAudio(word) {
+  const wordNorm = normalizeName(word);
+  const syllNorm = normalizeName(firstSyllable(word));
+
+  // Look ONLY in /audio
+  const candidates = [
+    `audio/${wordNorm}.mp3`,
+    `audio/${wordNorm}.wav`,
+    `audio/${syllNorm}.mp3`,
+    `audio/${syllNorm}.wav`,
+  ];
+
+  const btn = playBtn;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '🔊 Reproduciendo…';
+
+  let i = 0;
+  const tryNext = () => {
+    if (i >= candidates.length) {
+      btn.disabled = false;
+      btn.textContent = label;
+      console.warn('No audio found for:', word, candidates);
+      return;
+    }
+    const src = candidates[i++];
+    const a = new Audio(src);
+    a.playsInline = true;
+    a.onended = () => { btn.disabled = false; btn.textContent = label; };
+    a.onerror = () => tryNext();
+    const p = a.play();
+    if (p && typeof p.then === 'function') p.catch(() => tryNext());
+  };
+  tryNext();
+}
+</script>
+
+<script src="https://cdn.webrtc-experiment.com/RecordRTC.js"></script>
+
+<script>
+let recorder, stream;
+window.allowSliderDraw = true;
+
+const startBtn = document.getElementById("startRecording");
+const stopBtn = document.getElementById("stopRecording");
+const previewContainer = document.getElementById("previewContainer");
+
+startBtn.onclick = async () => {
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  previewContainer.innerHTML = "";
+
+  const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const canvasStream = canvas.captureStream(30);
+  const combinedStream = new MediaStream([
+    ...canvasStream.getVideoTracks(),
+    ...audioStream.getAudioTracks()
+  ]);
+
+  recorder = RecordRTC(combinedStream, {
+    type: 'video',
+    mimeType: 'video/webm',
+    disableLogs: true
+  });
+
+  const readyText = document.getElementById("readyMessage");
+  readyText.textContent = "🎬 Get ready...";
+
+  setTimeout(() => {
+    recorder.startRecording();
+    readyText.textContent = "";
+    window.allowSliderDraw = false;
+    setTimeout(() => { window.allowSliderDraw = true; drawCanvas(); }, 200);
+  }, 600);
+};
+
+stopBtn.onclick = () => {
+  stopBtn.disabled = true;
+  startBtn.disabled = false;
+  recorder.stopRecording(() => {
+    const blob = recorder.getBlob();
+    const videoURL = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    video.src = videoURL;
+    video.controls = true;
+    video.style.maxWidth = "100%";
+    previewContainer.innerHTML = "";
+    previewContainer.appendChild(video);
+    stream?.getTracks().forEach(t => t.stop());
+  });
+};
+</script>
+
+<script>
+let recorder2, stream2;
+
+const startBtn2 = document.getElementById("startRecording");
+const stopBtn2 = document.getElementById("stopRecording");
+const previewContainer2 = document.getElementById("previewContainer");
+
+startBtn2.onclick = async () => {
+  startBtn2.disabled = true;
+  stopBtn2.disabled = false;
+  previewContainer2.innerHTML = "";
+
+  const audio = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const canvasStream = canvas.captureStream(30);
+  stream2 = new MediaStream([...canvasStream.getVideoTracks(), ...audio.getAudioTracks()]);
+
+  recorder2 = RecordRTC(stream2, {
+    type: 'video',
+    mimeType: 'video/webm',
+    disableLogs: true
+  });
+  
+  const readyText = document.getElementById("readyMessage");
+  readyText.textContent = "🎬 Get ready...";
+
+  setTimeout(() => {
+    recorder2.startRecording();
+    readyText.textContent = "";
+    window.allowSliderDraw = false;
+    setTimeout(() => { window.allowSliderDraw = true; drawCanvas(); }, 200);
+  }, 600);
+};
+
+stopBtn2.onclick = () => {
+  stopBtn2.disabled = true;
+  startBtn2.disabled = false;
+  recorder2.stopRecording(() => {
+    const blob = recorder2.getBlob();
+    const videoURL = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    video.src = videoURL;
+    video.controls = true;
+    video.style.maxWidth = "100%";
+    previewContainer2.innerHTML = "";
+    previewContainer2.appendChild(video);
+    stream2.getTracks().forEach(t => t.stop());
+  });
+};
+</script>
+</body>
+</html>
