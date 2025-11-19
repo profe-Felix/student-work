@@ -68,12 +68,11 @@
 
 <script>
 /* ==================== SUPABASE CONFIG (group sync) ==================== */
-/* Fill these with the same values you use in the main student-work app or lettersort */
+/* Same project as student-work / lettersort */
 const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
 const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
 
 // URL params: ?role=teacher&group=A or ?role=student&group=A
 const qs = new URLSearchParams(location.search);
@@ -163,7 +162,7 @@ async function getReadingIndex(groupCode) {
   return data.current_index;
 }
 
-/* ==================== Deterministic shuffle ==================== */
+/* ==================== Deterministic shuffle + session ==================== */
 /* xmur3 + mulberry32: small seeded RNG so teacher + students share the same random order. */
 function xmur3(str) {
   let h = 1779033703 ^ str.length;
@@ -195,6 +194,16 @@ function shuffleWithSeed(array, seedStr) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+/* simple UUID fallback if crypto.randomUUID is missing */
+function makeSessionId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return (
+    Date.now().toString(36) +
+    "-" +
+    Math.random().toString(36).slice(2)
+  );
 }
 
 /* Ensure this exists before first draw */
@@ -259,24 +268,55 @@ async function loadWordList() {
     const data = await response.text();
     let baseWords = data.trim().split("\n").map(w => w.trim()).filter(Boolean);
 
-    // In sync mode (teacher or student with group), use deterministic shuffle.
-    // In local mode, keep fully random like before.
     if (GROUP_CODE && (isTeacher || isStudent)) {
-      const seedStr = `${GROUP_CODE}::${listName}`;
-      words = shuffleWithSeed(baseWords, seedStr);
-      console.log('[SYNC] seeded order for', GROUP_CODE, listName, words);
-    } else {
-      words = baseWords.sort(() => Math.random() - 0.5);
-    }
+      // Make sure group row exists
+      await ensureReadingGroup(GROUP_CODE);
 
-    currentWordIndex = 0;
+      if (isTeacher) {
+        // New session every time teacher loads a list
+        const sessionId = makeSessionId();
+        const { error: sessErr } = await sbClient
+          .from('reading_groups')
+          .update({ session_id: sessionId, current_index: 0 })
+          .eq('group_code', GROUP_CODE);
+        if (sessErr) {
+          console.warn('update session_id error', sessErr);
+        }
+        const seedStr = `${GROUP_CODE}::${listName}::${sessionId}`;
+        words = shuffleWithSeed(baseWords, seedStr);
+        currentWordIndex = 0;
+        console.log('[SYNC] teacher session', GROUP_CODE, listName, sessionId, words);
+      } else if (isStudent) {
+        // Student reads teacher's session_id to get same random order
+        const { data: row, error: rowErr } = await sbClient
+          .from('reading_groups')
+          .select('session_id, current_index')
+          .eq('group_code', GROUP_CODE)
+          .maybeSingle();
+
+        if (!rowErr && row && row.session_id) {
+          const seedStr = `${GROUP_CODE}::${listName}::${row.session_id}`;
+          words = shuffleWithSeed(baseWords, seedStr);
+          currentWordIndex = row.current_index ?? 0;
+          console.log('[SYNC] student using session', GROUP_CODE, listName, row.session_id, 'index', currentWordIndex);
+        } else {
+          // Fallback if session not set yet
+          words = baseWords.sort(() => Math.random() - 0.5);
+          currentWordIndex = 0;
+          console.log('[SYNC] student fallback random (no session_id yet)');
+        }
+      }
+    } else {
+      // Local mode: fully random each time
+      words = baseWords.sort(() => Math.random() - 0.5);
+      currentWordIndex = 0;
+    }
 
     document.fonts.ready.then(async () => {
       setupWord(words[currentWordIndex]);
       playBtn.disabled = false;
 
       if (isTeacher && GROUP_CODE) {
-        await ensureReadingGroup(GROUP_CODE);
         await setReadingIndex(GROUP_CODE, currentWordIndex);
       }
 
