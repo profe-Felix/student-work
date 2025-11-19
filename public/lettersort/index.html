@@ -1,1714 +1,610 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Clasificador de letras — Maestro & Estudiante</title>
-
-  <!-- Kid-friendly font -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preconnect" href="https://dmlsiyyqpcupbizpxwhp.supabase.co" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spanish Reading Game</title>
+  
+  <!-- Andika Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Andika&display=swap" rel="stylesheet">
+  <!-- Supabase client -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 
   <style>
-    *{box-sizing:border-box}
-    :root{--bg:#f7f7fb;--ink:#111;--muted:#666;--brand:#2563eb;--ok:#16a34a;--bad:#dc2626;--card:#fff;--drop:#eef2ff}
-    html,body{height:100%}
-    body{margin:0;font:16px/1.45 Andika, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;background:var(--bg);color:var(--ink)}
-    .wrap{max-width:1200px;margin:0 auto;padding:12px}
-    header{position:sticky;top:0;background:#fff;border-bottom:1px solid #e5e7eb;z-index:5}
-    .row{display:flex;gap:12px;align-items:center}
-    .brand{font-weight:700}
-    .spacer{flex:1}
-    .switch{display:flex;gap:8px;align-items:center}
-    .hidden{display:none}
-    .panel{margin-top:10px}
-    .grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end}
-    .field{margin:6px 0}
-    .field .inline{display:flex;gap:8px}
-    input,button{font:inherit}
-    input{padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;width:100%}
-    .btn{padding:8px 12px;border-radius:10px;border:1px solid transparent;background:var(--brand);color:#fff;cursor:pointer}
-    .btn.outline{background:#fff;border-color:#d1d5db;color:#111}
-    .btn.ghost{background:transparent;border-color:transparent;color:#666}
-    .buttons{display:flex;gap:8px;align-items:center}
-    .note{font-size:12px;color:#666;margin-top:8px}
-    .letters{display:flex;flex-wrap:wrap;gap:6px}
-    .letters button{min-width:36px;height:36px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
-    .letters button.active{background:var(--brand);color:#fff;border-color:transparent}
-
-    main{max-width:1200px;margin:14px auto;padding:0 12px}
-
-    /* Classic columns */
-    .columns{
-      display:grid;
-      gap:16px;
-      margin-top:16px;
-      overflow-x:auto;
-      scroll-snap-type:x proximity;
+    body {
+      background-color: white;
+      font-family: 'Andika', sans-serif;
+      text-align: center;
+      user-select: none;
+      margin-top: 20px;
     }
-    .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px;scroll-snap-align:start}
-    .col header{display:flex;align-items:center;justify-content:center;margin-bottom:10px}
-
-    .syllTile{
-      min-width:110px;min-height:78px;padding:10px 14px;
-      background:#6dd0ff;color:#000;font-size:38px;line-height:1;border-radius:18px;
-      display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 2px rgba(0,0,0,.05);
-      user-select:none;
+    canvas {
+      border: 1px solid #ddd;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+      margin-bottom: 15px;
+      display: inline-block;
+      max-width: 100%;
+      height: auto; /* responsive */
     }
-
-    .drop{
-      min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
-      padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;align-items:stretch
+    select, button {
+      font-size: 18px;
+      padding: 5px 10px;
+      margin: 5px;
     }
-
-    .rackSection{margin-top:18px}
-    .rack{margin-top:8px;background:#fff;border:1px dashed #e5e7eb;border-radius:12px;padding:10px;display:flex;flex-wrap:wrap;gap:8px;min-height:150px}
-
-    .card{
-      user-select:none;touch-action:none;background:var(--card);border:1px solid #e5e7eb;border-radius:12px;
-      box-shadow:0 2px 6px rgba(0,0,0,.06);width:150px;overflow:hidden;cursor:grab;display:flex;flex-direction:column;align-items:center
-    }
-    .card:active{cursor:grabbing}
-    .card img{display:block;width:100%;aspect-ratio:4/3;object-fit:contain;background:#fafafa}
-    .card .cap{padding:6px 8px;width:100%;text-align:center;font-size:14px}
-    .card.ok{outline:3px solid var(--ok)}
-    .card.bad{outline:3px solid var(--bad)}
-    .locked{opacity:.9}
-
-    .one-per .drop .card{width:100%}
-    .card.dragging{width:150px !important; height:auto !important}
-
-    /* Word chip for rowsyll mode — keep a wide, non-shrinking basis */
-    .chip{
-      user-select:none; touch-action:none; cursor:grab;
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      padding:6px 12px;
-      border:1px solid #d1d5db;
-      border-radius:14px;
-      background:var(--drop);
-      font-size:clamp(24px, 2.8vw, 40px);
-      line-height:1.1;
-      min-height:48px;
-      flex:0 1 auto;
-      max-width:26ch;
-      white-space:normal;
-      word-break:break-word;
-    }
-    .chip:active{cursor:grabbing}
-    .chip.ok{outline:3px solid var(--ok)}
-    .chip.bad{outline:3px solid var(--bad)}
-
-    .rack.chips{
-      gap:12px;
-      padding:12px;
-      align-items:flex-start;
-    }
-    .chip.dragging{ width: auto !important; height:auto !important }
-
-    .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
-    .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
-
-    .soloBar{position:sticky;top:56px;z-index:4;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 10px rgba(0,0,0,.04)}
-    .bankActions{display:flex;gap:8px;align-items:center;margin-top:10px}
-
-    .celebrationCanvas{position:fixed;inset:0;pointer-events:none;z-index:50}
-
-    /* ---------- Row Picture Modes ---------- */
-    #rowMode{margin-top:14px;display:grid;gap:14px}
-
-    .rowLine{
-      display:grid;
-      grid-template-columns: 170px 170px 1fr; /* prompt-row mode */
-      align-items:center;
-      gap:14px;
-      background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px;
-      box-shadow:0 4px 14px rgba(0,0,0,.05)
-    }
-
-    .rowLine.twoCols{
-      grid-template-columns: minmax(220px, max-content) 1fr;
-      align-items:start;
-    }
-
-    .rowDrop{
-      min-height:160px;
-      background:var(--drop);
-      border:2px dashed #c7d2fe;
-      border-radius:12px;
-      display:flex;
-      flex-wrap:wrap;
-      gap:10px;
-      align-content:flex-start;
-      align-items:flex-start;
-      padding:8px;
-    }
-
-    .rowLine.twoCols .rowDrop{
-      width:100%;
-      max-width:100%;
-      min-width:0;
-      justify-content:flex-start;
-    }
-    .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
-    .rowCard{width:150px}
-    .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
-
-    body.row-compact .wrap { padding-top:6px; }
-    body.row-compact header { border-bottom-width:1px; }
-    body.row-compact .soloBar { padding:6px; }
-    body.row-compact .columns { gap:12px; }
-
-    body.row-compact #rowMode { gap:10px; }
-    body.row-compact .rowLine{
-      grid-template-columns: 150px 140px 1fr;
-      padding:8px;
-      gap:10px;
-      border-radius:10px;
-      box-shadow:0 3px 10px rgba(0,0,0,.045);
-    }
-    body.row-compact .rowLine.twoCols{ grid-template-columns: minmax(150px, max-content) 1fr; }
-    body.row-compact .rowDrop{
-      min-height:120px;
-      padding:6px;
-      border-radius:10px;
-      gap:6px;
-    }
-    body.row-compact .rowLine.twoCols .rowDrop{
-      min-width:150px;
-      width:max-content;
-      max-width:100%;
-    }
-    body.row-compact .rowRack{ gap:6px; }
-    body.row-compact .rowCard{ width:120px; }
-    body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
-    body.row-compact .bankActions{ margin-top:6px; }
-    body.row-compact .chip{
-      flex: 0 0 180px;
-      min-width:180px;
-      max-width:220px;
-      font-size:20px;
-      padding:10px 14px;
-    }
-
+    #controls { margin-top: 15px; }
   </style>
 </head>
 <body>
-  <header>
-    <div class="wrap">
-      <div class="row">
-        <div class="brand">Clasificador de letras</div>
-        <span id="soloPill" class="pill" style="display:none"></span>
-        <div class="spacer"></div>
-        <label class="switch">
-          <input id="modeToggle" type="checkbox" />
-          <span>Modo Maestro</span>
-        </label>
-      </div>
+  <h2>Spanish Reading Game</h2>
+  <div id="syncStatus" style="margin-bottom: 10px; font-size: 16px; color:#555;"></div>
 
-      <!-- Maestro -->
-      <div id="teacherPanel" class="panel hidden">
-        <div class="field">
-          <label>Código de sesión</label>
-          <div class="inline">
-            <input id="roomCode" placeholder="por ej., A_01" />
-            <button id="btnJoin" class="btn">Iniciar sesión</button>
-          </div>
-          <small class="note">Comparte este código con los estudiantes.</small>
-        </div>
+  <select id="wordListSelect">
+    <option value="" selected disabled>Selecciona una lista</option>
+    <option value="1. sílabas">1. sílabas</option>
+    <option value="2. palabras">2. palabras</option>
+    <option value="cvc">cvc</option>
+    <option value="inversas">inversas</option>
+    <option value="trabadas">trabadas</option>
+  </select>
 
-        <div class="grid">
-          <div>
-            <label>Letras objetivo (1–5)</label>
-            <div id="letterPicker" class="letters"></div>
-          </div>
-          <div>
-            <label>Cartas por columna</label>
-            <input id="cardsPerCol" type="number" min="1" max="8" value="4" />
-          </div>
-          <div class="buttons">
-            <button id="btnNewRound" class="btn">Nueva ronda</button>
-            <button id="btnVerify" class="btn outline">Verificar</button>
-            <button id="btnReset" class="btn ghost">Reiniciar ronda</button>
-          </div>
-        </div>
+  <div id="controls">
+    <!-- Play audio -->
+    <button id="playAudio" disabled>🔊 Play Audio</button>
+    <button id="prevWord">⟵ Prev</button>
+    <button id="nextWord">Next ⟶</button>
+  </div>
 
-        <div class="note">
-          Las imágenes y audios se cargan de <strong>Supabase Storage</strong>.
-          <div id="storageWarn" class="warn" style="display:none"></div>
-        </div>
-      </div>
+  <canvas id="wordCanvas" width="768" height="432"></canvas>
 
-      <!-- Estudiante -->
-      <div id="studentPanel" class="panel">
-        <div class="field inline">
-          <input id="studentRoom" placeholder="Código de sesión" />
-          <button id="btnStudentJoin" class="btn">Unirse</button>
-        </div>
-      </div>
-    </div>
-  </header>
+  <div id="recording-controls">
+    <button id="startRecording">🎙 Start Recording</button>
+    <button id="stopRecording" disabled>⏹ Stop Recording</button>
+  </div>
+  
+  <div id="readyMessage" style="font-size: 24px; margin-top: 10px; color: #555;"></div>
+  <div id="previewContainer"></div>
 
-  <main class="wrap">
-    <!-- SOLO TOOLBAR -->
-    <div id="soloBar" class="soloBar hidden">
-      <button id="soloNewRound" class="btn">Nueva ronda</button>
-      <button id="soloVerify" class="btn outline">Verificar</button>
-      <button id="soloReset" class="btn ghost">Reiniciar ronda</button>
-    </div>
-
-    <!-- Classic columns container -->
-    <div id="columns" class="columns"></div>
-
-    <!-- Row picture mode container -->
-    <section id="rowMode" class="hidden"></section>
-
-    <!-- Global rack (bank) -->
-    <section id="rackSection" class="rackSection">
-      <h3>Cartas</h3>
-      <div id="rack" class="rack" aria-label="rack"></div>
-      <div class="bankActions">
-        <button id="inlineVerify" class="btn outline">Verificar</button>
-        <button id="inlineReset" class="btn ghost">Reiniciar ronda</button>
-      </div>
-    </section>
-  </main>
-
-  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-  <script>
-    /******** SUPABASE CONFIG ********/
+<script>
+/* ==================== SUPABASE CONFIG (group sync) ==================== */
+/*  Fill these with the same values you use in the main student-work app
+ *  or in lettersort/index.html. These are your PUBLIC anon creds.
+ */
     const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
-    const DEFAULT_IMAGES_BUCKET = "lettersort-images";
-    const DEFAULT_AUDIO_BUCKET  = "lettersort-audio";
-    const DEFAULT_IMAGES_PREFIX = "";
-    const DEFAULT_AUDIO_PREFIX  = "";
-
-    // URL params
-    const qs = new URLSearchParams(location.search);
-    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'allisyll', 'rowsyll', 'syllcount', or classic
-    const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
-    const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
-    const IP = qs.get('ip') || DEFAULT_IMAGES_PREFIX;
-    const AP = qs.get('ap') || DEFAULT_AUDIO_PREFIX;
-
-    const SOLO_LETTERS   = (qs.get('letters')   || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-    const SOLO_SYLLABLES = (qs.get('syllables') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-    const SOLO_PER       = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
-    const SOLO_WORDS     = (qs.get('words') || '').split(',').map(s => s.trim()).filter(Boolean);
-    const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
-    const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
-
-    // NEW: syllable match mode ('initial' | 'any') and comparator ('equals' | 'contains' | 'prefix' | 'suffix')
-    const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
-    const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
-
-    // NEW: syllable-count columns via ?counts=1-3 or ?syllcount=1,2,3
-    function parseCountsParam(v){
-      const raw = (v||'').trim();
-      if(!raw) return [];
-      if(/^\d+\s*-\s*\d+$/.test(raw)){
-        const [a,b] = raw.split('-').map(x=>parseInt(x.trim(),10));
-        if(Number.isFinite(a) && Number.isFinite(b)){
-          const lo = Math.min(a,b), hi = Math.max(a,b);
-          return Array.from({length: hi-lo+1}, (_,i)=> lo+i);
-        }
-      }
-      return raw.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n) && n>0);
-    }
-    const SOLO_SYLLCOUNT = parseCountsParam(qs.get('counts') || qs.get('syllcount'));
-    
-    // Optional custom column titles: ?titles=sí,no,maybe
-    const COL_TITLES = (qs.get('titles') || '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-
-    // Row modes params
-    const ROWS_RAW   = qs.get('rows') || '';
-    const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
-
-    // Force SOLO by default unless ?sync=true
-    const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
-    if (!SYNC) {
-      document.addEventListener('DOMContentLoaded', () => {
-        teacherPanel.classList.add('hidden');
-        studentPanel.classList.add('hidden');
-        document.querySelector('.switch')?.classList.add('hidden');
-      });
-    }
-
-    // SOLO conditions
-    const SOLO_MODE =
-      !SYNC ||
-      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'syllcount' ||
-      (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0);
-
-    const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-    /******** UI refs ********/
-    const storageWarn   = document.getElementById('storageWarn');
-    const modeToggle    = document.getElementById('modeToggle');
-    const teacherPanel  = document.getElementById('teacherPanel');
-    const studentPanel  = document.getElementById('studentPanel');
-    const btnJoin       = document.getElementById('btnJoin');
-    const roomCodeEl    = document.getElementById('roomCode');
-    const studentRoomEl = document.getElementById('studentRoom');
-    const btnStudentJoin= document.getElementById('btnStudentJoin');
-    const letterPicker  = document.getElementById('letterPicker');
-    const cardsPerColEl = document.getElementById('cardsPerCol');
-    const columnsEl     = document.getElementById('columns');
-    const rackSectionEl = document.getElementById('rackSection');
-    const rackEl        = document.getElementById('rack');
-    const btnNewRound   = document.getElementById('btnNewRound');
-    const btnVerify     = document.getElementById('btnVerify');
-    const btnReset      = document.getElementById('btnReset');
-    const soloPill      = document.getElementById('soloPill');
-
-    // Solo toolbar refs
-    const soloBar        = document.getElementById('soloBar');
-    const soloNewRoundBtn= document.getElementById('soloNewRound');
-    const soloVerifyBtn  = document.getElementById('soloVerify');
-    const soloResetBtn   = document.getElementById('soloReset');
-
-    // Inline (under bank)
-    const inlineVerifyBtn= document.getElementById('inlineVerify');
-    const inlineResetBtn = document.getElementById('inlineReset');
-
-    // Row mode refs
-    const rowModeEl   = document.getElementById('rowMode');
-
-    /******** State ********/
-    let ROOM = null, channel = null, isTeacher = false;
-
-    // imageFiles entry: { name, path, url, stem, rawCore, core, initial }
-    let imageFiles = [];
-    // audio map and cache
-    const audioUrlByRawCore = new Map();     // rawCore -> mp3 URL
-    const audioElByRawCore  = new Map();     // rawCore -> preloaded HTMLAudioElement
-
-    let currentCols = [], currentCards = [], usedSet = new Set();
-
-    // Row mode state
-    let rowData = []; // generic holder for any row-mode
-
-    /******** Helpers ********/
-    function markersToPretty(s){
-      return (s||'')
-        .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
-        .replace(/n\.\./g,'ñ').replace(/u,,/g,'ü');
-    }
-    function stripDiacritics(s){
-      return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-    }
-    function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
-    function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
-    function stripImageSuffix(t){ return t.replace(/_(pic|img|image|foto)$/i,''); }
-    function normalizeMarkers(s){
-      let t = (s || '').toLowerCase().trim();
-      t = t.replace(/a\.\./g,'a').replace(/e\.\./g,'e').replace(/i\.\./g,'i').replace(/o\.\./g,'o').replace(/u\.\./g,'u');
-      t = t.replace(/u,,/g,'u').replace(/n\.\./g,'n');
-      t = stripDiacritics(t);
-      return t;
-    }
-    function initialFromStem(stemRaw){
-      const raw = (stemRaw || '').toLowerCase();
-      if(raw.startsWith('n..')) return 'ñ';
-      const s = normalizeMarkers(raw);
-      if(s.startsWith('ch')) return 'ch';
-      if(s.startsWith('ll')) return 'll';
-      if(s.startsWith('rr')) return 'rr';
-      return s[0] || '';
-    }
-
-    // Syllabify rules
-    function syllabifyEs(wordRaw){
-      const word = (wordRaw || '').toLowerCase();
-      const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
-      const isWeakUnaccented = ch => /^(i|u|ü)$/.test((ch||'')[0] || '');
-      const isAccWeak = ch => /[íú]/.test((ch||'')[0] || '');
-      const onsetPairs = ['pl','pr','bl','br','tr','dr','cl','cr','gl','gr','fl','fr','ch','ll','rr'];
-
-      const chars = [];
-      for (let i=0;i<word.length;i++){
-        const two = word.slice(i, i+2);
-        if (['ch','ll','rr'].includes(two)) { chars.push(two); i++; continue; }
-        if (word[i]==='q' && word[i+1]==='u' && /[eiéí]/.test(word[i+2]||'')) { chars.push('qu'); i++; continue; }
-        if (word[i]==='g' && word[i+1]==='u' && /[eiéí]/.test(word[i+2]||'') && word[i+1]!=='ü'){ chars.push('gu'); i++; continue; }
-        chars.push(word[i]);
-      }
-
-      const syl = []; let i = 0;
-      while (i < chars.length){
-        let onset = [];
-        while (i < chars.length && !isV(chars[i])) onset.push(chars[i++]);
-
-        if (i >= chars.length){
-          if (syl.length) syl[syl.length-1] += onset.join('');
-          else syl.push(onset.join(''));
-          break;
-        }
-
-        let nuc = [chars[i++]];
-        for (let k = 0; k < 2 && i < chars.length && isV(chars[i]); k++){
-          const prev = nuc[nuc.length-1], next = chars[i];
-          const canJoin =
-            ((isWeakUnaccented(prev) && !isAccWeak(prev)) && !isAccWeak(next)) ||
-            ((isWeakUnaccented(next) && !isAccWeak(next)) && !isAccWeak(prev)) ||
-            (isWeakUnaccented(prev) && isWeakUnaccented(next));
-          if (canJoin) { nuc.push(next); i++; } else break;
-        }
-
-        let after = [];
-        while (i < chars.length && !isV(chars[i])) after.push(chars[i++]);
-
-        let coda = [], nextOnset = after.slice();
-        if (nextOnset.length){
-          let m = 0;
-          while (nextOnset.length - m >= 2){
-            const a = nextOnset[m], b = nextOnset[m+1];
-            const pair = (a + b).replace(/[^a-zñ]/g,'');
-            if (onsetPairs.includes(pair)) break;
-            m++;
-          }
-          coda = nextOnset.slice(0, m);
-          nextOnset = nextOnset.slice(m);
-          while (nextOnset.length > 2) coda.push(nextOnset.shift());
-        }
-
-        syl.push(onset.join('') + nuc.join('') + coda.join(''));
-        if (nextOnset.length) i -= nextOnset.length;
-      }
-      return syl.filter(Boolean).map(s => s.trim());
-    }
-    function syllablesNormalized(coreWord){
-      const pretty = markersToPretty(coreWord);
-      return syllabifyEs(pretty).map(normalizeMarkers);
-    }
-    function syllableCount(coreWord){
-      return syllablesNormalized(coreWord).length;
-    }
-
-    // Comparator for syllables: equals | contains | prefix | suffix
-    function cmpSyll(a, b){
-      if(!a || !b) return false;
-      switch (SYLL_CMP) {
-        case 'contains': return a.includes(b);
-        case 'prefix':   return a.startsWith(b);
-        case 'suffix':   return a.endsWith(b);
-        default:         return a === b; // 'equals'
-      }
-    }
-
-    /******** Public URL existence check (GET with Range) ********/
-    async function publicUrlIfExists(bucket, path){
-      const { data } = client.storage.from(bucket).getPublicUrl(path);
-      const url = data?.publicUrl;
-      if(!url) return null;
-      try {
-        const r = await fetch(url, { method:'GET', headers:{ Range:'bytes=0-0' } });
-        if (r.ok) return url;
-      } catch {}
-      return null;
-    }
-
-    /******** Image resolver (JPG only) ********/
-    function jpgCandidatesForWord(word){
-      const wMarker = (word||'').toLowerCase();
-      const wPretty = markersToPretty(word||'').toLowerCase();
-      const wPlain  = stripDiacritics(wPretty);
-      const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
-      const names = [
-        `${wMarker}_pic.jpg`,
-        `${wPretty}_pic.jpg`,
-        `${wPlain}_pic.jpg`,
-      ];
-      return names.map(n => `${prefix}${n}`);
-    }
-    async function resolveImageForWord(word){
-      for(const p of jpgCandidatesForWord(word)){
-        const url = await publicUrlIfExists(IB, p);
-        if (url) {
-          const name = p.split('/').pop();
-          const stem = stemOf(name);
-          const rawCore = stripImageSuffix(stem);
-          return {
-            name, path:p, url, stem,
-            rawCore, core: normalizeMarkers(rawCore),
-            initial: initialFromStem(stem)
-          };
-        }
-      }
-      return null;
-    }
-
-    async function listAll(bucket, prefix) {
-      const path = prefix && prefix.trim() !== "" ? prefix : undefined;
-      let out = [], offset = 0, limit = 100;
-      while (true) {
-        const { data, error } = await client.storage.from(bucket).list(path, {
-          limit, offset, sortBy:{column:'name', order:'asc'}
-        });
-        if (error) throw error;
-        const items = data || [];
-        for (const it of items) {
-          const fullpath = path ? `${path.replace(/\/$/,'')}/${it.name}` : it.name;
-          if (!it.metadata) {
-            out.push(...(await listAll(bucket, fullpath)));
-          } else {
-            out.push({ ...it, fullpath });
-          }
-        }
-        if (items.length < limit) break;
-        offset += limit;
-      }
-      return out;
-    }
-    async function listAllImagesJpg(){
-      const files = await listAll(IB, IP);
-      const out = [];
-      for (const f of files){
-        const base = f.fullpath.split('/').pop() || f.fullpath;
-        if (extOf(base) !== 'jpg') continue;
-        const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
-        if (data?.publicUrl){
-          const stem = stemOf(base);
-          const rawCore = stripImageSuffix(stem);
-          out.push({
-            name: base, path: f.fullpath, url: data.publicUrl,
-            stem, rawCore, core: normalizeMarkers(rawCore),
-            initial: initialFromStem(stem)
-          });
-        }
-      }
-      return out;
-    }
-
-    /******** Audio resolver (only .mp3, rawCore.mp3) ********/
-    async function resolveAudioForRawCore(rawCore){
-      const prefix = AP ? `${AP.replace(/\/$/,'')}/` : '';
-      const p = `${prefix}${rawCore}.mp3`;
-      const url = await publicUrlIfExists(AB, p);
-      return url; // null if not found
-    }
-    async function ensureAudioUrl(rawCore){
-      if (audioUrlByRawCore.has(rawCore)) return audioUrlByRawCore.get(rawCore);
-      const url = await resolveAudioForRawCore(rawCore);
-      if (url) audioUrlByRawCore.set(rawCore, url);
-      return url;
-    }
-    async function preloadAudioForCores(rawCores){
-      const uniq = Array.from(new Set(rawCores));
-      await Promise.all(uniq.map(async k=>{
-        const url = await ensureAudioUrl(k);
-        if (url && !audioElByRawCore.has(k)){
-          const a = new Audio();
-          a.preload = 'auto';
-          a.src = url;
-          try{ a.load(); }catch{}
-          audioElByRawCore.set(k, a);
-        }
-      }));
-    }
-    async function playWordAudio(rawCore){
-      let a = audioElByRawCore.get(rawCore);
-      if (!a){
-        const url = await ensureAudioUrl(rawCore);
-        if (!url) return;
-        a = new Audio(url);
-        audioElByRawCore.set(rawCore, a);
-      }
-      try{ a.currentTime = 0; }catch{}
-      try{ await a.play(); }catch{}
-    }
-
-    /******** Storage bootstrap ********/
-    async function ensureStorageLoaded(){
-      try{
-        imageFiles = [];
-        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort' || MODE==='allisyll' || MODE==='rowsyll' || MODE==='syllcount'){
-          imageFiles = await listAllImagesJpg();
-        } else if (SOLO_WORDS.length){
-          const found = [];
-          for (const w of SOLO_WORDS){
-            const f = await resolveImageForWord(w);
-            if (f) found.push(f);
-          }
-          imageFiles = (found.length === SOLO_WORDS.length) ? found : await listAllImagesJpg();
-        } else {
-          imageFiles = await listAllImagesJpg();
-        }
-
-        storageWarn.style.display = imageFiles.length ? 'none' : 'block';
-        if (!imageFiles.length){
-          storageWarn.textContent = `No se encontraron imágenes JPG en "${IB}" (prefijo: ${IP || '(raíz)'}).`;
-        }
-      } catch(err){
-        storageWarn.style.display = 'block';
-        storageWarn.textContent = `Error al listar Storage: ${err?.message || err}`;
-      }
-    }
-
-    /******** Realtime (teacher/student only) ********/
-    let currentMode = MODE || 'classic';
-    async function joinRoom(room){
-      if(channel){ try{ await channel.unsubscribe(); }catch{} }
-      ROOM = (room||'').trim();
-      if(!ROOM){ alert('Código de sesión inválido'); return; }
-
-      channel = client.channel(`lettersort:${ROOM}`);
-      channel.on('broadcast', { event:'ROUND' }, p=>{
-        const d=p.payload;
-        buildColumns(d.columns);
-        setCards(d.cards);
-        clearAllPlacements();
-      });
-      channel.on('broadcast', { event:'VERIFY' }, ()=> verifyNow(true));
-      channel.on('broadcast', { event:'RESET' }, ()=> resetRoundPlacements());
-
-      const { error } = await channel.subscribe();
-      if(error){ alert('Error de Realtime'); console.error(error); }
-    }
-
-    /******** Labels (modular) ********/
-    function labelTextFor(letter, type){
-      if (LABEL_STYLE === 'emoji') {
-        return type==='is' ? `👍 Sílaba con /${letter}/` : `👎 Sílaba sin /${letter}/`;
-      }
-      return type==='is' ? `Empieza con /${letter}/` : `No empieza con /${letter}/`;
-    }
-
-    // Apply ?titles=... overrides by index, without changing keys/logic
-    function applyTitleOverrides(cols){
-      if (!COL_TITLES.length) return cols;
-      return cols.map((c, idx) => ({
-        ...c,
-        label: COL_TITLES[idx] || c.label
-      }));
-    }
-
-    function buildColumnsForLetters(activeLetters){
-      const columns = [];
-      if(activeLetters.length===1){
-        const L = activeLetters[0];
-        columns.push({label:labelTextFor(L,'is'),  key:`${L}`});
-        columns.push({label:labelTextFor(L,'not'), key:`not-${L}`});
-      } else {
-        activeLetters.forEach(L=> columns.push({label:labelTextFor(L,'is'), key:`${L}`}));
-      }
-      return applyTitleOverrides(columns);
-    }
-
-    function buildColumnsForSyllables(sylls){
-      const cols = sylls.map(s => ({ label: s, key:`syll:${normalizeMarkers(s)}`, display:s }));
-      return applyTitleOverrides(cols);
-    }
-    // NEW: columns for syllable counts
-    function buildColumnsForSyllCount(counts){
-      const cols = counts.map(n => ({
-        label: `${n} ${n===1?'sílaba':'sílabas'}`,
-        key: `count:${n}`,
-        display: `${n}`
-      }));
-      return applyTitleOverrides(cols);
-    }
-
-
-    /******** Round building ********/
-    function pickNoRepeat(arr, n){
-      const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
-      pool.sort(()=>Math.random()-0.5);
-      const chosen = pool.slice(0,n);
-      if(chosen.length < n){
-        const more = arr.filter(x=>!chosen.includes(x));
-        more.sort(()=>Math.random()-0.5);
-        chosen.push(...more.slice(0, n - chosen.length));
-      }
-      return chosen;
-    }
-    function buildRoundFromLetters(activeLetters, perCol){
-      const columns = buildColumnsForLetters(activeLetters);
-      const byInitial = (()=>{
-        const m=new Map();
-        for(const f of imageFiles){
-          if(!m.has(f.initial)) m.set(f.initial, []);
-          m.get(f.initial).push(f);
-        }
-        return m;
-      })();
-      const everything = [...imageFiles];
-      const cards = [];
-      for(const col of columns){
-        let picks=[];
-        if(col.key.startsWith('not-')){
-          const L = col.key.slice(4);
-          picks = pickNoRepeat(everything.filter(f => f.initial !== L), perCol);
-        } else {
-          const L = col.key;
-          picks = pickNoRepeat(byInitial.get(L) || [], perCol);
-        }
-        for(const f of picks){ usedSet.add(`${f.path}`); }
-        for(const f of picks){
-          cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
-        }
-      }
-      return { columns, cards };
-    }
-    function buildRoundFromSyllables(sylls, perCol){
-      const columns = buildColumnsForSyllables(sylls);
-      const cards = [];
-      for(const col of columns){
-        const targetSyl = col.key.slice(5);
-        const list = imageFiles.filter(f => {
-          const syls = syllablesNormalized(f.rawCore);
-          return SYLL_MATCH === 'any'
-            ? syls.some(s => cmpSyll(s, targetSyl))
-            : cmpSyll(syls[0], targetSyl);
-        });
-        const picks = pickNoRepeat(list, perCol);
-        for(const f of picks){ usedSet.add(`${f.path}`); }
-        for(const f of picks){
-          cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
-        }
-      }
-      return { columns, cards };
-    }
-    // NEW: round from syllable counts
-    function buildRoundFromSyllCount(counts, perCol){
-      const columns = buildColumnsForSyllCount(counts);
-      const cards = [];
-      for(const col of columns){
-        const need = parseInt(col.key.slice(6),10); // after 'count:'
-        const list = imageFiles.filter(f => syllableCount(f.rawCore) === need);
-        const picks = pickNoRepeat(list, perCol);
-        for(const f of picks){ usedSet.add(`${f.path}`); }
-        for(const f of picks){
-          cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
-        }
-      }
-      return { columns, cards };
-    }
-    // Existing words list (letters/sylls)
-    function buildRoundFromWordList(activeLetters, sylls, wordsList){
-      const columns = (sylls && sylls.length)
-        ? buildColumnsForSyllables(sylls)
-        : buildColumnsForLetters(activeLetters);
-
-      const indexNorm = new Map(); // normalized core -> file
-      for(const f of imageFiles){
-        const k = normalizeMarkers(f.rawCore);
-        if(!indexNorm.has(k)) indexNorm.set(k, f);
-      }
-
-      const cards = [];
-      for(const wRaw of wordsList){
-        const k = normalizeMarkers(wRaw);
-        const f = indexNorm.get(k);
-        if(!f) continue;
-        cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
-      }
-      return { columns, cards };
-    }
-    // NEW: words list + syllable counts
-    function buildRoundFromWordListWithCounts(counts, wordsList){
-      const columns = buildColumnsForSyllCount(counts);
-
-      const indexNorm = new Map();
-      for(const f of imageFiles){
-        const k = normalizeMarkers(f.rawCore);
-        if(!indexNorm.has(k)) indexNorm.set(k, f);
-      }
-
-      const cards = [];
-      for(const wRaw of wordsList){
-        const k = normalizeMarkers(wRaw);
-        const f = indexNorm.get(k);
-        if(!f) continue;
-        cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
-      }
-      return { columns, cards };
-    }
-
-    function setOneRowGrid(colsCount){
-      columnsEl.style.gridTemplateColumns = `repeat(${colsCount}, minmax(140px, 1fr))`;
-    }
-    function renderHeaderHTML(col){
-      if (col.key.startsWith('syll:')) {
-        if (HIDE_TITLE) return '';
-        const fallback = (col.display || '').toLowerCase();
-        const text = col.label || fallback;
-        return `<div class="syllTile" aria-hidden="true">${text}</div>`;
-      }
-      if (col.key.startsWith('count:')){
-        if (HIDE_TITLE) return '';
-        const n = parseInt(col.display || col.key.slice(6),10);
-        const defaultLabel = `${n} ${n===1?'sílaba':'sílabas'}`;
-        const text = col.label || defaultLabel;
-        return `<div class="syllTile" aria-hidden="true">${text}</div>`;
-      }
-      return `<h2>${col.label}</h2>`;
-    }
-
-    function buildColumns(columns){
-      currentCols = columns;
-      columnsEl.innerHTML='';
-      setOneRowGrid(columns.length);
-      columns.forEach((c, idx)=>{
-        const col = document.createElement('div');
-        col.className='col';
-        col.innerHTML = `
-          <header>${renderHeaderHTML(c)}</header>
-          <div class="drop" data-col="${idx}"></div>`;
-        columnsEl.appendChild(col);
-      });
-      const per = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
-      document.body.classList.toggle('one-per', per === 1);
-    }
-    function setCards(cards){
-      currentCards = [...cards];
-      rackEl.innerHTML='';
-      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
-      ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
-      preloadAudioForCores(ordered.map(c=>c.coreRaw));
-    }
-
-    let lastDragEndedAt = 0;
-    function renderCard(card, opts={}){
-      const el=document.createElement('div');
-      el.className='card' + (opts.rowCard ? ' rowCard' : '');
-      el.dataset.id=card.id;
-      if (opts.rowIndex != null) el.dataset.row = String(opts.rowIndex);
-      el.setAttribute('tabindex','0');
-      el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap" ${ROW_TITLE?'':'style="display:none"'}>${ROW_TITLE ? (markersToPretty(card.coreRaw)||'') : '&nbsp;'}</div>`;
-      el.addEventListener('click', async ()=>{
-        if (Date.now() - lastDragEndedAt < 150) return;
-        playWordAudio(card.coreRaw);
-      });
-      makeDraggable(el, opts.rowScope ? String(opts.rowIndex) : null);
-      return el;
-    }
-
-    /* New: word chips for rowsyll (no audio) */
-    function renderChip(word, id){
-      const el = document.createElement('div');
-      el.className = 'chip';
-      el.dataset.id = id || crypto.randomUUID();
-      el.textContent = markersToPretty(word);
-      el.setAttribute('tabindex','0');
-      makeDraggable(el, null);
-      return el;
-    }
-
-    function clearAllPlacements(){
-      document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
-      rackEl.innerHTML='';
-      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
-      ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
-    }
-    function resetRoundPlacements(){
-      document.querySelectorAll('.card, .chip').forEach(c=> c.classList.remove('ok','bad','locked') );
-      if (currentMode==='row' || currentMode==='rowalli' || currentMode==='allisyll' || currentMode==='rowsyll'){
-        rowData.forEach((r)=>{
-          r.dropEl.innerHTML='';
-        });
-        if (currentMode==='rowsyll'){
-          rackEl.innerHTML = '';
-          rackEl.classList.add('chips');
-          SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
-        } else {
-          rowData.forEach((r, idx)=>{
-            if (r.rackEl && r.cards){
-              r.rackEl.innerHTML='';
-              r.cards.forEach(c=> r.rackEl.appendChild(renderCard(c,{rowCard:true,rowIndex:idx,rowScope:true})));
-            }
-          });
-        }
-      } else {
-        clearAllPlacements();
-      }
-    }
-
-    /* Confetti unchanged */
-    function celebrate(){
-      const cvs = document.createElement('canvas');
-      cvs.className = 'celebrationCanvas';
-      document.body.appendChild(cvs);
-      const ctx = cvs.getContext('2d');
-      let W, H, t0;
-      const N = 180;
-      const parts = [];
-      function resize(){ W=window.innerWidth; H=window.innerHeight; cvs.width=W; cvs.height=H; }
-      window.addEventListener('resize', resize); resize();
-      for(let i=0;i<N;i++){
-        parts.push({
-          x: Math.random()*W,
-          y: -20-Math.random()*H*0.2,
-          vx: (-0.9 + Math.random()*1.8),
-          vy: 2.0 + Math.random()*2.1,
-          rot: Math.random()*Math.PI,
-          vr: (-0.22 + Math.random()*0.44),
-          size: 5 + Math.random()*6,
-          hue: Math.floor(Math.random()*360)
-        });
-      }
-      function tick(ts){
-        if(!t0) t0=ts;
-        const dt = Math.min(32, ts - t0); t0 = ts;
-        ctx.clearRect(0,0,W,H);
-        parts.forEach(p=>{
-          const gravity = 0.011;
-          const drag    = 0.004;
-          p.vy += gravity * (dt/16);
-          p.vx *= (1 - drag);
-          p.vy *= (1 - drag*0.6);
-          p.x += p.vx * (dt/16);
-          p.y += p.vy * (dt/16);
-          p.rot += p.vr * (dt/16);
-          ctx.save();
-          ctx.translate(p.x, p.y);
-          ctx.rotate(p.rot);
-          ctx.fillStyle = `hsl(${p.hue} 80% 55%)`;
-          ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size*0.6);
-          ctx.restore();
-        });
-        if (parts.every(p=>p.y > H+30)) {
-          document.body.removeChild(cvs);
-        } else { requestAnimationFrame(tick); }
-      }
-      requestAnimationFrame(tick);
-    }
-
-    /******** Row helpers ********/
-    function parseRows(str){
-      return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
-        const [left, right] = seg.split('~');
-        const prompt = (left||'').trim();
-        const choices = (right||'').split(',').map(s=>s.trim()).filter(Boolean);
-        return { prompt, choices };
-      }).filter(r=>r.prompt && r.choices.length);
-    }
-    function parseRowSyllDefs(str){
-      return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
-        const [left] = seg.split('~');
-        const [prompt, howRaw] = (left||'').split(':').map(s=>s.trim());
-        const how = (howRaw||'init').toLowerCase()==='final' ? 'final' : 'init';
-        return { prompt, how };
-      }).filter(r=>r.prompt);
-    }
-    function parseAlliGroups(str){
-      return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
-        const items = seg.split(',').map(s=>s.trim()).filter(Boolean);
-        return items;
-      }).filter(items=>items.length>=2);
-    }
-    function majorityInitial(rawCores){
-      const m = new Map();
-      for (const rc of rawCores){
-        const ini = initialFromStem(rc);
-        m.set(ini, (m.get(ini)||0)+1);
-      }
-      let bestI = null, bestC = -1;
-      for (const [k,v] of m){ if (v>bestC){ bestC=v; bestI=k; } }
-      return { initial: bestI || '', count: bestC<0 ? 0 : bestC };
-    }
-    // NEW: majority initial syllable (normalized)
-    function majorityInitialSyll(rawCores){
-      const m = new Map();
-      for (const rc of rawCores){
-        const syls = syllablesNormalized(rc);
-        const s0 = syls[0] || '';
-        if (!s0) continue;
-        m.set(s0, (m.get(s0) || 0) + 1);
-      }
-      let bestS = null, bestC = -1;
-      for (const [k,v] of m){
-        if (v > bestC){
-          bestC = v;
-          bestS = k;
-        }
-      }
-      return { syll: bestS || '', count: bestC<0 ? 0 : bestC };
-    }
-
-    /******** Row modes ********/
-    async function buildRowMode(){
-      currentMode = 'row';
-      document.body.classList.add('row-compact');
-      columnsEl.classList.add('hidden');
-      rackSectionEl.classList.add('hidden');
-      rowModeEl.classList.remove('hidden');
-
-      const rows = parseRows(ROWS_RAW);
-      rowData = [];
-      rowModeEl.innerHTML = '';
-
-      for (let i=0;i<rows.length;i++){
-        const r = rows[i];
-        const pImg = await resolveImageForWord(r.prompt);
-        if (!pImg) continue;
-
-        const choiceImgs = [];
-        for (const ch of r.choices){
-          const ci = await resolveImageForWord(ch);
-          if (ci) choiceImgs.push(ci);
-        }
-        if (!choiceImgs.length) continue;
-
-        const coresToPreload = [pImg.rawCore, ...choiceImgs.map(c=>c.rawCore)];
-        await preloadAudioForCores(coresToPreload);
-
-        const line = document.createElement('div');
-        line.className = 'rowLine';
-
-        const promptWrap = document.createElement('div');
-        promptWrap.className = 'rowPrompt';
-        const pCard = document.createElement('div');
-        pCard.className = 'card';
-        pCard.innerHTML = `<img alt="" src="${pImg.url}"><div class="cap" style="display:${ROW_TITLE?'block':'none'}">${ROW_TITLE?markersToPretty(pImg.rawCore):'&nbsp;'}</div>`;
-        pCard.addEventListener('click', ()=> playWordAudio(pImg.rawCore));
-        promptWrap.appendChild(pCard);
-
-        const drop = document.createElement('div');
-        drop.className = 'rowDrop';
-        drop.dataset.row = String(i);
-
-        const rack = document.createElement('div');
-        rack.className = 'rowRack';
-        rack.dataset.row = String(i);
-
-        line.appendChild(promptWrap);
-        line.appendChild(drop);
-        line.appendChild(rack);
-        rowModeEl.appendChild(line);
-
-        const cards = choiceImgs.map(ci => ({
-          id: crypto.randomUUID(),
-          imgUrl: ci.url,
-          coreRaw: ci.rawCore
-        }));
-        cards.forEach(c=> rack.appendChild(renderCard(c,{rowCard:true,rowIndex:i,rowScope:true})));
-
-        rowData.push({ type:'row', prompt:pImg, dropEl:drop, rackEl:rack, cards });
-      }
-    }
-
-    async function buildRowAlliMode(){
-      currentMode = 'rowalli';
-      document.body.classList.add('row-compact');
-      columnsEl.classList.add('hidden');
-      rackSectionEl.classList.add('hidden');
-      rowModeEl.classList.remove('hidden');
-
-      const groups = parseAlliGroups(ROWS_RAW);
-      rowData = [];
-      rowModeEl.innerHTML = '';
-
-      for (let i=0;i<groups.length;i++){
-        const names = groups[i];
-
-        const imgs = [];
-        for (const w of names){
-          const f = await resolveImageForWord(w);
-          if (f) imgs.push(f);
-        }
-        if (imgs.length < 2) continue;
-
-        const { initial: majInitial, count: majCount } = majorityInitial(imgs.map(x=>x.rawCore));
-
-        await preloadAudioForCores(imgs.map(x=>x.rawCore));
-
-        const line = document.createElement('div');
-        line.className = 'rowLine twoCols';
-
-        const drop = document.createElement('div');
-        drop.className = 'rowDrop';
-        drop.dataset.row = String(i);
-
-        const rack = document.createElement('div');
-        rack.className = 'rowRack';
-        rack.dataset.row = String(i);
-
-        line.appendChild(drop);
-        line.appendChild(rack);
-        rowModeEl.appendChild(line);
-
-        const cards = imgs.map(ci => ({
-          id: crypto.randomUUID(),
-          imgUrl: ci.url,
-          coreRaw: ci.rawCore
-        }));
-        cards.forEach(c=> rack.appendChild(renderCard(c,{rowCard:true,rowIndex:i,rowScope:true})));
-
-        rowData.push({
-          type:'rowalli',
-          dropEl: drop,
-          rackEl: rack,
-          cards,
-          expectedCount: majCount,
-          majInitial
-        });
-      }
-    }
-
-    // NEW: row alliteration by initial syllable (allisyll)
-    async function buildRowAlliSyllMode(){
-      currentMode = 'allisyll';
-      document.body.classList.add('row-compact');
-      columnsEl.classList.add('hidden');
-      rackSectionEl.classList.add('hidden');
-      rowModeEl.classList.remove('hidden');
-
-      const groups = parseAlliGroups(ROWS_RAW);
-      rowData = [];
-      rowModeEl.innerHTML = '';
-
-      for (let i=0;i<groups.length;i++){
-        const names = groups[i];
-
-        const imgs = [];
-        for (const w of names){
-          const f = await resolveImageForWord(w);
-          if (f) imgs.push(f);
-        }
-        if (imgs.length < 2) continue;
-
-        const { syll: majSyl, count: majCount } = majorityInitialSyll(imgs.map(x=>x.rawCore));
-
-        await preloadAudioForCores(imgs.map(x=>x.rawCore));
-
-        const line = document.createElement('div');
-        line.className = 'rowLine twoCols';
-
-        const drop = document.createElement('div');
-        drop.className = 'rowDrop';
-        drop.dataset.row = String(i);
-
-        const rack = document.createElement('div');
-        rack.className = 'rowRack';
-        rack.dataset.row = String(i);
-
-        line.appendChild(drop);
-        line.appendChild(rack);
-        rowModeEl.appendChild(line);
-
-        const cards = imgs.map(ci => ({
-          id: crypto.randomUUID(),
-          imgUrl: ci.url,
-          coreRaw: ci.rawCore
-        }));
-        cards.forEach(c=> rack.appendChild(renderCard(c,{rowCard:true,rowIndex:i,rowScope:true})));
-
-        rowData.push({
-          type:'allisyll',
-          dropEl: drop,
-          rackEl: rack,
-          cards,
-          expectedCount: majCount,
-          majSyl
-        });
-      }
-    }
-
-    async function buildRowSyllMode(){
-      currentMode = 'rowsyll';
-      document.body.classList.remove('row-compact');
-      columnsEl.classList.add('hidden');
-      rowModeEl.classList.remove('hidden');
-
-      rackSectionEl.classList.remove('hidden');
-      rackEl.innerHTML = '';
-      rackEl.classList.add('chips');
-      SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
-
-      const defs = parseRowSyllDefs(ROWS_RAW);
-      rowData = [];
-      rowModeEl.innerHTML = '';
-
-      for (let i=0;i<defs.length;i++){
-        const r = defs[i];
-        const pImg = await resolveImageForWord(r.prompt);
-        if (!pImg) continue;
-
-        const line = document.createElement('div');
-        line.className = 'rowLine twoCols';
-
-        const promptWrap = document.createElement('div');
-        promptWrap.className = 'rowPrompt';
-        const pCard = document.createElement('div');
-        pCard.className = 'card';
-        pCard.innerHTML = `<img alt="" src="${pImg.url}"><div class="cap" style="display:${ROW_TITLE?'block':'none'}">${ROW_TITLE?markersToPretty(pImg.rawCore):'&nbsp;'}</div>`;
-        promptWrap.appendChild(pCard);
-
-        const drop = document.createElement('div');
-        drop.className = 'rowDrop';
-        drop.dataset.row = String(i);
-
-        const spacer = document.createElement('div');
-        spacer.className = 'rowRack';
-
-        line.appendChild(promptWrap);
-        line.appendChild(drop);
-        line.appendChild(spacer);
-        rowModeEl.appendChild(line);
-
-        const promptSyls = syllablesNormalized(pImg.rawCore);
-        const targetSyl = r.how === 'init'
-          ? (promptSyls[0] || '')
-          : (promptSyls[promptSyls.length - 1] || '');
-        const targetInitial = initialFromStem(targetSyl);
-
-        rowData.push({
-          type: 'rowsyll',
-          dropEl: drop,
-          prompt: pImg,
-          how: r.how,
-          targetInitial
-        });
-      }
-    }
-
-    function everythingCorrect(){
-      if (currentMode==='row'){
-        for (const r of rowData){
-          const locked = r.dropEl.querySelectorAll('.card.locked').length;
-          if (locked !== 1) return false;
-        }
-        return true;
-      }
-      if (currentMode==='rowalli'){
-        for (const r of rowData){
-          const locked = r.dropEl.querySelectorAll('.card.locked').length;
-          if (locked !== r.expectedCount) return false;
-        }
-        return rowData.length>0;
-      }
-      if (currentMode==='allisyll'){
-        for (const r of rowData){
-          const locked = r.dropEl.querySelectorAll('.card.locked').length;
-          if (locked !== r.expectedCount) return false;
-        }
-        return rowData.length>0;
-      }
-      if (currentMode === 'rowsyll') {
-        const chipsInBank = rackEl.querySelectorAll('.chip').length;
-        if (chipsInBank > 0) return false;
-        const placed = rowModeEl.querySelectorAll('.rowDrop .chip').length;
-        if (placed === 0) return false;
-        const anyBad = rowModeEl.querySelector('.rowDrop .chip.bad');
-        if (anyBad) return false;
-        const locked = rowModeEl.querySelectorAll('.rowDrop .chip.locked').length;
-        return placed === locked;
-      }
-
-      // Classic modes
-      const inRack = rackEl.querySelectorAll('.card').length;
-      if(inRack>0) return false;
-      const anyBad = document.querySelector('.drop .card.bad');
-      if(anyBad) return false;
-      const placed = document.querySelectorAll('.drop .card').length;
-      const locked = document.querySelectorAll('.drop .card.locked').length;
-      return placed>0 && placed===locked;
-    }
-
-    function verifyNow(fromBroadcast){
-      if (currentMode==='row'){
-        rowData.forEach((r)=>{
-          const dropped = r.dropEl.querySelector('.card');
-          if (!dropped) return;
-          const cardId = dropped.dataset.id;
-          const card = r.cards.find(c=>c.id===cardId);
-          if (!card) return;
-          const a = initialFromStem(r.prompt.rawCore);
-          const b = initialFromStem(card.coreRaw);
-          const ok = (a===b);
-          if(ok){ dropped.classList.add('ok','locked'); lockCard(dropped, card); }
-          else { dropped.classList.add('bad'); setTimeout(()=> { dropped.classList.remove('bad'); r.rackEl.appendChild(dropped); }, 300); }
-        });
-        if (everythingCorrect()) celebrate();
-        return;
-      }
-
-      if (currentMode==='rowalli'){
-        rowData.forEach((r)=>{
-          [...r.dropEl.children].forEach(cardEl=>{
-            const card = r.cards.find(c=>c.id===cardEl.dataset.id);
-            if (!card) return;
-            const ini = initialFromStem(card.coreRaw);
-            const ok = (ini === r.majInitial);
-            if(ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
-            else { cardEl.classList.add('bad'); setTimeout(()=> { cardEl.classList.remove('bad'); r.rackEl.appendChild(cardEl); }, 300); }
-          });
-        });
-        if (everythingCorrect()) celebrate();
-        return;
-      }
-
-      if (currentMode==='allisyll'){
-        rowData.forEach((r)=>{
-          [...r.dropEl.children].forEach(cardEl=>{
-            const card = r.cards.find(c=>c.id===cardEl.dataset.id);
-            if (!card) return;
-            const syls = syllablesNormalized(card.coreRaw);
-            const firstSyl = syls[0] || '';
-            const ok = cmpSyll(firstSyl, r.majSyl);
-            if (ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
-            else {
-              cardEl.classList.add('bad');
-              setTimeout(()=> { cardEl.classList.remove('bad'); r.rackEl.appendChild(cardEl); }, 300);
-            }
-          });
-        });
-        if (everythingCorrect()) celebrate();
-        return;
-      }
-
-      if (currentMode==='rowsyll'){
-        rowData.forEach((r)=>{
-          const tgt = r.targetInitial; // e.g., 't' (or 'ch','ll','rr')
-          const how = r.how;           // 'init' or 'final'
-
-          [...r.dropEl.children].forEach(chipEl=>{
-            const text = (chipEl.textContent || '').trim().toLowerCase();
-
-            const syls = syllablesNormalized(text);
-            let ok = false;
-
-            if (syls.length){
-              const chosen = (how==='init') ? syls[0] : syls[syls.length-1];
-              const VOWEL = /^[aeiou]/;
-              const digraphs = ['ch','ll','rr'];
-              const syllableMatchesCV = (syllNorm, targetInitial)=>{
-                if(!syllNorm) return false;
-                if (digraphs.includes(targetInitial)) {
-                  if (!syllNorm.startsWith(targetInitial)) return false;
-                  const rest = syllNorm.slice(targetInitial.length);
-                  return rest.length > 0 && VOWEL.test(rest[0]);
-                }
-                if (syllNorm[0] !== targetInitial) return false;
-                return syllNorm.length > 1 && VOWEL.test(syllNorm[1]);
-              };
-              ok = syllableMatchesCV(chosen, tgt);
-            }
-
-            if (ok){
-              chipEl.classList.add('ok','locked');
-            } else {
-              chipEl.classList.add('bad');
-              setTimeout(()=> { chipEl.classList.remove('bad'); rackEl.appendChild(chipEl); }, 300);
-            }
-          });
-        });
-
-        if (everythingCorrect()) celebrate();
-        return;
-      }
-
-      // Classic (columns) — now includes 'count:' target
-      const getTarget = key => {
-        if (key.startsWith('not-'))   return {type:'not', letter:key.slice(4)};
-        if (key.startsWith('syll:'))  return {type:'syll', syll:key.slice(5)};
-        if (key.startsWith('count:')) return {type:'count', n: parseInt(key.slice(6),10)};
-        return {type:'is', letter:key};
-      };
-
-      document.querySelectorAll('.drop').forEach((drop, idx)=>{
-        const target = getTarget(currentCols[idx].key);
-        [...drop.children].forEach(cardEl=>{
-          const card = currentCards.find(c=>c.id===cardEl.dataset.id);
-          if(!card) return;
-
-          const coreRaw = card.coreRaw;
-          let ok = false;
-          if (target.type === 'syll') {
-            const syls = syllablesNormalized(coreRaw);
-            ok = (SYLL_MATCH==='any')
-              ? syls.some(s => cmpSyll(s, target.syll))
-              : cmpSyll(syls[0], target.syll);
-          } else if (target.type === 'count') {
-            ok = syllableCount(coreRaw) === target.n;
-          } else {
-            const initial = initialFromStem(coreRaw);
-            ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
-          }
-
-          if(ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
-          else { cardEl.classList.add('bad'); setTimeout(()=> ejectToRack(cardEl), 350); }
-        });
-      });
-
-      if (everythingCorrect()) celebrate();
-      if (!fromBroadcast && isTeacher && channel){
-        channel.send({ type:'broadcast', event:'VERIFY' });
-      }
-    }
-
-    // ----- Drag & Drop -----
-    let drag=null;
-    function makeDraggable(el, rowScope){
-      el.style.touchAction='none';
-      if (rowScope != null) el.dataset.row = String(rowScope);
-      el.addEventListener('pointerdown', onGrab);
-    }
-    function onGrab(e){
-      e.preventDefault();
-      const el=e.currentTarget;
-      if(el.classList.contains('locked')) return;
-      drag={
-        el,
-        originParent:el.parentElement,
-        rowScope: el.dataset.row || null,
-        pointerId:e.pointerId,
-        startX:e.clientX, startY:e.clientY,
-        moved:false
-      };
-      el.classList.add('dragging');
-      el.setPointerCapture(e.pointerId);
-      window.addEventListener('pointermove', onMove, {passive:false});
-      window.addEventListener('pointerup', onDrop, {passive:false});
-      window.addEventListener('pointercancel', onCancel, {passive:false});
-    }
-    function onMove(e){
-      if(!drag || e.pointerId!==drag.pointerId) return;
-      e.preventDefault();
-      const dx = e.clientX - drag.startX;
-      const dy = e.clientY - drag.startY;
-      if(!drag.moved && Math.hypot(dx,dy) < 4) return;
-      if(!drag.moved){
-        drag.moved = true;
-        drag.el.style.position='fixed';
-        if (drag.el.classList.contains('card')) {
-          drag.el.style.width = '150px';
-        } else {
-          drag.el.style.width = drag.el.getBoundingClientRect().width + 'px';
-        }
-        drag.el.style.height = '';
-        drag.el.style.zIndex=1000;
-        drag.el.style.pointerEvents='none';
-
-      }
-      drag.el.style.left=(e.clientX-70)+'px';
-      drag.el.style.top =(e.clientY-70)+'px';
-    }
-function onDrop(e){
-  if (!drag || e.pointerId !== drag.pointerId) return;
-  cleanupPointer(e.pointerId);
-  const el = drag.el;
-
-  if (!drag.moved) {
-    resetDraggedStyles(el);
-    drag = null;
-    return;
-  }
-
-  resetDraggedStyles(el);
-
-  const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
-
-  // Keep one-per visual style for teacher mode only
-  const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value || '4', 10)));
-  document.body.classList.toggle('one-per', perCol === 1);
-
-  if (drop) {
-    if (drop.classList.contains('rowDrop')) {
-      // Row mode: still allow only 1 in the answer slot
-      if (currentMode === 'row' && drop.children.length >= 1) {
-        drag.originParent.appendChild(el);
-      } else {
-        drop.appendChild(el);
-      }
-    } else {
-      // For normal .drop and .rack: NO CAP on number of children
-      drop.appendChild(el);
-    }
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// URL params: ?role=teacher&group=A or ?role=student&group=A
+const qs = new URLSearchParams(location.search);
+const ROLE = (qs.get('role') || '').toLowerCase();     // 'teacher' or 'student'
+const GROUP_CODE = (qs.get('group') || '').toUpperCase();
+const isTeacher = ROLE === 'teacher' && !!GROUP_CODE;
+const isStudent = ROLE === 'student' && !!GROUP_CODE;
+
+const syncStatusEl = document.getElementById('syncStatus');
+if (syncStatusEl) {
+  if (!ROLE || !GROUP_CODE) {
+    syncStatusEl.textContent = "Modo local: usa ?role=teacher&group=A o ?role=student&group=A en la URL para sincronizar.";
+  } else if (isTeacher) {
+    syncStatusEl.textContent = `Modo MAESTRO — Grupo ${GROUP_CODE}. Usa Prev/Next para guiar.`;
+  } else if (isStudent) {
+    syncStatusEl.textContent = `Modo ESTUDIANTE — Grupo ${GROUP_CODE}. Seguirá al maestro.`;
   } else {
-    drag.originParent.appendChild(el);
+    syncStatusEl.textContent = "Modo local (role/group no válidos).";
   }
-
-  lastDragEndedAt = Date.now();
-  drag = null;
 }
 
-    function onCancel(e){
-      if(!drag || e.pointerId!==drag.pointerId) return;
-      cleanupPointer(e.pointerId);
-      resetDraggedStyles(drag.el);
-      drag=null;
-    }
-    function cleanupPointer(pointerId){
-      try{ drag.el.releasePointerCapture(pointerId);}catch(_){}
-      drag.el.classList.remove('dragging');
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onDrop);
-      window.removeEventListener('pointercancel', onCancel);
-    }
-    function resetDraggedStyles(el){
-      el.classList.remove('dragging');
-      el.style.position=''; el.style.left=''; el.style.top=''; el.style.zIndex=''; el.style.pointerEvents='';
-      el.style.width=''; el.style.height='';
-    }
-    function hitTestDrop(x, y, rowScope){
-      const zones = Array.from(document.querySelectorAll('.drop, .rowDrop, .rack, .rowRack'));
-      for (const d of zones){
-        if (rowScope != null && d.dataset.row && d.dataset.row !== rowScope) continue;
-        const r = d.getBoundingClientRect();
-        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return d;
-      }
+/**
+ * Make sure a reading_groups row exists for this group_code.
+ * If not, create one with current_index = 0.
+ */
+async function ensureReadingGroup(groupCode) {
+  if (!groupCode) return null;
+
+  const { data, error } = await sbClient
+    .from('reading_groups')
+    .select('*')
+    .eq('group_code', groupCode)
+    .maybeSingle();
+
+  // PGRST116 = no rows
+  if (error && error.code !== 'PGRST116') {
+    console.warn('ensureReadingGroup error', error);
+    return null;
+  }
+
+  if (!data) {
+    const { data: inserted, error: insertErr } = await sbClient
+      .from('reading_groups')
+      .insert({ group_code: groupCode, current_index: 0 })
+      .select()
+      .single();
+    if (insertErr) {
+      console.warn('insert reading_group error', insertErr);
       return null;
     }
-    function ejectToRack(cardEl){ cardEl.classList.remove('bad'); rackEl.appendChild(cardEl); }
-    function lockCard(cardEl, card){
-      const clone = cardEl.cloneNode(true);
-      clone.classList.add('locked');
-      if (cardEl.classList.contains('card') && card){
-        clone.addEventListener('click', ()=> playWordAudio(card.coreRaw));
-      }
-      cardEl.replaceWith(clone);
+    return inserted;
+  }
+
+  return data;
+}
+
+/**
+ * Teacher: set the current word index for a group.
+ */
+async function setReadingIndex(groupCode, index) {
+  if (!groupCode) return null;
+  const { data, error } = await sbClient
+    .from('reading_groups')
+    .update({ current_index: index })
+    .eq('group_code', groupCode)
+    .select('current_index')
+    .single();
+
+  if (error) {
+    console.warn('setReadingIndex error', error);
+    return null;
+  }
+  return data.current_index;
+}
+
+/**
+ * Student: get current word index for a group.
+ */
+async function getReadingIndex(groupCode) {
+  if (!groupCode) return null;
+  const { data, error } = await sbClient
+    .from('reading_groups')
+    .select('current_index')
+    .eq('group_code', groupCode)
+    .single();
+
+  if (error) {
+    if (error.code !== 'PGRST116') {
+      console.warn('getReadingIndex error', error);
     }
+    return null;
+  }
+  return data.current_index;
+}
 
-    /******** Controls wiring ********/
-    btnVerify.addEventListener('click', ()=> verifyNow(false));
-    btnReset.addEventListener('click', resetRoundPlacements);
+/* Ensure this exists before first draw */
+if (window.allowSliderDraw === undefined) {
+  window.allowSliderDraw = true;
+}
 
-    soloVerifyBtn.addEventListener('click', ()=> verifyNow(false));
-    soloResetBtn.addEventListener('click', resetRoundPlacements);
+/* ==================== Canvas + responsive scaling ==================== */
+const canvas = document.getElementById("wordCanvas");
+const ctx = canvas.getContext("2d");
 
-    inlineVerifyBtn.addEventListener('click', ()=> verifyNow(false));
-    inlineResetBtn.addEventListener('click', resetRoundPlacements);
+let words = [], currentWordIndex = 0;
+let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
+let letters = [];
+let pollTimer = null; // for student polling
 
-    btnNewRound.addEventListener('click', async ()=>{
-      if(!isTeacher) return;
-      if(imageFiles.length===0){
-        await ensureStorageLoaded();
-        if(imageFiles.length===0){ alert('No hay imágenes disponibles.'); return; }
+const DPR = window.devicePixelRatio || 1;
+const BASE_W = 768, BASE_H = 432, BASE_AR = BASE_H / BASE_W;
+
+function resizeCanvas() {
+  const maxWidth = 768;
+  const width = Math.min(window.innerWidth * 0.95, maxWidth);
+  const height = Math.round(width * BASE_AR);
+
+  canvas.style.width = width + "px";
+  canvas.style.height = height + "px";
+
+  canvas.width = Math.round(width * DPR);
+  canvas.height = Math.round(height * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  if (words.length) {
+    setupWord(words[currentWordIndex]);
+  } else {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+window.addEventListener("resize", () => requestAnimationFrame(resizeCanvas));
+window.addEventListener("orientationchange", () => requestAnimationFrame(resizeCanvas));
+document.addEventListener("DOMContentLoaded", resizeCanvas);
+
+/* ==================== UI & Data ==================== */
+const playBtn = document.getElementById("playAudio");
+
+document.getElementById("wordListSelect").addEventListener("change", loadWordList);
+document.getElementById("nextWord").addEventListener("click", () => changeWord(1));
+document.getElementById("prevWord").addEventListener("click", () => changeWord(-1));
+
+playBtn.addEventListener("click", () => {
+  if (!words.length) return;
+  playWordAudio(words[currentWordIndex]);
+});
+
+async function loadWordList() {
+  const listName = document.getElementById("wordListSelect").value; // e.g., "1. sílabas"
+  const url = `wordlists/${encodeURIComponent(listName)}.txt`;      // encode spaces/accents
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`No encontrado: ${url}`);
+    const data = await response.text();
+    words = data.trim().split("\n").map(w => w.trim()).sort(() => Math.random() - 0.5);
+    currentWordIndex = 0;
+
+    document.fonts.ready.then(async () => {
+      setupWord(words[currentWordIndex]);
+      playBtn.disabled = false;
+
+      // TEACHER: initialize group row & set index to 0
+      if (isTeacher && GROUP_CODE) {
+        await ensureReadingGroup(GROUP_CODE);
+        await setReadingIndex(GROUP_CODE, currentWordIndex);
       }
-      const hasSyll  = SOLO_SYLLABLES.length > 0;
-      const hasCount = SOLO_SYLLCOUNT.length > 0;
-      const activeLetters = (hasSyll || hasCount) ? [] : [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
-      if(!hasSyll && !hasCount && activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
-      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
-      const useWords = SOLO_WORDS.length > 0;
 
-      const payload =
-        useWords
-          ? (hasCount
-              ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
-              : buildRoundFromWordList(activeLetters, SOLO_SYLLABLES, SOLO_WORDS))
-          : (hasCount
-              ? buildRoundFromSyllCount(SOLO_SYLLCOUNT, perCol)
-              : (hasSyll
-                  ? buildRoundFromSyllables(SOLO_SYLLABLES, perCol)
-                  : buildRoundFromLetters(activeLetters, perCol)));
-
-      await channel.send({ type:'broadcast', event:'ROUND', payload });
+      // STUDENT: start polling for teacher's index
+      if (isStudent && GROUP_CODE) {
+        startStudentPolling();
+      }
     });
+  } catch (err) {
+    console.warn(err);
+    alert(`No pude cargar "${url}". Verifica el nombre y las mayúsculas/minúsculas en GitHub Pages.`);
+  }
+}
 
-    modeToggle.addEventListener('change', () => {
-      isTeacher = modeToggle.checked;
-      teacherPanel.classList.toggle('hidden', !isTeacher);
-      studentPanel.classList.toggle('hidden', isTeacher);
+async function startStudentPolling() {
+  if (!isStudent || !GROUP_CODE) return;
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  const doPoll = async () => {
+    const idx = await getReadingIndex(GROUP_CODE);
+    if (idx == null) return;
+    if (!words.length) return; // no list yet
+    if (idx === currentWordIndex) return;
+    if (idx < 0 || idx >= words.length) return;
+
+    currentWordIndex = idx;
+    document.fonts.ready.then(() => {
+      setupWord(words[currentWordIndex]);
+      playBtn.disabled = false;
     });
+  };
 
-    const LETTERS = 'a,b,c,ch,d,e,f,g,h,i,j,k,l,ll,m,n,ñ,o,p,q,r,rr,s,t,u,v,w,x,y,z'.split(',');
-    function renderLetterPicker(){
-      letterPicker.innerHTML='';
-      LETTERS.forEach(L=>{
-        const b=document.createElement('button');
-        b.type='button'; b.textContent=L;
-        b.addEventListener('click', ()=>{
-          b.classList.toggle('active');
-          const act=[...letterPicker.querySelectorAll('.active')];
-          if(act.length>5) b.classList.remove('active');
-        });
-        letterPicker.appendChild(b);
-      });
+  // initial hit + interval
+  await doPoll();
+  pollTimer = setInterval(doPoll, 2000);
+}
+
+function changeWord(direction) {
+  if (!words.length) return;
+  currentWordIndex = (currentWordIndex + direction + words.length) % words.length;
+  document.fonts.ready.then(() => {
+    setupWord(words[currentWordIndex]);
+    playBtn.disabled = false;
+  });
+
+  // TEACHER: push new index to Supabase
+  if (isTeacher && GROUP_CODE) {
+    setReadingIndex(GROUP_CODE, currentWordIndex);
+  }
+}
+
+/* ==================== Layout & Drawing ==================== */
+function setupWord(word) {
+  const baseFont = 80;
+  const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
+  const fontPx = Math.max(36, Math.min(96, scaledFont));
+  ctx.font = `bold ${fontPx}px Andika`;
+
+  letters = parseWord(word);
+
+  const padding = 10;
+  const em = fontPx;
+  const minPill = Math.max(18, em * 0.55);
+  const innerPad = Math.max(4, Math.round(em * 0.06));
+
+  letters.forEach(l => {
+    const gw = ctx.measureText(l.text).width;
+    l.gw = gw;
+    l.w  = Math.max(gw + innerPad * 2, minPill);
+  });
+
+  const totalWidth = letters.reduce((s, l) => s + l.w, 0) + padding * (letters.length - 1);
+
+  sliderStart = (canvas.clientWidth - totalWidth) / 2;
+  sliderEnd   = sliderStart + totalWidth;
+
+  sliderX = sliderStart;
+  drawCanvas();
+}
+
+function parseWord(word) {
+  const digraphs = ["ch", "ll", "rr", "qu"];
+  const out = [];
+  for (let i = 0; i < word.length;) {
+    let digraph = digraphs.find(d => word.startsWith(d, i));
+    if (digraph) {
+      out.push({text: digraph, soundType: getSoundType(digraph)});
+      i += digraph.length;
+    } else {
+      out.push({text: word[i], soundType: getSoundType(word[i], word[i+1])});
+      i++;
     }
-    renderLetterPicker();
+  }
+  return out;
+}
 
-    /******** SOLO MODE ********/
-    function setPanelsForSolo() {
-      teacherPanel.classList.add('hidden');
-      studentPanel.classList.add('hidden');
-      document.querySelector('.switch').classList.add('hidden');
+function getSoundType(letter, nextLetter = "") {
+  if (letter === "c") return /[ei]/.test(nextLetter) ? "continuous" : "stop";
+  if (["p","t","k","b","d","g","ch"].includes(letter)) return "stop";
+  if (letter === "h") return "silent";
+  return "continuous";
+}
 
-      document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
+function drawCanvas() {
+  if (!window.allowSliderDraw) return;
 
-      const per = SOLO_PER || 4;
-      const modeTxt =
-        (MODE==='row')       ? `modo filas` :
-        (MODE==='rowalli' || MODE==='allisort') ? `aliteración por filas` :
-        (MODE==='allisyll')  ? `sílabas iniciales por filas` :
-        (MODE==='rowsyll')   ? `sílabas (inicio/final) por filas` :
-        (MODE==='syllcount' || SOLO_SYLLCOUNT.length) ? `conteo de sílabas (${(SOLO_SYLLCOUNT.join(', ')||'1+')})` :
-        (SOLO_SYLLABLES.length
-          ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
-          : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras'));
-      const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
-      const labelTxt = LABEL_STYLE==='emoji' ? ` · etiquetas: emoji` : '';
-      const hideTxt = HIDE_TITLE ? ` · sin título` : '';
-      soloPill.style.display = 'inline-block';
-      soloPill.textContent = `Modo individual: ${modeTxt}${wordsTxt}${labelTxt}${hideTxt}`;
-      soloBar.classList.remove('hidden');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const baseFont = 80;
+  const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
+  const fontPx = Math.max(36, Math.min(96, scaledFont));
+  ctx.font = `bold ${fontPx}px Andika`;
+  ctx.textAlign = "center";
+
+  const padding = 10;
+  const pillH = Math.max(16, Math.round(fontPx * 0.25));
+  const textY = Math.round(fontPx * 1.25);
+  const pillY = textY + Math.max(16, Math.round(fontPx * 0.5));
+
+  function pillRadius(w, h) {
+    return Math.max(2, Math.min(10, h / 2, w / 2 - 1));
+  }
+
+  let x = sliderStart;
+
+  letters.forEach(letter => {
+    const pillW = letter.w;
+
+    ctx.fillStyle = (sliderX >= x + 1) ? "black" : "lightgrey";
+    if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
+
+    ctx.fillText(letter.text, x + pillW / 2, textY);
+
+    ctx.strokeStyle = letter.soundType === "silent" ? "#aaa"
+                     : letter.soundType === "stop" ? "red" : "green";
+    ctx.lineWidth = 3;
+    ctx.fillStyle = (sliderX >= x + 1) ? ctx.strokeStyle : "white";
+
+    const r = pillRadius(pillW, pillH);
+    roundRect(x, pillY, pillW, pillH, r, true, true);
+
+    x += pillW + padding;
+  });
+
+  const lineY = pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "#ccc";
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(sliderStart, lineY);
+  ctx.lineTo(sliderEnd, lineY);
+  ctx.stroke();
+
+  ctx.strokeStyle = "#007bff";
+  ctx.beginPath();
+  ctx.moveTo(sliderStart, lineY);
+  ctx.lineTo(sliderX, lineY);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.fillStyle = "#007bff";
+  ctx.arc(sliderX, lineY, 10, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+canvas.addEventListener("pointerdown", (e)=> {isDragging=true; moveSlider(e);});
+canvas.addEventListener("pointermove", (e)=> {if(isDragging){moveSlider(e);}});
+canvas.addEventListener("pointerup", ()=>isDragging=false);
+canvas.addEventListener("pointerleave", ()=>isDragging=false);
+
+function moveSlider(e){
+  const rect = canvas.getBoundingClientRect();
+  sliderX = Math.min(Math.max(e.clientX - rect.left, sliderStart), sliderEnd);
+  drawCanvas();
+}
+
+function roundRect(x, y, w, h, r, fill, stroke) {
+  r = Math.max(0, Math.min(r, w/2, h/2));
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  if (fill) ctx.fill();
+  if (stroke) ctx.stroke();
+}
+
+/* ==================== AUDIO: use /audio, fallback to first syllable ==================== */
+function normalizeName(s) {
+  return s
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zñü]+/g, '');
+}
+function isVowel(ch) { return /[aeiouáéíóú]/i.test(ch); }
+function firstSyllable(word) {
+  const w = (word || "").toLowerCase();
+  if (!w) return "";
+  const digraphs = ["ch","ll","rr","qu"];
+  for (const d of digraphs) {
+    if (w.startsWith(d)) {
+      const next = w[d.length] || "";
+      if (isVowel(next)) return d + next; // e.g. "qu"+"e" => "que"
+      return d;
     }
+  }
+  const a = w[0] || "", b = w[1] || "";
+  if (isVowel(a)) return a;             // V...
+  if (a && b && !isVowel(a) && isVowel(b)) return a + b; // CV...
+  return w.slice(0, Math.min(2, w.length));
+}
 
-    function startSoloRound(){
-      usedSet = new Set();
-      rackEl.classList.remove('chips');
+function playWordAudio(word) {
+  const raw = (word || "").toLowerCase().trim();        // keeps accents (mamá)
+  const wordNorm = normalizeName(word);                 // mama
+  const syllNorm = normalizeName(firstSyllable(word));  // ma, be, etc.
 
-      if (MODE==='row'){ buildRowMode(); return; }
-      if (MODE==='rowalli' || MODE==='allisort'){ buildRowAlliMode(); return; }
-      if (MODE==='allisyll'){ buildRowAlliSyllMode(); return; }
-      if (MODE==='rowsyll'){ buildRowSyllMode(); return; }
+  // Try in this order:
+  // 1) Exact word with accents (mamá.mp3)
+  // 2) Exact word without accents (mama.mp3)
+  // 3) First syllable without accents (ma.mp3)
+  const candidates = [
+    `audio/${encodeURIComponent(raw)}.mp3`,   // mamá.mp3
+    `audio/${encodeURIComponent(raw)}.wav`,   // mamá.wav (if you ever add it)
+    `audio/${wordNorm}.mp3`,                  // mama.mp3
+    `audio/${wordNorm}.wav`,                  // mama.wav
+    `audio/${syllNorm}.mp3`,                  // ma.mp3
+    `audio/${syllNorm}.wav`,                  // ma.wav
+  ];
 
-      document.body.classList.remove('row-compact');
+  const btn = playBtn;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '🔊 Reproduciendo…';
 
-      const hasSyll  = SOLO_SYLLABLES.length > 0;
-      const hasCount = SOLO_SYLLCOUNT.length > 0;
-      const per = SOLO_PER || 4;
-      document.body.classList.toggle('one-per', per === 1);
-
-      let payload;
-      if (SOLO_WORDS.length > 0) {
-        payload = hasCount
-          ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
-          : buildRoundFromWordList(hasSyll ? [] : SOLO_LETTERS, SOLO_SYLLABLES, SOLO_WORDS);
-      } else if (hasCount) {
-        payload = buildRoundFromSyllCount(SOLO_SYLLCOUNT, per);
-      } else if (hasSyll) {
-        payload = buildRoundFromSyllables(SOLO_SYLLABLES, per);
-      } else {
-        payload = buildRoundFromLetters(SOLO_LETTERS, per);
-      }
-
-      currentMode = 'classic';
-      rowModeEl.classList.add('hidden');
-      columnsEl.classList.remove('hidden');
-      rackSectionEl.classList.remove('hidden');
-
-      buildColumns(payload.columns);
-      setCards(payload.cards);
-      clearAllPlacements();
+  let i = 0;
+  const tryNext = () => {
+    if (i >= candidates.length) {
+      btn.disabled = false;
+      btn.textContent = label;
+      console.warn('No audio found for:', word, candidates);
+      return;
     }
+    const src = candidates[i++];
+    const a = new Audio(src);
+    a.playsInline = true;
+    a.onended = () => { btn.disabled = false; btn.textContent = label; };
+    a.onerror = () => tryNext();
+    const p = a.play();
+    if (p && typeof p.then === 'function') p.catch(() => tryNext());
+  };
+  tryNext();
+}
+</script>
 
-    (async function boot(){
-      if (SOLO_MODE) {
-        setPanelsForSolo();
-        await ensureStorageLoaded();
-        if(imageFiles.length===0 && MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' && MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='syllcount') return;
-        soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
-        startSoloRound();
-        return;
-      }
+<script src="https://cdn.webrtc-experiment.com/RecordRTC.js"></script>
 
-      currentMode = 'classic';
-      modeToggle.checked = false;
-      isTeacher = false;
-      teacherPanel.classList.add('hidden');
-      studentPanel.classList.remove('hidden');
-    })();
-  </script>
+<script>
+let recorder, stream;
+window.allowSliderDraw = true;
+
+const startBtn = document.getElementById("startRecording");
+const stopBtn = document.getElementById("stopRecording");
+const previewContainer = document.getElementById("previewContainer");
+
+startBtn.onclick = async () => {
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  previewContainer.innerHTML = "";
+
+  const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const canvasStream = canvas.captureStream(30);
+  const combinedStream = new MediaStream([
+    ...canvasStream.getVideoTracks(),
+    ...audioStream.getAudioTracks()
+  ]);
+
+  recorder = RecordRTC(combinedStream, {
+    type: 'video',
+    mimeType: 'video/webm',
+    disableLogs: true
+  });
+
+  const readyText = document.getElementById("readyMessage");
+  readyText.textContent = "🎬 Get ready...";
+
+  setTimeout(() => {
+    recorder.startRecording();
+    readyText.textContent = "";
+    window.allowSliderDraw = false;
+    setTimeout(() => { window.allowSliderDraw = true; drawCanvas(); }, 200);
+  }, 600);
+};
+
+stopBtn.onclick = () => {
+  stopBtn.disabled = true;
+  startBtn.disabled = false;
+  recorder.stopRecording(() => {
+    const blob = recorder.getBlob();
+    const videoURL = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    video.src = videoURL;
+    video.controls = true;
+    video.style.maxWidth = "100%";
+    previewContainer.innerHTML = "";
+    previewContainer.appendChild(video);
+    stream?.getTracks().forEach(t => t.stop());
+  });
+};
+</script>
+
+<script>
+let recorder2, stream2;
+
+const startBtn2 = document.getElementById("startRecording");
+const stopBtn2 = document.getElementById("stopRecording");
+const previewContainer2 = document.getElementById("previewContainer");
+
+startBtn2.onclick = async () => {
+  startBtn2.disabled = true;
+  stopBtn2.disabled = false;
+  previewContainer2.innerHTML = "";
+
+  const audio = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const canvasStream = canvas.captureStream(30);
+  stream2 = new MediaStream([...canvasStream.getVideoTracks(), ...audio.getAudioTracks()]);
+
+  recorder2 = RecordRTC(stream2, {
+    type: 'video',
+    mimeType: 'video/webm',
+    disableLogs: true
+  });
+  
+  const readyText = document.getElementById("readyMessage");
+  readyText.textContent = "🎬 Get ready...";
+
+  setTimeout(() => {
+    recorder2.startRecording();
+    readyText.textContent = "";
+    window.allowSliderDraw = false;
+    setTimeout(() => { window.allowSliderDraw = true; drawCanvas(); }, 200);
+  }, 600);
+};
+
+stopBtn2.onclick = () => {
+  stopBtn2.disabled = true;
+  startBtn2.disabled = false;
+  recorder2.stopRecording(() => {
+    const blob = recorder2.getBlob();
+    const videoURL = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    video.src = videoURL;
+    video.controls = true;
+    video.style.maxWidth = "100%";
+    previewContainer2.innerHTML = "";
+    previewContainer2.appendChild(video);
+    stream2.getTracks().forEach(t => t.stop());
+  });
+};
+</script>
 </body>
 </html>
