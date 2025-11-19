@@ -309,15 +309,21 @@ function firstSyllable(word) {
 }
 
 function playWordAudio(word) {
-  const wordNorm = normalizeName(word);
-  const syllNorm = normalizeName(firstSyllable(word));
+  const raw = (word || "").toLowerCase().trim();        // keeps accents (mamá)
+  const wordNorm = normalizeName(word);                 // mama
+  const syllNorm = normalizeName(firstSyllable(word));  // ma, be, etc.
 
-  // Look ONLY in /audio
+  // Try in this order:
+  // 1) Exact word with accents (mamá.mp3)
+  // 2) Exact word without accents (mama.mp3)
+  // 3) First syllable without accents (ma.mp3)
   const candidates = [
-    `audio/${wordNorm}.mp3`,
-    `audio/${wordNorm}.wav`,
-    `audio/${syllNorm}.mp3`,
-    `audio/${syllNorm}.wav`,
+    `audio/${encodeURIComponent(raw)}.mp3`,   // mamá.mp3
+    `audio/${encodeURIComponent(raw)}.wav`,   // mamá.wav (if you ever add it)
+    `audio/${wordNorm}.mp3`,                  // mama.mp3
+    `audio/${wordNorm}.wav`,                  // mama.wav
+    `audio/${syllNorm}.mp3`,                  // ma.mp3
+    `audio/${syllNorm}.wav`,                  // ma.wav
   ];
 
   const btn = playBtn;
