@@ -7,6 +7,9 @@
   
   <!-- Andika Font -->
   <link href="https://fonts.googleapis.com/css2?family=Andika&display=swap" rel="stylesheet">
+  <!-- Supabase client -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
   <style>
     body {
       background-color: white;
@@ -35,6 +38,7 @@
 </head>
 <body>
   <h2>Spanish Reading Game</h2>
+  <div id="syncStatus" style="margin-bottom: 10px; font-size: 16px; color:#555;"></div>
 
   <select id="wordListSelect">
     <option value="" selected disabled>Selecciona una lista</option>
@@ -63,6 +67,136 @@
   <div id="previewContainer"></div>
 
 <script>
+/* ==================== SUPABASE CONFIG (group sync) ==================== */
+/* Fill these with the same values you use in the main student-work app or lettersort */
+const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
+
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+
+// URL params: ?role=teacher&group=A or ?role=student&group=A
+const qs = new URLSearchParams(location.search);
+const ROLE = (qs.get('role') || '').toLowerCase();     // 'teacher' or 'student'
+const GROUP_CODE = (qs.get('group') || '').toUpperCase();
+const isTeacher = ROLE === 'teacher' && !!GROUP_CODE;
+const isStudent = ROLE === 'student' && !!GROUP_CODE;
+
+const syncStatusEl = document.getElementById('syncStatus');
+if (syncStatusEl) {
+  if (!ROLE || !GROUP_CODE) {
+    syncStatusEl.textContent = "Modo local: usa ?role=teacher&group=A o ?role=student&group=A en la URL para sincronizar.";
+  } else if (isTeacher) {
+    syncStatusEl.textContent = `Modo MAESTRO — Grupo ${GROUP_CODE}. Usa Prev/Next para guiar.`;
+  } else if (isStudent) {
+    syncStatusEl.textContent = `Modo ESTUDIANTE — Grupo ${GROUP_CODE}. Seguirá al maestro.`;
+  } else {
+    syncStatusEl.textContent = "Modo local (role/group no válidos).";
+  }
+}
+
+/** Make sure a reading_groups row exists for this group_code. */
+async function ensureReadingGroup(groupCode) {
+  if (!groupCode) return null;
+
+  const { data, error } = await sbClient
+    .from('reading_groups')
+    .select('*')
+    .eq('group_code', groupCode)
+    .maybeSingle();
+
+  // PGRST116 = no rows
+  if (error && error.code !== 'PGRST116') {
+    console.warn('ensureReadingGroup error', error);
+    return null;
+  }
+
+  if (!data) {
+    const { data: inserted, error: insertErr } = await sbClient
+      .from('reading_groups')
+      .insert({ group_code: groupCode, current_index: 0 })
+      .select()
+      .single();
+    if (insertErr) {
+      console.warn('insert reading_group error', insertErr);
+      return null;
+    }
+    return inserted;
+  }
+
+  return data;
+}
+
+/** Teacher: set the current word index for a group. */
+async function setReadingIndex(groupCode, index) {
+  if (!groupCode) return null;
+  const { data, error } = await sbClient
+    .from('reading_groups')
+    .update({ current_index: index })
+    .eq('group_code', groupCode)
+    .select('current_index')
+    .single();
+
+  if (error) {
+    console.warn('setReadingIndex error', error);
+    return null;
+  }
+  console.log('[TEACHER] set index', groupCode, index);
+  return data.current_index;
+}
+
+/** Student: get current word index for a group. */
+async function getReadingIndex(groupCode) {
+  if (!groupCode) return null;
+  const { data, error } = await sbClient
+    .from('reading_groups')
+    .select('current_index')
+    .eq('group_code', groupCode)
+    .single();
+
+  if (error) {
+    if (error.code !== 'PGRST116') {
+      console.warn('getReadingIndex error', error);
+    }
+    return null;
+  }
+  return data.current_index;
+}
+
+/* ==================== Deterministic shuffle ==================== */
+/* xmur3 + mulberry32: small seeded RNG so teacher + students share the same random order. */
+function xmur3(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function() {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    h ^= h >>> 16;
+    return h >>> 0;
+  };
+}
+function mulberry32(a) {
+  return function() {
+    let t = a += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function shuffleWithSeed(array, seedStr) {
+  const seedFn = xmur3(seedStr);
+  const rng = mulberry32(seedFn());
+  const arr = array.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 /* Ensure this exists before first draw */
 if (window.allowSliderDraw === undefined) {
   window.allowSliderDraw = true;
@@ -75,6 +209,7 @@ const ctx = canvas.getContext("2d");
 let words = [], currentWordIndex = 0;
 let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
 let letters = [];
+let pollTimer = null; // for student polling
 
 const DPR = window.devicePixelRatio || 1;
 const BASE_W = 768, BASE_H = 432, BASE_AR = BASE_H / BASE_W;
@@ -122,17 +257,63 @@ async function loadWordList() {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`No encontrado: ${url}`);
     const data = await response.text();
-    words = data.trim().split("\n").map(w => w.trim()).sort(() => Math.random() - 0.5);
+    let baseWords = data.trim().split("\n").map(w => w.trim()).filter(Boolean);
+
+    // In sync mode (teacher or student with group), use deterministic shuffle.
+    // In local mode, keep fully random like before.
+    if (GROUP_CODE && (isTeacher || isStudent)) {
+      const seedStr = `${GROUP_CODE}::${listName}`;
+      words = shuffleWithSeed(baseWords, seedStr);
+      console.log('[SYNC] seeded order for', GROUP_CODE, listName, words);
+    } else {
+      words = baseWords.sort(() => Math.random() - 0.5);
+    }
+
     currentWordIndex = 0;
 
-    document.fonts.ready.then(() => {
+    document.fonts.ready.then(async () => {
       setupWord(words[currentWordIndex]);
       playBtn.disabled = false;
+
+      if (isTeacher && GROUP_CODE) {
+        await ensureReadingGroup(GROUP_CODE);
+        await setReadingIndex(GROUP_CODE, currentWordIndex);
+      }
+
+      if (isStudent && GROUP_CODE) {
+        startStudentPolling();
+      }
     });
   } catch (err) {
     console.warn(err);
     alert(`No pude cargar "${url}". Verifica el nombre y las mayúsculas/minúsculas en GitHub Pages.`);
   }
+}
+
+async function startStudentPolling() {
+  if (!isStudent || !GROUP_CODE) return;
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  const doPoll = async () => {
+    const idx = await getReadingIndex(GROUP_CODE);
+    if (idx == null) return;
+    if (!words.length) return;
+    if (idx === currentWordIndex) return;
+    if (idx < 0 || idx >= words.length) return;
+
+    console.log('[STUDENT] applying index from teacher', idx);
+    currentWordIndex = idx;
+    document.fonts.ready.then(() => {
+      setupWord(words[currentWordIndex]);
+      playBtn.disabled = false;
+    });
+  };
+
+  await doPoll();
+  pollTimer = setInterval(doPoll, 2000);
 }
 
 function changeWord(direction) {
@@ -142,6 +323,10 @@ function changeWord(direction) {
     setupWord(words[currentWordIndex]);
     playBtn.disabled = false;
   });
+
+  if (isTeacher && GROUP_CODE) {
+    setReadingIndex(GROUP_CODE, currentWordIndex);
+  }
 }
 
 /* ==================== Layout & Drawing ==================== */
@@ -313,10 +498,6 @@ function playWordAudio(word) {
   const wordNorm = normalizeName(word);                 // mama
   const syllNorm = normalizeName(firstSyllable(word));  // ma, be, etc.
 
-  // Try in this order:
-  // 1) Exact word with accents (mamá.mp3)
-  // 2) Exact word without accents (mama.mp3)
-  // 3) First syllable without accents (ma.mp3)
   const candidates = [
     `audio/${encodeURIComponent(raw)}.mp3`,   // mamá.mp3
     `audio/${encodeURIComponent(raw)}.wav`,   // mamá.wav (if you ever add it)
