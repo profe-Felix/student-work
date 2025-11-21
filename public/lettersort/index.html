@@ -1271,48 +1271,58 @@
       }
     }
 
-    function everythingCorrect(){
-      if (currentMode==='row'){
-        for (const r of rowData){
-          const locked = r.dropEl.querySelectorAll('.card.locked').length;
-          if (locked !== 1) return false;
-        }
-        return true;
-      }
-      if (currentMode==='rowalli'){
-        for (const r of rowData){
-          const locked = r.dropEl.querySelectorAll('.card.locked').length;
-          if (locked !== r.expectedCount) return false;
-        }
-        return rowData.length>0;
-      }
-      if (currentMode==='allisyll'){
-        for (const r of rowData){
-          const locked = r.dropEl.querySelectorAll('.card.locked').length;
-          if (locked !== r.expectedCount) return false;
-        }
-        return rowData.length>0;
-      }
-      if (currentMode === 'rowsyll') {
-        const chipsInBank = rackEl.querySelectorAll('.chip').length;
-        if (chipsInBank > 0) return false;
-        const placed = rowModeEl.querySelectorAll('.rowDrop .chip').length;
-        if (placed === 0) return false;
-        const anyBad = rowModeEl.querySelector('.rowDrop .chip.bad');
-        if (anyBad) return false;
-        const locked = rowModeEl.querySelectorAll('.rowDrop .chip.locked').length;
-        return placed === locked;
+function everythingCorrect(){
+
+  // ========== STRICT MODE ONLY ==========
+  // If ANY card in the rack could correctly go in ANY column → NOT complete
+
+  const rackCards = rackEl.querySelectorAll('.card');
+
+  for (const cardEl of rackCards) {
+    const card = currentCards.find(c => c.id === cardEl.dataset.id);
+    if (!card) continue;
+
+    const coreRaw = card.coreRaw;
+
+    // check if this card matches ANY column target
+    for (let i = 0; i < currentCols.length; i++) {
+      const target = currentCols[i].key;
+
+      let fits = false;
+
+      if (target.startsWith('syll:')) {
+        const syl = target.slice(5);
+        const syls = syllablesNormalized(coreRaw);
+        fits = (SYLL_MATCH === 'any')
+          ? syls.some(s => cmpSyll(s, syl))
+          : cmpSyll(syls[0], syl);
+
+      } else if (target.startsWith('count:')) {
+        const n = parseInt(target.slice(6), 10);
+        fits = syllableCount(coreRaw) === n;
+
+      } else if (target.startsWith('not-')) {
+        const L = target.slice(4);
+        fits = initialFromStem(coreRaw) !== L;
+
+      } else {
+        fits = initialFromStem(coreRaw) === target;
       }
 
-      // Classic modes
-      const inRack = rackEl.querySelectorAll('.card').length;
-      if(inRack>0) return false;
-      const anyBad = document.querySelector('.drop .card.bad');
-      if(anyBad) return false;
-      const placed = document.querySelectorAll('.drop .card').length;
-      const locked = document.querySelectorAll('.drop .card.locked').length;
-      return placed>0 && placed===locked;
+      if (fits) return false; // ❌ still a valid unused card
     }
+  }
+
+  // ========== NORMAL VALIDATION ==========
+  const anyBad = document.querySelector('.drop .card.bad');
+  if (anyBad) return false;
+
+  const placed = document.querySelectorAll('.drop .card').length;
+  const locked = document.querySelectorAll('.drop .card.locked').length;
+
+  return placed > 0 && placed === locked;
+}
+
 
     function verifyNow(fromBroadcast){
       if (currentMode==='row'){
