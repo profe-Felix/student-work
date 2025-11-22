@@ -934,37 +934,42 @@
     function setOneRowGrid(colsCount){
       columnsEl.style.gridTemplateColumns = `repeat(${colsCount}, minmax(140px, 1fr))`;
     }
-    function renderHeaderHTML(col){
-      if (col.key.startsWith('syll:')) {
-        if (HIDE_TITLE) return '';
-        const fallback = (col.display || '').toLowerCase();
-        const text = col.label || fallback;
-        return `<div class="syllTile" aria-hidden="true">${text}</div>`;
-      }
-      if (col.key.startsWith('count:')){
-        if (HIDE_TITLE) return '';
-        const n = parseInt(col.display || col.key.slice(6),10);
-        const defaultLabel = `${n} ${n===1?'sílaba':'sílabas'}`;
-        const text = col.label || defaultLabel;
-        return `<div class="syllTile" aria-hidden="true">${text}</div>`;
-      }
-      if (col.key.startsWith('stress:')){
-        if (HIDE_TITLE) return '';
-        const pos = parseInt(col.display || col.key.slice(7),10);
-        const ordinals = ['primera','segunda','tercera','cuarta','quinta'];
-        const base = ordinals[pos-1] || `${pos}ª`;
-        const text = col.label || `sílaba tónica: ${base}`;
-        const dots = Array.from({length: pos}, (_,i)=>
-          `<span class="stressDot${i===pos-1 ? ' target' : ''}"></span>`
-        ).join('');
-        return `
-          <div class="syllTile" aria-hidden="true">
-            <div>${text}</div>
-            <div class="stressCounters">${dots}</div>
-          </div>`;
-      }
-      return `<h2>${col.label}</h2>`;
-    }
+function renderHeaderHTML(col){
+  // Syllable columns (keep as-is: blue tiles with text)
+  if (col.key.startsWith('syll:')) {
+    if (HIDE_TITLE) return '';
+    const fallback = (col.display || '').toLowerCase();
+    const text = col.label || fallback;
+    return `<div class="syllTile" aria-hidden="true">${text}</div>`;
+  }
+
+  // Syllable-count columns (keep text)
+  if (col.key.startsWith('count:')){
+    if (HIDE_TITLE) return '';
+    const n = parseInt(col.display || col.key.slice(6),10);
+    const defaultLabel = `${n} ${n===1?'sílaba':'sílabas'}`;
+    const text = col.label || defaultLabel;
+    return `<div class="syllTile" aria-hidden="true">${text}</div>`;
+  }
+
+  // 🔴 STRESS COLUMNS: ONLY DOTS, NO TEXT
+  if (col.key.startsWith('stress:')){
+    if (HIDE_TITLE) return '';
+    const pos = parseInt(col.display || col.key.slice(7),10); // 1,2,3
+    const totalDots = 3; // always show 3 dots like your example
+
+    const dots = Array.from({ length: totalDots }, (_, i) =>
+      `<span class="stressDot${i === pos - 1 ? ' target' : ''}"></span>`
+    ).join('');
+
+    // just the row of dots; no words
+    return `<div class="stressCounters" aria-hidden="true">${dots}</div>`;
+  }
+
+  // Default label for other column types
+  return `<h2>${col.label}</h2>`;
+}
+
 
     function buildColumns(columns){
       currentCols = columns;
