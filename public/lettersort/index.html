@@ -323,6 +323,35 @@
 
     // URL params
     const qs = new URLSearchParams(location.search);
+
+    // Special parser for ?words= that keeps "u,," together (ü marker)
+    function parseWordsParam(raw) {
+      const s = (raw || '').trim();
+      if (!s) return [];
+      const out = [];
+      let cur = '';
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === ',') {
+          const prev = s[i - 1];
+          const next = s[i + 1];
+          // Treat "u,," as part of the word, not a separator
+          if (prev === 'u' && next === ',') {
+            cur += ',,';
+            i++; // skip the second comma
+            continue;
+          }
+          // normal separator
+          if (cur.trim()) out.push(cur.trim());
+          cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      if (cur.trim()) out.push(cur.trim());
+      return out;
+    }
+
     const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'allisyll', 'rowsyll', 'syllcount', 'stress', or classic
     const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
     const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
@@ -332,7 +361,7 @@
     const SOLO_LETTERS   = (qs.get('letters')   || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
     const SOLO_SYLLABLES = (qs.get('syllables') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
     const SOLO_PER       = Math.max(1, Math.min(8, parseInt(qs.get('percategory') || qs.get('per') || '0', 10) || 0));
-    const SOLO_WORDS     = (qs.get('words') || '').split(',').map(s => s.trim()).filter(Boolean);
+    const SOLO_WORDS     = parseWordsParam(qs.get('words') || '');
     const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
 
