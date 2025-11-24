@@ -27,11 +27,15 @@
       margin: 0;
       background: var(--bg);
       font-family: 'Andika', sans-serif;
-      font-size: 22px;
+      font-size: 20px;
+      min-height: 100vh;
+      display: flex;              /* center vertically */
+      align-items: center;
+      justify-content: center;
       padding: 24px;
     }
 
-    /* FULL-WIDTH GRID */
+    /* FULL-WIDTH GRID – 3 big cards side by side */
     .cards {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -42,7 +46,7 @@
     .card {
       background: var(--card);
       border-radius: 16px;
-      padding: 40px 20px;               /* 🔼 taller cards */
+      padding: 40px 20px;
       border: 1px solid var(--border);
       box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
       text-align: center;
@@ -52,23 +56,26 @@
       height: 100%;
     }
 
-    .spanish-word {
-      font-size: 3rem;                  /* 🔼 bigger Spanish */
+    /* BIG text that scales with screen width */
+    .spanish-word,
+    .english-box {
+      font-size: clamp(3rem, 4vw, 5rem);  /* 👈 scales with viewport */
       font-weight: 700;
+    }
+
+    .spanish-word {
       color: var(--spanish);
       margin-bottom: 8px;
     }
 
     .english-box {
-      padding: 20px;                    /* 🔼 more padding */
+      padding: 20px;
       border-radius: 12px;
       background: var(--accent-soft);
-      min-height: 3.2em;                /* 🔼 taller area */
+      min-height: 3.2em;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 3rem;                  /* 🔼 bigger English */
-      font-weight: 700;
       color: var(--english);
     }
 
@@ -82,7 +89,7 @@
     }
 
     button {
-      font-size: 1.2rem;
+      font-size: clamp(1.2rem, 1.5vw, 2rem); /* bigger button text */
       padding: 12px 20px;
       border-radius: 999px;
       border: none;
@@ -93,6 +100,15 @@
     }
 
     button:active { transform: translateY(1px); }
+
+    @media (max-width: 700px) {
+      body {
+        padding: 16px;
+      }
+      .card {
+        padding: 32px 16px;
+      }
+    }
   </style>
 </head>
 <body>
