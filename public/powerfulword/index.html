@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -17,68 +16,58 @@
     :root {
       --bg:#fafbff;
       --card:#ffffff;
-      --ink:#111827;
-      --muted:#6b7280;
+      --border:#e5e7eb;
       --accent:#2563eb;
       --accent-soft:#dbeafe;
-      --border:#e5e7eb;
       --spanish:#dc2626; /* red */
       --english:#1d4ed8; /* blue */
     }
 
-    html, body {
-      height: 100%;
-      margin: 0;
-    }
-
     body {
+      margin: 0;
       background: var(--bg);
-      font-family: 'Andika', system-ui, sans-serif;
+      font-family: 'Andika', sans-serif;
       font-size: 18px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       padding: 16px;
     }
 
-    .wrapper {
-      width: 100%;
-      max-width: 480px;
-    }
-
+    /* SIDE-BY-SIDE GRID */
     .cards {
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
       gap: 16px;
+      max-width: 900px;
+      margin: auto;
     }
 
     .card {
       background: var(--card);
       border-radius: 16px;
-      padding: 20px 18px;
-      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.15);
+      padding: 20px 16px;
       border: 1px solid var(--border);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
+      text-align: center;
       display: flex;
       flex-direction: column;
       gap: 12px;
-      text-align: center;
     }
 
     .spanish-word {
       font-size: 2rem;
       font-weight: 700;
       color: var(--spanish);
+      margin-bottom: 6px;
     }
 
     .english-box {
-      padding: 12px 10px;
+      padding: 12px;
       border-radius: 12px;
       background: var(--accent-soft);
       min-height: 2.2em;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 2rem;      /* 🔥 SAME SIZE AS SPANISH */
+      font-size: 2rem;
       font-weight: 700;
       color: var(--english);
     }
@@ -104,89 +93,85 @@
     }
 
     button:active { transform: translateY(1px); }
+
   </style>
 </head>
 <body>
-  <div class="wrapper">
-    <div id="cardsContainer" class="cards"></div>
-  </div>
+
+  <div id="cardsContainer" class="cards"></div>
 
   <script>
+    // Read ?pairs=casa;house,perro;dog
     function getPairsFromURL() {
-      const params = new URLSearchParams(window.location.search);
-      const raw = params.get('pairs');
+      const raw = new URLSearchParams(window.location.search).get("pairs");
       if (!raw) return null;
 
-      return raw.split(',').map(set => {
-        const [es, en] = set.split(';');
-        return { es: es?.trim() || '', en: en?.trim() || '' };
-      }).filter(p => p.es && p.en);
+      return raw.split(",").map(set => {
+        const [es, en] = set.split(";").map(s => s.trim());
+        return es && en ? { es, en } : null;
+      }).filter(Boolean);
     }
 
+    // Defaults if no URL pairs
     const defaultPairs = [
-      { es: 'la casa', en: 'the house' },
-      { es: 'el perro', en: 'the dog' },
-      { es: 'la escuela', en: 'the school' },
-      { es: 'el libro', en: 'the book' },
-      { es: 'la mesa', en: 'the table' }
+      { es: "la casa", en: "the house" },
+      { es: "el perro", en: "the dog" },
+      { es: "la escuela", en: "the school" },
+      { es: "el libro", en: "the book" },
+      { es: "la mesa", en: "the table" }
     ];
 
     const urlPairs = getPairsFromURL();
     const wordPairs = urlPairs || defaultPairs;
 
+    // n parameter
     function getCountFromURL(defaultN = 3) {
-      const params = new URLSearchParams(window.location.search);
-      const n = parseInt(params.get('n'), 10);
-      if (Number.isNaN(n) || n <= 0) return defaultN;
-      return Math.min(n, wordPairs.length);
+      const n = parseInt(new URLSearchParams(window.location.search).get("n"), 10);
+      return (!n || n <= 0) ? defaultN : Math.min(n, wordPairs.length);
     }
 
-    const cardCount = getCountFromURL(3);
+    const count = getCountFromURL(3);
     const cardsContainer = document.getElementById("cardsContainer");
 
     function createCard(pair) {
-      const div = document.createElement("div");
-      div.className = "card";
+      const card = document.createElement("div");
+      card.className = "card";
 
-      div.innerHTML = `
+      card.innerHTML = `
         <div class="spanish-word">${pair.es}</div>
-        <div class="english-box hidden">
-          <span class="english-text">${pair.en}</span>
-        </div>
-        <div>
-          <button class="toggleBtn">Show</button>
-        </div>
+        <div class="english-box hidden"><span class="english-text">${pair.en}</span></div>
+        <button class="toggleBtn">Show</button>
       `;
 
-      const toggleBtn = div.querySelector(".toggleBtn");
-      const box      = div.querySelector(".english-box");
-      const english  = div.querySelector(".english-text");
+      const btn = card.querySelector(".toggleBtn");
+      const box = card.querySelector(".english-box");
+      const text = card.querySelector(".english-text");
 
       function show() {
         box.classList.remove("hidden");
-        english.style.visibility = "visible";
-        toggleBtn.textContent = "Hide";
+        text.style.visibility = "visible";
+        btn.textContent = "Hide";
       }
 
       function hide() {
         box.classList.add("hidden");
-        english.style.visibility = "hidden";
-        toggleBtn.textContent = "Show";
+        text.style.visibility = "hidden";
+        btn.textContent = "Show";
       }
 
       hide();
-
-      toggleBtn.addEventListener("click", () => {
+      btn.addEventListener("click", () => {
         if (box.classList.contains("hidden")) show();
         else hide();
       });
 
-      return div;
+      return card;
     }
 
-    for (let i = 0; i < cardCount; i++) {
+    for (let i = 0; i < count; i++) {
       cardsContainer.appendChild(createCard(wordPairs[i]));
     }
   </script>
+
 </body>
 </html>
