@@ -27,17 +27,17 @@
       margin: 0;
       background: var(--bg);
       font-family: 'Andika', sans-serif;
-      font-size: 22px;              /* 🔼 bigger base size */
+      font-size: 22px;
       padding: 24px;
     }
 
-    /* SIDE-BY-SIDE GRID – bigger cards */
+    /* FULL-WIDTH GRID */
     .cards {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); /* 🔼 wider cards */
-      gap: 20px;
-      max-width: 1100px;            /* 🔼 more space */
-      margin: auto;
+      /* cards will expand to fill the row */
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
+      width: 100%;          /* 🔑 no max-width cap */
     }
 
     .card {
@@ -50,10 +50,11 @@
       display: flex;
       flex-direction: column;
       gap: 16px;
+      height: 100%;
     }
 
     .spanish-word {
-      font-size: 2.6rem;            /* 🔼 bigger */
+      font-size: 2.6rem;
       font-weight: 700;
       color: var(--spanish);
       margin-bottom: 8px;
@@ -67,7 +68,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 2.6rem;            /* 🔼 same big size */
+      font-size: 2.6rem;
       font-weight: 700;
       color: var(--english);
     }
