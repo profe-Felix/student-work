@@ -27,47 +27,47 @@
       margin: 0;
       background: var(--bg);
       font-family: 'Andika', sans-serif;
-      font-size: 18px;
-      padding: 16px;
+      font-size: 22px;              /* 🔼 bigger base size */
+      padding: 24px;
     }
 
-    /* SIDE-BY-SIDE GRID */
+    /* SIDE-BY-SIDE GRID – bigger cards */
     .cards {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-      gap: 16px;
-      max-width: 900px;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); /* 🔼 wider cards */
+      gap: 20px;
+      max-width: 1100px;            /* 🔼 more space */
       margin: auto;
     }
 
     .card {
       background: var(--card);
       border-radius: 16px;
-      padding: 20px 16px;
+      padding: 24px 20px;
       border: 1px solid var(--border);
       box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
       text-align: center;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 16px;
     }
 
     .spanish-word {
-      font-size: 2rem;
+      font-size: 2.6rem;            /* 🔼 bigger */
       font-weight: 700;
       color: var(--spanish);
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
 
     .english-box {
-      padding: 12px;
+      padding: 14px;
       border-radius: 12px;
       background: var(--accent-soft);
-      min-height: 2.2em;
+      min-height: 2.4em;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 2rem;
+      font-size: 2.6rem;            /* 🔼 same big size */
       font-weight: 700;
       color: var(--english);
     }
@@ -82,8 +82,8 @@
     }
 
     button {
-      font-size: 1rem;
-      padding: 8px 16px;
+      font-size: 1.1rem;
+      padding: 10px 18px;
       border-radius: 999px;
       border: none;
       background: var(--accent);
@@ -93,7 +93,6 @@
     }
 
     button:active { transform: translateY(1px); }
-
   </style>
 </head>
 <body>
