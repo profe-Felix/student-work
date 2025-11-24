@@ -1,1 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tarjetas Español - Inglés</title>
 
+  <!-- Andika font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
+
+  <style>
+    * { box-sizing: border-box; }
+
+    :root {
+      --bg:#fafbff;
+      --card:#ffffff;
+      --ink:#111827;
+      --muted:#6b7280;
+      --accent:#2563eb;
+      --accent-soft:#dbeafe;
+      --border:#e5e7eb;
+      --spanish:#dc2626; /* red */
+      --english:#1d4ed8; /* blue */
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      background: var(--bg);
+      font-family: 'Andika', system-ui, sans-serif;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .wrapper {
+      width: 100%;
+      max-width: 480px;
+    }
+
+    .cards {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 20px 18px;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.15);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      text-align: center;
+    }
+
+    .spanish-word {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--spanish);
+    }
+
+    .english-box {
+      padding: 12px 10px;
+      border-radius: 12px;
+      background: var(--accent-soft);
+      min-height: 2.2em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;      /* 🔥 SAME SIZE AS SPANISH */
+      font-weight: 700;
+      color: var(--english);
+    }
+
+    .english-box.hidden {
+      background:#f3f4f6;
+      color: transparent;
+    }
+
+    .english-box.hidden .english-text {
+      visibility: hidden;
+    }
+
+    button {
+      font-size: 1rem;
+      padding: 8px 16px;
+      border-radius: 999px;
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:active { transform: translateY(1px); }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div id="cardsContainer" class="cards"></div>
+  </div>
+
+  <script>
+    function getPairsFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      const raw = params.get('pairs');
+      if (!raw) return null;
+
+      return raw.split(',').map(set => {
+        const [es, en] = set.split(';');
+        return { es: es?.trim() || '', en: en?.trim() || '' };
+      }).filter(p => p.es && p.en);
+    }
+
+    const defaultPairs = [
+      { es: 'la casa', en: 'the house' },
+      { es: 'el perro', en: 'the dog' },
+      { es: 'la escuela', en: 'the school' },
+      { es: 'el libro', en: 'the book' },
+      { es: 'la mesa', en: 'the table' }
+    ];
+
+    const urlPairs = getPairsFromURL();
+    const wordPairs = urlPairs || defaultPairs;
+
+    function getCountFromURL(defaultN = 3) {
+      const params = new URLSearchParams(window.location.search);
+      const n = parseInt(params.get('n'), 10);
+      if (Number.isNaN(n) || n <= 0) return defaultN;
+      return Math.min(n, wordPairs.length);
+    }
+
+    const cardCount = getCountFromURL(3);
+    const cardsContainer = document.getElementById("cardsContainer");
+
+    function createCard(pair) {
+      const div = document.createElement("div");
+      div.className = "card";
+
+      div.innerHTML = `
+        <div class="spanish-word">${pair.es}</div>
+        <div class="english-box hidden">
+          <span class="english-text">${pair.en}</span>
+        </div>
+        <div>
+          <button class="toggleBtn">Show</button>
+        </div>
+      `;
+
+      const toggleBtn = div.querySelector(".toggleBtn");
+      const box      = div.querySelector(".english-box");
+      const english  = div.querySelector(".english-text");
+
+      function show() {
+        box.classList.remove("hidden");
+        english.style.visibility = "visible";
+        toggleBtn.textContent = "Hide";
+      }
+
+      function hide() {
+        box.classList.add("hidden");
+        english.style.visibility = "hidden";
+        toggleBtn.textContent = "Show";
+      }
+
+      hide();
+
+      toggleBtn.addEventListener("click", () => {
+        if (box.classList.contains("hidden")) show();
+        else hide();
+      });
+
+      return div;
+    }
+
+    for (let i = 0; i < cardCount; i++) {
+      cardsContainer.appendChild(createCard(wordPairs[i]));
+    }
+  </script>
+</body>
+</html>
