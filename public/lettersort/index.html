@@ -141,6 +141,51 @@
       align-items:flex-start;
     }
     .chip.dragging{ width: auto !important; height:auto !important }
+    /* ===== Tiles-only cards (words instead of images) ===== */
+    body.tiles-only .card{
+      width:auto;
+      min-width:130px;
+      max-width:260px;
+    }
+    body.tiles-only .card img{
+      display:none;
+    }
+    body.tiles-only .card .cap{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:clamp(24px, 2.6vw, 40px);
+      line-height:1.1;
+      padding:12px 16px;
+      min-height:64px;
+      text-align:center;
+      white-space:normal;
+      word-break:break-word;
+    }
+
+    /* Word tiles (cards & chips) share the same rounded layout */
+    .wordTile{
+      position:relative;
+      border-radius:18px;
+      overflow:hidden;
+    }
+
+    /* Click-to-reveal blue cover that hides the text until clicked */
+    .wordCover{
+      position:absolute;
+      inset:0;
+      border:none;
+      padding:0;
+      margin:0;
+      border-radius:inherit;
+      background:#3b82f6;            /* blue cover */
+      cursor:pointer;
+      /* prevent focus outline ugliness */
+      outline:none;
+    }
+    .wordCover::after{
+      content:"";
+    }
 
     .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
@@ -364,6 +409,9 @@
     const SOLO_WORDS     = parseWordsParam(qs.get('words') || '');
     const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
+    // NEW: tiles-only (words instead of images) + hide-words
+    const TILES_ONLY = (qs.get('tilesonly') || qs.get('wordtiles') || '').toLowerCase() === 'true';
+    const HIDE_WORDS = (qs.get('hidewords') || '').toLowerCase() === 'true';
 
     // NEW: syllable match mode ('initial' | 'any') and comparator ('equals' | 'contains' | 'prefix' | 'suffix')
     const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
@@ -1037,33 +1085,88 @@ function renderHeaderHTML(col){
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
       preloadAudioForCores(ordered.map(c=>c.coreRaw));
     }
+    // Add a blue cover on top of a word tile that disappears on click.
+    function attachWordCover(tileEl){
+      const cover = document.createElement('button');
+      cover.type = 'button';
+      cover.className = 'wordCover';
+
+      // Don't let the cover start a drag
+      cover.addEventListener('pointerdown', ev => {
+        ev.stopPropagation();
+      });
+
+      cover.addEventListener('click', ev => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        cover.remove();   // reveal the word
+      });
+
+      tileEl.appendChild(cover);
+    }
 
     let lastDragEndedAt = 0;
     function renderCard(card, opts={}){
-      const el=document.createElement('div');
-      el.className='card' + (opts.rowCard ? ' rowCard' : '');
-      el.dataset.id=card.id;
+      const el = document.createElement('div');
+      el.className = 'card' + (opts.rowCard ? ' rowCard' : '');
+      el.dataset.id = card.id;
       if (opts.rowIndex != null) el.dataset.row = String(opts.rowIndex);
       el.setAttribute('tabindex','0');
-      el.innerHTML = `<img alt="" src="${card.imgUrl}"/><div class="cap" ${ROW_TITLE?'':'style="display:none"'}>${ROW_TITLE ? (markersToPretty(card.coreRaw)||'') : '&nbsp;'}</div>`;
-      el.addEventListener('click', async ()=>{
+
+      // Word label we’ll show on tiles
+      const labelText = markersToPretty(card.coreRaw || card.word || card.stem || '');
+
+      if (TILES_ONLY) {
+        // Word-only tile (no image)
+        el.classList.add('wordTile');
+        el.innerHTML = `<div class="cap">${labelText || '&nbsp;'}</div>`;
+      } else {
+        // Original image + (optional) caption
+        el.innerHTML = `
+          <img alt="" src="${card.imgUrl}"/>
+          <div class="cap" ${ROW_TITLE ? '' : 'style="display:none"'}>${ROW_TITLE ? (markersToPretty(card.coreRaw) || '') : '&nbsp;'}</div>
+        `;
+      }
+
+      // Audio on click (ignore click right after drag)
+      el.addEventListener('click', async (ev) => {
+        // cover handles its own click
+        if (ev.target && ev.target.classList && ev.target.classList.contains('wordCover')) return;
         if (Date.now() - lastDragEndedAt < 150) return;
-        playWordAudio(card.coreRaw);
+        if (card.coreRaw) {
+          playWordAudio(card.coreRaw);
+        }
       });
+
+      // If requested, start tiles hidden with a blue cover
+      if (TILES_ONLY && HIDE_WORDS) {
+        attachWordCover(el);
+      }
+
       makeDraggable(el, opts.rowScope ? String(opts.rowIndex) : null);
       return el;
     }
 
-    /* New: word chips for rowsyll (no audio) */
+
+    /* New: word chips for rowsyll (no audio by default) */
     function renderChip(word, id){
       const el = document.createElement('div');
       el.className = 'chip';
       el.dataset.id = id || crypto.randomUUID();
       el.textContent = markersToPretty(word);
       el.setAttribute('tabindex','0');
+
+      // Treat as a word tile so the cover fits nicely
+      el.classList.add('wordTile');
+
+      if (HIDE_WORDS) {
+        attachWordCover(el);
+      }
+
       makeDraggable(el, null);
       return el;
     }
+
 
     function clearAllPlacements(){
       document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
@@ -1884,6 +1987,9 @@ function onDrop(e){
     }
 
     (async function boot(){
+      // Global flags for CSS
+      if (TILES_ONLY) document.body.classList.add('tiles-only');
+      if (HIDE_WORDS) document.body.classList.add('hide-words');
       if (SOLO_MODE) {
         setPanelsForSolo();
         await ensureStorageLoaded();
