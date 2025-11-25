@@ -669,36 +669,46 @@
       return syllablesNormalized(coreWord).length;
     }
 
-    // NEW: stressed syllable index (1-based)
-    function stressedSyllIndex(coreWordRaw){
-      const pretty = markersToPretty((coreWordRaw || '').toLowerCase());
-      const syls = syllabifyEs(pretty);
-      if (!syls.length) return 1;
+// NEW: stressed syllable index (1-based) counted from the RIGHT
+// 1 = última, 2 = penúltima, 3 = antepenúltima, etc.
+function stressedSyllIndex(coreWordRaw){
+  const pretty = markersToPretty((coreWordRaw || '').toLowerCase());
+  const syls = syllabifyEs(pretty);
+  if (!syls.length) return 1;
 
-      // explicit accent
-      let stressed = -1;
-      for (let i = 0; i < syls.length; i++){
-        if (/[áéíóú]/.test(syls[i])) {
-          stressed = i;
-          break;
-        }
-      }
+  // índice de la sílaba tónica contando desde la izquierda (0-based)
+  let stressed = -1;
 
-      if (stressed === -1) {
-        const plain = stripDiacritics(pretty);
-        const lastChar = plain[plain.length - 1] || '';
-        const endsVowel = /[aeiou]/.test(lastChar);
-        const endsNOrS  = /[ns]/.test(lastChar);
-        if (endsVowel || endsNOrS) {
-          stressed = Math.max(0, syls.length - 2); // penultimate
-        } else {
-          stressed = syls.length - 1; // last
-        }
-      }
-
-      if (stressed < 0 || stressed >= syls.length) stressed = syls.length - 1;
-      return stressed + 1;
+  // 1) Si hay tilde escrita, usamos esa sílaba
+  for (let i = 0; i < syls.length; i++){
+    if (/[áéíóú]/.test(syls[i])) {
+      stressed = i;
+      break;
     }
+  }
+
+  // 2) Si no hay tilde, aplicamos reglas generales (aguda / llana)
+  if (stressed === -1) {
+    const plain = stripDiacritics(pretty);
+    const lastChar = plain[plain.length - 1] || '';
+    const endsVowel = /[aeiou]/.test(lastChar);
+    const endsNOrS  = /[ns]/.test(lastChar);
+    if (endsVowel || endsNOrS) {
+      // palabra llana → penúltima
+      stressed = Math.max(0, syls.length - 2);
+    } else {
+      // palabra aguda → última
+      stressed = syls.length - 1;
+    }
+  }
+
+  if (stressed < 0 || stressed >= syls.length) stressed = syls.length - 1;
+
+  // convertimos a índice DESDE LA DERECHA (1-based)
+  const fromRight = syls.length - stressed;
+  return fromRight;  // 1 = última, 2 = penúltima, etc.
+}
+
 
     // Comparator for syllables: equals | contains | prefix | suffix
     function cmpSyll(a, b){
@@ -932,18 +942,23 @@
       return applyTitleOverrides(cols);
     }
     // NEW: columns for stressed syllable positions
-    function buildColumnsForStress(positions){
-      const ordinals = ['primera', 'segunda', 'tercera', 'cuarta', 'quinta'];
-      const cols = positions.map(p => {
-        const base = ordinals[p-1] || `${p}ª`;
-        return {
-          label: `sílaba tónica: ${base}`,
-          key: `stress:${p}`,
-          display: String(p)
-        };
-      });
-      return applyTitleOverrides(cols);
-    }
+function buildColumnsForStress(positions){
+  const cols = positions.map(p => {
+    let base;
+    if (p === 1)      base = 'última';
+    else if (p === 2) base = 'penúltima';
+    else if (p === 3) base = 'antepenúltima';
+    else              base = `${p}ª desde el final`;
+
+    return {
+      label: `sílaba tónica: ${base}`,
+      key: `stress:${p}`,
+      display: String(p)   // seguimos usando el número para la lógica
+    };
+  });
+  return applyTitleOverrides(cols);
+}
+
 
         // ----- Stress reveal helpers -----
     function backgroundUrlFromParam(){
