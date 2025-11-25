@@ -283,6 +283,51 @@
       font-size:20px;
       padding:10px 14px;
     }
+    
+    /* ---------- Stress reveal background scene ---------- */
+    #stressRevealScene{
+      margin-top:16px;
+    }
+    #stressRevealScene.hidden{
+      display:none;
+    }
+    .stress-bg-wrapper{
+      position:relative;
+      max-width:520px;
+      margin:0 auto 12px auto;
+      border-radius:12px;
+      overflow:hidden;
+      box-shadow:0 6px 20px rgba(0,0,0,.12);
+      background:#fff;
+    }
+    .stress-bg-wrapper img{
+      display:block;
+      width:100%;
+      height:auto;
+    }
+    .revealBlob{
+      position:absolute;
+      background:#0f8b9c;
+      border-radius:999px;
+      padding:26px 32px;
+      opacity:0.96;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:28px;
+      font-weight:700;
+      color:#fff;
+      box-shadow:0 4px 10px rgba(0,0,0,.25);
+      transform:translate3d(0,0,0);
+      transition:opacity .3s ease, transform .3s ease;
+      pointer-events:auto;
+      user-select:none;
+    }
+    .revealBlob.hiddenBlob{
+      opacity:0;
+      pointer-events:none;
+      transform:translate3d(0,-40px,0);
+    }
 
   </style>
 </head>
@@ -349,12 +394,16 @@
       <button id="soloVerify" class="btn outline">Verificar</button>
       <button id="soloReset" class="btn ghost">Reiniciar ronda</button>
     </div>
-
+    
     <!-- Classic columns container -->
     <div id="columns" class="columns"></div>
 
+    <!-- Stress reveal scene (background + ovals) -->
+    <section id="stressRevealScene" class="hidden"></section>
+
     <!-- Row picture mode container -->
     <section id="rowMode" class="hidden"></section>
+
 
     <!-- Global rack (bank) -->
     <section id="rackSection" class="rackSection">
@@ -409,7 +458,7 @@
       return out;
     }
 
-    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'allisyll', 'rowsyll', 'syllcount', 'stress', or classic
+    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'allisyll', 'rowsyll', 'syllcount', 'stress', 'stressreveal', or classic
     const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
     const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
     const IP = qs.get('ip') || DEFAULT_IMAGES_PREFIX;
@@ -469,7 +518,7 @@
     // SOLO conditions
     const SOLO_MODE =
       !SYNC ||
-      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'syllcount' || MODE === 'stress' ||
+      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
       (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0) || (SOLO_STRESSPOS.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -505,6 +554,9 @@
 
     // Row mode refs
     const rowModeEl   = document.getElementById('rowMode');
+
+    // Stress reveal scene
+    const stressRevealEl = document.getElementById('stressRevealScene');
 
     /******** State ********/
     let ROOM = null, channel = null, isTeacher = false;
@@ -789,7 +841,7 @@
         // 🔵 tilesonly + words: don't hit Storage at all
         if (TILES_ONLY && SOLO_WORDS.length > 0 &&
             MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' &&
-            MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='syllcount') {
+            MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='syllcount' && MODE!=='stressreveal') {
           storageWarn.style.display = 'none';
           return;
         }
@@ -892,6 +944,66 @@
       });
       return applyTitleOverrides(cols);
     }
+
+        // ----- Stress reveal helpers -----
+    function backgroundUrlFromParam(){
+      const bg = qs.get('bg') || qs.get('background') || '';
+      if (!bg) return null;
+      const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
+      const full = `${prefix}${bg}`;
+      const { data } = client.storage.from(IB).getPublicUrl(full);
+      return data?.publicUrl || null;
+    }
+
+    function buildStressRevealScene(cards){
+      if (!stressRevealEl) return;
+      const bgUrl = backgroundUrlFromParam();
+      if (!bgUrl){
+        stressRevealEl.classList.add('hidden');
+        stressRevealEl.innerHTML = '';
+        return;
+      }
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'stress-bg-wrapper';
+
+      const img = document.createElement('img');
+      img.src = bgUrl;
+      img.alt = '';
+      wrapper.appendChild(img);
+
+      const n = cards.length || 0;
+      const cols = Math.min(3, Math.max(1, n >= 6 ? 3 : (n >= 3 ? 2 : 1)));
+      const rows = Math.ceil(n / cols) || 1;
+
+      cards.forEach((card, idx) => {
+        const blob = document.createElement('div');
+        blob.className = 'revealBlob';
+        blob.dataset.cardId = card.id;
+
+        const col = idx % cols;
+        const row = Math.floor(idx / cols);
+        const left = 12 + col * (76 / (cols - 1 || 1));
+        const top  = 15 + row * (65 / (rows - 1 || 1));
+
+        blob.style.left = `${left}%`;
+        blob.style.top  = `${top}%`;
+        blob.textContent = String(idx + 1); // simple numbering
+
+        wrapper.appendChild(blob);
+      });
+
+      stressRevealEl.innerHTML = '';
+      stressRevealEl.appendChild(wrapper);
+      stressRevealEl.classList.remove('hidden');
+    }
+
+    function revealBlobForCard(card){
+      if (!stressRevealEl || !card) return;
+      const blob = stressRevealEl.querySelector(`.revealBlob[data-card-id="${card.id}"]`);
+      if (blob) blob.classList.add('hiddenBlob');
+    }
+
 
 
     /******** Round building ********/
@@ -1674,8 +1786,17 @@ function everythingCorrect(){
             if (!card) return;
             const ini = initialFromStem(card.coreRaw);
             const ok = (ini === r.majInitial);
-            if(ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
-            else { cardEl.classList.add('bad'); setTimeout(()=> { cardEl.classList.remove('bad'); r.rackEl.appendChild(cardEl); }, 300); }
+          if(ok){
+            cardEl.classList.add('ok','locked');
+            lockCard(cardEl, card);
+            if (currentMode === 'stressreveal') {
+              revealBlobForCard(card);
+            }
+          } else {
+            cardEl.classList.add('bad');
+            setTimeout(()=> ejectToRack(cardEl), 350);
+          }
+
           });
         });
         if (everythingCorrect()) celebrate();
@@ -1986,7 +2107,7 @@ function onDrop(e){
         (MODE==='allisyll')  ? `sílabas iniciales por filas` :
         (MODE==='rowsyll')   ? `sílabas (inicio/final) por filas` :
         (MODE==='syllcount' || SOLO_SYLLCOUNT.length) ? `conteo de sílabas (${(SOLO_SYLLCOUNT.join(', ')||'1+')})` :
-        (MODE==='stress' || SOLO_STRESSPOS.length) ? `sílaba tónica (${(SOLO_STRESSPOS.join(', ')||'1+')})` :
+        (MODE==='stress' || MODE==='stressreveal' || SOLO_STRESSPOS.length) ? `sílaba tónica (${(SOLO_STRESSPOS.join(', ')||'1+')})` :
         (SOLO_SYLLABLES.length
           ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
           : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras'));
@@ -2002,6 +2123,7 @@ function onDrop(e){
       usedSet = new Set();
       rackEl.classList.remove('chips');
 
+      // Row-style modes
       if (MODE==='row'){ buildRowMode(); return; }
       if (MODE==='rowalli' || MODE==='allisort'){ buildRowAlliMode(); return; }
       if (MODE==='allisyll'){ buildRowAlliSyllMode(); return; }
@@ -2016,7 +2138,20 @@ function onDrop(e){
       document.body.classList.toggle('one-per', per === 1);
 
       let payload;
-      if (SOLO_WORDS.length > 0) {
+
+      // 🔵 Special: stressreveal mode (background + blobs)
+      if (MODE === 'stressreveal') {
+        // get stress positions from param or compute from words
+        let positions = SOLO_STRESSPOS.slice();
+        if (!positions.length && SOLO_WORDS.length){
+          const set = new Set();
+          SOLO_WORDS.forEach(w => set.add(stressedSyllIndex(w)));
+          positions = Array.from(set).sort((a,b)=>a-b);
+        }
+        if (!positions.length) positions = [1,2]; // fallback
+
+        payload = buildRoundFromWordListWithStress(positions, SOLO_WORDS);
+      } else if (SOLO_WORDS.length > 0) {
         payload = hasCount
           ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
           : (hasStress
@@ -2032,7 +2167,8 @@ function onDrop(e){
         payload = buildRoundFromLetters(SOLO_LETTERS, per);
       }
 
-      currentMode = 'classic';
+      // classic layout + rack
+      currentMode = (MODE === 'stressreveal') ? 'stressreveal' : 'classic';
       rowModeEl.classList.add('hidden');
       columnsEl.classList.remove('hidden');
       rackSectionEl.classList.remove('hidden');
@@ -2040,7 +2176,16 @@ function onDrop(e){
       buildColumns(payload.columns);
       setCards(payload.cards);
       clearAllPlacements();
+
+      // Build or clear the overlay scene
+      if (MODE === 'stressreveal') {
+        buildStressRevealScene(payload.cards);
+      } else if (stressRevealEl) {
+        stressRevealEl.classList.add('hidden');
+        stressRevealEl.innerHTML = '';
+      }
     }
+
 
     (async function boot(){
       // Global flags for CSS
