@@ -1227,23 +1227,28 @@ function renderHeaderHTML(col){
     return `<div class="syllTile" aria-hidden="true">${text}</div>`;
   }
 
-  // 🔴 STRESS COLUMNS: ONLY DOTS, NO TEXT
+  // 🔵 STRESS COLUMNS: 3 dots, but index is counted from the RIGHT
   if (col.key.startsWith('stress:')){
     if (HIDE_TITLE) return '';
-    const pos = parseInt(col.display || col.key.slice(7),10); // 1,2,3
-    const totalDots = 3; // always show 3 dots like your example
+    const posRaw = parseInt(col.display || col.key.slice(7),10); // 1,2,3 from right
+    const totalDots = 3;
+
+    // clamp and convert “from right” → “from left” index
+    let pos = Number.isFinite(posRaw) ? posRaw : 1;
+    let idxFromLeft = totalDots - pos;                // 1→last dot, 2→middle, 3→first
+    const targetIdx = Math.min(totalDots-1, Math.max(0, idxFromLeft));
 
     const dots = Array.from({ length: totalDots }, (_, i) =>
-      `<span class="stressDot${i === pos - 1 ? ' target' : ''}"></span>`
+      `<span class="stressDot${i === targetIdx ? ' target' : ''}"></span>`
     ).join('');
 
-    // just the row of dots; no words
     return `<div class="stressCounters" aria-hidden="true">${dots}</div>`;
   }
 
   // Default label for other column types
   return `<h2>${col.label}</h2>`;
 }
+
 
 
     function buildColumns(columns){
