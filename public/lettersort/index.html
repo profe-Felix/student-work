@@ -97,7 +97,19 @@
     }
 
     .rackSection{margin-top:18px}
-    .rack{margin-top:8px;background:#fff;border:1px dashed #e5e7eb;border-radius:12px;padding:10px;display:flex;flex-wrap:wrap;gap:8px;min-height:150px}
+.rack{
+  margin-top:8px;
+  background:#fff;
+  border:1px dashed #e5e7eb;
+  border-radius:12px;
+  padding:10px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:flex-start;  /* cards only as tall as their content */
+  min-height:0;           /* container shrinks to whatever height it needs */
+}
+
 
     .card{
       user-select:none;touch-action:none;background:var(--card);border:1px solid #e5e7eb;border-radius:12px;
