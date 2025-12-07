@@ -124,12 +124,23 @@
   /* Right palettes */
   .palettes{display:grid;grid-template-columns:1fr;gap:14px}
   .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
-  .card h2{margin:0 0 8px;font-size:18px}
+  .card h2{font-size:18px;margin:0}
   .card small{color:var(--muted)}
   .tray{
     display:grid;
     grid-template-columns: repeat(var(--tray-cols), max-content);
     gap:8px;
+  }
+  .card-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:6px;
+    margin-bottom:8px;
+  }
+  .mini-tools{
+    display:flex;
+    gap:4px;
   }
 
   /* Text tiles */
@@ -228,7 +239,7 @@
         <small class="note">Consejo: suelta sobre la papelera para borrar.</small>
         <div class="trash-tools">
           <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
-          <div id="capTools"></div>
+          <div id="capTools"></div> <!-- only space lives here now -->
         </div>
       </div>
     </div>
@@ -240,22 +251,36 @@
       <h2>Espacio</h2>
       <div id="spaceTray" class="tray"></div>
     </div>
+
     <div class="card" id="lettersCard">
-      <h2>Letras</h2>
+      <div class="card-header">
+        <h2>Letras</h2>
+        <div class="mini-tools" id="lettersCapTools"></div>
+      </div>
       <div id="lettersTray" class="tray"></div>
     </div>
+
     <div class="card" id="syllCard">
-      <h2>Sílabas</h2>
+      <div class="card-header">
+        <h2>Sílabas</h2>
+        <div class="mini-tools" id="syllCapTools"></div>
+      </div>
       <div id="syllTray" class="tray"></div>
     </div>
+
     <div class="card" id="wordsCard">
-      <h2>Palabras</h2>
+      <div class="card-header">
+        <h2>Palabras</h2>
+        <div class="mini-tools" id="wordsCapTools"></div>
+      </div>
       <div id="wordsTray" class="tray"></div>
     </div>
+
     <div class="card" id="puncCard">
       <h2>Puntuación</h2>
       <div id="puncTray" class="tray"></div>
     </div>
+
     <div class="card" id="picsCard">
       <h2>Imágenes</h2>
       <small>Arrastra imágenes (o pégalos) aquí. También puedes precargar con <code>?imgs=URL1,URL2</code>.</small>
@@ -355,7 +380,11 @@
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn= document.getElementById('validateBtn');
 
-  const capTools = document.getElementById('capTools');
+  const capTools = document.getElementById('capTools'); // bottom strip (space only)
+
+  const lettersCapTools = document.getElementById('lettersCapTools');
+  const syllCapTools    = document.getElementById('syllCapTools');
+  const wordsCapTools   = document.getElementById('wordsCapTools');
 
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
@@ -497,10 +526,22 @@
       IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
     }
 
+    /* bottom strip: just a handy space tool */
     capTools.innerHTML = '';
-    capTools.appendChild(makeSpaceTile(false));   // space tool
-    capTools.appendChild(makeCapTool('up'));     // ↑
-    capTools.appendChild(makeCapTool('down'));   // ↓
+    capTools.appendChild(makeSpaceTile(false));
+
+    /* header tools: caps next to Letras / Sílabas / Palabras */
+    lettersCapTools.innerHTML = '';
+    lettersCapTools.appendChild(makeCapTool('up'));
+    lettersCapTools.appendChild(makeCapTool('down'));
+
+    syllCapTools.innerHTML = '';
+    syllCapTools.appendChild(makeCapTool('up'));
+    syllCapTools.appendChild(makeCapTool('down'));
+
+    wordsCapTools.innerHTML = '';
+    wordsCapTools.appendChild(makeCapTool('up'));
+    wordsCapTools.appendChild(makeCapTool('down'));
   }
 
   function relayoutSlot(slot){
@@ -523,7 +564,8 @@
 
       const src = e.currentTarget;
       const isPalette = [
-        spaceTray, lettersTray, syllTray, wordsTray, puncTray, picsTray, capTools
+        spaceTray, lettersTray, syllTray, wordsTray, puncTray, picsTray,
+        capTools, lettersCapTools, syllCapTools, wordsCapTools
       ].includes(src.parentElement);
       let dragEl;
       if (cloneOnDrag && isPalette){
