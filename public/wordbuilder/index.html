@@ -95,25 +95,6 @@
     height:clamp(40px, 6vh, 64px);
   }
 
-  /* Case toggle button per slot */
-  .case-toggle{
-    position:absolute;
-    top:-10px;
-    left:-10px;
-    width:22px;
-    height:22px;
-    border-radius:999px;
-    border:2px solid #4b5563;
-    background:#fff;
-    color:#111;
-    font-size:14px;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    cursor:pointer;
-    user-select:none;
-  }
-
   /* Bottom: note + trash stacked on the left */
   .row-bottom{margin-top:12px}
   .note-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
@@ -153,6 +134,26 @@
     align-items:center; justify-content:center; cursor:pointer
   }
   .tile.clone .x{display:flex}
+
+  /* Per-tile case toggle (only on clones) */
+  .tile .case-toggle{
+    position:absolute;
+    top:-8px;
+    left:-8px;
+    width:22px;
+    height:22px;
+    border-radius:999px;
+    border:2px solid #4b5563;
+    background:#fff;
+    color:#111;
+    font-size:14px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    user-select:none;
+  }
+
   .dragging{opacity:.9; box-shadow:0 8px 24px rgba(0,0,0,.15)}
   .highlight{outline:3px solid #a5b4fc; outline-offset:2px}
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
@@ -166,6 +167,7 @@
     background:transparent; border:none; border-radius:0; box-shadow:none;
   }
   .slot .tile.in-slot .x{ top:-6px; right:-6px; }
+  .slot .tile.in-slot .case-toggle{ top:-6px; left:-6px; }
 
   /* Image tiles */
   .tile.img{ padding:4px 6px; min-width:auto; }
@@ -349,13 +351,39 @@
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
 
+  /* ===== Case toggle per tile ===== */
+  function toggleTileCase(tile){
+    const current = tile.dataset.case === 'capital' ? 'capital' : 'base';
+    const next = current === 'capital' ? 'base' : 'capital';
+    tile.dataset.case = next;
+
+    const base = tile.dataset.base ?? tile.dataset.text ?? '';
+    let display = base;
+    if (next === 'capital' && base.length > 0){
+      display = base.charAt(0).toUpperCase() + base.slice(1);
+    }
+
+    tile.dataset.text = display;
+    const label = tile.querySelector('.label');
+    if (label) label.textContent = display;
+
+    const btn = tile.querySelector('.case-toggle');
+    if (btn){
+      btn.textContent = next === 'capital' ? '↓' : '↑';
+      btn.title = next === 'capital'
+        ? 'Volver a minúscula'
+        : 'Poner inicial mayúscula';
+    }
+  }
+
   /* ===== Tile makers ===== */
   function makeTextTile(text, isClone=false){
     const div = document.createElement('div');
     div.className = 'tile' + (isClone ? ' clone' : '');
     div.dataset.kind = 'text';
-    div.dataset.base = text;      // original text
-    div.dataset.text = text;      // current text
+    div.dataset.base = text;         // original text
+    div.dataset.text = text;         // current text
+    div.dataset.case = 'base';
 
     const label = document.createElement('span');
     label.className = 'label';
@@ -363,6 +391,7 @@
     div.appendChild(label);
 
     if(isClone){
+      // Delete button
       const x = document.createElement('div');
       x.className = 'x'; x.textContent = '×'; x.title = 'Eliminar';
       x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
@@ -372,7 +401,20 @@
         if(p?.classList?.contains('slot')) relayoutSlot(p);
       });
       div.appendChild(x);
+
+      // Case toggle button (first letter capital)
+      const toggle = document.createElement('div');
+      toggle.className = 'case-toggle';
+      toggle.textContent = '↑';
+      toggle.title = 'Poner inicial mayúscula';
+      toggle.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
+      toggle.addEventListener('click', (e)=>{
+        e.preventDefault(); e.stopImmediatePropagation();
+        toggleTileCase(div);
+      });
+      div.appendChild(toggle);
     }
+
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
@@ -422,34 +464,6 @@
     return div;
   }
 
-  /* ===== Case toggle per slot ===== */
-  function toggleSlotCase(slot){
-    const current = slot.dataset.case === 'upper' ? 'upper' : 'base';
-    const next = current === 'upper' ? 'base' : 'upper';
-    slot.dataset.case = next;
-
-    const tiles = slot.querySelectorAll('.tile[data-kind="text"]');
-    tiles.forEach(t => {
-      const base = t.dataset.base ?? t.dataset.text ?? '';
-      const label = t.querySelector('.label');
-      if (!label) return;
-      if (next === 'upper'){
-        const upper = base.toUpperCase();
-        label.textContent = upper;
-        t.dataset.text = upper;
-      } else {
-        label.textContent = base;
-        t.dataset.text = base;
-      }
-    });
-
-    const btn = slot.querySelector('.case-toggle');
-    if (btn){
-      btn.textContent = next === 'upper' ? '↓' : '↑';
-      btn.title = next === 'upper' ? 'Volver a minúsculas' : 'Convertir a MAYÚSCULAS';
-    }
-  }
-
   /* ===== Build board & palettes ===== */
   function buildRows(boxesPerRow, numRows, countOverride){
     // If a fixed count is provided, compute rows/boxes from it
@@ -471,20 +485,6 @@
         const s = document.createElement('div');
         s.className = 'slot';
         s.dataset.index = index++;
-        s.dataset.case = 'base';
-
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'case-toggle';
-        toggle.textContent = '↑';
-        toggle.title = 'Convertir a MAYÚSCULAS';
-        toggle.addEventListener('click', (e)=>{
-          e.stopPropagation();
-          e.preventDefault();
-          toggleSlotCase(s);
-        });
-        s.appendChild(toggle);
-
         line.appendChild(s);
       }
       slotsEl.appendChild(line);
@@ -523,19 +523,7 @@
   /* ===== Layout inside slots ===== */
   function relayoutSlot(slot){
     const tiles = [...slot.querySelectorAll('.tile')];
-    tiles.forEach(t => {
-      t.classList.add('in-slot');
-      // If slot is in upper mode, keep any new text tiles uppercased
-      if (slot.dataset.case === 'upper' && t.dataset.kind === 'text'){
-        const base = t.dataset.base ?? t.dataset.text ?? '';
-        const label = t.querySelector('.label');
-        if (label){
-          const upper = base.toUpperCase();
-          label.textContent = upper;
-          t.dataset.text = upper;
-        }
-      }
-    });
+    tiles.forEach(t => t.classList.add('in-slot'));
   }
   function relayoutAllSlots(){
     document.querySelectorAll('.slot').forEach(relayoutSlot);
@@ -550,7 +538,7 @@
 
     el.addEventListener('pointerdown', (e)=>{
       if(e.button!==0) return;
-      if (e.target && e.target.closest && e.target.closest('.x')) return; // clicking ✕ → no drag
+      if (e.target && e.target.closest && (e.target.closest('.x') || e.target.closest('.case-toggle'))) return; // clicking ✕ or arrow → no drag
 
       const src = e.currentTarget;
       const isPalette = [spaceTray, lettersTray, syllTray, wordsTray, picsTray].includes(src.parentElement);
