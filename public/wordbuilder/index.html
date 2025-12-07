@@ -79,7 +79,7 @@
     border-radius:12px;
     padding:6px 8px;
     display:inline-flex;
-    gap:0;                      /* no auto gap between tiles */
+    gap:0;                      /* NO visual gap between tiles */
     align-items:center;
     justify-content:flex-start;
     flex-wrap:nowrap;
@@ -95,31 +95,13 @@
     height:clamp(40px, 6vh, 64px);
   }
 
-  /* Bottom: note + trash + tools */
+  /* Bottom: note + trash */
   .row-bottom{margin-top:12px}
   .note-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
   .trash{
     display:inline-flex;align-items:center;gap:8px;
     background:var(--trash);border:2px dashed var(--danger);color:#991b1b;
     padding:6px 10px;border-radius:12px;font-size:16px;user-select:none
-  }
-  .trash-tools{
-    display:flex;
-    align-items:center;
-    gap:6px;
-    flex-wrap:wrap;
-    margin-top:4px;
-  }
-  #capTools{
-    display:flex;
-    gap:6px;
-  }
-  .tile.captool,
-  .tile.accenttool{
-    min-width:auto;
-    height:32px;
-    padding:0 10px;
-    font-size:18px;
   }
 
   /* Right palettes */
@@ -151,14 +133,7 @@
     min-width:var(--tile-min-w); height:var(--tile-h); padding:0 12px;
     background:var(--tile); border:2px solid var(--tile-border); border-radius:12px;
     font-size:var(--tile-fs); line-height:1; cursor:grab; position:relative;
-    transition:transform .05s.ease;
-  }
-  .tile .label{
-    /* allow pointer events so char spans can be hit */
-    pointer-events:auto;
-  }
-  .char-span{
-    display:inline-block;
+    transition:transform .05s ease;
   }
   .tile:active{cursor:grabbing; transform:scale(.98)}
 
@@ -199,7 +174,7 @@
     background:#e5e7eb;
     border:1px dashed #9ca3af;
     border-radius:999px;
-    margin:0 var(--inner-gap);  /* visible gap only when space is present */
+    margin:0 var(--inner-gap);  /* visible gap ONLY for spaces */
   }
 
   /* Punctuation tiles */
@@ -210,7 +185,16 @@
   }
   .slot .tile.punc.in-slot{
     padding:0;
-    margin:0;
+    margin:0;              /* no extra gap */
+  }
+
+  /* Tools (caps + accent) */
+  .tile.captool,
+  .tile.accenttool{
+    min-width:auto;
+    height:32px;
+    padding:0 10px;
+    font-size:18px;
   }
 </style>
 </head>
@@ -242,10 +226,7 @@
     <div class="row-bottom">
       <div class="note-wrap">
         <small class="note">Consejo: suelta sobre la papelera para borrar.</small>
-        <div class="trash-tools">
-          <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
-          <div id="capTools"></div> <!-- only space lives here now -->
-        </div>
+        <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
       </div>
     </div>
   </section>
@@ -260,7 +241,7 @@
     <div class="card" id="lettersCard">
       <div class="card-header">
         <h2>Letras</h2>
-        <div class="mini-tools" id="lettersCapTools"></div>
+        <div class="mini-tools" id="lettersTools"></div>
       </div>
       <div id="lettersTray" class="tray"></div>
     </div>
@@ -268,7 +249,7 @@
     <div class="card" id="syllCard">
       <div class="card-header">
         <h2>Sílabas</h2>
-        <div class="mini-tools" id="syllCapTools"></div>
+        <div class="mini-tools" id="syllTools"></div>
       </div>
       <div id="syllTray" class="tray"></div>
     </div>
@@ -276,7 +257,7 @@
     <div class="card" id="wordsCard">
       <div class="card-header">
         <h2>Palabras</h2>
-        <div class="mini-tools" id="wordsCapTools"></div>
+        <div class="mini-tools" id="wordsTools"></div>
       </div>
       <div id="wordsTray" class="tray"></div>
     </div>
@@ -366,10 +347,10 @@
   const spaceTray = document.getElementById('spaceTray');
 
   const lettersTray = document.getElementById('lettersTray');
-  const syllTray = document.getElementById('syllTray');
-  const wordsTray = document.getElementById('wordsTray');
-  const puncTray = document.getElementById('puncTray');
-  const picsTray = document.getElementById('picsTray');
+  const syllTray   = document.getElementById('syllTray');
+  const wordsTray  = document.getElementById('wordsTray');
+  const puncTray   = document.getElementById('puncTray');
+  const picsTray   = document.getElementById('picsTray');
 
   const lettersCard = document.getElementById('lettersCard');
   const syllCard   = document.getElementById('syllCard');
@@ -377,89 +358,73 @@
   const puncCard   = document.getElementById('puncCard');
   const picsCard   = document.getElementById('picsCard');
 
+  const lettersTools = document.getElementById('lettersTools');
+  const syllTools    = document.getElementById('syllTools');
+  const wordsTools   = document.getElementById('wordsTools');
+
   const boxesInput = document.getElementById('boxesInput');
   const rowsInput  = document.getElementById('rowsInput');
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn= document.getElementById('validateBtn');
 
-  const capTools = document.getElementById('capTools'); // bottom strip (space only)
-
-  const lettersCapTools = document.getElementById('lettersCapTools');
-  const syllCapTools    = document.getElementById('syllCapTools');
-  const wordsCapTools   = document.getElementById('wordsCapTools');
-
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
 
-  /* ===== Text rendering (per-letter spans with index) ===== */
-  function renderTextLabel(tile){
-    const label = tile.querySelector('.label');
-    if (!label) return;
-    const text = tile.dataset.text ?? '';
-    label.innerHTML = '';
-    for (let i = 0; i < text.length; i++){
-      const ch = text[i];
-      const span = document.createElement('span');
-      span.className = 'char-span';
-      span.dataset.index = String(i);
-      span.textContent = ch;
-      label.appendChild(span);
-    }
-  }
-
-  /* Capitalization via tools (uses current text, keeps accents) */
+  /* ===== Caps + accent helpers ===== */
   function applyCapToTile(tile, mode){
     if (!tile || tile.dataset.kind !== 'text') return;
-    const cur = tile.dataset.text ?? '';
+    const cur = tile.dataset.text ?? tile.textContent ?? '';
     if (!cur) return;
-    let display;
+    let out;
     if (mode === 'up'){
-      display = cur[0].toUpperCase() + cur.slice(1);
-    } else { // down
-      display = cur[0].toLowerCase() + cur.slice(1);
+      out = cur[0].toUpperCase() + cur.slice(1);
+    } else {
+      out = cur[0].toLowerCase() + cur.slice(1);
     }
-    tile.dataset.text = display;
-    renderTextLabel(tile);
+    tile.dataset.text = out;
+    tile.textContent = out;
   }
 
-  /* Accent toggle on specific character index */
   const plainToAcc = { a:'á', e:'é', i:'í', o:'ó', u:'ú',
                        A:'Á', E:'É', I:'Í', O:'Ó', U:'Ú' };
   const accToPlain = { á:'a', é:'e', í:'i', ó:'o', ú:'u',
-                       Á:'A', É:'E', Í:'Í', Ó:'Ó', Ú:'Ú' };
+                       Á:'A', É:'E', Í:'I', Ó:'O', Ú:'U' };
 
-  function applyAccentAt(tile, index){
+  function applyAccentAtPointer(tile, clientX){
     if (!tile || tile.dataset.kind !== 'text') return;
-    const cur = tile.dataset.text ?? '';
+    const cur = tile.dataset.text ?? tile.textContent ?? '';
+    const len = cur.length;
+    if (!len) return;
+
+    const rect = tile.getBoundingClientRect();
+    const relX = clientX - rect.left;
+    const charWidth = rect.width / len || 1;
+    let idx = Math.floor(relX / charWidth);
+    if (idx < 0) idx = 0;
+    if (idx >= len) idx = len - 1;
+
     const chars = [...cur];
-    if (index < 0 || index >= chars.length) return;
-    const c = chars[index];
+    const c = chars[idx];
 
     if (plainToAcc[c]) {
-      chars[index] = plainToAcc[c];       // add accent
+      chars[idx] = plainToAcc[c];
     } else if (accToPlain[c]) {
-      chars[index] = accToPlain[c];       // remove accent
+      chars[idx] = accToPlain[c];
     } else {
       return; // not a vowel we handle
     }
-
-    const next = chars.join('');
-    tile.dataset.text = next;
-    renderTextLabel(tile);
+    const out = chars.join('');
+    tile.dataset.text = out;
+    tile.textContent = out;
   }
 
-  /* Tile makers */
+  /* ===== Tile makers ===== */
   function makeTextTile(text, isClone=false){
     const div = document.createElement('div');
     div.className = 'tile' + (isClone ? ' clone' : '');
     div.dataset.kind = 'text';
     div.dataset.text = text;
-
-    const label = document.createElement('span');
-    label.className = 'label';
-    div.appendChild(label);
-    renderTextLabel(div);
-
+    div.textContent = text;
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
@@ -469,13 +434,7 @@
     div.className = 'tile punc' + (isClone ? ' clone' : '');
     div.dataset.kind = 'punc';
     div.dataset.text = ch;
-    div.dataset.puncPos = (ch === '¿' || ch === '¡') ? 'pre' : 'post';
-
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = ch;
-    div.appendChild(label);
-
+    div.textContent = ch;
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
@@ -507,11 +466,8 @@
     const div = document.createElement('div');
     div.className = 'tile captool';
     div.dataset.kind = 'captool';
-    div.dataset.tool = mode;
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = mode === 'up' ? '↑' : '↓';
-    div.appendChild(label);
+    div.dataset.mode = mode;
+    div.textContent = mode === 'up' ? '↑' : '↓';
     makeDraggable(div, { cloneOnDrag:true });
     return div;
   }
@@ -520,15 +476,12 @@
     const div = document.createElement('div');
     div.className = 'tile accenttool';
     div.dataset.kind = 'accenttool';
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = '´';
-    div.appendChild(label);
+    div.textContent = '´';
     makeDraggable(div, { cloneOnDrag:true });
     return div;
   }
 
-  /* Board & palettes */
+  /* ===== Board & palettes ===== */
   function buildRows(boxesPerRow, numRows, countOverride){
     let rows = numRows;
     if (Number.isFinite(countOverride)) {
@@ -555,51 +508,48 @@
   }
 
   function fillPalettes(){
+    // Space
     spaceTray.innerHTML = '';
     spaceCard.style.display = SPACE_ON ? '' : 'none';
     if (SPACE_ON) spaceTray.appendChild(makeSpaceTile(false));
 
+    // Letters
     lettersTray.innerHTML = '';
     lettersCard.style.display = LETTERS.length ? '' : 'none';
     LETTERS.forEach(t => lettersTray.appendChild(makeTextTile(t, false)));
 
+    // Syllables
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
     SYLL.forEach(t => syllTray.appendChild(makeTextTile(t, false)));
 
+    // Words
     wordsTray.innerHTML = '';
     wordsCard.style.display = WORDS.length ? '' : 'none';
     WORDS.forEach(w => wordsTray.appendChild(makeTextTile(w, false)));
 
+    // Punctuation
     puncTray.innerHTML = '';
     puncCard.style.display = PUNC.length ? '' : 'none';
     PUNC.forEach(ch => puncTray.appendChild(makePuncTile(ch, false)));
 
+    // Pictures
     picsTray.innerHTML = '';
     picsCard.style.display = IMAGES_ON ? '' : 'none';
     if (IMAGES_ON) {
       IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
     }
 
-    /* bottom strip: just a handy space tool */
-    capTools.innerHTML = '';
-    capTools.appendChild(makeSpaceTile(false));
-
-    /* header tools: caps + accent next to Letras / Sílabas / Palabras */
-    lettersCapTools.innerHTML = '';
-    lettersCapTools.appendChild(makeCapTool('up'));
-    lettersCapTools.appendChild(makeCapTool('down'));
-    lettersCapTools.appendChild(makeAccentTool());
-
-    syllCapTools.innerHTML = '';
-    syllCapTools.appendChild(makeCapTool('up'));
-    syllCapTools.appendChild(makeCapTool('down'));
-    syllCapTools.appendChild(makeAccentTool());
-
-    wordsCapTools.innerHTML = '';
-    wordsCapTools.appendChild(makeCapTool('up'));
-    wordsCapTools.appendChild(makeCapTool('down'));
-    wordsCapTools.appendChild(makeAccentTool());
+    // Tools next to headers
+    function attachTools(container){
+      container.innerHTML = '';
+      container.appendChild(makeCapTool('up'));
+      container.appendChild(makeCapTool('down'));
+      container.appendChild(makeAccentTool());
+    }
+    attachTools(lettersTools);
+    attachTools(syllTools);
+    attachTools(wordsTools);
   }
 
   function relayoutSlot(slot){
@@ -610,7 +560,7 @@
     document.querySelectorAll('.slot').forEach(relayoutSlot);
   }
 
-  /* Drag & drop */
+  /* ===== Drag & drop (restored logic) ===== */
   let drag = null;
 
   function makeDraggable(el, opts){
@@ -621,17 +571,26 @@
       if(e.button!==0) return;
 
       const src = e.currentTarget;
-      const isPalette = [
-        spaceTray, lettersTray, syllTray, wordsTray, puncTray, picsTray,
-        capTools, lettersCapTools, syllCapTools, wordsCapTools
-      ].includes(src.parentElement);
+      const parent = src.parentElement;
+      const isPalette =
+        parent === spaceTray ||
+        parent === lettersTray ||
+        parent === syllTray ||
+        parent === wordsTray ||
+        parent === puncTray ||
+        parent === picsTray ||
+        parent === lettersTools ||
+        parent === syllTools ||
+        parent === wordsTools;
+
       let dragEl;
       if (cloneOnDrag && isPalette){
-        if (src.dataset.kind === 'img') dragEl = makeImageTile(src.dataset.src, true);
-        else if (src.dataset.kind === 'space') dragEl = makeSpaceTile(true);
-        else if (src.dataset.kind === 'punc') dragEl = makePuncTile(src.dataset.text, true);
-        else if (src.dataset.kind === 'captool') dragEl = makeCapTool(src.dataset.tool);
-        else if (src.dataset.kind === 'accenttool') dragEl = makeAccentTool();
+        const kind = src.dataset.kind;
+        if (kind === 'img') dragEl = makeImageTile(src.dataset.src, true);
+        else if (kind === 'space') dragEl = makeSpaceTile(true);
+        else if (kind === 'punc') dragEl = makePuncTile(src.dataset.text, true);
+        else if (kind === 'captool') dragEl = makeCapTool(src.dataset.mode);
+        else if (kind === 'accenttool') dragEl = makeAccentTool();
         else dragEl = makeTextTile(src.dataset.text, true);
       } else {
         dragEl = src;
@@ -673,7 +632,8 @@
     const kind = drag.el.dataset.kind;
     if(slot && kind !== 'captool' && kind !== 'accenttool') slot.classList.add('highlight');
 
-    trashEl.classList.toggle('highlight',
+    trashEl.classList.toggle(
+      'highlight',
       kind !== 'captool' && kind !== 'accenttool' && !!t?.closest?.('#trash')
     );
   }
@@ -694,49 +654,38 @@
 
   function onUp(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
-
     const t = document.elementFromPoint(e.clientX, e.clientY);
     const kind = drag.el.dataset.kind;
 
-    /* Cap tools: drop on any word tile */
+    /* Special case: caps tool */
     if (kind === 'captool'){
-      const wordTile = t?.closest?.('.tile[data-kind="text"]');
-      if (wordTile){
-        const mode = drag.el.dataset.tool === 'down' ? 'down' : 'up';
-        applyCapToTile(wordTile, mode);
+      const tile = t?.closest?.('.tile[data-kind="text"]');
+      if (tile){
+        applyCapToTile(tile, drag.el.dataset.mode === 'down' ? 'down' : 'up');
       }
       drag.el.remove();
-      document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
-      trashEl.classList.remove('highlight');
+      cleanupHighlights();
       cleanup();
       return;
     }
 
-    /* Accent tool: drop on a specific letter span */
+    /* Special case: accent tool (per-letter based on drop X) */
     if (kind === 'accenttool'){
-      const charSpan = t?.closest?.('.char-span');
-      if (charSpan){
-        const label = charSpan.parentElement;
-        const tile = label?.closest?.('.tile[data-kind="text"]');
-        if (tile){
-          const idx = parseInt(charSpan.dataset.index ?? '-1', 10);
-          if (!Number.isNaN(idx) && idx >= 0){
-            applyAccentAt(tile, idx);
-          }
-        }
+      const tile = t?.closest?.('.tile[data-kind="text"]');
+      if (tile){
+        applyAccentAtPointer(tile, e.clientX);
       }
       drag.el.remove();
-      document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
-      trashEl.classList.remove('highlight');
+      cleanupHighlights();
       cleanup();
       return;
     }
 
+    /* Normal tiles (letters, syllables, words, spaces, punc, images) */
     const onTrash = !!t?.closest?.('#trash');
     const slot = t?.closest?.('.slot');
 
-    document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
-    trashEl.classList.remove('highlight');
+    cleanupHighlights();
 
     drag.el.classList.remove('dragging');
     Object.assign(drag.el.style, {position:'', left:'', top:'', zIndex:'', pointerEvents:'', width:'', height:''});
@@ -764,6 +713,11 @@
       }
     }
     cleanup();
+  }
+
+  function cleanupHighlights(){
+    document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
+    trashEl.classList.remove('highlight');
   }
 
   function onCancel(){
@@ -818,15 +772,15 @@
       [...slot.querySelectorAll('.tile')].forEach(t=>{
         const k = t.dataset.kind;
         if (k === 'text') {
-          s += t.dataset.text ?? '';
+          s += t.dataset.text ?? t.textContent ?? '';
         } else if (k === 'space') {
           s += ' ';
         } else if (k === 'img') {
           s += (s.endsWith(' ') ? '' : ' ') + '[img]' + ' ';
         } else if (k === 'punc') {
-          const ch = t.dataset.text || '';
+          const ch = t.dataset.text || t.textContent || '';
           if (',.?!'.includes(ch)) {
-            s = s.replace(/\s+$/,'');
+            s = s.replace(/\s+$/,''); // remove trailing space before punctuation
             s += ch;
           } else if ('¿¡'.includes(ch)) {
             s += ch;
