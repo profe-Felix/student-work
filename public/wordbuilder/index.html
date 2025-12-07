@@ -95,6 +95,25 @@
     height:clamp(40px, 6vh, 64px);
   }
 
+  /* Case toggle button per slot */
+  .case-toggle{
+    position:absolute;
+    top:-10px;
+    left:-10px;
+    width:22px;
+    height:22px;
+    border-radius:999px;
+    border:2px solid #4b5563;
+    background:#fff;
+    color:#111;
+    font-size:14px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    user-select:none;
+  }
+
   /* Bottom: note + trash stacked on the left */
   .row-bottom{margin-top:12px}
   .note-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
@@ -123,6 +142,9 @@
     background:var(--tile); border:2px solid var(--tile-border); border-radius:12px;
     font-size:var(--tile-fs); line-height:1; cursor:grab; position:relative;
     transition:transform .05s ease;
+  }
+  .tile .label{
+    pointer-events:none;
   }
   .tile:active{cursor:grabbing; transform:scale(.98)}
   .tile .x{
@@ -331,9 +353,14 @@
   function makeTextTile(text, isClone=false){
     const div = document.createElement('div');
     div.className = 'tile' + (isClone ? ' clone' : '');
-    div.textContent = text;
     div.dataset.kind = 'text';
-    div.dataset.text = text;
+    div.dataset.base = text;      // original text
+    div.dataset.text = text;      // current text
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = text;
+    div.appendChild(label);
 
     if(isClone){
       const x = document.createElement('div');
@@ -395,6 +422,34 @@
     return div;
   }
 
+  /* ===== Case toggle per slot ===== */
+  function toggleSlotCase(slot){
+    const current = slot.dataset.case === 'upper' ? 'upper' : 'base';
+    const next = current === 'upper' ? 'base' : 'upper';
+    slot.dataset.case = next;
+
+    const tiles = slot.querySelectorAll('.tile[data-kind="text"]');
+    tiles.forEach(t => {
+      const base = t.dataset.base ?? t.dataset.text ?? '';
+      const label = t.querySelector('.label');
+      if (!label) return;
+      if (next === 'upper'){
+        const upper = base.toUpperCase();
+        label.textContent = upper;
+        t.dataset.text = upper;
+      } else {
+        label.textContent = base;
+        t.dataset.text = base;
+      }
+    });
+
+    const btn = slot.querySelector('.case-toggle');
+    if (btn){
+      btn.textContent = next === 'upper' ? '↓' : '↑';
+      btn.title = next === 'upper' ? 'Volver a minúsculas' : 'Convertir a MAYÚSCULAS';
+    }
+  }
+
   /* ===== Build board & palettes ===== */
   function buildRows(boxesPerRow, numRows, countOverride){
     // If a fixed count is provided, compute rows/boxes from it
@@ -416,6 +471,20 @@
         const s = document.createElement('div');
         s.className = 'slot';
         s.dataset.index = index++;
+        s.dataset.case = 'base';
+
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'case-toggle';
+        toggle.textContent = '↑';
+        toggle.title = 'Convertir a MAYÚSCULAS';
+        toggle.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          e.preventDefault();
+          toggleSlotCase(s);
+        });
+        s.appendChild(toggle);
+
         line.appendChild(s);
       }
       slotsEl.appendChild(line);
@@ -454,7 +523,19 @@
   /* ===== Layout inside slots ===== */
   function relayoutSlot(slot){
     const tiles = [...slot.querySelectorAll('.tile')];
-    tiles.forEach(t => t.classList.add('in-slot'));
+    tiles.forEach(t => {
+      t.classList.add('in-slot');
+      // If slot is in upper mode, keep any new text tiles uppercased
+      if (slot.dataset.case === 'upper' && t.dataset.kind === 'text'){
+        const base = t.dataset.base ?? t.dataset.text ?? '';
+        const label = t.querySelector('.label');
+        if (label){
+          const upper = base.toUpperCase();
+          label.textContent = upper;
+          t.dataset.text = upper;
+        }
+      }
+    });
   }
   function relayoutAllSlots(){
     document.querySelectorAll('.slot').forEach(relayoutSlot);
