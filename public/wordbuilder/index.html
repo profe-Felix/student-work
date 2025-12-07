@@ -151,13 +151,14 @@
     min-width:var(--tile-min-w); height:var(--tile-h); padding:0 12px;
     background:var(--tile); border:2px solid var(--tile-border); border-radius:12px;
     font-size:var(--tile-fs); line-height:1; cursor:grab; position:relative;
-    transition:transform .05s ease;
+    transition:transform .05s.ease;
   }
   .tile .label{
-    pointer-events:none;
+    /* allow pointer events so char spans can be hit */
+    pointer-events:auto;
   }
   .char-span{
-    /* inline spans for each character */
+    display:inline-block;
   }
   .tile:active{cursor:grabbing; transform:scale(.98)}
 
@@ -318,8 +319,6 @@
     return !['0','off','false','none','no'].includes(lo);
   }
 
-  const BOXES = clampInt(qs.get('boxes') ?? qs.get('drops'), 4, 1, 12);
-
   const BOXES_PER_ROW = clampInt(
     qs.get('boxCols') ?? qs.get('boxes') ?? qs.get('columns'),
     4, 1, 12
@@ -328,7 +327,6 @@
     qs.get('boxRows') ?? qs.get('rows') ?? qs.get('r'),
     1, 1, 50
   );
-
   const BOX_COUNT = clampInt(qs.get('boxCount') ?? qs.get('count'), null, 1, 500);
 
   const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
@@ -393,15 +391,17 @@
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
 
-  /* ===== Text rendering (per-letter spans) ===== */
+  /* ===== Text rendering (per-letter spans with index) ===== */
   function renderTextLabel(tile){
     const label = tile.querySelector('.label');
     if (!label) return;
     const text = tile.dataset.text ?? '';
     label.innerHTML = '';
-    for (const ch of [...text]){
+    for (let i = 0; i < text.length; i++){
+      const ch = text[i];
       const span = document.createElement('span');
       span.className = 'char-span';
+      span.dataset.index = String(i);
       span.textContent = ch;
       label.appendChild(span);
     }
@@ -426,7 +426,7 @@
   const plainToAcc = { a:'á', e:'é', i:'í', o:'ó', u:'ú',
                        A:'Á', E:'É', I:'Í', O:'Ó', U:'Ú' };
   const accToPlain = { á:'a', é:'e', í:'i', ó:'o', ú:'u',
-                       Á:'A', É:'E', Í:'I', Ó:'O', Ú:'U' };
+                       Á:'A', É:'E', Í:'Í', Ó:'Ó', Ú:'Ú' };
 
   function applyAccentAt(tile, index){
     if (!tile || tile.dataset.kind !== 'text') return;
@@ -719,10 +719,9 @@
         const label = charSpan.parentElement;
         const tile = label?.closest?.('.tile[data-kind="text"]');
         if (tile){
-          const spans = [...label.querySelectorAll('.char-span')];
-          const index = spans.indexOf(charSpan);
-          if (index !== -1){
-            applyAccentAt(tile, index);
+          const idx = parseInt(charSpan.dataset.index ?? '-1', 10);
+          if (!Number.isNaN(idx) && idx >= 0){
+            applyAccentAt(tile, idx);
           }
         }
       }
