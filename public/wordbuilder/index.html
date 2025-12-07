@@ -16,7 +16,7 @@
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
     --trash:#fee2e2; --danger:#ef4444;
     --gap:12px;              /* gap between word boxes / rows */
-    --inner-gap:10px;        /* logical "gap" between words – now only for space pill sizing */
+    --inner-gap:10px;        /* logical gap for space pill */
     --tile-min-w:48px;       /* palette text tile base size */
     --tile-h:48px;
     --tile-fs:28px;
@@ -79,7 +79,7 @@
     border-radius:12px;
     padding:6px 8px;
     display:inline-flex;
-    gap:0;                      /* 🔴 no auto gap between tiles */
+    gap:0;                      /* no auto gap between tiles */
     align-items:center;
     justify-content:flex-start;
     flex-wrap:nowrap;
@@ -95,7 +95,7 @@
     height:clamp(40px, 6vh, 64px);
   }
 
-  /* Bottom: note + trash + cap tools */
+  /* Bottom: note + trash + tools */
   .row-bottom{margin-top:12px}
   .note-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
   .trash{
@@ -103,16 +103,12 @@
     background:var(--trash);border:2px dashed var(--danger);color:#991b1b;
     padding:6px 10px;border-radius:12px;font-size:16px;user-select:none
   }
-
-  .cap-tools-row{
+  .trash-tools{
     display:flex;
     align-items:center;
-    gap:8px;
+    gap:6px;
     flex-wrap:wrap;
-  }
-  .cap-label{
-    font-size:14px;
-    color:var(--muted);
+    margin-top:4px;
   }
   #capTools{
     display:flex;
@@ -159,7 +155,7 @@
     flex:0 0 auto; min-width:0;
     height:clamp(40px, 6vh, 64px);
     font-size:clamp(26px, 3.4vw, 56px);
-    padding:0;                   /* 🔴 no padding between characters / tiles */
+    padding:0;
     background:transparent; border:none; border-radius:0; box-shadow:none;
   }
 
@@ -187,7 +183,7 @@
     background:#e5e7eb;
     border:1px dashed #9ca3af;
     border-radius:999px;
-    margin:0 var(--inner-gap);  /* visible word gap controlled ONLY by this tile */
+    margin:0 var(--inner-gap);  /* visible gap only when space is present */
   }
 
   /* Punctuation tiles */
@@ -197,10 +193,9 @@
     font-size:24px;
   }
   .slot .tile.punc.in-slot{
-    padding:0;                  /* 🔴 same as text: no padding, so it hugs */
+    padding:0;
     margin:0;
   }
-
 </style>
 </head>
 <body>
@@ -231,9 +226,8 @@
     <div class="row-bottom">
       <div class="note-wrap">
         <small class="note">Consejo: suelta sobre la papelera para borrar.</small>
-        <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
-        <div class="cap-tools-row">
-          <span class="cap-label">Arrastra ↑ / ↓ a una palabra:</span>
+        <div class="trash-tools">
+          <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
           <div id="capTools"></div>
         </div>
       </div>
@@ -504,8 +498,9 @@
     }
 
     capTools.innerHTML = '';
-    capTools.appendChild(makeCapTool('up'));
-    capTools.appendChild(makeCapTool('down'));
+    capTools.appendChild(makeSpaceTile(false));   // space tool
+    capTools.appendChild(makeCapTool('up'));     // ↑
+    capTools.appendChild(makeCapTool('down'));   // ↓
   }
 
   function relayoutSlot(slot){
