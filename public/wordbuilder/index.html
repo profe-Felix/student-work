@@ -7,7 +7,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Andika&wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
 
 <style>
   *{box-sizing:border-box}
@@ -95,13 +95,34 @@
     height:clamp(40px, 6vh, 64px);
   }
 
-  /* Bottom: note + trash stacked on the left */
+  /* Bottom: note + trash + cap tools */
   .row-bottom{margin-top:12px}
   .note-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
   .trash{
     display:inline-flex;align-items:center;gap:8px;
     background:var(--trash);border:2px dashed var(--danger);color:#991b1b;
     padding:6px 10px;border-radius:12px;font-size:16px;user-select:none
+  }
+
+  .cap-tools-row{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+  }
+  .cap-label{
+    font-size:14px;
+    color:var(--muted);
+  }
+  #capTools{
+    display:flex;
+    gap:6px;
+  }
+  .tile.captool{
+    min-width:auto;
+    height:32px;
+    padding:0 10px;
+    font-size:18px;
   }
 
   /* Right palettes */
@@ -128,31 +149,6 @@
     pointer-events:none;
   }
   .tile:active{cursor:grabbing; transform:scale(.98)}
-  .tile .x{
-    position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:999px;
-    background:#fff; border:2px solid var(--danger); color:#ef4444; font-size:14px; display:none;
-    align-items:center; justify-content:center; cursor:pointer
-  }
-  .tile.clone .x{display:flex}
-
-  /* Per-tile case toggle (only on clones) */
-  .tile .case-toggle{
-    position:absolute;
-    top:-8px;
-    left:-8px;
-    width:22px;
-    height:22px;
-    border-radius:999px;
-    border:2px solid #4b5563;
-    background:#fff;
-    color:#111;
-    font-size:14px;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    cursor:pointer;
-    user-select:none;
-  }
 
   .dragging{opacity:.9; box-shadow:0 8px 24px rgba(0,0,0,.15)}
   .highlight{outline:3px solid #a5b4fc; outline-offset:2px}
@@ -166,8 +162,6 @@
     padding:0 6px;
     background:transparent; border:none; border-radius:0; box-shadow:none;
   }
-  .slot .tile.in-slot .x{ top:-6px; right:-6px; }
-  .slot .tile.in-slot .case-toggle{ top:-6px; left:-6px; }
 
   /* Image tiles */
   .tile.img{ padding:4px 6px; min-width:auto; }
@@ -237,6 +231,10 @@
       <div class="note-wrap">
         <small class="note">Consejo: suelta sobre la papelera para borrar.</small>
         <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
+        <div class="cap-tools-row">
+          <span class="cap-label">Arrastra ↑ / ↓ a una palabra:</span>
+          <div id="capTools"></div>
+        </div>
       </div>
     </div>
   </section>
@@ -368,33 +366,25 @@
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn= document.getElementById('validateBtn');
 
+  const capTools = document.getElementById('capTools');
+
   /* reflect current inputs */
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
 
-  /* ===== Case toggle per tile ===== */
-  function toggleTileCase(tile){
-    const current = tile.dataset.case === 'capital' ? 'capital' : 'base';
-    const next = current === 'capital' ? 'base' : 'capital';
-    tile.dataset.case = next;
-
+  /* ===== Capitalization helpers (used by cap tools) ===== */
+  function applyCapToTile(tile, mode){
+    if (!tile || tile.dataset.kind !== 'text') return;
     const base = tile.dataset.base ?? tile.dataset.text ?? '';
     let display = base;
-    if (next === 'capital' && base.length > 0){
+    if (mode === 'up' && base.length > 0){
       display = base.charAt(0).toUpperCase() + base.slice(1);
+    } else if (mode === 'down'){
+      display = base;
     }
-
     tile.dataset.text = display;
     const label = tile.querySelector('.label');
     if (label) label.textContent = display;
-
-    const btn = tile.querySelector('.case-toggle');
-    if (btn){
-      btn.textContent = next === 'capital' ? '↓' : '↑';
-      btn.title = next === 'capital'
-        ? 'Volver a minúscula'
-        : 'Poner inicial mayúscula';
-    }
   }
 
   /* ===== Tile makers ===== */
@@ -404,37 +394,11 @@
     div.dataset.kind = 'text';
     div.dataset.base = text;         // original text
     div.dataset.text = text;         // current text
-    div.dataset.case = 'base';
 
     const label = document.createElement('span');
     label.className = 'label';
     label.textContent = text;
     div.appendChild(label);
-
-    if(isClone){
-      // Delete button
-      const x = document.createElement('div');
-      x.className = 'x'; x.textContent = '×'; x.title = 'Eliminar';
-      x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
-      x.addEventListener('click', (e)=>{
-        e.preventDefault(); e.stopImmediatePropagation();
-        const p = div.parentElement; div.remove();
-        if(p?.classList?.contains('slot')) relayoutSlot(p);
-      });
-      div.appendChild(x);
-
-      // Case toggle button (first letter capital)
-      const toggle = document.createElement('div');
-      toggle.className = 'case-toggle';
-      toggle.textContent = '↑';
-      toggle.title = 'Poner inicial mayúscula';
-      toggle.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
-      toggle.addEventListener('click', (e)=>{
-        e.preventDefault(); e.stopImmediatePropagation();
-        toggleTileCase(div);
-      });
-      div.appendChild(toggle);
-    }
 
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
@@ -453,18 +417,6 @@
     label.textContent = ch;
     div.appendChild(label);
 
-    if (isClone){
-      const x = document.createElement('div');
-      x.className = 'x'; x.textContent = '×'; x.title = 'Eliminar';
-      x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
-      x.addEventListener('click', (e)=>{
-        e.preventDefault(); e.stopImmediatePropagation();
-        const p = div.parentElement; div.remove();
-        if(p?.classList?.contains('slot')) relayoutSlot(p);
-      });
-      div.appendChild(x);
-    }
-
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
@@ -479,17 +431,6 @@
     im.src = url; im.alt = 'img';
     div.appendChild(im);
 
-    if(isClone){
-      const x = document.createElement('div');
-      x.className = 'x'; x.textContent = '×'; x.title = 'Eliminar';
-      x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
-      x.addEventListener('click', (e)=>{
-        e.preventDefault(); e.stopImmediatePropagation();
-        const p = div.parentElement; div.remove();
-        if(p?.classList?.contains('slot')) relayoutSlot(p);
-      });
-      div.appendChild(x);
-    }
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
@@ -499,18 +440,20 @@
     div.className = 'tile space' + (isClone ? ' clone' : '');
     div.dataset.kind = 'space';
     div.dataset.text = ' ';
-    if(isClone){
-      const x = document.createElement('div');
-      x.className = 'x'; x.textContent = '×'; x.title = 'Eliminar';
-      x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
-      x.addEventListener('click', (e)=>{
-        e.preventDefault(); e.stopImmediatePropagation();
-        const p = div.parentElement; div.remove();
-        if(p?.classList?.contains('slot')) relayoutSlot(p);
-      });
-      div.appendChild(x);
-    }
     makeDraggable(div, { cloneOnDrag: !isClone });
+    return div;
+  }
+
+  function makeCapTool(mode){
+    const div = document.createElement('div');
+    div.className = 'tile captool';
+    div.dataset.kind = 'captool';
+    div.dataset.tool = mode; // 'up' or 'down'
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = mode === 'up' ? '↑' : '↓';
+    div.appendChild(label);
+    makeDraggable(div, { cloneOnDrag:true });
     return div;
   }
 
@@ -573,6 +516,11 @@
     if (IMAGES_ON) {
       IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
     }
+
+    // Cap tools
+    capTools.innerHTML = '';
+    capTools.appendChild(makeCapTool('up'));
+    capTools.appendChild(makeCapTool('down'));
   }
 
   /* ===== Layout inside slots ===== */
@@ -593,15 +541,17 @@
 
     el.addEventListener('pointerdown', (e)=>{
       if(e.button!==0) return;
-      if (e.target && e.target.closest && (e.target.closest('.x') || e.target.closest('.case-toggle'))) return; // clicking ✕ or arrow → no drag
 
       const src = e.currentTarget;
-      const isPalette = [spaceTray, lettersTray, syllTray, wordsTray, puncTray, picsTray].includes(src.parentElement);
+      const isPalette = [
+        spaceTray, lettersTray, syllTray, wordsTray, puncTray, picsTray, capTools
+      ].includes(src.parentElement);
       let dragEl;
       if (cloneOnDrag && isPalette){
         if (src.dataset.kind === 'img') dragEl = makeImageTile(src.dataset.src, true);
         else if (src.dataset.kind === 'space') dragEl = makeSpaceTile(true);
         else if (src.dataset.kind === 'punc') dragEl = makePuncTile(src.dataset.text, true);
+        else if (src.dataset.kind === 'captool') dragEl = makeCapTool(src.dataset.tool);
         else dragEl = makeTextTile(src.dataset.text, true);
       } else {
         dragEl = src;
@@ -640,9 +590,11 @@
     document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
     const t = document.elementFromPoint(e.clientX, e.clientY);
     const slot = t?.closest?.('.slot');
-    if(slot) slot.classList.add('highlight');
+    if(slot && drag.el.dataset.kind !== 'captool') slot.classList.add('highlight');
 
-    trashEl.classList.toggle('highlight', !!t?.closest?.('#trash'));
+    trashEl.classList.toggle('highlight',
+      drag.el.dataset.kind !== 'captool' && !!t?.closest?.('#trash')
+    );
   }
 
   // Insert el into slot at the position nearest to clientX
@@ -664,6 +616,21 @@
     if(!drag || e.pointerId!==drag.pointerId) return;
 
     const t = document.elementFromPoint(e.clientX, e.clientY);
+
+    // If we are dragging a capitalization tool, apply to word tile and bail.
+    if (drag.el.dataset.kind === 'captool'){
+      const wordTile = t?.closest?.('.tile[data-kind="text"]');
+      if (wordTile){
+        const mode = drag.el.dataset.tool === 'down' ? 'down' : 'up';
+        applyCapToTile(wordTile, mode);
+      }
+      drag.el.remove(); // remove the cloned tool
+      document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
+      trashEl.classList.remove('highlight');
+      cleanup();
+      return;
+    }
+
     const onTrash = !!t?.closest?.('#trash');
     const slot = t?.closest?.('.slot');
 
@@ -700,7 +667,7 @@
 
   function onCancel(){
     if(!drag) return;
-    if(drag.fromPalette){
+    if(drag.fromPalette || drag.el.dataset.kind === 'captool'){
       drag.el.remove();
     } else if (drag.originParent){
       drag.originParent.appendChild(drag.el);
