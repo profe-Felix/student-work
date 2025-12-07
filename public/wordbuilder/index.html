@@ -15,18 +15,20 @@
     --bg:#fafbff; --grid:#eef1f7; --ink:#111; --muted:#6b7280; --brand:#2563eb;
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
     --trash:#fee2e2; --danger:#ef4444;
-    --gap:12px;              /* gap between word boxes / rows */
-    --inner-gap:10px;        /* logical gap for space pill */
-    --tile-min-w:48px;       /* palette text tile base size */
+    --gap:12px;
+    --inner-gap:10px;
+    --tile-min-w:48px;
     --tile-h:48px;
     --tile-fs:28px;
-    --tray-cols: 10;         /* items per row in right palettes (URL-overridable) */
-    --space-w: 1.8ch;        /* width of space when dropped */
+    --tray-cols:10;
+    --space-w:1.8ch;
   }
   html,body{height:100%}
   body{
-    margin:0; font:18px/1.35 Andika, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-    color:var(--ink); background:
+    margin:0;
+    font:18px/1.35 Andika, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    color:var(--ink);
+    background:
       linear-gradient(0deg, transparent calc(100% - 1px), var(--grid) 1px),
       linear-gradient(90deg, transparent calc(100% - 1px), var(--grid) 1px),
       var(--bg);
@@ -48,7 +50,6 @@
   main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
   @media (max-width:1000px){ main{grid-template-columns:1fr} }
 
-  /* Board */
   .board{
     background:var(--drop);
     border:2px solid var(--drop-border);
@@ -56,7 +57,6 @@
     padding:12px;
   }
 
-  /* Rows-based board (no CSS grid) */
   .slots{
     display:flex;
     flex-direction:column;
@@ -79,7 +79,7 @@
     border-radius:12px;
     padding:6px 8px;
     display:inline-flex;
-    gap:0;                      /* NO visual gap between tiles */
+    gap:0; /* no automatic gaps; only spaces create gaps */
     align-items:center;
     justify-content:flex-start;
     flex-wrap:nowrap;
@@ -95,25 +95,30 @@
     height:clamp(40px, 6vh, 64px);
   }
 
-  /* Bottom: note + trash */
   .row-bottom{margin-top:12px}
   .note-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+  .trash-row{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+  }
   .trash{
     display:inline-flex;align-items:center;gap:8px;
     background:var(--trash);border:2px dashed var(--danger);color:#991b1b;
     padding:6px 10px;border-radius:12px;font-size:16px;user-select:none
   }
 
-  /* Right palettes */
   .palettes{display:grid;grid-template-columns:1fr;gap:14px}
   .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
-  .card h2{font-size:18px;margin:0}
+  .card h2{margin:0;font-size:18px}
   .card small{color:var(--muted)}
   .tray{
     display:grid;
-    grid-template-columns: repeat(var(--tray-cols), max-content);
+    grid-template-columns:repeat(var(--tray-cols), max-content);
     gap:8px;
   }
+
   .card-header{
     display:flex;
     align-items:center;
@@ -126,7 +131,6 @@
     gap:4px;
   }
 
-  /* Text tiles */
   .tile{
     user-select:none; -webkit-user-drag:none; touch-action:none;
     display:inline-flex; align-items:center; justify-content:center;
@@ -136,12 +140,10 @@
     transition:transform .05s ease;
   }
   .tile:active{cursor:grabbing; transform:scale(.98)}
-
   .dragging{opacity:.9; box-shadow:0 8px 24px rgba(0,0,0,.15)}
   .highlight{outline:3px solid #a5b4fc; outline-offset:2px}
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-  /* In-slot compact look (true text run) */
   .slot .tile.in-slot{
     flex:0 0 auto; min-width:0;
     height:clamp(40px, 6vh, 64px);
@@ -150,13 +152,11 @@
     background:transparent; border:none; border-radius:0; box-shadow:none;
   }
 
-  /* Image tiles */
   .tile.img{ padding:4px 6px; min-width:auto; }
   .tile.img img{ display:block; max-height:var(--tile-h); height:auto; width:auto; max-width:160px; }
   .slot .tile.img.in-slot{ background:transparent; border:none; padding:0 4px; }
   .slot .tile.img.in-slot img{ max-height:clamp(40px, 6vh, 64px); border-radius:6px; }
 
-  /* Space tile */
   .tile.space{
     border-style:dashed;
     background:#f3f4f6;
@@ -170,14 +170,13 @@
     min-width:var(--space-w);
     padding:0;
     height:clamp(40px, 6vh, 64px);
-    font-size:0;                /* hide ␣ glyph but keep pill */
+    font-size:0;
     background:#e5e7eb;
     border:1px dashed #9ca3af;
     border-radius:999px;
-    margin:0 var(--inner-gap);  /* visible gap ONLY for spaces */
+    margin:0 var(--inner-gap);
   }
 
-  /* Punctuation tiles */
   .tile.punc{
     min-width:auto;
     padding:0 8px;
@@ -185,10 +184,9 @@
   }
   .slot .tile.punc.in-slot{
     padding:0;
-    margin:0;              /* no extra gap */
+    margin:0;
   }
 
-  /* Tools (caps + accent) */
   .tile.captool,
   .tile.accenttool{
     min-width:auto;
@@ -220,18 +218,19 @@
 </header>
 
 <main>
-  <!-- LEFT: Word building board -->
   <section class="board">
     <div id="slots" class="slots"></div>
     <div class="row-bottom">
       <div class="note-wrap">
         <small class="note">Consejo: suelta sobre la papelera para borrar.</small>
-        <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
+        <div class="trash-row">
+          <div id="trash" class="trash" aria-label="Papelera">🗑️ Papelera</div>
+          <div id="trashSpace"></div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- RIGHT: Palettes -->
   <aside class="palettes">
     <div class="card" id="spaceCard">
       <h2>Espacio</h2>
@@ -276,10 +275,8 @@
 </main>
 
 <script>
-  /* ===== URL options ===== */
   const qs = new URLSearchParams(location.search);
 
-  /* Helpers */
   function clampInt(val, fallback, min, max){
     const n = parseInt(val, 10);
     if (Number.isFinite(n)) return Math.max(min, Math.min(max, n));
@@ -300,20 +297,14 @@
     return !['0','off','false','none','no'].includes(lo);
   }
 
-  const BOXES_PER_ROW = clampInt(
-    qs.get('boxCols') ?? qs.get('boxes') ?? qs.get('columns'),
-    4, 1, 12
-  );
-  const NUM_ROWS = clampInt(
-    qs.get('boxRows') ?? qs.get('rows') ?? qs.get('r'),
-    1, 1, 50
-  );
-  const BOX_COUNT = clampInt(qs.get('boxCount') ?? qs.get('count'), null, 1, 500);
+  const BOXES_PER_ROW = clampInt(qs.get('boxCols') ?? qs.get('boxes') ?? qs.get('columns'), 4, 1, 12);
+  const NUM_ROWS      = clampInt(qs.get('boxRows') ?? qs.get('rows') ?? qs.get('r'), 1, 1, 50);
+  const BOX_COUNT     = clampInt(qs.get('boxCount') ?? qs.get('count'), null, 1, 500);
 
   const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
   if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
 
-  const SPACE_ON = getToggle('space', true);
+  const SPACE_ON  = getToggle('space', true);
   const IMAGES_ON = getToggle(['images','imgs','pics','pictures'], true);
 
   const spaceW = parseFloat(qs.get('spacew'));
@@ -321,7 +312,6 @@
     document.documentElement.style.setProperty('--space-w', `${spaceW}ch`);
   }
 
-  /* ===== Data ===== */
   const DEFAULT_LETTERS = [
     'ó','o','m','t','n','g','qu',
     'á','a','p','d','f','ch','z',
@@ -329,34 +319,34 @@
     'ú','u','l','c','j','v','y',
     'é','e','ll','k','w','x'
   ];
-  const DEFAULT_SYLL = ['ma','me','mi','mo','mu','la','le','li','lo','lu','pa','pe','pi','po','pu','sa','se','si','so','su','bra','bre','bri','bro','bru','cha','che','chi','cho','chu','que','qui'];
+  const DEFAULT_SYLL  = ['ma','me','mi','mo','mu','la','le','li','lo','lu','pa','pe','pi','po','pu','sa','se','si','so','su','bra','bre','bri','bro','bru','cha','che','chi','cho','chu','que','qui'];
   const DEFAULT_WORDS = ['yo','tú','mi','la','el','un','una','me','te','va','no','sí'];
-  const DEFAULT_PUNC = ['¿','?','¡','!',',','.'];
+  const DEFAULT_PUNC  = ['¿','?','¡','!',',','.'];
 
-  const LETTERS = getList('letters', DEFAULT_LETTERS);
-  const SYLL = getList(['syll','syllables'], DEFAULT_SYLL);
-  const WORDS = getList(['words','word'], DEFAULT_WORDS);
-  const PUNC = getList(['punc','punct','punctuation'], DEFAULT_PUNC);
+  const LETTERS  = getList('letters', DEFAULT_LETTERS);
+  const SYLL     = getList(['syll','syllables'], DEFAULT_SYLL);
+  const WORDS    = getList(['words','word'], DEFAULT_WORDS);
+  const PUNC     = getList(['punc','punct','punctuation'], DEFAULT_PUNC);
   const IMG_URLS = getList(['imgs','images','pics','pictures'], []);
 
-  /* DOM refs */
-  const slotsEl = document.getElementById('slots');
-  const trashEl = document.getElementById('trash');
+  const slotsEl       = document.getElementById('slots');
+  const trashEl       = document.getElementById('trash');
+  const trashSpaceEl  = document.getElementById('trashSpace');
 
   const spaceCard = document.getElementById('spaceCard');
   const spaceTray = document.getElementById('spaceTray');
 
   const lettersTray = document.getElementById('lettersTray');
-  const syllTray   = document.getElementById('syllTray');
-  const wordsTray  = document.getElementById('wordsTray');
-  const puncTray   = document.getElementById('puncTray');
-  const picsTray   = document.getElementById('picsTray');
+  const syllTray    = document.getElementById('syllTray');
+  const wordsTray   = document.getElementById('wordsTray');
+  const puncTray    = document.getElementById('puncTray');
+  const picsTray    = document.getElementById('picsTray');
 
   const lettersCard = document.getElementById('lettersCard');
-  const syllCard   = document.getElementById('syllCard');
-  const wordsCard  = document.getElementById('wordsCard');
-  const puncCard   = document.getElementById('puncCard');
-  const picsCard   = document.getElementById('picsCard');
+  const syllCard    = document.getElementById('syllCard');
+  const wordsCard   = document.getElementById('wordsCard');
+  const puncCard    = document.getElementById('puncCard');
+  const picsCard    = document.getElementById('picsCard');
 
   const lettersTools = document.getElementById('lettersTools');
   const syllTools    = document.getElementById('syllTools');
@@ -370,19 +360,15 @@
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
 
-  /* ===== Caps + accent helpers ===== */
   function applyCapToTile(tile, mode){
     if (!tile || tile.dataset.kind !== 'text') return;
     const cur = tile.dataset.text ?? tile.textContent ?? '';
     if (!cur) return;
-    let out;
-    if (mode === 'up'){
-      out = cur[0].toUpperCase() + cur.slice(1);
-    } else {
-      out = cur[0].toLowerCase() + cur.slice(1);
-    }
+    const first = cur[0];
+    const rest  = cur.slice(1);
+    const out = (mode === 'up' ? first.toUpperCase() : first.toLowerCase()) + rest;
     tile.dataset.text = out;
-    tile.textContent = out;
+    tile.textContent  = out;
   }
 
   const plainToAcc = { a:'á', e:'é', i:'í', o:'ó', u:'ú',
@@ -392,39 +378,62 @@
 
   function applyAccentAtPointer(tile, clientX){
     if (!tile || tile.dataset.kind !== 'text') return;
+
     const cur = tile.dataset.text ?? tile.textContent ?? '';
     const len = cur.length;
     if (!len) return;
 
     const rect = tile.getBoundingClientRect();
-    const relX = clientX - rect.left;
-    const charWidth = rect.width / len || 1;
-    let idx = Math.floor(relX / charWidth);
-    if (idx < 0) idx = 0;
-    if (idx >= len) idx = len - 1;
+    // clamp X inside tile
+    const safeWidth = rect.width || 1;
+    let relX = clientX - rect.left;
+    if (relX < 0) relX = 0;
+    if (relX > safeWidth) relX = safeWidth;
+
+    let approx = Math.floor((relX / safeWidth) * len);
+    if (approx < 0) approx = 0;
+    if (approx >= len) approx = len - 1;
 
     const chars = [...cur];
+    const isAccentable = (ch) => !!plainToAcc[ch] || !!accToPlain[ch];
+
+    let idx = approx;
+    if (!isAccentable(chars[idx])) {
+      let best = -1;
+      let bestDist = Infinity;
+      for (let i = 0; i < len; i++){
+        if (!isAccentable(chars[i])) continue;
+        const d = Math.abs(i - approx);
+        if (d < bestDist){
+          bestDist = d;
+          best = i;
+        }
+      }
+      if (best === -1) return; // no vowels to accent
+      idx = best;
+    }
+
     const c = chars[idx];
 
     if (plainToAcc[c]) {
-      chars[idx] = plainToAcc[c];
+      chars[idx] = plainToAcc[c];      // add accent
     } else if (accToPlain[c]) {
-      chars[idx] = accToPlain[c];
+      chars[idx] = accToPlain[c];      // remove accent
     } else {
-      return; // not a vowel we handle
+      return;
     }
+
     const out = chars.join('');
     tile.dataset.text = out;
-    tile.textContent = out;
+    tile.textContent  = out;
   }
 
-  /* ===== Tile makers ===== */
   function makeTextTile(text, isClone=false){
     const div = document.createElement('div');
     div.className = 'tile' + (isClone ? ' clone' : '');
     div.dataset.kind = 'text';
     div.dataset.text = text;
-    div.textContent = text;
+    div.textContent  = text;
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
@@ -434,7 +443,7 @@
     div.className = 'tile punc' + (isClone ? ' clone' : '');
     div.dataset.kind = 'punc';
     div.dataset.text = ch;
-    div.textContent = ch;
+    div.textContent  = ch;
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
@@ -444,11 +453,10 @@
     div.className = 'tile img' + (isClone ? ' clone' : '');
     div.dataset.kind = 'img';
     div.dataset.src = url;
-
     const im = document.createElement('img');
-    im.src = url; im.alt = 'img';
+    im.src = url;
+    im.alt = 'img';
     div.appendChild(im);
-
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
@@ -467,7 +475,7 @@
     div.className = 'tile captool';
     div.dataset.kind = 'captool';
     div.dataset.mode = mode;
-    div.textContent = mode === 'up' ? '↑' : '↓';
+    div.textContent  = mode === 'up' ? '↑' : '↓';
     makeDraggable(div, { cloneOnDrag:true });
     return div;
   }
@@ -476,18 +484,16 @@
     const div = document.createElement('div');
     div.className = 'tile accenttool';
     div.dataset.kind = 'accenttool';
-    div.textContent = '´';
+    div.textContent  = '´';
     makeDraggable(div, { cloneOnDrag:true });
     return div;
   }
 
-  /* ===== Board & palettes ===== */
   function buildRows(boxesPerRow, numRows, countOverride){
     let rows = numRows;
     if (Number.isFinite(countOverride)) {
       rows = Math.max(1, Math.ceil(countOverride / boxesPerRow));
     }
-
     slotsEl.innerHTML = '';
     let index = 0;
     for (let r = 0; r < rows; r++){
@@ -496,7 +502,6 @@
       const boxesThisRow = Number.isFinite(countOverride)
         ? Math.min(boxesPerRow, Math.max(0, countOverride - r*boxesPerRow))
         : boxesPerRow;
-
       for (let c = 0; c < boxesThisRow; c++){
         const s = document.createElement('div');
         s.className = 'slot';
@@ -508,39 +513,33 @@
   }
 
   function fillPalettes(){
-    // Space
     spaceTray.innerHTML = '';
     spaceCard.style.display = SPACE_ON ? '' : 'none';
     if (SPACE_ON) spaceTray.appendChild(makeSpaceTile(false));
 
-    // Letters
     lettersTray.innerHTML = '';
     lettersCard.style.display = LETTERS.length ? '' : 'none';
     LETTERS.forEach(t => lettersTray.appendChild(makeTextTile(t, false)));
 
-    // Syllables
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
     SYLL.forEach(t => syllTray.appendChild(makeTextTile(t, false)));
 
-    // Words
     wordsTray.innerHTML = '';
     wordsCard.style.display = WORDS.length ? '' : 'none';
     WORDS.forEach(w => wordsTray.appendChild(makeTextTile(w, false)));
 
-    // Punctuation
     puncTray.innerHTML = '';
     puncCard.style.display = PUNC.length ? '' : 'none';
     PUNC.forEach(ch => puncTray.appendChild(makePuncTile(ch, false)));
 
-    // Pictures
     picsTray.innerHTML = '';
     picsCard.style.display = IMAGES_ON ? '' : 'none';
-    if (IMAGES_ON) {
-      IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
-    }
+    if (IMAGES_ON) IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
 
-    // Tools next to headers
+    trashSpaceEl.innerHTML = '';
+    trashSpaceEl.appendChild(makeSpaceTile(false));
+
     function attachTools(container){
       container.innerHTML = '';
       container.appendChild(makeCapTool('up'));
@@ -560,7 +559,6 @@
     document.querySelectorAll('.slot').forEach(relayoutSlot);
   }
 
-  /* ===== Drag & drop (restored logic) ===== */
   let drag = null;
 
   function makeDraggable(el, opts){
@@ -572,31 +570,25 @@
 
       const src = e.currentTarget;
       const parent = src.parentElement;
-      const isPalette =
-        parent === spaceTray ||
-        parent === lettersTray ||
-        parent === syllTray ||
-        parent === wordsTray ||
-        parent === puncTray ||
-        parent === picsTray ||
-        parent === lettersTools ||
-        parent === syllTools ||
-        parent === wordsTools;
+      const isPalette = [
+        spaceTray, lettersTray, syllTray, wordsTray, puncTray, picsTray,
+        trashSpaceEl, lettersTools, syllTools, wordsTools
+      ].includes(parent);
 
       let dragEl;
       if (cloneOnDrag && isPalette){
-        const kind = src.dataset.kind;
-        if (kind === 'img') dragEl = makeImageTile(src.dataset.src, true);
-        else if (kind === 'space') dragEl = makeSpaceTile(true);
-        else if (kind === 'punc') dragEl = makePuncTile(src.dataset.text, true);
-        else if (kind === 'captool') dragEl = makeCapTool(src.dataset.mode);
-        else if (kind === 'accenttool') dragEl = makeAccentTool();
+        const k = src.dataset.kind;
+        if (k === 'img') dragEl = makeImageTile(src.dataset.src, true);
+        else if (k === 'space') dragEl = makeSpaceTile(true);
+        else if (k === 'punc') dragEl = makePuncTile(src.dataset.text, true);
+        else if (k === 'captool') dragEl = makeCapTool(src.dataset.mode);
+        else if (k === 'accenttool') dragEl = makeAccentTool();
         else dragEl = makeTextTile(src.dataset.text, true);
       } else {
         dragEl = src;
       }
 
-      if(dragEl !== src && isPalette){
+      if (dragEl !== src && isPalette){
         document.body.appendChild(dragEl);
       }
 
@@ -630,7 +622,7 @@
     const t = document.elementFromPoint(e.clientX, e.clientY);
     const slot = t?.closest?.('.slot');
     const kind = drag.el.dataset.kind;
-    if(slot && kind !== 'captool' && kind !== 'accenttool') slot.classList.add('highlight');
+    if (slot && kind !== 'captool' && kind !== 'accenttool') slot.classList.add('highlight');
 
     trashEl.classList.toggle(
       'highlight',
@@ -652,36 +644,34 @@
     else slot.appendChild(el);
   }
 
+  function cleanupHighlights(){
+    document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
+    trashEl.classList.remove('highlight');
+  }
+
   function onUp(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
     const t = document.elementFromPoint(e.clientX, e.clientY);
     const kind = drag.el.dataset.kind;
 
-    /* Special case: caps tool */
     if (kind === 'captool'){
       const tile = t?.closest?.('.tile[data-kind="text"]');
-      if (tile){
-        applyCapToTile(tile, drag.el.dataset.mode === 'down' ? 'down' : 'up');
-      }
+      if (tile) applyCapToTile(tile, drag.el.dataset.mode === 'down' ? 'down' : 'up');
       drag.el.remove();
       cleanupHighlights();
       cleanup();
       return;
     }
 
-    /* Special case: accent tool (per-letter based on drop X) */
     if (kind === 'accenttool'){
       const tile = t?.closest?.('.tile[data-kind="text"]');
-      if (tile){
-        applyAccentAtPointer(tile, e.clientX);
-      }
+      if (tile) applyAccentAtPointer(tile, e.clientX);
       drag.el.remove();
       cleanupHighlights();
       cleanup();
       return;
     }
 
-    /* Normal tiles (letters, syllables, words, spaces, punc, images) */
     const onTrash = !!t?.closest?.('#trash');
     const slot = t?.closest?.('.slot');
 
@@ -715,11 +705,6 @@
     cleanup();
   }
 
-  function cleanupHighlights(){
-    document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
-    trashEl.classList.remove('highlight');
-  }
-
   function onCancel(){
     if(!drag) return;
     if(drag.fromPalette ||
@@ -739,8 +724,7 @@
     drag = null;
   }
 
-  /* Pics: drop/paste */
-  ;['dragenter','dragover'].forEach(ev=>{
+  ['dragenter','dragover'].forEach(ev=>{
     picsTray.addEventListener(ev, e=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; });
   });
   picsTray.addEventListener('drop', async e=>{
@@ -764,7 +748,6 @@
     });
   });
 
-  /* Validate */
   validateBtn.addEventListener('click', ()=>{
     const result = [];
     document.querySelectorAll('.slot').forEach(slot=>{
@@ -780,7 +763,7 @@
         } else if (k === 'punc') {
           const ch = t.dataset.text || t.textContent || '';
           if (',.?!'.includes(ch)) {
-            s = s.replace(/\s+$/,''); // remove trailing space before punctuation
+            s = s.replace(/\s+$/,'');
             s += ch;
           } else if ('¿¡'.includes(ch)) {
             s += ch;
@@ -794,15 +777,13 @@
     alert('Cajas:\n' + result.map((w,i)=>`#${i+1}: ${w || '—'}`).join('\n'));
   });
 
-  /* Apply */
   applyBoxes.addEventListener('click', ()=>{
     const boxesPer = clampInt(boxesInput.value, BOXES_PER_ROW, 1, 12);
-    const rows = clampInt(rowsInput.value,  NUM_ROWS, 1, 50);
+    const rows     = clampInt(rowsInput.value,  NUM_ROWS,      1, 50);
     buildRows(boxesPer, rows, null);
     relayoutAllSlots();
   });
 
-  /* Boot */
   buildRows(BOXES_PER_ROW, NUM_ROWS, BOX_COUNT);
   fillPalettes();
   relayoutAllSlots();
