@@ -7,7 +7,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Andika&wght@400;700&display=swap" rel="stylesheet">
 
 <style>
   *{box-sizing:border-box}
@@ -193,6 +193,19 @@
     background:transparent;
     border:none;
   }
+
+  /* Punctuation tiles */
+  .tile.punc{
+    min-width:auto;
+    padding:0 8px;
+    font-size:24px;
+  }
+  .slot .tile.punc.in-slot[data-punc-pos="pre"]{
+    margin-right:calc(-1 * var(--inner-gap));  /* hug word after */
+  }
+  .slot .tile.punc.in-slot[data-punc-pos="post"]{
+    margin-left:calc(-1 * var(--inner-gap));   /* hug word before */
+  }
 </style>
 </head>
 <body>
@@ -245,6 +258,10 @@
     <div class="card" id="wordsCard">
       <h2>Palabras</h2>
       <div id="wordsTray" class="tray"></div>
+    </div>
+    <div class="card" id="puncCard">
+      <h2>Puntuación</h2>
+      <div id="puncTray" class="tray"></div>
     </div>
     <div class="card" id="picsCard">
       <h2>Imágenes</h2>
@@ -319,10 +336,12 @@
   ];
   const DEFAULT_SYLL = ['ma','me','mi','mo','mu','la','le','li','lo','lu','pa','pe','pi','po','pu','sa','se','si','so','su','bra','bre','bri','bro','bru','cha','che','chi','cho','chu','que','qui'];
   const DEFAULT_WORDS = ['yo','tú','mi','la','el','un','una','me','te','va','no','sí'];
+  const DEFAULT_PUNC = ['¿','?','¡','!',',','.'];
 
   const LETTERS = getList('letters', DEFAULT_LETTERS);
   const SYLL = getList(['syll','syllables'], DEFAULT_SYLL);
   const WORDS = getList(['words','word'], DEFAULT_WORDS);
+  const PUNC = getList(['punc','punct','punctuation'], DEFAULT_PUNC);
   const IMG_URLS = getList(['imgs','images','pics','pictures'], []); // optional
 
   /* ===== DOM refs ===== */
@@ -335,11 +354,13 @@
   const lettersTray = document.getElementById('lettersTray');
   const syllTray = document.getElementById('syllTray');
   const wordsTray = document.getElementById('wordsTray');
+  const puncTray = document.getElementById('puncTray');
   const picsTray = document.getElementById('picsTray');
 
   const lettersCard = document.getElementById('lettersCard');
   const syllCard   = document.getElementById('syllCard');
   const wordsCard  = document.getElementById('wordsCard');
+  const puncCard   = document.getElementById('puncCard');
   const picsCard   = document.getElementById('picsCard');
 
   const boxesInput = document.getElementById('boxesInput');
@@ -413,6 +434,35 @@
         toggleTileCase(div);
       });
       div.appendChild(toggle);
+    }
+
+    makeDraggable(div, { cloneOnDrag: !isClone });
+    return div;
+  }
+
+  function makePuncTile(ch, isClone=false){
+    const div = document.createElement('div');
+    div.className = 'tile punc' + (isClone ? ' clone' : '');
+    div.dataset.kind = 'punc';
+    div.dataset.text = ch;
+    // classification for visual hugging
+    div.dataset.puncPos = (ch === '¿' || ch === '¡') ? 'pre' : 'post';
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = ch;
+    div.appendChild(label);
+
+    if (isClone){
+      const x = document.createElement('div');
+      x.className = 'x'; x.textContent = '×'; x.title = 'Eliminar';
+      x.addEventListener('pointerdown', (e)=>{ e.preventDefault(); e.stopImmediatePropagation(); });
+      x.addEventListener('click', (e)=>{
+        e.preventDefault(); e.stopImmediatePropagation();
+        const p = div.parentElement; div.remove();
+        if(p?.classList?.contains('slot')) relayoutSlot(p);
+      });
+      div.appendChild(x);
     }
 
     makeDraggable(div, { cloneOnDrag: !isClone });
@@ -512,6 +562,11 @@
     wordsCard.style.display = WORDS.length ? '' : 'none';
     WORDS.forEach(w => wordsTray.appendChild(makeTextTile(w, false)));
 
+    // Punctuation
+    puncTray.innerHTML = '';
+    puncCard.style.display = PUNC.length ? '' : 'none';
+    PUNC.forEach(ch => puncTray.appendChild(makePuncTile(ch, false)));
+
     // Pictures (toggleable)
     picsTray.innerHTML = '';
     picsCard.style.display = IMAGES_ON ? '' : 'none';
@@ -541,11 +596,12 @@
       if (e.target && e.target.closest && (e.target.closest('.x') || e.target.closest('.case-toggle'))) return; // clicking ✕ or arrow → no drag
 
       const src = e.currentTarget;
-      const isPalette = [spaceTray, lettersTray, syllTray, wordsTray, picsTray].includes(src.parentElement);
+      const isPalette = [spaceTray, lettersTray, syllTray, wordsTray, puncTray, picsTray].includes(src.parentElement);
       let dragEl;
       if (cloneOnDrag && isPalette){
         if (src.dataset.kind === 'img') dragEl = makeImageTile(src.dataset.src, true);
         else if (src.dataset.kind === 'space') dragEl = makeSpaceTile(true);
+        else if (src.dataset.kind === 'punc') dragEl = makePuncTile(src.dataset.text, true);
         else dragEl = makeTextTile(src.dataset.text, true);
       } else {
         dragEl = src;
@@ -691,9 +747,25 @@
       let s = '';
       [...slot.querySelectorAll('.tile')].forEach(t=>{
         const k = t.dataset.kind;
-        if (k === 'text') s += t.dataset.text ?? '';
-        else if (k === 'space') s += ' ';
-        else if (k === 'img') s += (s.endsWith(' ') ? '' : ' ') + '[img]' + ' ';
+        if (k === 'text') {
+          s += t.dataset.text ?? '';
+        } else if (k === 'space') {
+          s += ' ';
+        } else if (k === 'img') {
+          s += (s.endsWith(' ') ? '' : ' ') + '[img]' + ' ';
+        } else if (k === 'punc') {
+          const ch = t.dataset.text || '';
+          if (',.?!'.includes(ch)) {
+            // trailing: remove spaces before punctuation
+            s = s.replace(/\s+$/,'');
+            s += ch;
+          } else if ('¿¡'.includes(ch)) {
+            // leading: just append, user controls spaces after with space tiles
+            s += ch;
+          } else {
+            s += ch;
+          }
+        }
       });
       result.push(s.trim());
     });
