@@ -663,14 +663,21 @@
       return;
     }
 
-    if (kind === 'accenttool'){
-      const tile = t?.closest?.('.tile[data-kind="text"]');
-      if (tile) applyAccentAtPointer(tile, e.clientX);
-      drag.el.remove();
-      cleanupHighlights();
-      cleanup();
-      return;
-    }
+if (kind === 'accenttool'){
+  const tile = t?.closest?.('.tile[data-kind="text"]');
+  if (tile) {
+    // Use the center of the accent tile, not the mouse cursor,
+    // so the little ´ is what you line up with the letter.
+    const accRect = drag.el.getBoundingClientRect();
+    const centerX = accRect.left + accRect.width / 2;
+    applyAccentAtPointer(tile, centerX);
+  }
+  drag.el.remove();
+  cleanupHighlights();
+  cleanup();
+  return;
+}
+
 
     const onTrash = !!t?.closest?.('#trash');
     const slot = t?.closest?.('.slot');
