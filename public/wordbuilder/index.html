@@ -114,7 +114,8 @@
     display:flex;
     gap:6px;
   }
-  .tile.captool{
+  .tile.captool,
+  .tile.accenttool{
     min-width:auto;
     height:32px;
     padding:0 10px;
@@ -154,6 +155,9 @@
   }
   .tile .label{
     pointer-events:none;
+  }
+  .char-span{
+    /* inline spans for each character */
   }
   .tile:active{cursor:grabbing; transform:scale(.98)}
 
@@ -389,19 +393,59 @@
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
 
-  /* Capitalization via tools */
+  /* ===== Text rendering (per-letter spans) ===== */
+  function renderTextLabel(tile){
+    const label = tile.querySelector('.label');
+    if (!label) return;
+    const text = tile.dataset.text ?? '';
+    label.innerHTML = '';
+    for (const ch of [...text]){
+      const span = document.createElement('span');
+      span.className = 'char-span';
+      span.textContent = ch;
+      label.appendChild(span);
+    }
+  }
+
+  /* Capitalization via tools (uses current text, keeps accents) */
   function applyCapToTile(tile, mode){
     if (!tile || tile.dataset.kind !== 'text') return;
-    const base = tile.dataset.base ?? tile.dataset.text ?? '';
-    let display = base;
-    if (mode === 'up' && base.length > 0){
-      display = base.charAt(0).toUpperCase() + base.slice(1);
-    } else if (mode === 'down'){
-      display = base;
+    const cur = tile.dataset.text ?? '';
+    if (!cur) return;
+    let display;
+    if (mode === 'up'){
+      display = cur[0].toUpperCase() + cur.slice(1);
+    } else { // down
+      display = cur[0].toLowerCase() + cur.slice(1);
     }
     tile.dataset.text = display;
-    const label = tile.querySelector('.label');
-    if (label) label.textContent = display;
+    renderTextLabel(tile);
+  }
+
+  /* Accent toggle on specific character index */
+  const plainToAcc = { a:'á', e:'é', i:'í', o:'ó', u:'ú',
+                       A:'Á', E:'É', I:'Í', O:'Ó', U:'Ú' };
+  const accToPlain = { á:'a', é:'e', í:'i', ó:'o', ú:'u',
+                       Á:'A', É:'E', Í:'I', Ó:'O', Ú:'U' };
+
+  function applyAccentAt(tile, index){
+    if (!tile || tile.dataset.kind !== 'text') return;
+    const cur = tile.dataset.text ?? '';
+    const chars = [...cur];
+    if (index < 0 || index >= chars.length) return;
+    const c = chars[index];
+
+    if (plainToAcc[c]) {
+      chars[index] = plainToAcc[c];       // add accent
+    } else if (accToPlain[c]) {
+      chars[index] = accToPlain[c];       // remove accent
+    } else {
+      return; // not a vowel we handle
+    }
+
+    const next = chars.join('');
+    tile.dataset.text = next;
+    renderTextLabel(tile);
   }
 
   /* Tile makers */
@@ -409,13 +453,12 @@
     const div = document.createElement('div');
     div.className = 'tile' + (isClone ? ' clone' : '');
     div.dataset.kind = 'text';
-    div.dataset.base = text;
     div.dataset.text = text;
 
     const label = document.createElement('span');
     label.className = 'label';
-    label.textContent = text;
     div.appendChild(label);
+    renderTextLabel(div);
 
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
@@ -468,6 +511,18 @@
     const label = document.createElement('span');
     label.className = 'label';
     label.textContent = mode === 'up' ? '↑' : '↓';
+    div.appendChild(label);
+    makeDraggable(div, { cloneOnDrag:true });
+    return div;
+  }
+
+  function makeAccentTool(){
+    const div = document.createElement('div');
+    div.className = 'tile accenttool';
+    div.dataset.kind = 'accenttool';
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = '´';
     div.appendChild(label);
     makeDraggable(div, { cloneOnDrag:true });
     return div;
@@ -530,18 +585,21 @@
     capTools.innerHTML = '';
     capTools.appendChild(makeSpaceTile(false));
 
-    /* header tools: caps next to Letras / Sílabas / Palabras */
+    /* header tools: caps + accent next to Letras / Sílabas / Palabras */
     lettersCapTools.innerHTML = '';
     lettersCapTools.appendChild(makeCapTool('up'));
     lettersCapTools.appendChild(makeCapTool('down'));
+    lettersCapTools.appendChild(makeAccentTool());
 
     syllCapTools.innerHTML = '';
     syllCapTools.appendChild(makeCapTool('up'));
     syllCapTools.appendChild(makeCapTool('down'));
+    syllCapTools.appendChild(makeAccentTool());
 
     wordsCapTools.innerHTML = '';
     wordsCapTools.appendChild(makeCapTool('up'));
     wordsCapTools.appendChild(makeCapTool('down'));
+    wordsCapTools.appendChild(makeAccentTool());
   }
 
   function relayoutSlot(slot){
@@ -573,6 +631,7 @@
         else if (src.dataset.kind === 'space') dragEl = makeSpaceTile(true);
         else if (src.dataset.kind === 'punc') dragEl = makePuncTile(src.dataset.text, true);
         else if (src.dataset.kind === 'captool') dragEl = makeCapTool(src.dataset.tool);
+        else if (src.dataset.kind === 'accenttool') dragEl = makeAccentTool();
         else dragEl = makeTextTile(src.dataset.text, true);
       } else {
         dragEl = src;
@@ -591,8 +650,8 @@
       drag.el.classList.add('dragging');
       Object.assign(drag.el.style, {
         position:'fixed', zIndex:1000, pointerEvents:'none',
-        width: drag.el.offsetWidth + 'px',
-        height: drag.el.offsetHeight + 'px'
+        width: dragEl.offsetWidth + 'px',
+        height: dragEl.offsetHeight + 'px'
       });
       moveTo(drag.el, e.clientX, e.clientY);
 
@@ -611,10 +670,11 @@
     document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
     const t = document.elementFromPoint(e.clientX, e.clientY);
     const slot = t?.closest?.('.slot');
-    if(slot && drag.el.dataset.kind !== 'captool') slot.classList.add('highlight');
+    const kind = drag.el.dataset.kind;
+    if(slot && kind !== 'captool' && kind !== 'accenttool') slot.classList.add('highlight');
 
     trashEl.classList.toggle('highlight',
-      drag.el.dataset.kind !== 'captool' && !!t?.closest?.('#trash')
+      kind !== 'captool' && kind !== 'accenttool' && !!t?.closest?.('#trash')
     );
   }
 
@@ -636,12 +696,35 @@
     if(!drag || e.pointerId!==drag.pointerId) return;
 
     const t = document.elementFromPoint(e.clientX, e.clientY);
+    const kind = drag.el.dataset.kind;
 
-    if (drag.el.dataset.kind === 'captool'){
+    /* Cap tools: drop on any word tile */
+    if (kind === 'captool'){
       const wordTile = t?.closest?.('.tile[data-kind="text"]');
       if (wordTile){
         const mode = drag.el.dataset.tool === 'down' ? 'down' : 'up';
         applyCapToTile(wordTile, mode);
+      }
+      drag.el.remove();
+      document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
+      trashEl.classList.remove('highlight');
+      cleanup();
+      return;
+    }
+
+    /* Accent tool: drop on a specific letter span */
+    if (kind === 'accenttool'){
+      const charSpan = t?.closest?.('.char-span');
+      if (charSpan){
+        const label = charSpan.parentElement;
+        const tile = label?.closest?.('.tile[data-kind="text"]');
+        if (tile){
+          const spans = [...label.querySelectorAll('.char-span')];
+          const index = spans.indexOf(charSpan);
+          if (index !== -1){
+            applyAccentAt(tile, index);
+          }
+        }
       }
       drag.el.remove();
       document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
@@ -686,7 +769,9 @@
 
   function onCancel(){
     if(!drag) return;
-    if(drag.fromPalette || drag.el.dataset.kind === 'captool'){
+    if(drag.fromPalette ||
+       drag.el.dataset.kind === 'captool' ||
+       drag.el.dataset.kind === 'accenttool'){
       drag.el.remove();
     } else if (drag.originParent){
       drag.originParent.appendChild(drag.el);
