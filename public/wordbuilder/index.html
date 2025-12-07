@@ -16,12 +16,12 @@
     --tile:#fff; --tile-border:#111827; --drop:#ffffff; --drop-border:#111827;
     --trash:#fee2e2; --danger:#ef4444;
     --gap:12px;              /* gap between word boxes / rows */
-    --inner-gap:10px;        /* gap inside a word box (between tiles) */
+    --inner-gap:10px;        /* logical "gap" between words – now only for space pill sizing */
     --tile-min-w:48px;       /* palette text tile base size */
     --tile-h:48px;
     --tile-fs:28px;
     --tray-cols: 10;         /* items per row in right palettes (URL-overridable) */
-    --space-w: 1ch;          /* width of space when dropped */
+    --space-w: 1.8ch;        /* width of space when dropped */
   }
   html,body{height:100%}
   body{
@@ -78,20 +78,20 @@
     border:2px solid var(--drop-border);
     border-radius:12px;
     padding:6px 8px;
-    display:inline-flex;               /* tighter natural sizing */
-    gap:var(--inner-gap);
+    display:inline-flex;
+    gap:0;                      /* 🔴 no auto gap between tiles */
     align-items:center;
     justify-content:flex-start;
     flex-wrap:nowrap;
-    min-width:max(6ch, 80px);          /* keeps minimum shape */
-    width:auto;                        /* shrink to fit contents */
+    min-width:max(6ch, 80px);
+    width:auto;
     position:relative;
     vertical-align:top;
   }
   .slot:empty::before{
     content:"";
     display:block;
-    width:8ch;                         /* nice default syllable width */
+    width:8ch;
     height:clamp(40px, 6vh, 64px);
   }
 
@@ -154,12 +154,12 @@
   .highlight{outline:3px solid #a5b4fc; outline-offset:2px}
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
 
-  /* In-slot compact look (remove inner box) */
+  /* In-slot compact look (true text run) */
   .slot .tile.in-slot{
     flex:0 0 auto; min-width:0;
     height:clamp(40px, 6vh, 64px);
     font-size:clamp(26px, 3.4vw, 56px);
-    padding:0 6px;
+    padding:0;                   /* 🔴 no padding between characters / tiles */
     background:transparent; border:none; border-radius:0; box-shadow:none;
   }
 
@@ -183,9 +183,11 @@
     min-width:var(--space-w);
     padding:0;
     height:clamp(40px, 6vh, 64px);
-    font-size:0;                 /* invisible label */
-    background:transparent;
-    border:none;
+    font-size:0;                /* hide ␣ glyph but keep pill */
+    background:#e5e7eb;
+    border:1px dashed #9ca3af;
+    border-radius:999px;
+    margin:0 var(--inner-gap);  /* visible word gap controlled ONLY by this tile */
   }
 
   /* Punctuation tiles */
@@ -194,12 +196,11 @@
     padding:0 8px;
     font-size:24px;
   }
-  .slot .tile.punc.in-slot[data-punc-pos="pre"]{
-    margin-right:calc(-1 * var(--inner-gap));  /* hug word after */
+  .slot .tile.punc.in-slot{
+    padding:0;                  /* 🔴 same as text: no padding, so it hugs */
+    margin:0;
   }
-  .slot .tile.punc.in-slot[data-punc-pos="post"]{
-    margin-left:calc(-1 * var(--inner-gap));   /* hug word before */
-  }
+
 </style>
 </head>
 <body>
@@ -279,7 +280,6 @@
     if (Number.isFinite(n)) return Math.max(min, Math.min(max, n));
     return fallback;
   }
-  // Omit → defaults; blank/off/false/0/none → []; otherwise split by comma
   function getList(keys, defaults){
     const key = (Array.isArray(keys) ? keys.find(k => qs.has(k)) : keys) ?? null;
     if (!key) return defaults;
@@ -295,10 +295,8 @@
     return !['0','off','false','none','no'].includes(lo);
   }
 
-  /* Old single-number (kept for compat; unused by builder now) */
   const BOXES = clampInt(qs.get('boxes') ?? qs.get('drops'), 4, 1, 12);
 
-  /* Rows-based controls: boxes per row + number of rows */
   const BOXES_PER_ROW = clampInt(
     qs.get('boxCols') ?? qs.get('boxes') ?? qs.get('columns'),
     4, 1, 12
@@ -308,14 +306,11 @@
     1, 1, 50
   );
 
-  /* Optional fixed total (still supported) */
   const BOX_COUNT = clampInt(qs.get('boxCount') ?? qs.get('count'), null, 1, 500);
 
-  /* Palettes per-row */
   const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
   if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
 
-  /* Space + Images toggles */
   const SPACE_ON = getToggle('space', true);
   const IMAGES_ON = getToggle(['images','imgs','pics','pictures'], true);
 
@@ -340,9 +335,9 @@
   const SYLL = getList(['syll','syllables'], DEFAULT_SYLL);
   const WORDS = getList(['words','word'], DEFAULT_WORDS);
   const PUNC = getList(['punc','punct','punctuation'], DEFAULT_PUNC);
-  const IMG_URLS = getList(['imgs','images','pics','pictures'], []); // optional
+  const IMG_URLS = getList(['imgs','images','pics','pictures'], []);
 
-  /* ===== DOM refs ===== */
+  /* DOM refs */
   const slotsEl = document.getElementById('slots');
   const trashEl = document.getElementById('trash');
 
@@ -368,11 +363,10 @@
 
   const capTools = document.getElementById('capTools');
 
-  /* reflect current inputs */
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
 
-  /* ===== Capitalization helpers (used by cap tools) ===== */
+  /* Capitalization via tools */
   function applyCapToTile(tile, mode){
     if (!tile || tile.dataset.kind !== 'text') return;
     const base = tile.dataset.base ?? tile.dataset.text ?? '';
@@ -387,13 +381,13 @@
     if (label) label.textContent = display;
   }
 
-  /* ===== Tile makers ===== */
+  /* Tile makers */
   function makeTextTile(text, isClone=false){
     const div = document.createElement('div');
     div.className = 'tile' + (isClone ? ' clone' : '');
     div.dataset.kind = 'text';
-    div.dataset.base = text;         // original text
-    div.dataset.text = text;         // current text
+    div.dataset.base = text;
+    div.dataset.text = text;
 
     const label = document.createElement('span');
     label.className = 'label';
@@ -409,7 +403,6 @@
     div.className = 'tile punc' + (isClone ? ' clone' : '');
     div.dataset.kind = 'punc';
     div.dataset.text = ch;
-    // classification for visual hugging
     div.dataset.puncPos = (ch === '¿' || ch === '¡') ? 'pre' : 'post';
 
     const label = document.createElement('span');
@@ -448,7 +441,7 @@
     const div = document.createElement('div');
     div.className = 'tile captool';
     div.dataset.kind = 'captool';
-    div.dataset.tool = mode; // 'up' or 'down'
+    div.dataset.tool = mode;
     const label = document.createElement('span');
     label.className = 'label';
     label.textContent = mode === 'up' ? '↑' : '↓';
@@ -457,10 +450,9 @@
     return div;
   }
 
-  /* ===== Build board & palettes ===== */
+  /* Board & palettes */
   function buildRows(boxesPerRow, numRows, countOverride){
-    // If a fixed count is provided, compute rows/boxes from it
-    let rows = numRows, boxes = boxesPerRow;
+    let rows = numRows;
     if (Number.isFinite(countOverride)) {
       rows = Math.max(1, Math.ceil(countOverride / boxesPerRow));
     }
@@ -485,45 +477,37 @@
   }
 
   function fillPalettes(){
-    // Space (its own small card)
     spaceTray.innerHTML = '';
     spaceCard.style.display = SPACE_ON ? '' : 'none';
     if (SPACE_ON) spaceTray.appendChild(makeSpaceTile(false));
 
-    // Letters
     lettersTray.innerHTML = '';
     lettersCard.style.display = LETTERS.length ? '' : 'none';
     LETTERS.forEach(t => lettersTray.appendChild(makeTextTile(t, false)));
 
-    // Syllables
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
     SYLL.forEach(t => syllTray.appendChild(makeTextTile(t, false)));
 
-    // Words
     wordsTray.innerHTML = '';
     wordsCard.style.display = WORDS.length ? '' : 'none';
     WORDS.forEach(w => wordsTray.appendChild(makeTextTile(w, false)));
 
-    // Punctuation
     puncTray.innerHTML = '';
     puncCard.style.display = PUNC.length ? '' : 'none';
     PUNC.forEach(ch => puncTray.appendChild(makePuncTile(ch, false)));
 
-    // Pictures (toggleable)
     picsTray.innerHTML = '';
     picsCard.style.display = IMAGES_ON ? '' : 'none';
     if (IMAGES_ON) {
       IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
     }
 
-    // Cap tools
     capTools.innerHTML = '';
     capTools.appendChild(makeCapTool('up'));
     capTools.appendChild(makeCapTool('down'));
   }
 
-  /* ===== Layout inside slots ===== */
   function relayoutSlot(slot){
     const tiles = [...slot.querySelectorAll('.tile')];
     tiles.forEach(t => t.classList.add('in-slot'));
@@ -532,7 +516,7 @@
     document.querySelectorAll('.slot').forEach(relayoutSlot);
   }
 
-  /* ===== Drag & Drop (with insert-between) ===== */
+  /* Drag & drop */
   let drag = null;
 
   function makeDraggable(el, opts){
@@ -597,7 +581,6 @@
     );
   }
 
-  // Insert el into slot at the position nearest to clientX
   function insertAtPointer(slot, el, clientX){
     const kids = [...slot.querySelectorAll('.tile')].filter(k => k !== el);
     if (kids.length === 0){
@@ -617,14 +600,13 @@
 
     const t = document.elementFromPoint(e.clientX, e.clientY);
 
-    // If we are dragging a capitalization tool, apply to word tile and bail.
     if (drag.el.dataset.kind === 'captool'){
       const wordTile = t?.closest?.('.tile[data-kind="text"]');
       if (wordTile){
         const mode = drag.el.dataset.tool === 'down' ? 'down' : 'up';
         applyCapToTile(wordTile, mode);
       }
-      drag.el.remove(); // remove the cloned tool
+      drag.el.remove();
       document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
       trashEl.classList.remove('highlight');
       cleanup();
@@ -682,7 +664,7 @@
     drag = null;
   }
 
-  /* ===== Pics: drop/paste images into the Pictures tray ===== */
+  /* Pics: drop/paste */
   ;['dragenter','dragover'].forEach(ev=>{
     picsTray.addEventListener(ev, e=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; });
   });
@@ -707,7 +689,7 @@
     });
   });
 
-  /* ===== Validate ===== */
+  /* Validate */
   validateBtn.addEventListener('click', ()=>{
     const result = [];
     document.querySelectorAll('.slot').forEach(slot=>{
@@ -723,11 +705,9 @@
         } else if (k === 'punc') {
           const ch = t.dataset.text || '';
           if (',.?!'.includes(ch)) {
-            // trailing: remove spaces before punctuation
             s = s.replace(/\s+$/,'');
             s += ch;
           } else if ('¿¡'.includes(ch)) {
-            // leading: just append, user controls spaces after with space tiles
             s += ch;
           } else {
             s += ch;
@@ -739,7 +719,7 @@
     alert('Cajas:\n' + result.map((w,i)=>`#${i+1}: ${w || '—'}`).join('\n'));
   });
 
-  /* Aplicar: rebuild rows live */
+  /* Apply */
   applyBoxes.addEventListener('click', ()=>{
     const boxesPer = clampInt(boxesInput.value, BOXES_PER_ROW, 1, 12);
     const rows = clampInt(rowsInput.value,  NUM_ROWS, 1, 50);
@@ -747,7 +727,7 @@
     relayoutAllSlots();
   });
 
-  /* ===== Boot ===== */
+  /* Boot */
   buildRows(BOXES_PER_ROW, NUM_ROWS, BOX_COUNT);
   fillPalettes();
   relayoutAllSlots();
