@@ -29,7 +29,7 @@
       font-family: 'Andika', sans-serif;
       font-size: 20px;
       min-height: 100vh;
-      display: flex;              /* center vertically */
+      display: flex;
       align-items: center;
       justify-content: center;
       padding: 24px;
@@ -59,8 +59,13 @@
     /* BIG text that scales with screen width */
     .spanish-word,
     .english-box {
-      font-size: clamp(3rem, 4vw, 5rem);  /* 👈 scales with viewport */
+      font-size: clamp(3rem, 4vw, 5rem);
       font-weight: 700;
+
+      /* 🔧 FIX: prevent letters touching (fl, ff, lt, etc.) */
+      letter-spacing: 0.03em;
+      font-kerning: normal;
+      text-rendering: optimizeLegibility;
     }
 
     .spanish-word {
@@ -89,7 +94,7 @@
     }
 
     button {
-      font-size: clamp(1.2rem, 1.5vw, 2rem); /* bigger button text */
+      font-size: clamp(1.2rem, 1.5vw, 2rem);
       padding: 12px 20px;
       border-radius: 999px;
       border: none;
@@ -116,7 +121,6 @@
   <div id="cardsContainer" class="cards"></div>
 
   <script>
-    // Read ?pairs=casa;house,perro;dog
     function getPairsFromURL() {
       const raw = new URLSearchParams(window.location.search).get("pairs");
       if (!raw) return null;
@@ -127,7 +131,6 @@
       }).filter(Boolean);
     }
 
-    // Defaults if no URL pairs
     const defaultPairs = [
       { es: "la casa", en: "the house" },
       { es: "el perro", en: "the dog" },
@@ -139,7 +142,6 @@
     const urlPairs = getPairsFromURL();
     const wordPairs = urlPairs || defaultPairs;
 
-    // n parameter
     function getCountFromURL(defaultN = 3) {
       const n = parseInt(new URLSearchParams(window.location.search).get("n"), 10);
       return (!n || n <= 0) ? defaultN : Math.min(n, wordPairs.length);
