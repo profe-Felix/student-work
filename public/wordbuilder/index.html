@@ -232,11 +232,6 @@
   </section>
 
   <aside class="palettes">
-    <div class="card" id="spaceCard">
-      <h2>Espacio</h2>
-      <div id="spaceTray" class="tray"></div>
-    </div>
-
     <div class="card" id="lettersCard">
       <div class="card-header">
         <h2>Letras</h2>
@@ -305,7 +300,7 @@
   if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
 
   /* ===== Feature toggles (URL) =====
-     ?space=off   -> hides space palette + space next to papelera
+     ?space=off   -> removes space tile next to papelera
      ?caps=off    -> hides ↑ ↓ tools and disables them
      ?accent=off  -> hides ´ tool and disables it
      ?punc=off    -> hides punctuation palette
@@ -342,9 +337,6 @@
   const slotsEl       = document.getElementById('slots');
   const trashEl       = document.getElementById('trash');
   const trashSpaceEl  = document.getElementById('trashSpace');
-
-  const spaceCard = document.getElementById('spaceCard');
-  const spaceTray = document.getElementById('spaceTray');
 
   const lettersTray = document.getElementById('lettersTray');
   const syllTray    = document.getElementById('syllTray');
@@ -517,45 +509,34 @@
   }
 
   function fillPalettes(){
-    /* Space palette */
-    spaceTray.innerHTML = '';
-    spaceCard.style.display = SPACE_ON ? '' : 'none';
-    if (SPACE_ON) spaceTray.appendChild(makeSpaceTile(false));
-
-    /* Letters */
     lettersTray.innerHTML = '';
     lettersCard.style.display = LETTERS.length ? '' : 'none';
     LETTERS.forEach(t => lettersTray.appendChild(makeTextTile(t, false)));
 
-    /* Syllables */
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
     SYLL.forEach(t => syllTray.appendChild(makeTextTile(t, false)));
 
-    /* Words */
     wordsTray.innerHTML = '';
     wordsCard.style.display = WORDS.length ? '' : 'none';
     WORDS.forEach(w => wordsTray.appendChild(makeTextTile(w, false)));
 
-    /* Punctuation (toggleable) */
     puncTray.innerHTML = '';
     puncCard.style.display = (PUNC_ON && PUNC.length) ? '' : 'none';
     if (PUNC_ON) {
       PUNC.forEach(ch => puncTray.appendChild(makePuncTile(ch, false)));
     }
 
-    /* Pictures */
     picsTray.innerHTML = '';
     picsCard.style.display = IMAGES_ON ? '' : 'none';
     if (IMAGES_ON) IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
 
-    /* Space next to Papelera (toggleable) */
+    // Space tile next to Papelera (toggleable)
     trashSpaceEl.innerHTML = '';
     if (SPACE_ON) {
       trashSpaceEl.appendChild(makeSpaceTile(false));
     }
 
-    /* Tools next to labels (toggleable) */
     function attachTools(container){
       container.innerHTML = '';
       if (CAPS_ON) {
@@ -591,7 +572,7 @@
       const src = e.currentTarget;
       const parent = src.parentElement;
       const isPalette = [
-        spaceTray, lettersTray, syllTray, wordsTray, puncTray, picsTray,
+        lettersTray, syllTray, wordsTray, puncTray, picsTray,
         trashSpaceEl, lettersTools, syllTools, wordsTools
       ].includes(parent);
 
