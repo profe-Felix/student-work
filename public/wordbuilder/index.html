@@ -304,7 +304,17 @@
   const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
   if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
 
-  const SPACE_ON  = getToggle('space', true);
+  /* ===== Feature toggles (URL) =====
+     ?space=off   -> hides space palette + space next to papelera
+     ?caps=off    -> hides ↑ ↓ tools and disables them
+     ?accent=off  -> hides ´ tool and disables it
+     ?punc=off    -> hides punctuation palette
+  */
+  const SPACE_ON   = getToggle('space', true);
+  const CAPS_ON    = getToggle(['caps','case','upper'], true);
+  const ACCENT_ON  = getToggle(['accent','acento'], true);
+  const PUNC_ON    = getToggle(['punc','punct','punctuation'], true);
+
   const IMAGES_ON = getToggle(['images','imgs','pics','pictures'], true);
 
   const spaceW = parseFloat(qs.get('spacew'));
@@ -384,7 +394,6 @@
     if (!len) return;
 
     const rect = tile.getBoundingClientRect();
-    // clamp X inside tile
     const safeWidth = rect.width || 1;
     let relX = clientX - rect.left;
     if (relX < 0) relX = 0;
@@ -409,19 +418,14 @@
           best = i;
         }
       }
-      if (best === -1) return; // no vowels to accent
+      if (best === -1) return;
       idx = best;
     }
 
     const c = chars[idx];
-
-    if (plainToAcc[c]) {
-      chars[idx] = plainToAcc[c];      // add accent
-    } else if (accToPlain[c]) {
-      chars[idx] = accToPlain[c];      // remove accent
-    } else {
-      return;
-    }
+    if (plainToAcc[c]) chars[idx] = plainToAcc[c];
+    else if (accToPlain[c]) chars[idx] = accToPlain[c];
+    else return;
 
     const out = chars.join('');
     tile.dataset.text = out;
@@ -513,38 +517,54 @@
   }
 
   function fillPalettes(){
+    /* Space palette */
     spaceTray.innerHTML = '';
     spaceCard.style.display = SPACE_ON ? '' : 'none';
     if (SPACE_ON) spaceTray.appendChild(makeSpaceTile(false));
 
+    /* Letters */
     lettersTray.innerHTML = '';
     lettersCard.style.display = LETTERS.length ? '' : 'none';
     LETTERS.forEach(t => lettersTray.appendChild(makeTextTile(t, false)));
 
+    /* Syllables */
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
     SYLL.forEach(t => syllTray.appendChild(makeTextTile(t, false)));
 
+    /* Words */
     wordsTray.innerHTML = '';
     wordsCard.style.display = WORDS.length ? '' : 'none';
     WORDS.forEach(w => wordsTray.appendChild(makeTextTile(w, false)));
 
+    /* Punctuation (toggleable) */
     puncTray.innerHTML = '';
-    puncCard.style.display = PUNC.length ? '' : 'none';
-    PUNC.forEach(ch => puncTray.appendChild(makePuncTile(ch, false)));
+    puncCard.style.display = (PUNC_ON && PUNC.length) ? '' : 'none';
+    if (PUNC_ON) {
+      PUNC.forEach(ch => puncTray.appendChild(makePuncTile(ch, false)));
+    }
 
+    /* Pictures */
     picsTray.innerHTML = '';
     picsCard.style.display = IMAGES_ON ? '' : 'none';
     if (IMAGES_ON) IMG_URLS.forEach(u => picsTray.appendChild(makeImageTile(u, false)));
 
+    /* Space next to Papelera (toggleable) */
     trashSpaceEl.innerHTML = '';
-    trashSpaceEl.appendChild(makeSpaceTile(false));
+    if (SPACE_ON) {
+      trashSpaceEl.appendChild(makeSpaceTile(false));
+    }
 
+    /* Tools next to labels (toggleable) */
     function attachTools(container){
       container.innerHTML = '';
-      container.appendChild(makeCapTool('up'));
-      container.appendChild(makeCapTool('down'));
-      container.appendChild(makeAccentTool());
+      if (CAPS_ON) {
+        container.appendChild(makeCapTool('up'));
+        container.appendChild(makeCapTool('down'));
+      }
+      if (ACCENT_ON) {
+        container.appendChild(makeAccentTool());
+      }
     }
     attachTools(lettersTools);
     attachTools(syllTools);
@@ -655,6 +675,7 @@
     const kind = drag.el.dataset.kind;
 
     if (kind === 'captool'){
+      if (!CAPS_ON) { drag.el.remove(); cleanupHighlights(); cleanup(); return; }
       const tile = t?.closest?.('.tile[data-kind="text"]');
       if (tile) applyCapToTile(tile, drag.el.dataset.mode === 'down' ? 'down' : 'up');
       drag.el.remove();
@@ -663,21 +684,19 @@
       return;
     }
 
-if (kind === 'accenttool'){
-  const tile = t?.closest?.('.tile[data-kind="text"]');
-  if (tile) {
-    // Use the center of the accent tile, not the mouse cursor,
-    // so the little ´ is what you line up with the letter.
-    const accRect = drag.el.getBoundingClientRect();
-    const centerX = accRect.left + accRect.width / 2;
-    applyAccentAtPointer(tile, centerX);
-  }
-  drag.el.remove();
-  cleanupHighlights();
-  cleanup();
-  return;
-}
-
+    if (kind === 'accenttool'){
+      if (!ACCENT_ON) { drag.el.remove(); cleanupHighlights(); cleanup(); return; }
+      const tile = t?.closest?.('.tile[data-kind="text"]');
+      if (tile) {
+        const accRect = drag.el.getBoundingClientRect();
+        const centerX = accRect.left + accRect.width / 2;
+        applyAccentAtPointer(tile, centerX);
+      }
+      drag.el.remove();
+      cleanupHighlights();
+      cleanup();
+      return;
+    }
 
     const onTrash = !!t?.closest?.('#trash');
     const slot = t?.closest?.('.slot');
