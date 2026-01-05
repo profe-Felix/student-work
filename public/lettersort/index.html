@@ -329,33 +329,33 @@
   <header>
     <div class="wrap">
       <div class="row">
-        <div class="brand">Clasificador de letras</div>
+        <div class="brand" id="uiBrand">Clasificador de letras</div>
         <span id="soloPill" class="pill" style="display:none"></span>
         <div class="spacer"></div>
         <label class="switch">
           <input id="modeToggle" type="checkbox" />
-          <span>Modo Maestro</span>
+          <span id="uiModeLabel">Modo Maestro</span>
         </label>
       </div>
 
       <!-- Maestro -->
       <div id="teacherPanel" class="panel hidden">
         <div class="field">
-          <label>Código de sesión</label>
+          <label id="uiSessionCodeLabel">Código de sesión</label>
           <div class="inline">
             <input id="roomCode" placeholder="por ej., A_01" />
             <button id="btnJoin" class="btn">Iniciar sesión</button>
           </div>
-          <small class="note">Comparte este código con los estudiantes.</small>
+          <small class="note" id="uiShareNote">Comparte este código con los estudiantes.</small>
         </div>
 
         <div class="grid">
           <div>
-            <label>Letras objetivo (1–5)</label>
+            <label id="uiTargetLettersLabel">Letras objetivo (1–5)</label>
             <div id="letterPicker" class="letters"></div>
           </div>
           <div>
-            <label>Cartas por columna</label>
+            <label id="uiCardsPerColLabel">Cartas por columna</label>
             <input id="cardsPerCol" type="number" min="1" max="8" value="4" />
           </div>
           <div class="buttons">
@@ -365,7 +365,7 @@
           </div>
         </div>
 
-        <div class="note">
+        <div class="note" id="uiStorageNote">
           Las imágenes y audios se cargan de <strong>Supabase Storage</strong>.
           <div id="storageWarn" class="warn" style="display:none"></div>
         </div>
@@ -400,7 +400,7 @@
 
     <!-- Global rack (bank) -->
     <section id="rackSection" class="rackSection">
-      <h3>Cartas</h3>
+      <h3 id="uiCardsHeader">Cartas</h3>
       <div id="rack" class="rack" aria-label="rack"></div>
       <div class="bankActions">
         <button id="inlineVerify" class="btn outline">Verificar</button>
@@ -423,9 +423,181 @@
     // URL params
     const qs = new URLSearchParams(location.search);
 
-    // NEW: language switch (Spanish default). Use: ?lang=en (or ?language=en / english)
+    // language switch (Spanish default). Use: ?lang=en (or ?language=en / english)
     const LANG_RAW = (qs.get('lang') || qs.get('language') || 'es').toLowerCase().trim();
     const LANG = (LANG_RAW.startsWith('en') || LANG_RAW === 'english') ? 'en' : 'es';
+
+    // Apply html lang attr
+    document.documentElement.lang = LANG;
+
+    // --- UI strings (ES/EN) ---
+    const UI = {
+      es: {
+        brand: 'Clasificador de letras',
+        modeTeacher: 'Modo Maestro',
+        sessionCode: 'Código de sesión',
+        join: 'Iniciar sesión',
+        shareNote: 'Comparte este código con los estudiantes.',
+        targetLetters: 'Letras objetivo (1–5)',
+        cardsPerCol: 'Cartas por columna',
+        newRound: 'Nueva ronda',
+        verify: 'Verificar',
+        reset: 'Reiniciar ronda',
+        studentRoomPh: 'Código de sesión',
+        studentJoin: 'Unirse',
+        cardsHeader: 'Cartas',
+        storageNote: 'Las imágenes y audios se cargan de <strong>Supabase Storage</strong>.',
+        warnNoImages: (IB, IP) => `No se encontraron imágenes JPG en "${IB}" (prefijo: ${IP || '(raíz)'}).`,
+        alertInvalidRoom: 'Código de sesión inválido',
+        alertRealtimeErr: 'Error de Realtime',
+        alertNoImages: 'No hay imágenes disponibles.',
+        alertPickLetters: 'Seleccione 1–5 letras.',
+        soloPrefix: 'Modo individual:',
+        soloMode: {
+          row: 'modo filas',
+          rowalli: 'aliteración por filas',
+          allisyll: 'sílabas iniciales por filas',
+          rowsyll: 'sílabas (inicio/final) por filas',
+          syllcount: (arr) => `conteo de sílabas (${(arr.join(', ')||'1+')})`,
+          stress: (arr) => `sílaba tónica (${(arr.join(', ')||'1+')})`
+        },
+        soloExtras: {
+          words: (w) => ` · palabras=${w.join(', ')}`,
+          emoji: ' · etiquetas: emoji',
+          hidetitle: ' · sin título',
+          lang: '' // default, no need to show
+        },
+        labels: {
+          is: (L) => `Empieza con /${L}/`,
+          not: (L) => `No empieza con /${L}/`,
+          emojiIs: (L) => `👍 Sílaba con /${L}/`,
+          emojiNot: (L) => `👎 Sílaba sin /${L}/`,
+          syllOne: (n) => `${n} sílaba`,
+          syllMany: (n) => `${n} sílabas`,
+          stressBase: (p) => {
+            if (p === 1) return 'última';
+            if (p === 2) return 'penúltima';
+            if (p === 3) return 'antepenúltima';
+            return `${p}ª desde el final`;
+          },
+          stressLabel: (base) => `sílaba tónica: ${base}`
+        }
+      },
+      en: {
+        brand: 'Letter Sorter',
+        modeTeacher: 'Teacher Mode',
+        sessionCode: 'Session code',
+        join: 'Start session',
+        shareNote: 'Share this code with students.',
+        targetLetters: 'Target letters (1–5)',
+        cardsPerCol: 'Cards per column',
+        newRound: 'New round',
+        verify: 'Check',
+        reset: 'Reset round',
+        studentRoomPh: 'Session code',
+        studentJoin: 'Join',
+        cardsHeader: 'Cards',
+        storageNote: 'Images and audio load from <strong>Supabase Storage</strong>.',
+        warnNoImages: (IB, IP) => `No JPG images found in "${IB}" (prefix: ${IP || '(root)'}).`,
+        alertInvalidRoom: 'Invalid session code',
+        alertRealtimeErr: 'Realtime error',
+        alertNoImages: 'No images available.',
+        alertPickLetters: 'Select 1–5 letters.',
+        soloPrefix: 'Solo mode:',
+        soloMode: {
+          row: 'row mode',
+          rowalli: 'row alliteration',
+          allisyll: 'row initial-syllables',
+          rowsyll: 'row syllables (start/end)',
+          syllcount: (arr) => `syllable count (${(arr.join(', ')||'1+')})`,
+          stress: (arr) => `stressed syllable (${(arr.join(', ')||'1+')})`
+        },
+        soloExtras: {
+          words: (w) => ` · words=${w.join(', ')}`,
+          emoji: ' · labels: emoji',
+          hidetitle: ' · no title',
+          lang: ' · lang=en'
+        },
+        labels: {
+          is: (L) => `Starts with /${L}/`,
+          not: (L) => `Does not start with /${L}/`,
+          emojiIs: (L) => `👍 Syllable with /${L}/`,
+          emojiNot: (L) => `👎 Syllable without /${L}/`,
+          syllOne: (n) => `${n} syllable`,
+          syllMany: (n) => `${n} syllables`,
+          stressBase: (p) => {
+            if (p === 1) return 'last';
+            if (p === 2) return 'second-to-last';
+            if (p === 3) return 'third-to-last';
+            return `${p}th from the end`;
+          },
+          stressLabel: (base) => `stress: ${base}`
+        }
+      }
+    };
+    const T = UI[LANG] || UI.es;
+
+    function applyUiText(){
+      // top bar
+      const brandEl = document.getElementById('uiBrand');
+      const modeLabelEl = document.getElementById('uiModeLabel');
+      if (brandEl) brandEl.textContent = T.brand;
+      if (modeLabelEl) modeLabelEl.textContent = T.modeTeacher;
+
+      // teacher panel
+      const sc = document.getElementById('uiSessionCodeLabel');
+      const share = document.getElementById('uiShareNote');
+      const tl = document.getElementById('uiTargetLettersLabel');
+      const cpc = document.getElementById('uiCardsPerColLabel');
+      const storageNote = document.getElementById('uiStorageNote');
+
+      if (sc) sc.textContent = T.sessionCode;
+      if (share) share.textContent = T.shareNote;
+      if (tl) tl.textContent = T.targetLetters;
+      if (cpc) cpc.textContent = T.cardsPerCol;
+
+      // buttons (teacher + solo + inline)
+      const btnJoin = document.getElementById('btnJoin');
+      const btnNewRound = document.getElementById('btnNewRound');
+      const btnVerify = document.getElementById('btnVerify');
+      const btnReset = document.getElementById('btnReset');
+
+      const soloNewRound = document.getElementById('soloNewRound');
+      const soloVerify = document.getElementById('soloVerify');
+      const soloReset = document.getElementById('soloReset');
+
+      const inlineVerify = document.getElementById('inlineVerify');
+      const inlineReset = document.getElementById('inlineReset');
+
+      if (btnJoin) btnJoin.textContent = T.join;
+      if (btnNewRound) btnNewRound.textContent = T.newRound;
+      if (btnVerify) btnVerify.textContent = T.verify;
+      if (btnReset) btnReset.textContent = T.reset;
+
+      if (soloNewRound) soloNewRound.textContent = T.newRound;
+      if (soloVerify) soloVerify.textContent = T.verify;
+      if (soloReset) soloReset.textContent = T.reset;
+
+      if (inlineVerify) inlineVerify.textContent = T.verify;
+      if (inlineReset) inlineReset.textContent = T.reset;
+
+      // student panel
+      const studentRoom = document.getElementById('studentRoom');
+      const btnStudentJoin = document.getElementById('btnStudentJoin');
+      if (studentRoom) studentRoom.placeholder = T.studentRoomPh;
+      if (btnStudentJoin) btnStudentJoin.textContent = T.studentJoin;
+
+      // rack header
+      const cardsHeader = document.getElementById('uiCardsHeader');
+      if (cardsHeader) cardsHeader.textContent = T.cardsHeader;
+
+      // storage note (HTML)
+      if (storageNote) {
+        storageNote.innerHTML = `${T.storageNote}<div id="storageWarn" class="warn" style="display:none"></div>`;
+      }
+    }
+
+    applyUiText();
 
     // Special parser for ?words= that keeps "u,," together (ü marker)
     function parseWordsParam(raw) {
@@ -467,15 +639,15 @@
     const SOLO_WORDS     = parseWordsParam(qs.get('words') || '');
     const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
-    // NEW: tiles-only (words instead of images) + hide-words
+    // tiles-only (words instead of images) + hide-words
     const TILES_ONLY = (qs.get('tilesonly') || qs.get('wordtiles') || '').toLowerCase() === 'true';
     const HIDE_WORDS = (qs.get('hidewords') || '').toLowerCase() === 'true';
 
-    // NEW: syllable match mode ('initial' | 'any') and comparator ('equals' | 'contains' | 'prefix' | 'suffix')
+    // syllable match mode ('initial' | 'any') and comparator ('equals' | 'contains' | 'prefix' | 'suffix')
     const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
     const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
 
-    // NEW: syllable-count columns via ?counts=1-3 or ?syllcount=1,2,3
+    // syllable-count columns via ?counts=1-3 or ?syllcount=1,2,3
     function parseCountsParam(v){
       const raw = (v||'').trim();
       if(!raw) return [];
@@ -489,7 +661,7 @@
       return raw.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n) && n>0);
     }
     const SOLO_SYLLCOUNT = parseCountsParam(qs.get('counts') || qs.get('syllcount'));
-    // NEW: stressed-syllable positions via ?stress=1,2,3
+    // stressed-syllable positions via ?stress=1,2,3
     const SOLO_STRESSPOS = parseCountsParam(qs.get('stress') || qs.get('stresspos'));
     
     // Optional custom column titles: ?titles=sí,no,maybe
@@ -599,10 +771,9 @@
     }
 
     // -----------------------------
-    // Syllabify (ES + NEW EN)
+    // Syllabify (ES + EN)
     // -----------------------------
 
-    // Spanish syllabify rules
     function syllabifyEs(wordRaw){
       const word = (wordRaw || '').toLowerCase();
       const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
@@ -663,19 +834,12 @@
       return syl.filter(Boolean).map(s => s.trim());
     }
 
-    // NEW: English syllabify (lightweight heuristic)
-    // Goal: good syllable COUNTS for common words; fixes "tricycle" and "telephone" => 3
     function syllabifyEn(wordRaw){
       let w = (wordRaw || '').toLowerCase().trim();
-
-      // keep letters/apostrophes only (so "can't" behaves)
       w = w.replace(/[^a-z']/g,'');
       if (!w) return [];
-
-      // Handle a few common suffix patterns that affect silent-e style counting
       const isVowel = ch => /[aeiouy]/.test(ch || '');
 
-      // Identify vowel-group boundaries
       const groups = [];
       let i = 0;
       while (i < w.length){
@@ -683,46 +847,31 @@
         if (isVowel(ch)) {
           let j = i + 1;
           while (j < w.length && isVowel(w[j])) j++;
-          groups.push([i, j]); // [start, end)
+          groups.push([i, j]);
           i = j;
         } else {
           i++;
         }
       }
 
-      // Base syllable count = vowel groups
       let count = groups.length;
 
-      // Silent "e" rule (but NOT for consonant+le endings like "cycle"/"tricycle" → "...cle" counts)
-      // - If word ends with 'e'
-      // - And doesn't end with consonant + 'le'
-      // - And has more than 1 syllable
       if (w.endsWith('e') && count > 1) {
         const endsWithConsonantLe =
           w.endsWith('le') &&
           w.length >= 3 &&
-          !isVowel(w[w.length - 3]); // consonant before 'le'
-
-        if (!endsWithConsonantLe) {
-          count -= 1;
-        }
+          !isVowel(w[w.length - 3]);
+        if (!endsWithConsonantLe) count -= 1;
       }
 
-      // "ed" / "es" sometimes add a syllable (wanted for "wanted", "passes")—we keep it simple:
-      // If ends with "ed" and before it is 't' or 'd' → add syllable back
       if (w.endsWith('ed') && w.length >= 3) {
         const prev = w[w.length - 3];
         if (prev === 't' || prev === 'd') count += 1;
       }
 
-      // Rebuild approximate syllable slices for your existing "initial/any syllable" logic.
-      // We’ll split around vowel groups by assigning preceding consonants to the current syllable,
-      // and starting a new syllable at each vowel-group start (except the first).
-      // This is a heuristic; your main win is correct COUNT.
       if (count <= 0) count = 1;
 
-      // Build syllables by cutting at vowel-group starts (except first)
-      const cutPoints = groups.slice(1).map(g => g[0]); // starts of later vowel groups
+      const cutPoints = groups.slice(1).map(g => g[0]);
       const syl = [];
       let start = 0;
       for (const cp of cutPoints){
@@ -732,8 +881,6 @@
       }
       syl.push(w.slice(start));
 
-      // Post-fix: if we adjusted count (silent-e), trim a trailing lone 'e' syllable
-      // e.g., "telephone": splits might end with "...e" chunk; merge it into previous.
       if (w.endsWith('e') && syl.length > 1) {
         const last = syl[syl.length - 1];
         if (last === 'e') {
@@ -742,28 +889,20 @@
         }
       }
 
-      // If our slice count disagrees with final count (rare), prefer the count by merging from the end.
       while (syl.length > count && syl.length > 1) {
         syl[syl.length - 2] += syl[syl.length - 1];
         syl.pop();
-      }
-      while (syl.length < count) {
-        // Can’t safely split more; just return what we have.
-        break;
       }
 
       return syl.filter(Boolean);
     }
 
-    // Choose syllabifier by language
     function syllabifyByLang(wordPrettyOrRaw){
       if (LANG === 'en') return syllabifyEn(wordPrettyOrRaw);
       return syllabifyEs(wordPrettyOrRaw);
     }
 
     function syllablesNormalized(coreWord){
-      // In Spanish mode, markersToPretty restores á/é/… and ü/ñ for proper ES syllabify.
-      // In English mode, it’s harmless (words generally won’t contain markers).
       const pretty = markersToPretty(coreWord);
       return syllabifyByLang(pretty).map(normalizeMarkers);
     }
@@ -771,18 +910,13 @@
       return syllablesNormalized(coreWord).length;
     }
 
-    // NEW: stressed syllable index (1-based) counted from the RIGHT
-    // 1 = última, 2 = penúltima, 3 = antepenúltima, etc.
-    // NOTE: This is Spanish stress logic; English “stress” mode isn’t well-defined here.
+    // Spanish stress logic (kept as-is)
     function stressedSyllIndex(coreWordRaw){
       const pretty = markersToPretty((coreWordRaw || '').toLowerCase());
       const syls = syllabifyEs(pretty);
       if (!syls.length) return 1;
 
-      // índice de la sílaba tónica contando desde la izquierda (0-based)
       let stressed = -1;
-
-      // 1) Si hay tilde escrita, usamos esa sílaba
       for (let i = 0; i < syls.length; i++){
         if (/[áéíóú]/.test(syls[i])) {
           stressed = i;
@@ -790,40 +924,30 @@
         }
       }
 
-      // 2) Si no hay tilde, aplicamos reglas generales (aguda / llana)
       if (stressed === -1) {
         const plain = stripDiacritics(pretty);
         const lastChar = plain[plain.length - 1] || '';
         const endsVowel = /[aeiou]/.test(lastChar);
         const endsNOrS  = /[ns]/.test(lastChar);
-        if (endsVowel || endsNOrS) {
-          // palabra llana → penúltima
-          stressed = Math.max(0, syls.length - 2);
-        } else {
-          // palabra aguda → última
-          stressed = syls.length - 1;
-        }
+        if (endsVowel || endsNOrS) stressed = Math.max(0, syls.length - 2);
+        else stressed = syls.length - 1;
       }
 
       if (stressed < 0 || stressed >= syls.length) stressed = syls.length - 1;
-
-      // convertimos a índice DESDE LA DERECHA (1-based)
       const fromRight = syls.length - stressed;
-      return fromRight;  // 1 = última, 2 = penúltima, etc.
+      return fromRight;
     }
 
-    // Comparator for syllables: equals | contains | prefix | suffix
     function cmpSyll(a, b){
       if(!a || !b) return false;
       switch (SYLL_CMP) {
         case 'contains': return a.includes(b);
         case 'prefix':   return a.startsWith(b);
         case 'suffix':   return a.endsWith(b);
-        default:         return a === b; // 'equals'
+        default:         return a === b;
       }
     }
 
-    /******** Public URL existence check (GET with Range) ********/
     async function publicUrlIfExists(bucket, path){
       const { data } = client.storage.from(bucket).getPublicUrl(path);
       const url = data?.publicUrl;
@@ -835,7 +959,6 @@
       return null;
     }
 
-    /******** Image resolver (JPG only) ********/
     function jpgCandidatesForWord(word){
       const wMarker = (word||'').toLowerCase();
       const wPretty = markersToPretty(word||'').toLowerCase();
@@ -907,12 +1030,11 @@
       return out;
     }
 
-    /******** Audio resolver (only .mp3, rawCore.mp3) ********/
     async function resolveAudioForRawCore(rawCore){
       const prefix = AP ? `${AP.replace(/\/$/,'')}/` : '';
       const p = `${prefix}${rawCore}.mp3`;
       const url = await publicUrlIfExists(AB, p);
-      return url; // null if not found
+      return url;
     }
     async function ensureAudioUrl(rawCore){
       if (audioUrlByRawCore.has(rawCore)) return audioUrlByRawCore.get(rawCore);
@@ -945,16 +1067,14 @@
       try{ await a.play(); }catch{}
     }
 
-    /******** Storage bootstrap ********/
     async function ensureStorageLoaded(){
       try{
         imageFiles = [];
 
-        // 🔵 tilesonly + words: don't hit Storage at all
         if (TILES_ONLY && SOLO_WORDS.length > 0 &&
             MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' &&
             MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='syllcount' && MODE!=='stressreveal') {
-          storageWarn.style.display = 'none';
+          if (storageWarn) storageWarn.style.display = 'none';
           return;
         }
 
@@ -970,22 +1090,26 @@
         } else {
           imageFiles = await listAllImagesJpg();
         }
-        storageWarn.style.display = imageFiles.length ? 'none' : 'block';
-        if (!imageFiles.length){
-          storageWarn.textContent = `No se encontraron imágenes JPG en "${IB}" (prefijo: ${IP || '(raíz)'}).`;
+
+        if (storageWarn){
+          storageWarn.style.display = imageFiles.length ? 'none' : 'block';
+          if (!imageFiles.length){
+            storageWarn.textContent = T.warnNoImages(IB, IP);
+          }
         }
       } catch(err){
-        storageWarn.style.display = 'block';
-        storageWarn.textContent = `Error al listar Storage: ${err?.message || err}`;
+        if (storageWarn){
+          storageWarn.style.display = 'block';
+          storageWarn.textContent = `Error: ${err?.message || err}`;
+        }
       }
     }
 
-    /******** Realtime (teacher/student only) ********/
     let currentMode = MODE || 'classic';
     async function joinRoom(room){
       if(channel){ try{ await channel.unsubscribe(); }catch{} }
       ROOM = (room||'').trim();
-      if(!ROOM){ alert('Código de sesión inválido'); return; }
+      if(!ROOM){ alert(T.alertInvalidRoom); return; }
 
       channel = client.channel(`lettersort:${ROOM}`);
       channel.on('broadcast', { event:'ROUND' }, p=>{
@@ -998,18 +1122,16 @@
       channel.on('broadcast', { event:'RESET' }, ()=> resetRoundPlacements());
 
       const { error } = await channel.subscribe();
-      if(error){ alert('Error de Realtime'); console.error(error); }
+      if(error){ alert(T.alertRealtimeErr); console.error(error); }
     }
 
-    /******** Labels (modular) ********/
     function labelTextFor(letter, type){
       if (LABEL_STYLE === 'emoji') {
-        return type==='is' ? `👍 Sílaba con /${letter}/` : `👎 Sílaba sin /${letter}/`;
+        return type==='is' ? T.labels.emojiIs(letter) : T.labels.emojiNot(letter);
       }
-      return type==='is' ? `Empieza con /${letter}/` : `No empieza con /${letter}/`;
+      return type==='is' ? T.labels.is(letter) : T.labels.not(letter);
     }
 
-    // Apply ?titles=... overrides by index, without changing keys/logic
     function applyTitleOverrides(cols){
       if (!COL_TITLES.length) return cols;
       return cols.map((c, idx) => ({
@@ -1034,26 +1156,21 @@
       const cols = sylls.map(s => ({ label: s, key:`syll:${normalizeMarkers(s)}`, display:s }));
       return applyTitleOverrides(cols);
     }
-    // NEW: columns for syllable counts
+
     function buildColumnsForSyllCount(counts){
       const cols = counts.map(n => ({
-        label: `${n} ${n===1?'sílaba':'sílabas'}`,
+        label: (n===1 ? T.labels.syllOne(n) : T.labels.syllMany(n)),
         key: `count:${n}`,
         display: `${n}`
       }));
       return applyTitleOverrides(cols);
     }
-    // NEW: columns for stressed syllable positions
+
     function buildColumnsForStress(positions){
       const cols = positions.map(p => {
-        let base;
-        if (p === 1)      base = 'última';
-        else if (p === 2) base = 'penúltima';
-        else if (p === 3) base = 'antepenúltima';
-        else              base = `${p}ª desde el final`;
-
+        const base = T.labels.stressBase(p);
         return {
-          label: `sílaba tónica: ${base}`,
+          label: T.labels.stressLabel(base),
           key: `stress:${p}`,
           display: String(p)
         };
@@ -1061,7 +1178,6 @@
       return applyTitleOverrides(cols);
     }
 
-    // ----- Stress reveal helpers -----
     function backgroundUrlFromParam(){
       const bg = qs.get('bg') || qs.get('background') || '';
       if (!bg) return null;
@@ -1120,7 +1236,6 @@
       if (blob) blob.classList.add('hiddenBlob');
     }
 
-    /******** Round building ********/
     function pickNoRepeat(arr, n){
       const pool = arr.filter(x=>!usedSet.has(`${x.path}`));
       pool.sort(()=>Math.random()-0.5);
@@ -1179,7 +1294,6 @@
       }
       return { columns, cards };
     }
-    // NEW: round from syllable counts
     function buildRoundFromSyllCount(counts, perCol){
       const columns = buildColumnsForSyllCount(counts);
       const cards = [];
@@ -1194,7 +1308,6 @@
       }
       return { columns, cards };
     }
-    // NEW: round from stressed syllable positions
     function buildRoundFromStress(positions, perCol){
       const columns = buildColumnsForStress(positions);
       const cards = [];
@@ -1209,13 +1322,11 @@
       }
       return { columns, cards };
     }
-    // Existing words list (letters/sylls)
     function buildRoundFromWordList(activeLetters, sylls, wordsList){
       const columns = (sylls && sylls.length)
         ? buildColumnsForSyllables(sylls)
         : buildColumnsForLetters(activeLetters);
 
-      // 🔵 tilesonly: build from words only, no Storage dependency
       if (TILES_ONLY) {
         const cards = wordsList.map(wRaw => ({
           id: crypto.randomUUID(),
@@ -1242,7 +1353,6 @@
       return { columns, cards };
     }
 
-    // NEW: words list + syllable counts
     function buildRoundFromWordListWithCounts(counts, wordsList){
       const columns = buildColumnsForSyllCount(counts);
 
@@ -1272,7 +1382,6 @@
       return { columns, cards };
     }
 
-    // NEW: words list + stressed syllable positions
     function buildRoundFromWordListWithStress(positions, wordsList){
       const columns = buildColumnsForStress(positions);
 
@@ -1307,7 +1416,6 @@
     }
 
     function renderHeaderHTML(col){
-      // Syllable columns
       if (col.key.startsWith('syll:')) {
         if (HIDE_TITLE) return '';
         const fallback = (col.display || '').toLowerCase();
@@ -1315,16 +1423,14 @@
         return `<div class="syllTile" aria-hidden="true">${text}</div>`;
       }
 
-      // Syllable-count columns
       if (col.key.startsWith('count:')){
         if (HIDE_TITLE) return '';
         const n = parseInt(col.display || col.key.slice(6),10);
-        const defaultLabel = `${n} ${n===1?'sílaba':'sílabas'}`;
+        const defaultLabel = (n===1 ? T.labels.syllOne(n) : T.labels.syllMany(n));
         const text = col.label || defaultLabel;
         return `<div class="syllTile" aria-hidden="true">${text}</div>`;
       }
 
-      // STRESS COLUMNS: 3 dots, index counted from the RIGHT
       if (col.key.startsWith('stress:')){
         if (HIDE_TITLE) return '';
         const posRaw = parseInt(col.display || col.key.slice(7),10);
@@ -1406,9 +1512,7 @@
       el.addEventListener('click', async (ev) => {
         if (ev.target && ev.target.classList && ev.target.classList.contains('wordCover')) return;
         if (Date.now() - lastDragEndedAt < 150) return;
-        if (card.coreRaw) {
-          playWordAudio(card.coreRaw);
-        }
+        if (card.coreRaw) playWordAudio(card.coreRaw);
       });
 
       if (TILES_ONLY && HIDE_WORDS) attachWordCover(el);
@@ -1459,7 +1563,6 @@
       }
     }
 
-    /* Confetti unchanged */
     function celebrate(){
       const cvs = document.createElement('canvas');
       cvs.className = 'celebrationCanvas';
@@ -1509,7 +1612,6 @@
       requestAnimationFrame(tick);
     }
 
-    /******** Row helpers ********/
     function parseRows(str){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const [left, right] = seg.split('~');
@@ -1560,7 +1662,6 @@
       return { syll: bestS || '', count: bestC<0 ? 0 : bestC };
     }
 
-    /******** Row modes ********/
     async function buildRowMode(){
       currentMode = 'row';
       document.body.classList.add('row-compact');
@@ -1871,9 +1972,7 @@
             if(ok){
               cardEl.classList.add('ok','locked');
               lockCard(cardEl, card);
-              if (currentMode === 'stressreveal') {
-                revealBlobForCard(card);
-              }
+              if (currentMode === 'stressreveal') revealBlobForCard(card);
             } else {
               cardEl.classList.add('bad');
               setTimeout(()=> ejectToRack(cardEl), 350);
@@ -1984,7 +2083,7 @@
       }
     }
 
-    // ----- Drag & Drop -----
+    // Drag & Drop
     let drag=null;
     function makeDraggable(el, rowScope){
       el.style.touchAction='none';
@@ -2102,7 +2201,7 @@
       cardEl.replaceWith(clone);
     }
 
-    /******** Controls wiring ********/
+    // Controls wiring
     btnVerify.addEventListener('click', ()=> verifyNow(false));
     btnReset.addEventListener('click', resetRoundPlacements);
 
@@ -2116,13 +2215,13 @@
       if(!isTeacher) return;
       if(imageFiles.length===0){
         await ensureStorageLoaded();
-        if(imageFiles.length===0){ alert('No hay imágenes disponibles.'); return; }
+        if(imageFiles.length===0){ alert(T.alertNoImages); return; }
       }
       const hasSyll   = SOLO_SYLLABLES.length > 0;
       const hasCount  = SOLO_SYLLCOUNT.length > 0;
       const hasStress = SOLO_STRESSPOS.length > 0;
       const activeLetters = (hasSyll || hasCount || hasStress) ? [] : [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
-      if(!hasSyll && !hasCount && !hasStress && activeLetters.length===0){ alert('Seleccione 1–5 letras.'); return; }
+      if(!hasSyll && !hasCount && !hasStress && activeLetters.length===0){ alert(T.alertPickLetters); return; }
       const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value||'4',10)));
       const useWords = SOLO_WORDS.length > 0;
 
@@ -2166,7 +2265,6 @@
     }
     renderLetterPicker();
 
-    /******** SOLO MODE ********/
     function setPanelsForSolo() {
       teacherPanel.classList.add('hidden');
       studentPanel.classList.add('hidden');
@@ -2175,21 +2273,23 @@
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
       const modeTxt =
-        (MODE==='row')       ? `modo filas` :
-        (MODE==='rowalli' || MODE==='allisort') ? `aliteración por filas` :
-        (MODE==='allisyll')  ? `sílabas iniciales por filas` :
-        (MODE==='rowsyll')   ? `sílabas (inicio/final) por filas` :
-        (MODE==='syllcount' || SOLO_SYLLCOUNT.length) ? `conteo de sílabas (${(SOLO_SYLLCOUNT.join(', ')||'1+')})` :
-        (MODE==='stress' || MODE==='stressreveal' || SOLO_STRESSPOS.length) ? `sílaba tónica (${(SOLO_STRESSPOS.join(', ')||'1+')})` :
+        (MODE==='row')       ? T.soloMode.row :
+        (MODE==='rowalli' || MODE==='allisort') ? T.soloMode.rowalli :
+        (MODE==='allisyll')  ? T.soloMode.allisyll :
+        (MODE==='rowsyll')   ? T.soloMode.rowsyll :
+        (MODE==='syllcount' || SOLO_SYLLCOUNT.length) ? T.soloMode.syllcount(SOLO_SYLLCOUNT) :
+        (MODE==='stress' || MODE==='stressreveal' || SOLO_STRESSPOS.length) ? T.soloMode.stress(SOLO_STRESSPOS) :
         (SOLO_SYLLABLES.length
-          ? `sílabas=${SOLO_SYLLABLES.join(', ')}`
-          : (SOLO_LETTERS.length ? `letras=${SOLO_LETTERS.join(', ')}` : 'lista de palabras'));
-      const wordsTxt = SOLO_WORDS.length ? ` · palabras=${SOLO_WORDS.join(', ')}` : '';
-      const labelTxt = LABEL_STYLE==='emoji' ? ` · etiquetas: emoji` : '';
-      const hideTxt = HIDE_TITLE ? ` · sin título` : '';
-      const langTxt = (LANG === 'en') ? ` · lang=en` : '';
+          ? `syllables=${SOLO_SYLLABLES.join(', ')}`
+          : (SOLO_LETTERS.length ? `letters=${SOLO_LETTERS.join(', ')}` : 'word list'));
+
+      const wordsTxt = SOLO_WORDS.length ? T.soloExtras.words(SOLO_WORDS) : '';
+      const labelTxt = LABEL_STYLE==='emoji' ? T.soloExtras.emoji : '';
+      const hideTxt = HIDE_TITLE ? T.soloExtras.hidetitle : '';
+      const langTxt = (LANG === 'en') ? T.soloExtras.lang : '';
+
       soloPill.style.display = 'inline-block';
-      soloPill.textContent = `Modo individual: ${modeTxt}${wordsTxt}${labelTxt}${hideTxt}${langTxt}`;
+      soloPill.textContent = `${T.soloPrefix} ${modeTxt}${wordsTxt}${labelTxt}${hideTxt}${langTxt}`;
       soloBar.classList.remove('hidden');
     }
 
@@ -2257,6 +2357,9 @@
     (async function boot(){
       if (TILES_ONLY) document.body.classList.add('tiles-only');
       if (HIDE_WORDS) document.body.classList.add('hide-words');
+
+      // (re)apply UI text after DOM ready (safe)
+      applyUiText();
 
       if (SOLO_MODE) {
         setPanelsForSolo();
