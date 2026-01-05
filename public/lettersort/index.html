@@ -59,37 +59,35 @@
       text-align:center;
     }
 
-/* --- Stress counter styles (new) --- */
-.stressCounters{
-  display:flex;
-  gap:8px;
-  justify-content:center;
-  margin-top:6px;
-  padding-bottom:10px;          /* room for the underline */
-}
+    /* --- Stress counter styles (new) --- */
+    .stressCounters{
+      display:flex;
+      gap:8px;
+      justify-content:center;
+      margin-top:6px;
+      padding-bottom:10px;          /* room for the underline */
+    }
 
-.stressDot{
-  width:18px;
-  height:18px;
-  border-radius:999px;
-  background:#2563eb;           /* blue fill */
-  position:relative;            /* so ::after is positioned from here */
-}
+    .stressDot{
+      width:18px;
+      height:18px;
+      border-radius:999px;
+      background:#2563eb;           /* blue fill */
+      position:relative;            /* so ::after is positioned from here */
+    }
 
-/* underline under the selected dot, with a GAP */
-.stressDot.target::after{
-  content:"";
-  position:absolute;
-  left:50%;
-  transform:translateX(-50%);
-  width:22px;                   /* slightly wider than the dot */
-  height:3px;
-  background:#2563eb;           /* same blue as the dot */
-  top:22px;                     /* 18px (dot) + ~4px gap */
-  border-radius:999px;
-}
-
-
+    /* underline under the selected dot, with a GAP */
+    .stressDot.target::after{
+      content:"";
+      position:absolute;
+      left:50%;
+      transform:translateX(-50%);
+      width:22px;                   /* slightly wider than the dot */
+      height:3px;
+      background:#2563eb;           /* same blue as the dot */
+      top:22px;                     /* 18px (dot) + ~4px gap */
+      border-radius:999px;
+    }
 
     .drop{
       min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
@@ -97,19 +95,18 @@
     }
 
     .rackSection{margin-top:18px}
-.rack{
-  margin-top:8px;
-  background:#fff;
-  border:1px dashed #e5e7eb;
-  border-radius:12px;
-  padding:10px;
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-  align-items:flex-start;  /* cards only as tall as their content */
-  min-height:0;           /* container shrinks to whatever height it needs */
-}
-
+    .rack{
+      margin-top:8px;
+      background:#fff;
+      border:1px dashed #e5e7eb;
+      border-radius:12px;
+      padding:10px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:flex-start;  /* cards only as tall as their content */
+      min-height:0;           /* container shrinks to whatever height it needs */
+    }
 
     .card{
       user-select:none;touch-action:none;background:var(--card);border:1px solid #e5e7eb;border-radius:12px;
@@ -153,6 +150,7 @@
       align-items:flex-start;
     }
     .chip.dragging{ width: auto !important; height:auto !important }
+
     /* ===== Tiles-only cards (words instead of images) ===== */
     body.tiles-only .card{
       width:auto;
@@ -404,7 +402,6 @@
     <!-- Row picture mode container -->
     <section id="rowMode" class="hidden"></section>
 
-
     <!-- Global rack (bank) -->
     <section id="rackSection" class="rackSection">
       <h3>Cartas</h3>
@@ -470,6 +467,7 @@
     const SOLO_WORDS     = parseWordsParam(qs.get('words') || '');
     const HIDE_TITLE     = (qs.get('hidetitle') || '').toLowerCase() === 'true';
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
+
     // NEW: tiles-only (words instead of images) + hide-words
     const TILES_ONLY = (qs.get('tilesonly') || qs.get('wordtiles') || '').toLowerCase() === 'true';
     const HIDE_WORDS = (qs.get('hidewords') || '').toLowerCase() === 'true';
@@ -477,6 +475,31 @@
     // NEW: syllable match mode ('initial' | 'any') and comparator ('equals' | 'contains' | 'prefix' | 'suffix')
     const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
     const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
+
+    // ============================================================
+    // NEW: Syllable-count label language + label modes (EN + numbers)
+    //   ?lang=en                -> "1 syllable", "2 syllables"
+    //   ?label=numbers          -> "1", "2", "3"
+    //   ?labels=a,b,c           -> overrides per index (1->a, 2->b, 3->c)
+    // Also supports your existing ?titles= override after columns build.
+    // ============================================================
+    const LANG = (qs.get('lang') || 'es').toLowerCase();              // 'es' | 'en' (extendable)
+    const COUNT_LABEL_MODE = (qs.get('label') || '').toLowerCase();   // 'numbers' | '' (default text)
+    const COUNT_LABELS_OVERRIDE = (qs.get('labels') || '').trim();    // comma-separated
+    function syllCountLabel(n){
+      // explicit override: labels=a,b,c
+      if (COUNT_LABELS_OVERRIDE){
+        const parts = COUNT_LABELS_OVERRIDE.split(',').map(s => decodeURIComponent(s.trim()));
+        if (parts[n-1]) return parts[n-1];
+      }
+
+      // numbers-only
+      if (COUNT_LABEL_MODE === 'numbers') return String(n);
+
+      // default text
+      if (LANG === 'en') return (n === 1) ? '1 syllable' : `${n} syllables`;
+      return (n === 1) ? '1 sílaba' : `${n} sílabas`;
+    }
 
     // NEW: syllable-count columns via ?counts=1-3 or ?syllcount=1,2,3
     function parseCountsParam(v){
@@ -669,46 +692,45 @@
       return syllablesNormalized(coreWord).length;
     }
 
-// NEW: stressed syllable index (1-based) counted from the RIGHT
-// 1 = última, 2 = penúltima, 3 = antepenúltima, etc.
-function stressedSyllIndex(coreWordRaw){
-  const pretty = markersToPretty((coreWordRaw || '').toLowerCase());
-  const syls = syllabifyEs(pretty);
-  if (!syls.length) return 1;
+    // NEW: stressed syllable index (1-based) counted from the RIGHT
+    // 1 = última, 2 = penúltima, 3 = antepenúltima, etc.
+    function stressedSyllIndex(coreWordRaw){
+      const pretty = markersToPretty((coreWordRaw || '').toLowerCase());
+      const syls = syllabifyEs(pretty);
+      if (!syls.length) return 1;
 
-  // índice de la sílaba tónica contando desde la izquierda (0-based)
-  let stressed = -1;
+      // índice de la sílaba tónica contando desde la izquierda (0-based)
+      let stressed = -1;
 
-  // 1) Si hay tilde escrita, usamos esa sílaba
-  for (let i = 0; i < syls.length; i++){
-    if (/[áéíóú]/.test(syls[i])) {
-      stressed = i;
-      break;
+      // 1) Si hay tilde escrita, usamos esa sílaba
+      for (let i = 0; i < syls.length; i++){
+        if (/[áéíóú]/.test(syls[i])) {
+          stressed = i;
+          break;
+        }
+      }
+
+      // 2) Si no hay tilde, aplicamos reglas generales (aguda / llana)
+      if (stressed === -1) {
+        const plain = stripDiacritics(pretty);
+        const lastChar = plain[plain.length - 1] || '';
+        const endsVowel = /[aeiou]/.test(lastChar);
+        const endsNOrS  = /[ns]/.test(lastChar);
+        if (endsVowel || endsNOrS) {
+          // palabra llana → penúltima
+          stressed = Math.max(0, syls.length - 2);
+        } else {
+          // palabra aguda → última
+          stressed = syls.length - 1;
+        }
+      }
+
+      if (stressed < 0 || stressed >= syls.length) stressed = syls.length - 1;
+
+      // convertimos a índice DESDE LA DERECHA (1-based)
+      const fromRight = syls.length - stressed;
+      return fromRight;  // 1 = última, 2 = penúltima, etc.
     }
-  }
-
-  // 2) Si no hay tilde, aplicamos reglas generales (aguda / llana)
-  if (stressed === -1) {
-    const plain = stripDiacritics(pretty);
-    const lastChar = plain[plain.length - 1] || '';
-    const endsVowel = /[aeiou]/.test(lastChar);
-    const endsNOrS  = /[ns]/.test(lastChar);
-    if (endsVowel || endsNOrS) {
-      // palabra llana → penúltima
-      stressed = Math.max(0, syls.length - 2);
-    } else {
-      // palabra aguda → última
-      stressed = syls.length - 1;
-    }
-  }
-
-  if (stressed < 0 || stressed >= syls.length) stressed = syls.length - 1;
-
-  // convertimos a índice DESDE LA DERECHA (1-based)
-  const fromRight = syls.length - stressed;
-  return fromRight;  // 1 = última, 2 = penúltima, etc.
-}
-
 
     // Comparator for syllables: equals | contains | prefix | suffix
     function cmpSyll(a, b){
@@ -932,35 +954,36 @@ function stressedSyllIndex(coreWordRaw){
       const cols = sylls.map(s => ({ label: s, key:`syll:${normalizeMarkers(s)}`, display:s }));
       return applyTitleOverrides(cols);
     }
-    // NEW: columns for syllable counts
+
+    // UPDATED: columns for syllable counts now support ?lang=en / ?label=numbers / ?labels=...
     function buildColumnsForSyllCount(counts){
       const cols = counts.map(n => ({
-        label: `${n} ${n===1?'sílaba':'sílabas'}`,
+        label: syllCountLabel(n),
         key: `count:${n}`,
         display: `${n}`
       }));
       return applyTitleOverrides(cols);
     }
+
     // NEW: columns for stressed syllable positions
-function buildColumnsForStress(positions){
-  const cols = positions.map(p => {
-    let base;
-    if (p === 1)      base = 'última';
-    else if (p === 2) base = 'penúltima';
-    else if (p === 3) base = 'antepenúltima';
-    else              base = `${p}ª desde el final`;
+    function buildColumnsForStress(positions){
+      const cols = positions.map(p => {
+        let base;
+        if (p === 1)      base = 'última';
+        else if (p === 2) base = 'penúltima';
+        else if (p === 3) base = 'antepenúltima';
+        else              base = `${p}ª desde el final`;
 
-    return {
-      label: `sílaba tónica: ${base}`,
-      key: `stress:${p}`,
-      display: String(p)   // seguimos usando el número para la lógica
-    };
-  });
-  return applyTitleOverrides(cols);
-}
+        return {
+          label: `sílaba tónica: ${base}`,
+          key: `stress:${p}`,
+          display: String(p)   // seguimos usando el número para la lógica
+        };
+      });
+      return applyTitleOverrides(cols);
+    }
 
-
-        // ----- Stress reveal helpers -----
+    // ----- Stress reveal helpers -----
     function backgroundUrlFromParam(){
       const bg = qs.get('bg') || qs.get('background') || '';
       if (!bg) return null;
@@ -1018,8 +1041,6 @@ function buildColumnsForStress(positions){
       const blob = stressRevealEl.querySelector(`.revealBlob[data-card-id="${card.id}"]`);
       if (blob) blob.classList.add('hiddenBlob');
     }
-
-
 
     /******** Round building ********/
     function pickNoRepeat(arr, n){
@@ -1205,51 +1226,48 @@ function buildColumnsForStress(positions){
       return { columns, cards };
     }
 
-
     function setOneRowGrid(colsCount){
       columnsEl.style.gridTemplateColumns = `repeat(${colsCount}, minmax(140px, 1fr))`;
     }
-function renderHeaderHTML(col){
-  // Syllable columns (keep as-is: blue tiles with text)
-  if (col.key.startsWith('syll:')) {
-    if (HIDE_TITLE) return '';
-    const fallback = (col.display || '').toLowerCase();
-    const text = col.label || fallback;
-    return `<div class="syllTile" aria-hidden="true">${text}</div>`;
-  }
+    function renderHeaderHTML(col){
+      // Syllable columns (keep as-is: blue tiles with text)
+      if (col.key.startsWith('syll:')) {
+        if (HIDE_TITLE) return '';
+        const fallback = (col.display || '').toLowerCase();
+        const text = col.label || fallback;
+        return `<div class="syllTile" aria-hidden="true">${text}</div>`;
+      }
 
-  // Syllable-count columns (keep text)
-  if (col.key.startsWith('count:')){
-    if (HIDE_TITLE) return '';
-    const n = parseInt(col.display || col.key.slice(6),10);
-    const defaultLabel = `${n} ${n===1?'sílaba':'sílabas'}`;
-    const text = col.label || defaultLabel;
-    return `<div class="syllTile" aria-hidden="true">${text}</div>`;
-  }
+      // Syllable-count columns (use computed label; keep look)
+      if (col.key.startsWith('count:')){
+        if (HIDE_TITLE) return '';
+        const n = parseInt(col.display || col.key.slice(6),10);
+        const defaultLabel = syllCountLabel(n);
+        const text = col.label || defaultLabel;
+        return `<div class="syllTile" aria-hidden="true">${text}</div>`;
+      }
 
-  // 🔵 STRESS COLUMNS: 3 dots, but index is counted from the RIGHT
-  if (col.key.startsWith('stress:')){
-    if (HIDE_TITLE) return '';
-    const posRaw = parseInt(col.display || col.key.slice(7),10); // 1,2,3 from right
-    const totalDots = 3;
+      // 🔵 STRESS COLUMNS: 3 dots, but index is counted from the RIGHT
+      if (col.key.startsWith('stress:')){
+        if (HIDE_TITLE) return '';
+        const posRaw = parseInt(col.display || col.key.slice(7),10); // 1,2,3 from right
+        const totalDots = 3;
 
-    // clamp and convert “from right” → “from left” index
-    let pos = Number.isFinite(posRaw) ? posRaw : 1;
-    let idxFromLeft = totalDots - pos;                // 1→last dot, 2→middle, 3→first
-    const targetIdx = Math.min(totalDots-1, Math.max(0, idxFromLeft));
+        // clamp and convert “from right” → “from left” index
+        let pos = Number.isFinite(posRaw) ? posRaw : 1;
+        let idxFromLeft = totalDots - pos;                // 1→last dot, 2→middle, 3→first
+        const targetIdx = Math.min(totalDots-1, Math.max(0, idxFromLeft));
 
-    const dots = Array.from({ length: totalDots }, (_, i) =>
-      `<span class="stressDot${i === targetIdx ? ' target' : ''}"></span>`
-    ).join('');
+        const dots = Array.from({ length: totalDots }, (_, i) =>
+          `<span class="stressDot${i === targetIdx ? ' target' : ''}"></span>`
+        ).join('');
 
-    return `<div class="stressCounters" aria-hidden="true">${dots}</div>`;
-  }
+        return `<div class="stressCounters" aria-hidden="true">${dots}</div>`;
+      }
 
-  // Default label for other column types
-  return `<h2>${col.label}</h2>`;
-}
-
-
+      // Default label for other column types
+      return `<h2>${col.label}</h2>`;
+    }
 
     function buildColumns(columns){
       currentCols = columns;
@@ -1335,7 +1353,6 @@ function renderHeaderHTML(col){
       return el;
     }
 
-
     /* New: word chips for rowsyll (no audio by default) */
     function renderChip(word, id){
       const el = document.createElement('div');
@@ -1354,7 +1371,6 @@ function renderHeaderHTML(col){
       makeDraggable(el, null);
       return el;
     }
-
 
     function clearAllPlacements(){
       document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
@@ -1724,62 +1740,61 @@ function renderHeaderHTML(col){
       }
     }
 
-function everythingCorrect(){
+    function everythingCorrect(){
 
-  // ========== STRICT MODE ONLY ==========
-  // If ANY card in the rack could correctly go in ANY column → NOT complete
+      // ========== STRICT MODE ONLY ==========
+      // If ANY card in the rack could correctly go in ANY column → NOT complete
 
-  const rackCards = rackEl.querySelectorAll('.card');
+      const rackCards = rackEl.querySelectorAll('.card');
 
-  for (const cardEl of rackCards) {
-    const card = currentCards.find(c => c.id === cardEl.dataset.id);
-    if (!card) continue;
+      for (const cardEl of rackCards) {
+        const card = currentCards.find(c => c.id === cardEl.dataset.id);
+        if (!card) continue;
 
-    const coreRaw = card.coreRaw;
+        const coreRaw = card.coreRaw;
 
-    // check if this card matches ANY column target
-    for (let i = 0; i < currentCols.length; i++) {
-      const target = currentCols[i].key;
+        // check if this card matches ANY column target
+        for (let i = 0; i < currentCols.length; i++) {
+          const target = currentCols[i].key;
 
-      let fits = false;
+          let fits = false;
 
-      if (target.startsWith('syll:')) {
-        const syl = target.slice(5);
-        const syls = syllablesNormalized(coreRaw);
-        fits = (SYLL_MATCH === 'any')
-          ? syls.some(s => cmpSyll(s, syl))
-          : cmpSyll(syls[0], syl);
+          if (target.startsWith('syll:')) {
+            const syl = target.slice(5);
+            const syls = syllablesNormalized(coreRaw);
+            fits = (SYLL_MATCH === 'any')
+              ? syls.some(s => cmpSyll(s, syl))
+              : cmpSyll(syls[0], syl);
 
-      } else if (target.startsWith('count:')) {
-        const n = parseInt(target.slice(6), 10);
-        fits = syllableCount(coreRaw) === n;
+          } else if (target.startsWith('count:')) {
+            const n = parseInt(target.slice(6), 10);
+            fits = syllableCount(coreRaw) === n;
 
-      } else if (target.startsWith('stress:')) {
-        const pos = parseInt(target.slice(7),10);
-        fits = stressedSyllIndex(coreRaw) === pos;
+          } else if (target.startsWith('stress:')) {
+            const pos = parseInt(target.slice(7),10);
+            fits = stressedSyllIndex(coreRaw) === pos;
 
-      } else if (target.startsWith('not-')) {
-        const L = target.slice(4);
-        fits = initialFromStem(coreRaw) !== L;
+          } else if (target.startsWith('not-')) {
+            const L = target.slice(4);
+            fits = initialFromStem(coreRaw) !== L;
 
-      } else {
-        fits = initialFromStem(coreRaw) === target;
+          } else {
+            fits = initialFromStem(coreRaw) === target;
+          }
+
+          if (fits) return false; // ❌ still a valid unused card
+        }
       }
 
-      if (fits) return false; // ❌ still a valid unused card
+      // ========== NORMAL VALIDATION ==========
+      const anyBad = document.querySelector('.drop .card.bad');
+      if (anyBad) return false;
+
+      const placed = document.querySelectorAll('.drop .card').length;
+      const locked = document.querySelectorAll('.drop .card.locked').length;
+
+      return placed > 0 && placed === locked;
     }
-  }
-
-  // ========== NORMAL VALIDATION ==========
-  const anyBad = document.querySelector('.drop .card.bad');
-  if (anyBad) return false;
-
-  const placed = document.querySelectorAll('.drop .card').length;
-  const locked = document.querySelectorAll('.drop .card.locked').length;
-
-  return placed > 0 && placed === locked;
-}
-
 
     function verifyNow(fromBroadcast){
       if (currentMode==='row'){
@@ -1806,17 +1821,16 @@ function everythingCorrect(){
             if (!card) return;
             const ini = initialFromStem(card.coreRaw);
             const ok = (ini === r.majInitial);
-          if(ok){
-            cardEl.classList.add('ok','locked');
-            lockCard(cardEl, card);
-            if (currentMode === 'stressreveal') {
-              revealBlobForCard(card);
+            if(ok){
+              cardEl.classList.add('ok','locked');
+              lockCard(cardEl, card);
+              if (currentMode === 'stressreveal') {
+                revealBlobForCard(card);
+              }
+            } else {
+              cardEl.classList.add('bad');
+              setTimeout(()=> ejectToRack(cardEl), 350);
             }
-          } else {
-            cardEl.classList.add('bad');
-            setTimeout(()=> ejectToRack(cardEl), 350);
-          }
-
           });
         });
         if (everythingCorrect()) celebrate();
@@ -1967,49 +1981,48 @@ function everythingCorrect(){
         drag.el.style.height = '';
         drag.el.style.zIndex=1000;
         drag.el.style.pointerEvents='none';
-
       }
       drag.el.style.left=(e.clientX-70)+'px';
       drag.el.style.top =(e.clientY-70)+'px';
     }
-function onDrop(e){
-  if (!drag || e.pointerId !== drag.pointerId) return;
-  cleanupPointer(e.pointerId);
-  const el = drag.el;
+    function onDrop(e){
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      cleanupPointer(e.pointerId);
+      const el = drag.el;
 
-  if (!drag.moved) {
-    resetDraggedStyles(el);
-    drag = null;
-    return;
-  }
-
-  resetDraggedStyles(el);
-
-  const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
-
-  // Keep one-per visual style for teacher mode only
-  const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value || '4', 10)));
-  document.body.classList.toggle('one-per', perCol === 1);
-
-  if (drop) {
-    if (drop.classList.contains('rowDrop')) {
-      // Row mode: still allow only 1 in the answer slot
-      if (currentMode === 'row' && drop.children.length >= 1) {
-        drag.originParent.appendChild(el);
-      } else {
-        drop.appendChild(el);
+      if (!drag.moved) {
+        resetDraggedStyles(el);
+        drag = null;
+        return;
       }
-    } else {
-      // For normal .drop and .rack: NO CAP on number of children
-      drop.appendChild(el);
-    }
-  } else {
-    drag.originParent.appendChild(el);
-  }
 
-  lastDragEndedAt = Date.now();
-  drag = null;
-}
+      resetDraggedStyles(el);
+
+      const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
+
+      // Keep one-per visual style for teacher mode only
+      const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value || '4', 10)));
+      document.body.classList.toggle('one-per', perCol === 1);
+
+      if (drop) {
+        if (drop.classList.contains('rowDrop')) {
+          // Row mode: still allow only 1 in the answer slot
+          if (currentMode === 'row' && drop.children.length >= 1) {
+            drag.originParent.appendChild(el);
+          } else {
+            drop.appendChild(el);
+          }
+        } else {
+          // For normal .drop and .rack: NO CAP on number of children
+          drop.appendChild(el);
+        }
+      } else {
+        drag.originParent.appendChild(el);
+      }
+
+      lastDragEndedAt = Date.now();
+      drag = null;
+    }
 
     function onCancel(e){
       if(!drag || e.pointerId!==drag.pointerId) return;
@@ -2205,7 +2218,6 @@ function onDrop(e){
         stressRevealEl.innerHTML = '';
       }
     }
-
 
     (async function boot(){
       // Global flags for CSS
