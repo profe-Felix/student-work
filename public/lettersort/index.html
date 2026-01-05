@@ -834,68 +834,85 @@
       return syl.filter(Boolean).map(s => s.trim());
     }
 
-    function syllabifyEn(wordRaw){
-      let w = (wordRaw || '').toLowerCase().trim();
-      w = w.replace(/[^a-z']/g,'');
-      if (!w) return [];
-      const isVowel = ch => /[aeiouy]/.test(ch || '');
+function syllabifyEn(wordRaw){
+  let w = (wordRaw || '').toLowerCase().trim();
+  w = w.replace(/[^a-z']/g,'');
+  if (!w) return [];
 
-      const groups = [];
-      let i = 0;
-      while (i < w.length){
-        const ch = w[i];
-        if (isVowel(ch)) {
-          let j = i + 1;
-          while (j < w.length && isVowel(w[j])) j++;
-          groups.push([i, j]);
-          i = j;
-        } else {
-          i++;
-        }
-      }
+  const isVowel = ch => /[aeiouy]/.test(ch || '');
 
-      let count = groups.length;
+  // Detect consonant + "le" ending (table, tricycle, rifle...)
+  const endsWithConsonantLe =
+    w.endsWith('le') &&
+    w.length >= 3 &&
+    !isVowel(w[w.length - 3]);
 
-      if (w.endsWith('e') && count > 1) {
-        const endsWithConsonantLe =
-          w.endsWith('le') &&
-          w.length >= 3 &&
-          !isVowel(w[w.length - 3]);
-        if (!endsWithConsonantLe) count -= 1;
-      }
+  // If it’s consonant+le, peel off the final syllable now
+  let leTail = '';
+  if (endsWithConsonantLe) {
+    leTail = w.slice(-3);   // e.g. "cle"
+    w = w.slice(0, -3);     // rest of word
+    if (!w) return [leTail];
+  }
 
-      if (w.endsWith('ed') && w.length >= 3) {
-        const prev = w[w.length - 3];
-        if (prev === 't' || prev === 'd') count += 1;
-      }
-
-      if (count <= 0) count = 1;
-
-      const cutPoints = groups.slice(1).map(g => g[0]);
-      const syl = [];
-      let start = 0;
-      for (const cp of cutPoints){
-        if (cp <= start) continue;
-        syl.push(w.slice(start, cp));
-        start = cp;
-      }
-      syl.push(w.slice(start));
-
-      if (w.endsWith('e') && syl.length > 1) {
-        const last = syl[syl.length - 1];
-        if (last === 'e') {
-          syl[syl.length - 2] += 'e';
-          syl.pop();
-        }
-      }
-
-      while (syl.length > count && syl.length > 1) {
-        syl[syl.length - 2] += syl[syl.length - 1];
-        syl.pop();
-      }
-
-      return syl.filter(Boolean);
+  // Find vowel groups in the remaining base word
+  const groups = [];
+  let i = 0;
+  while (i < w.length){
+    const ch = w[i];
+    if (isVowel(ch)) {
+      let j = i + 1;
+      while (j < w.length && isVowel(w[j])) j++;
+      groups.push([i, j]);
+      i = j;
+    } else {
+      i++;
     }
+  }
+
+  let count = groups.length;
+
+  // Silent "e" on base word only (we already handled consonant+le separately)
+  if (w.endsWith('e') && count > 1) count -= 1;
+
+  // "ed" syllable add-back (wanted, ended)
+  if (w.endsWith('ed') && w.length >= 3) {
+    const prev = w[w.length - 3];
+    if (prev === 't' || prev === 'd') count += 1;
+  }
+
+  if (count <= 0) count = 1;
+
+  // Cut at vowel-group starts (except first)
+  const cutPoints = groups.slice(1).map(g => g[0]);
+  const syl = [];
+  let start = 0;
+  for (const cp of cutPoints){
+    if (cp <= start) continue;
+    syl.push(w.slice(start, cp));
+    start = cp;
+  }
+  syl.push(w.slice(start));
+
+  // If we still have a trailing lone 'e', merge it (ONLY for non -le endings)
+  // (This is now safe because consonant+le was removed earlier.)
+  if (syl.length > 1 && syl[syl.length - 1] === 'e') {
+    syl[syl.length - 2] += 'e';
+    syl.pop();
+  }
+
+  // Force slice count down to computed count by merging from the end
+  while (syl.length > count && syl.length > 1) {
+    syl[syl.length - 2] += syl[syl.length - 1];
+    syl.pop();
+  }
+
+  // Put consonant+le syllable back as its own syllable
+  if (leTail) syl.push(leTail);
+
+  return syl.filter(Boolean);
+}
+
 
     function syllabifyByLang(wordPrettyOrRaw){
       if (LANG === 'en') return syllabifyEn(wordPrettyOrRaw);
