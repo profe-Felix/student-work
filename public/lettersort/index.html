@@ -1912,54 +1912,47 @@ function syllabifyEn(wordRaw){
       }
     }
 
-    function everythingCorrect(){
-      const rackCards = rackEl.querySelectorAll('.card');
+function everythingCorrect(){
+  // ---------- ROWSYLL (chips in rowDrop) ----------
+  if (currentMode === 'rowsyll') {
+    const rackChips = rackEl.querySelectorAll('.chip');
+    if (rackChips.length > 0) return false; // anything left in the bank
 
-      for (const cardEl of rackCards) {
-        const card = currentCards.find(c => c.id === cardEl.dataset.id);
-        if (!card) continue;
+    // any incorrect chip currently in a row drop?
+    if (document.querySelector('.rowDrop .chip.bad')) return false;
 
-        const coreRaw = card.coreRaw;
+    const placed = document.querySelectorAll('.rowDrop .chip').length;
+    const locked = document.querySelectorAll('.rowDrop .chip.locked').length;
 
-        for (let i = 0; i < currentCols.length; i++) {
-          const target = currentCols[i].key;
-          let fits = false;
+    // Require at least one placed, and all placed are locked
+    return placed > 0 && placed === locked;
+  }
 
-          if (target.startsWith('syll:')) {
-            const syl = target.slice(5);
-            const syls = syllablesNormalized(coreRaw);
-            fits = (SYLL_MATCH === 'any')
-              ? syls.some(s => cmpSyll(s, syl))
-              : cmpSyll(syls[0], syl);
+  // ---------- ROW / ROWALLI / ALLISYLL (cards in rowDrop) ----------
+  if (currentMode === 'row' || currentMode === 'rowalli' || currentMode === 'allisyll') {
+    // any unlocked still in per-row racks?
+    const anyUnplaced = rowData.some(r => r.rackEl && r.rackEl.querySelector('.card'));
+    if (anyUnplaced) return false;
 
-          } else if (target.startsWith('count:')) {
-            const n = parseInt(target.slice(6), 10);
-            fits = syllableCount(coreRaw) === n;
+    if (document.querySelector('.rowDrop .card.bad')) return false;
 
-          } else if (target.startsWith('stress:')) {
-            const pos = parseInt(target.slice(7),10);
-            fits = stressedSyllIndex(coreRaw) === pos;
+    const placed = document.querySelectorAll('.rowDrop .card').length;
+    const locked = document.querySelectorAll('.rowDrop .card.locked').length;
 
-          } else if (target.startsWith('not-')) {
-            const L = target.slice(4);
-            fits = initialFromStem(coreRaw) !== L;
+    return placed > 0 && placed === locked;
+  }
 
-          } else {
-            fits = initialFromStem(coreRaw) === target;
-          }
+  // ---------- CLASSIC (cards in .drop) ----------
+  const rackCards = rackEl.querySelectorAll('.card');
+  if (rackCards.length > 0) return false;
 
-          if (fits) return false;
-        }
-      }
+  if (document.querySelector('.drop .card.bad')) return false;
 
-      const anyBad = document.querySelector('.drop .card.bad');
-      if (anyBad) return false;
+  const placed = document.querySelectorAll('.drop .card').length;
+  const locked = document.querySelectorAll('.drop .card.locked').length;
 
-      const placed = document.querySelectorAll('.drop .card').length;
-      const locked = document.querySelectorAll('.drop .card.locked').length;
-
-      return placed > 0 && placed === locked;
-    }
+  return placed > 0 && placed === locked;
+}
 
     function verifyNow(fromBroadcast){
       if (currentMode==='row'){
