@@ -36,7 +36,7 @@
     }
     #controls { margin-top: 15px; }
 
-    /* ===== NEW: Spelling mode UI ===== */
+    /* ===== Spelling mode UI ===== */
     .row {
       display: flex;
       justify-content: center;
@@ -115,7 +115,7 @@
   <h2>Spanish Reading Game</h2>
   <div id="syncStatus" style="margin-bottom: 10px; font-size: 16px; color:#555;"></div>
 
-  <!-- ===== NEW: spelling mode toggle ===== -->
+  <!-- spelling mode toggle -->
   <div class="row">
     <span class="pill">
       <input type="checkbox" id="spellingToggle" />
@@ -134,7 +134,6 @@
   </select>
 
   <div id="controls">
-    <!-- Play audio -->
     <button id="playAudio" disabled>🔊 Play Audio</button>
     <button id="prevWord">⟵ Prev</button>
     <button id="nextWord">Next ⟶</button>
@@ -142,7 +141,7 @@
 
   <canvas id="wordCanvas" width="768" height="432"></canvas>
 
-  <!-- ===== NEW: spelling panel ===== -->
+  <!-- spelling panel -->
   <div id="spellingPanel">
     <div class="row">
       <input id="spellingInput"
@@ -171,7 +170,6 @@
 
 <script>
 /* ==================== SUPABASE CONFIG (group sync) ==================== */
-/* Same project as student-work / lettersort */
 const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
@@ -179,7 +177,7 @@ const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // URL params: ?role=teacher&group=A or ?role=student&group=A
 const qs = new URLSearchParams(location.search);
-const ROLE = (qs.get('role') || '').toLowerCase();     // 'teacher' or 'student'
+const ROLE = (qs.get('role') || '').toLowerCase();
 const GROUP_CODE = (qs.get('group') || '').toUpperCase();
 const isTeacher = ROLE === 'teacher' && !!GROUP_CODE;
 const isStudent = ROLE === 'student' && !!GROUP_CODE;
@@ -197,7 +195,6 @@ if (syncStatusEl) {
   }
 }
 
-/** Make sure a reading_groups row exists for this group_code. */
 async function ensureReadingGroup(groupCode) {
   if (!groupCode) return null;
 
@@ -207,7 +204,6 @@ async function ensureReadingGroup(groupCode) {
     .eq('group_code', groupCode)
     .maybeSingle();
 
-  // PGRST116 = no rows
   if (error && error.code !== 'PGRST116') {
     console.warn('ensureReadingGroup error', error);
     return null;
@@ -229,7 +225,6 @@ async function ensureReadingGroup(groupCode) {
   return data;
 }
 
-/** Teacher: set the current word index for a group. */
 async function setReadingIndex(groupCode, index) {
   if (!groupCode) return null;
   const { data, error } = await sbClient
@@ -247,7 +242,6 @@ async function setReadingIndex(groupCode, index) {
   return data.current_index;
 }
 
-/** Student: get current word index for a group. */
 async function getReadingIndex(groupCode) {
   if (!groupCode) return null;
   const { data, error } = await sbClient
@@ -266,7 +260,6 @@ async function getReadingIndex(groupCode) {
 }
 
 /* ==================== Deterministic shuffle + session ==================== */
-/* xmur3 + mulberry32: small seeded RNG so teacher + students share the same random order. */
 function xmur3(str) {
   let h = 1779033703 ^ str.length;
   for (let i = 0; i < str.length; i++) {
@@ -298,15 +291,9 @@ function shuffleWithSeed(array, seedStr) {
   }
   return arr;
 }
-
-/* simple UUID fallback if crypto.randomUUID is missing */
 function makeSessionId() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
-  return (
-    Date.now().toString(36) +
-    "-" +
-    Math.random().toString(36).slice(2)
-  );
+  return (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
 }
 
 /* Ensure this exists before first draw */
@@ -321,7 +308,7 @@ const ctx = canvas.getContext("2d");
 let words = [], currentWordIndex = 0;
 let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
 let letters = [];
-let pollTimer = null; // for student polling
+let pollTimer = null;
 
 const DPR = window.devicePixelRatio || 1;
 const BASE_W = 768, BASE_H = 432, BASE_AR = BASE_H / BASE_W;
@@ -361,7 +348,7 @@ playBtn.addEventListener("click", () => {
   playWordAudio(words[currentWordIndex]);
 });
 
-/* ==================== NEW: Spelling mode wiring ==================== */
+/* ==================== Spelling mode wiring ==================== */
 const spellingToggle = document.getElementById('spellingToggle');
 const spellingPanel  = document.getElementById('spellingPanel');
 const spellingInput  = document.getElementById('spellingInput');
@@ -373,7 +360,11 @@ const autoplayHint   = document.getElementById('autoplayHint');
 
 let spellingMode = false;
 let spellingSubmitted = false;
-let userPrimedForAudio = false; // iOS autoplay gate
+let userPrimedForAudio = false;
+
+/* NEW: store last typed (so canvas can render letters) */
+let spellingLastTypedRaw = "";     // what student typed
+let spellingLastTypedSyl = [];     // syllabified typed
 
 function primeAudioOnce() {
   if (userPrimedForAudio) return;
@@ -385,6 +376,8 @@ window.addEventListener('keydown', primeAudioOnce);
 
 function resetSpellingUI() {
   spellingSubmitted = false;
+  spellingLastTypedRaw = "";
+  spellingLastTypedSyl = [];
   if (feedbackEl) { feedbackEl.textContent = ""; feedbackEl.style.color = "#111"; }
   if (correctReveal) correctReveal.textContent = "";
   if (spellingInput) spellingInput.value = "";
@@ -400,9 +393,14 @@ function setSpellingMode(on) {
 if (spellingToggle) spellingToggle.addEventListener('change', () => setSpellingMode(spellingToggle.checked));
 
 if (submitSpelling) submitSpelling.addEventListener('click', () => gradeSpelling());
-if (clearSpelling) clearSpelling.addEventListener('click', () => { if (spellingInput) { spellingInput.value=""; spellingInput.focus(); } });
+if (clearSpelling) clearSpelling.addEventListener('click', () => { if (spellingInput) { spellingInput.value=""; spellingInput.focus(); drawCanvas(); } });
 
 if (spellingInput) {
+  spellingInput.addEventListener('input', () => {
+    spellingLastTypedRaw = (spellingInput.value || "");
+    spellingLastTypedSyl = syllabify(spellingLastTypedRaw.trim());
+    drawCanvas();
+  });
   spellingInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -411,12 +409,19 @@ if (spellingInput) {
   });
 }
 
-/* Accent-insensitive compare (accept mamá == mama) */
+/* Accent-insensitive compare */
 function normalizeForCompare(s) {
   return (s || "")
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zñü]+/g, '');
+}
+
+/* Helper: compare one character accent-insensitively */
+function normChar(ch) {
+  return (ch || "")
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
 /* Auto syllabify (heuristic; tune later) */
@@ -472,7 +477,6 @@ function syllabify(word) {
   let i = 0;
 
   while (i < tokens.length) {
-    // onset
     let onsetStart = i;
     while (i < tokens.length && !isVowelToken(tokens[i])) i++;
     if (i >= tokens.length) {
@@ -482,12 +486,10 @@ function syllabify(word) {
     }
     const onset = tokens.slice(onsetStart, i);
 
-    // nucleus
     const vg = vowelGroup(tokens, i);
     const nucleus = vg.nucleus;
     i = vg.next;
 
-    // consonant cluster until next vowel
     let consStart = i;
     while (i < tokens.length && !isVowelToken(tokens[i])) i++;
     const cons = tokens.slice(consStart, i);
@@ -519,7 +521,6 @@ function syllabify(word) {
     const syl = onset.join('') + nucleus.join('') + coda.join('');
     syllables.push(syl);
 
-    // rewind for next onset
     i = i - nextOnset.length;
   }
 
@@ -539,6 +540,9 @@ function gradeSpelling() {
     return;
   }
 
+  spellingLastTypedRaw = typed;
+  spellingLastTypedSyl = syllabify(typed);
+
   const ok = normalizeForCompare(typed) === normalizeForCompare(correct);
   spellingSubmitted = true;
 
@@ -552,10 +556,10 @@ function gradeSpelling() {
   drawCanvas();
 }
 
-/* ==================== ORIGINAL: loadWordList / sync stays same ==================== */
+/* ==================== loadWordList / sync stays same ==================== */
 async function loadWordList() {
-  const listName = document.getElementById("wordListSelect").value; // e.g., "1. sílabas"
-  const url = `wordlists/${encodeURIComponent(listName)}.txt`;      // encode spaces/accents
+  const listName = document.getElementById("wordListSelect").value;
+  const url = `wordlists/${encodeURIComponent(listName)}.txt`;
 
   try {
     const response = await fetch(url);
@@ -564,11 +568,9 @@ async function loadWordList() {
     let baseWords = data.trim().split("\n").map(w => w.trim()).filter(Boolean);
 
     if (GROUP_CODE && (isTeacher || isStudent)) {
-      // Make sure group row exists
       await ensureReadingGroup(GROUP_CODE);
 
       if (isTeacher) {
-        // New session every time teacher loads a list
         const sessionId = makeSessionId();
         const { error: sessErr } = await sbClient
           .from('reading_groups')
@@ -582,7 +584,6 @@ async function loadWordList() {
         currentWordIndex = 0;
         console.log('[SYNC] teacher session', GROUP_CODE, listName, sessionId, words);
       } else if (isStudent) {
-        // Student reads teacher's session_id to get same random order
         const { data: row, error: rowErr } = await sbClient
           .from('reading_groups')
           .select('session_id, current_index')
@@ -595,14 +596,12 @@ async function loadWordList() {
           currentWordIndex = row.current_index ?? 0;
           console.log('[SYNC] student using session', GROUP_CODE, listName, row.session_id, 'index', currentWordIndex);
         } else {
-          // Fallback if session not set yet
           words = baseWords.sort(() => Math.random() - 0.5);
           currentWordIndex = 0;
           console.log('[SYNC] student fallback random (no session_id yet)');
         }
       }
     } else {
-      // Local mode: fully random each time
       words = baseWords.sort(() => Math.random() - 0.5);
       currentWordIndex = 0;
     }
@@ -619,7 +618,6 @@ async function loadWordList() {
         startStudentPolling();
       }
 
-      // NEW: in spelling mode, focus input
       if (spellingMode && spellingInput) spellingInput.focus();
     });
   } catch (err) {
@@ -647,8 +645,6 @@ async function startStudentPolling() {
     document.fonts.ready.then(() => {
       setupWord(words[currentWordIndex]);
       playBtn.disabled = false;
-
-      // NEW: spelling focus
       if (spellingMode && spellingInput) spellingInput.focus();
     });
   };
@@ -663,8 +659,6 @@ function changeWord(direction) {
   document.fonts.ready.then(() => {
     setupWord(words[currentWordIndex]);
     playBtn.disabled = false;
-
-    // NEW: spelling focus
     if (spellingMode && spellingInput) spellingInput.focus();
   });
 
@@ -675,7 +669,6 @@ function changeWord(direction) {
 
 /* ==================== Layout & Drawing ==================== */
 function setupWord(word) {
-  // NEW: reset spelling UI when word changes
   if (spellingMode) resetSpellingUI();
 
   const baseFont = 80;
@@ -704,7 +697,6 @@ function setupWord(word) {
   sliderX = sliderStart;
   drawCanvas();
 
-  // NEW: auto-play audio on word load ONLY in spelling mode AND after user gesture (iOS-safe)
   if (spellingMode && userPrimedForAudio) {
     setTimeout(() => {
       if (words.length) playWordAudio(words[currentWordIndex]);
@@ -757,68 +749,89 @@ function drawCanvas() {
     return Math.max(2, Math.min(10, h / 2, w / 2 - 1));
   }
 
-  /* ===== NEW: spelling-mode drawing (no hints: boxes + blanks) ===== */
+  /* ===== spelling-mode drawing: letters above underlines + per-letter coloring ===== */
   if (spellingMode && words.length) {
-    const word = words[currentWordIndex] || "";
-    const sylls = syllabify(word);
-    const showCorrect = spellingSubmitted;
+    const correctWord = words[currentWordIndex] || "";
+    const correctSyl = syllabify(correctWord);
+
+    const typedSyl = spellingLastTypedSyl && spellingLastTypedSyl.length
+      ? spellingLastTypedSyl
+      : (spellingInput ? syllabify((spellingInput.value || "").trim()) : []);
 
     const gap = Math.max(10, Math.round(fontPx * 0.18));
-    const boxH = Math.max(52, Math.round(fontPx * 0.9));
-    const boxY = Math.round(canvas.clientHeight * 0.20);
+    const boxH = Math.max(60, Math.round(fontPx * 1.05));
+    const boxY = Math.round(canvas.clientHeight * 0.18);
 
-    const syllWidths = sylls.map(s => {
+    ctx.textBaseline = "alphabetic";
+
+    const syllWidths = correctSyl.map(s => {
       const n = Math.max(1, s.length);
-      const w = Math.max(90, Math.min(280, n * Math.round(fontPx * 0.55)));
+      const w = Math.max(100, Math.min(320, n * Math.round(fontPx * 0.62)));
       return w;
     });
 
     const totalW = syllWidths.reduce((a,b)=>a+b,0) + gap * (syllWidths.length - 1);
     let x = (canvas.clientWidth - totalW) / 2;
 
-    // Per-syllable correctness after submit (accent-insensitive; aligned by syllable index)
-    let sylOk = [];
-    if (showCorrect && spellingInput) {
-      const typed = (spellingInput.value || "").trim();
-      const typedSyl = syllabify(typed);
-      for (let i = 0; i < sylls.length; i++) {
-        const a = normalizeForCompare(sylls[i] || "");
-        const b = normalizeForCompare(typedSyl[i] || "");
-        sylOk[i] = (a === b && b.length > 0);
-      }
-    }
+    for (let si = 0; si < correctSyl.length; si++) {
+      const correctS = correctSyl[si] || "";
+      const typedS = (typedSyl[si] || "");
 
-    for (let i = 0; i < sylls.length; i++) {
-      const w = syllWidths[i];
+      const w = syllWidths[si];
 
+      // box
       ctx.lineWidth = 4;
-      ctx.strokeStyle = showCorrect ? (sylOk[i] ? "#16a34a" : "#dc2626") : "#111";
+      ctx.strokeStyle = "#111";
       ctx.fillStyle = "#fff";
       roundRect(x, boxY, w, boxH, 14, true, true);
 
-      // blanks
-      const lettersCount = Math.max(1, sylls[i].length);
-      const blankGap = Math.max(8, Math.round(fontPx * 0.12));
-      const blankW = Math.max(12, Math.round(fontPx * 0.25));
-      const totalBlankW = lettersCount * blankW + (lettersCount - 1) * blankGap;
-      let bx = x + (w - totalBlankW) / 2;
-      const by = boxY + Math.round(boxH * 0.70);
+      // letter slots
+      const slots = Math.max(1, correctS.length);
+      const blankGap = Math.max(10, Math.round(fontPx * 0.14));
+      const blankW = Math.max(14, Math.round(fontPx * 0.30));
+      const totalBlankW = slots * blankW + (slots - 1) * blankGap;
+      const start = x + (w - totalBlankW) / 2;
 
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = showCorrect ? (sylOk[i] ? "#16a34a" : "#dc2626") : "#111";
+      const underlineY = boxY + Math.round(boxH * 0.72);
+      const letterY = boxY + Math.round(boxH * 0.55);
 
-      for (let k = 0; k < lettersCount; k++) {
+      // draw each slot
+      for (let li = 0; li < slots; li++) {
+        const bx = start + li * (blankW + blankGap);
+
+        const typedCh = typedS[li] || "";          // what student typed for that position
+        const correctCh = correctS[li] || "";      // correct at that position
+
+        const isFilled = !!typedCh;
+        const isCorrect = isFilled && (normChar(typedCh) === normChar(correctCh));
+
+        // choose color
+        let col = "#111";
+        if (spellingSubmitted) {
+          col = isCorrect ? "#16a34a" : "#dc2626";
+        }
+
+        // underline (colored after submit)
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = spellingSubmitted ? col : "#111";
         ctx.beginPath();
-        ctx.moveTo(bx, by);
-        ctx.lineTo(bx + blankW, by);
+        ctx.moveTo(bx, underlineY);
+        ctx.lineTo(bx + blankW, underlineY);
         ctx.stroke();
-        bx += blankW + blankGap;
+
+        // typed letter above underline
+        if (typedCh) {
+          ctx.fillStyle = spellingSubmitted ? col : "#111";
+          ctx.font = `bold ${Math.round(fontPx * 0.62)}px Andika`;
+          ctx.fillText(typedCh, bx + blankW/2, letterY);
+          ctx.font = `bold ${fontPx}px Andika`;
+        }
       }
 
       x += w + gap;
     }
 
-    // draw the slider rail faintly below (keeps layout consistent visually)
+    // faint rail below (keeps visual layout stable)
     const lineY = pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
     ctx.lineCap = "round";
     ctx.strokeStyle = "#eee";
@@ -828,10 +841,10 @@ function drawCanvas() {
     ctx.lineTo(sliderEnd, lineY);
     ctx.stroke();
 
-    return; // don't draw letters/pills in spelling mode
+    return;
   }
 
-  /* ===== ORIGINAL drawing (unchanged) ===== */
+  /* ===== original reading-mode drawing ===== */
   let x = sliderStart;
 
   letters.forEach(letter => {
@@ -912,28 +925,28 @@ function firstSyllable(word) {
   for (const d of digraphs) {
     if (w.startsWith(d)) {
       const next = w[d.length] || "";
-      if (isVowel(next)) return d + next; // e.g. "qu"+"e" => "que"
+      if (isVowel(next)) return d + next;
       return d;
     }
   }
   const a = w[0] || "", b = w[1] || "";
-  if (isVowel(a)) return a;             // V...
-  if (a && b && !isVowel(a) && isVowel(b)) return a + b; // CV...
+  if (isVowel(a)) return a;
+  if (a && b && !isVowel(a) && isVowel(b)) return a + b;
   return w.slice(0, Math.min(2, w.length));
 }
 
 function playWordAudio(word) {
-  const raw = (word || "").toLowerCase().trim();        // keeps accents (mamá)
-  const wordNorm = normalizeName(word);                 // mama
-  const syllNorm = normalizeName(firstSyllable(word));  // ma, be, etc.
+  const raw = (word || "").toLowerCase().trim();
+  const wordNorm = normalizeName(word);
+  const syllNorm = normalizeName(firstSyllable(word));
 
   const candidates = [
-    `audio/${encodeURIComponent(raw)}.mp3`,   // mamá.mp3
-    `audio/${encodeURIComponent(raw)}.wav`,   // mamá.wav (if you ever add it)
-    `audio/${wordNorm}.mp3`,                  // mama.mp3
-    `audio/${wordNorm}.wav`,                  // mama.wav
-    `audio/${syllNorm}.mp3`,                  // ma.mp3
-    `audio/${syllNorm}.wav`,                  // ma.wav
+    `audio/${encodeURIComponent(raw)}.mp3`,
+    `audio/${encodeURIComponent(raw)}.wav`,
+    `audio/${wordNorm}.mp3`,
+    `audio/${wordNorm}.wav`,
+    `audio/${syllNorm}.mp3`,
+    `audio/${syllNorm}.wav`,
   ];
 
   const btn = playBtn;
@@ -1066,5 +1079,17 @@ stopBtn2.onclick = () => {
   });
 };
 </script>
+
+<script>
+/* connect toggle to UI */
+function setSpellingMode(on) {
+  spellingMode = !!on;
+  if (spellingPanel) spellingPanel.style.display = spellingMode ? "block" : "none";
+  resetSpellingUI();
+  drawCanvas();
+  if (spellingMode && spellingInput) spellingInput.focus();
+}
+</script>
+
 </body>
 </html>
