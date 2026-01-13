@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Spanish Reading Game</title>
-  
+
   <!-- Andika Font -->
   <link href="https://fonts.googleapis.com/css2?family=Andika&display=swap" rel="stylesheet">
   <!-- Supabase client -->
@@ -23,7 +23,7 @@
       -webkit-user-select: none;
       user-select: none;
       touch-action: none;
-      margin-bottom: 15px;
+      margin-bottom: 10px;
       display: inline-block;
       max-width: 100%;
       height: auto; /* responsive */
@@ -32,99 +32,51 @@
       font-size: 18px;
       padding: 5px 10px;
       margin: 5px;
-      font-family: 'Andika', sans-serif;
     }
-    #controls { margin-top: 15px; }
+    #controls { margin-top: 10px; }
 
-    /* ===== Spelling mode UI ===== */
-    .row {
-      display: flex;
-      justify-content: center;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 8px;
-      margin-bottom: 6px;
+    #modeBar{
+      margin: 10px auto 8px;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      flex-wrap:wrap;
+      gap:8px;
     }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 10px;
-      border: 1px solid #ddd;
-      border-radius: 999px;
-      background: #fafafa;
-      color: #333;
-      font-size: 16px;
+    #tileRack{
+      display:none;
+      max-width: 900px;
+      margin: 0 auto 10px;
+      padding: 6px;
+      display:flex;
+      flex-wrap:wrap;
+      justify-content:center;
+      gap:8px;
     }
-    #spellingPanel {
-      max-width: 820px;
-      margin: 0 auto;
-      padding: 10px 12px;
-      display: none; /* toggled on/off */
+    .tileBtn{
+      font-family:'Andika', sans-serif;
+      font-size:22px;
+      padding:10px 14px;
+      border:2px solid #111;
+      background:#fff;
+      border-radius:14px;
+      cursor:pointer;
+      min-width:54px;
     }
-    #spellingInput {
-      width: min(520px, 92vw);
-      max-width: 92vw;
-      text-align: center;
-      border: 2px solid #111;
-      border-radius: 10px;
-      outline: none;
-      font-size: 20px;
-      padding: 8px 10px;
-      font-family: 'Andika', sans-serif;
+    .tileBtn:disabled{
+      opacity:.35;
+      cursor:not-allowed;
     }
-    #spellingInput:focus {
-      border-color: #2563eb;
-      box-shadow: 0 0 0 3px rgba(37,99,235,.15);
-    }
-    #feedback {
-      font-size: 18px;
-      margin-top: 8px;
-      min-height: 24px;
-    }
-    #correctReveal {
-      font-size: 20px;
-      margin-top: 6px;
-      color: #111;
-      min-height: 48px;
-      line-height: 1.35;
-      white-space: pre-line; /* allow line breaks */
-    }
-    .muted {
-      color: #666;
-      font-size: 14px;
-      margin-top: 6px;
-    }
-    .btnPrimary {
-      background: #2563eb;
-      color: white;
-      border: none;
-      border-radius: 10px;
-      padding: 8px 12px;
-      cursor: pointer;
-    }
-    .btnPrimary:disabled { opacity: .55; cursor: not-allowed; }
-    .btnGhost {
-      background: white;
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      cursor: pointer;
-      padding: 8px 12px;
+    #hintLine{
+      font-size:14px;
+      color:#666;
+      margin-top:4px;
     }
   </style>
 </head>
 <body>
   <h2>Spanish Reading Game</h2>
   <div id="syncStatus" style="margin-bottom: 10px; font-size: 16px; color:#555;"></div>
-
-  <!-- spelling mode toggle -->
-  <div class="row">
-    <span class="pill">
-      <input type="checkbox" id="spellingToggle" />
-      <label for="spellingToggle" style="cursor:pointer;">Modo deletrear</label>
-    </span>
-    <span class="pill" id="autoplayHint">🔊 Auto-audio después del primer toque</span>
-  </div>
 
   <select id="wordListSelect">
     <option value="" selected disabled>Selecciona una lista</option>
@@ -141,37 +93,46 @@
     <button id="nextWord">Next ⟶</button>
   </div>
 
-  <canvas id="wordCanvas" width="768" height="432"></canvas>
+  <!-- NEW: mode bar (does not affect sync / reading) -->
+  <div id="modeBar">
+    <label style="font-size:18px;">Modo:</label>
+    <select id="gameModeSelect">
+      <option value="read" selected>📖 Leer (Slider)</option>
+      <option value="spell_kb">⌨️ Deletrear (Teclado)</option>
+      <option value="spell_tiles">🧩 Deletrear (Fichas)</option>
+    </select>
 
-  <!-- spelling panel -->
-  <div id="spellingPanel">
-    <div class="row">
-      <input id="spellingInput"
-             type="text"
-             inputmode="text"
-             autocomplete="off"
-             autocorrect="off"
-             autocapitalize="off"
-             spellcheck="false"
-             placeholder="Escribe la palabra aquí…" />
-      <button id="submitSpelling" class="btnPrimary">✅ Submit</button>
-      <button id="clearSpelling" class="btnGhost">↺ Borrar</button>
-    </div>
-    <div id="feedback"></div>
-    <div id="correctReveal"></div>
-    <div class="muted">Se aceptan sin acentos (mamá = mama). Después de Submit se muestra la forma correcta.</div>
+    <select id="tileModeSelect" style="display:none;">
+      <option value="exact" selected>Fichas: Exactas</option>
+      <option value="vowels">Fichas: Consonantes + Vocales</option>
+      <option value="distractors">Fichas: + Distractores</option>
+    </select>
+
+    <button id="submitSpell" disabled>✅ Submit</button>
+    <button id="backspaceSpell" disabled>⌫</button>
+    <button id="clearSpell" disabled>🧽 Clear</button>
   </div>
+  <div id="hintLine"></div>
+
+  <div id="tileRack"></div>
+
+  <canvas id="wordCanvas" width="768" height="432"></canvas>
 
   <div id="recording-controls">
     <button id="startRecording">🎙 Start Recording</button>
     <button id="stopRecording" disabled>⏹ Stop Recording</button>
   </div>
-  
+
   <div id="readyMessage" style="font-size: 24px; margin-top: 10px; color: #555;"></div>
   <div id="previewContainer"></div>
 
+  <!-- hidden input to capture keyboard typing in spelling mode -->
+  <input id="spellInput" autocomplete="off" autocapitalize="none" spellcheck="false"
+         style="position:absolute; left:-9999px; top:-9999px;" />
+
 <script>
 /* ==================== SUPABASE CONFIG (group sync) ==================== */
+/* Same project as student-work / lettersort */
 const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
@@ -179,7 +140,7 @@ const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // URL params: ?role=teacher&group=A or ?role=student&group=A
 const qs = new URLSearchParams(location.search);
-const ROLE = (qs.get('role') || '').toLowerCase();
+const ROLE = (qs.get('role') || '').toLowerCase();     // 'teacher' or 'student'
 const GROUP_CODE = (qs.get('group') || '').toUpperCase();
 const isTeacher = ROLE === 'teacher' && !!GROUP_CODE;
 const isStudent = ROLE === 'student' && !!GROUP_CODE;
@@ -197,6 +158,7 @@ if (syncStatusEl) {
   }
 }
 
+/** Make sure a reading_groups row exists for this group_code. */
 async function ensureReadingGroup(groupCode) {
   if (!groupCode) return null;
 
@@ -206,6 +168,7 @@ async function ensureReadingGroup(groupCode) {
     .eq('group_code', groupCode)
     .maybeSingle();
 
+  // PGRST116 = no rows
   if (error && error.code !== 'PGRST116') {
     console.warn('ensureReadingGroup error', error);
     return null;
@@ -227,6 +190,7 @@ async function ensureReadingGroup(groupCode) {
   return data;
 }
 
+/** Teacher: set the current word index for a group. */
 async function setReadingIndex(groupCode, index) {
   if (!groupCode) return null;
   const { data, error } = await sbClient
@@ -244,6 +208,7 @@ async function setReadingIndex(groupCode, index) {
   return data.current_index;
 }
 
+/** Student: get current word index for a group. */
 async function getReadingIndex(groupCode) {
   if (!groupCode) return null;
   const { data, error } = await sbClient
@@ -310,7 +275,7 @@ const ctx = canvas.getContext("2d");
 let words = [], currentWordIndex = 0;
 let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
 let letters = [];
-let pollTimer = null;
+let pollTimer = null; // for student polling
 
 const DPR = window.devicePixelRatio || 1;
 const BASE_W = 768, BASE_H = 432, BASE_AR = BASE_H / BASE_W;
@@ -340,6 +305,14 @@ document.addEventListener("DOMContentLoaded", resizeCanvas);
 
 /* ==================== UI & Data ==================== */
 const playBtn = document.getElementById("playAudio");
+const modeSel = document.getElementById("gameModeSelect");
+const tileModeSel = document.getElementById("tileModeSelect");
+const tileRack = document.getElementById("tileRack");
+const submitSpellBtn = document.getElementById("submitSpell");
+const clearSpellBtn = document.getElementById("clearSpell");
+const backspaceSpellBtn = document.getElementById("backspaceSpell");
+const hintLine = document.getElementById("hintLine");
+const spellInput = document.getElementById("spellInput");
 
 document.getElementById("wordListSelect").addEventListener("change", loadWordList);
 document.getElementById("nextWord").addEventListener("click", () => changeWord(1));
@@ -350,239 +323,65 @@ playBtn.addEventListener("click", () => {
   playWordAudio(words[currentWordIndex]);
 });
 
-/* ==================== Spelling mode wiring ==================== */
-const spellingToggle = document.getElementById('spellingToggle');
-const spellingPanel  = document.getElementById('spellingPanel');
-const spellingInput  = document.getElementById('spellingInput');
-const submitSpelling = document.getElementById('submitSpelling');
-const clearSpelling  = document.getElementById('clearSpelling');
-const feedbackEl     = document.getElementById('feedback');
-const correctReveal  = document.getElementById('correctReveal');
-const autoplayHint   = document.getElementById('autoplayHint');
-
-let spellingMode = false;
-let spellingSubmitted = false;
-let userPrimedForAudio = false;
-
-let spellingLastTypedRaw = "";
-let spellingLastTypedSyl = [];
-
-function primeAudioOnce() {
-  if (userPrimedForAudio) return;
-  userPrimedForAudio = true;
-  if (autoplayHint) autoplayHint.textContent = "🔊 Auto-audio activado";
-}
-window.addEventListener('pointerdown', primeAudioOnce, { passive: true });
-window.addEventListener('keydown', primeAudioOnce);
-
-function resetSpellingUI() {
-  spellingSubmitted = false;
-  spellingLastTypedRaw = "";
-  spellingLastTypedSyl = [];
-  if (feedbackEl) { feedbackEl.textContent = ""; feedbackEl.style.color = "#111"; }
-  if (correctReveal) correctReveal.textContent = "";
-  if (spellingInput) spellingInput.value = "";
-}
-
-function setSpellingMode(on) {
-  spellingMode = !!on;
-  if (spellingPanel) spellingPanel.style.display = spellingMode ? "block" : "none";
-  resetSpellingUI();
-  applySpellingMaxLen();  // NEW
+modeSel.addEventListener("change", () => {
+  gameMode = modeSel.value; // 'read'|'spell_kb'|'spell_tiles'
+  configureModeUI();
+  resetSpellingState(true);
   drawCanvas();
-  if (spellingMode && spellingInput) spellingInput.focus();
-}
-if (spellingToggle) spellingToggle.addEventListener('change', () => setSpellingMode(spellingToggle.checked));
+});
 
-if (submitSpelling) submitSpelling.addEventListener('click', () => gradeSpelling());
-if (clearSpelling) clearSpelling.addEventListener('click', () => {
-  if (spellingInput) {
-    spellingInput.value = "";
-    spellingLastTypedRaw = "";
-    spellingLastTypedSyl = [];
-    spellingSubmitted = false;
-    if (feedbackEl) { feedbackEl.textContent = ""; feedbackEl.style.color = "#111"; }
-    if (correctReveal) correctReveal.textContent = "";
-    spellingInput.focus();
+tileModeSel.addEventListener("change", () => {
+  if (gameMode === 'spell_tiles') {
+    resetSpellingState(true);
+    buildTilesForCurrentWord();
     drawCanvas();
   }
 });
 
-/* NEW: prevent extra letters based on correct word length */
-function applySpellingMaxLen() {
-  if (!spellingInput) return;
-  if (!spellingMode) { spellingInput.removeAttribute('maxlength'); return; }
-  const correct = (words && words.length) ? (words[currentWordIndex] || "") : "";
-  const maxLen = Math.max(0, (correct || "").length);
-  spellingInput.maxLength = maxLen;
-  spellingInput.placeholder = maxLen ? `Escribe la palabra (${maxLen} letras)…` : "Escribe la palabra aquí…";
-  // also hard-trim if something got pasted
-  if (spellingInput.value.length > maxLen) spellingInput.value = spellingInput.value.slice(0, maxLen);
-}
+submitSpellBtn.addEventListener("click", () => submitSpelling());
+clearSpellBtn.addEventListener("click", () => resetSpellingState(false));
+backspaceSpellBtn.addEventListener("click", () => spellingBackspace());
 
-if (spellingInput) {
-  spellingInput.addEventListener('input', () => {
-    applySpellingMaxLen(); // enforces trim on paste/IME too
-    spellingLastTypedRaw = (spellingInput.value || "");
-    spellingLastTypedSyl = syllabify(spellingLastTypedRaw.trim());
-    drawCanvas();
-  });
-  spellingInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      gradeSpelling();
-    }
-  });
-}
+/* ==================== NEW: Game mode state ==================== */
+let gameMode = 'read';
 
-function normalizeForCompare(s) {
-  return (s || "")
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zñü]+/g, '');
-}
-function normChar(ch) {
-  return (ch || "")
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
+/* spelling state */
+let targetWordRaw = "";
+let targetGraphemes = [];      // correct graphemes (digraphs as 1)
+let userGraphemes = [];        // filled graphemes (same length as target)
+let cursorSlot = 0;
+let spellingSubmitted = false;
+let perSlotCorrect = [];       // booleans after submit
+let pendingDigraph = null;     // { expected: 'ch', first:'c' } etc
 
-/* Auto syllabify (heuristic; tune later) */
-const STRONG = new Set(['a','e','o','á','é','ó']);
-const WEAK   = new Set(['i','u','ü','í','ú']);
-function isVowelChar(ch){ return /[aeiouáéíóúü]/i.test(ch); }
-function isAccentedWeak(ch){ return ch === 'í' || ch === 'ú'; }
-function isStrong(ch){ return STRONG.has(ch); }
-function tokenizeSpanish(word) {
-  const w = (word || "").toLowerCase();
-  const tokens = [];
-  for (let i=0;i<w.length;) {
-    const two = w.slice(i,i+2);
-    if (two === 'ch' || two === 'll' || two === 'rr') { tokens.push(two); i+=2; continue; }
-    if (two === 'qu') { tokens.push(two); i+=2; continue; }
-    if (two === 'gu') { tokens.push(two); i+=2; continue; }
-    tokens.push(w[i]); i++;
+/* tiles */
+let tiles = [];                // array of tile strings displayed
+let tilesUsed = [];            // boolean per tile
+
+function configureModeUI(){
+  const inSpelling = (gameMode !== 'read');
+  tileModeSel.style.display = (gameMode === 'spell_tiles') ? 'inline-block' : 'none';
+  tileRack.style.display = (gameMode === 'spell_tiles') ? 'flex' : 'none';
+
+  submitSpellBtn.disabled = !inSpelling;
+  clearSpellBtn.disabled = !inSpelling;
+  backspaceSpellBtn.disabled = !inSpelling;
+
+  hintLine.textContent = (gameMode === 'read')
+    ? ""
+    : (isStudent && GROUP_CODE)
+      ? "Modo práctica: el maestro controla Prev/Next. Tú puedes deletrear aquí."
+      : "Deletrea la palabra. No hay pistas.";
+
+  // focus keyboard input when in kb mode
+  if (gameMode === 'spell_kb') {
+    setTimeout(() => spellInput.focus(), 50);
   }
-  return tokens;
-}
-function isVowelToken(tok){
-  if (tok === 'qu' || tok === 'gu') return false;
-  if (tok === 'ch' || tok === 'll' || tok === 'rr') return false;
-  return tok.length === 1 && isVowelChar(tok);
-}
-function vowelGroup(tokens, start) {
-  let i = start;
-  let group = [];
-  while (i < tokens.length && isVowelToken(tokens[i])) { group.push(tokens[i]); i++; }
-  if (group.length <= 1) return { nucleus: group, next: start + group.length };
-
-  const nuc = [group[0]];
-  for (let k=1;k<group.length;k++){
-    const prev = nuc[nuc.length-1];
-    const curr = group[k];
-    if (isStrong(prev) && isStrong(curr)) break;
-    if (isAccentedWeak(prev) || isAccentedWeak(curr)) break;
-    nuc.push(curr);
-  }
-  return { nucleus: nuc, next: start + nuc.length };
-}
-const ONSET_PAIRS = new Set(['pr','pl','br','bl','fr','fl','tr','dr','cr','cl','gr','gl']);
-function syllabify(word) {
-  const original = (word || "").toLowerCase().trim();
-  if (!original) return [];
-  const tokens = tokenizeSpanish(original);
-
-  let hasVowel = false;
-  for (const t of tokens) if (isVowelToken(t)) { hasVowel = true; break; }
-  if (!hasVowel) return [original];
-
-  const syllables = [];
-  let i = 0;
-
-  while (i < tokens.length) {
-    let onsetStart = i;
-    while (i < tokens.length && !isVowelToken(tokens[i])) i++;
-    if (i >= tokens.length) {
-      if (syllables.length) syllables[syllables.length-1] += tokens.slice(onsetStart).join('');
-      else syllables.push(tokens.slice(onsetStart).join(''));
-      break;
-    }
-    const onset = tokens.slice(onsetStart, i);
-
-    const vg = vowelGroup(tokens, i);
-    const nucleus = vg.nucleus;
-    i = vg.next;
-
-    let consStart = i;
-    while (i < tokens.length && !isVowelToken(tokens[i])) i++;
-    const cons = tokens.slice(consStart, i);
-
-    let coda = [];
-    let nextOnset = cons;
-
-    if (cons.length === 0) { coda = []; nextOnset = []; }
-    else if (cons.length === 1) { coda = []; nextOnset = cons; }
-    else if (cons.length === 2) {
-      const pair = (cons[0] + cons[1]).replace(/[^a-zñü]/g,'');
-      if (ONSET_PAIRS.has(pair)) { coda = []; nextOnset = cons; }
-      else { coda = [cons[0]]; nextOnset = [cons[1]]; }
-    } else if (cons.length === 3) {
-      const last2 = (cons[1] + cons[2]).replace(/[^a-zñü]/g,'');
-      if (ONSET_PAIRS.has(last2)) { coda = [cons[0]]; nextOnset = [cons[1], cons[2]]; }
-      else { coda = [cons[0], cons[1]]; nextOnset = [cons[2]]; }
-    } else {
-      const last2 = (cons[cons.length-2] + cons[cons.length-1]).replace(/[^a-zñü]/g,'');
-      if (ONSET_PAIRS.has(last2)) {
-        coda = cons.slice(0, cons.length-2);
-        nextOnset = cons.slice(cons.length-2);
-      } else {
-        coda = cons.slice(0, cons.length-1);
-        nextOnset = cons.slice(cons.length-1);
-      }
-    }
-
-    const syl = onset.join('') + nucleus.join('') + coda.join('');
-    syllables.push(syl);
-
-    i = i - nextOnset.length;
-  }
-
-  return syllables.filter(Boolean);
 }
 
-function gradeSpelling() {
-  if (!spellingMode) return;
-  if (!words.length) return;
+/* ==================== Load list (unchanged behavior) ==================== */
+let baseWordsForDistractors = []; // keep raw list for mode 3 distractors
 
-  const correct = words[currentWordIndex] || "";
-  const typed = (spellingInput ? spellingInput.value : "").trim();
-
-  if (!typed) {
-    if (feedbackEl) { feedbackEl.textContent = "Escribe algo primero 🙂"; feedbackEl.style.color = "#666"; }
-    if (correctReveal) correctReveal.textContent = "";
-    return;
-  }
-
-  spellingLastTypedRaw = typed;
-  spellingLastTypedSyl = syllabify(typed);
-
-  const ok = normalizeForCompare(typed) === normalizeForCompare(correct);
-  spellingSubmitted = true;
-
-  if (feedbackEl) {
-    feedbackEl.textContent = ok ? "✅ ¡Correcto!" : "❌ Intenta otra vez.";
-    feedbackEl.style.color = ok ? "#16a34a" : "#dc2626";
-  }
-
-  /* NEW: show BOTH typed + correct underneath for comparison */
-  if (correctReveal) {
-    correctReveal.textContent = `Tu respuesta: ${typed}\nCorrecto: ${correct}`;
-  }
-
-  drawCanvas();
-}
-
-/* ==================== loadWordList / sync stays same ==================== */
 async function loadWordList() {
   const listName = document.getElementById("wordListSelect").value;
   const url = `wordlists/${encodeURIComponent(listName)}.txt`;
@@ -592,6 +391,7 @@ async function loadWordList() {
     if (!response.ok) throw new Error(`No encontrado: ${url}`);
     const data = await response.text();
     let baseWords = data.trim().split("\n").map(w => w.trim()).filter(Boolean);
+    baseWordsForDistractors = baseWords.slice();
 
     if (GROUP_CODE && (isTeacher || isStudent)) {
       await ensureReadingGroup(GROUP_CODE);
@@ -635,11 +435,12 @@ async function loadWordList() {
       setupWord(words[currentWordIndex]);
       playBtn.disabled = false;
 
-      if (isTeacher && GROUP_CODE) await setReadingIndex(GROUP_CODE, currentWordIndex);
-      if (isStudent && GROUP_CODE) startStudentPolling();
-
-      applySpellingMaxLen(); /* NEW */
-      if (spellingMode && spellingInput) spellingInput.focus();
+      if (isTeacher && GROUP_CODE) {
+        await setReadingIndex(GROUP_CODE, currentWordIndex);
+      }
+      if (isStudent && GROUP_CODE) {
+        startStudentPolling();
+      }
     });
   } catch (err) {
     console.warn(err);
@@ -649,7 +450,10 @@ async function loadWordList() {
 
 async function startStudentPolling() {
   if (!isStudent || !GROUP_CODE) return;
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 
   const doPoll = async () => {
     const idx = await getReadingIndex(GROUP_CODE);
@@ -663,8 +467,6 @@ async function startStudentPolling() {
     document.fonts.ready.then(() => {
       setupWord(words[currentWordIndex]);
       playBtn.disabled = false;
-      applySpellingMaxLen(); /* NEW */
-      if (spellingMode && spellingInput) spellingInput.focus();
     });
   };
 
@@ -674,21 +476,48 @@ async function startStudentPolling() {
 
 function changeWord(direction) {
   if (!words.length) return;
+
+  // keep teacher-only guidance in sync mode
+  if (isStudent && GROUP_CODE) return;
+
   currentWordIndex = (currentWordIndex + direction + words.length) % words.length;
   document.fonts.ready.then(() => {
     setupWord(words[currentWordIndex]);
     playBtn.disabled = false;
-    applySpellingMaxLen(); /* NEW */
-    if (spellingMode && spellingInput) spellingInput.focus();
   });
 
-  if (isTeacher && GROUP_CODE) setReadingIndex(GROUP_CODE, currentWordIndex);
+  if (isTeacher && GROUP_CODE) {
+    setReadingIndex(GROUP_CODE, currentWordIndex);
+  }
 }
 
-/* ==================== Layout & Drawing ==================== */
-function setupWord(word) {
-  if (spellingMode) resetSpellingUI();
+/* ==================== Grapheme parsing (digraphs are ONE) ==================== */
+function parseWord(word) {
+  const digraphs = ["ch", "ll", "rr", "qu"];
+  const out = [];
+  const w = (word || "").toLowerCase();
+  for (let i = 0; i < w.length;) {
+    const dg = digraphs.find(d => w.startsWith(d, i));
+    if (dg) {
+      out.push({ text: dg, soundType: getSoundType(dg) });
+      i += dg.length;
+    } else {
+      out.push({ text: w[i], soundType: getSoundType(w[i], w[i+1]) });
+      i++;
+    }
+  }
+  return out;
+}
 
+function getSoundType(letter, nextLetter = "") {
+  if (letter === "c") return /[ei]/.test(nextLetter) ? "continuous" : "stop";
+  if (["p","t","k","b","d","g","ch"].includes(letter)) return "stop";
+  if (letter === "h") return "silent";
+  return "continuous";
+}
+
+/* ==================== Word setup (keeps original reading behavior) ==================== */
+function setupWord(word) {
   const baseFont = 80;
   const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
   const fontPx = Math.max(36, Math.min(96, scaledFont));
@@ -714,42 +543,15 @@ function setupWord(word) {
 
   sliderX = sliderStart;
 
-  applySpellingMaxLen(); /* NEW */
+  // NEW: reset spelling state when word changes
+  resetSpellingState(true);
+  if (gameMode === 'spell_tiles') buildTilesForCurrentWord();
+
   drawCanvas();
-
-  if (spellingMode && userPrimedForAudio) {
-    setTimeout(() => {
-      if (words.length) playWordAudio(words[currentWordIndex]);
-    }, 150);
-  }
 }
 
-function parseWord(word) {
-  const digraphs = ["ch", "ll", "rr", "qu"];
-  const out = [];
-  for (let i = 0; i < word.length;) {
-    let digraph = digraphs.find(d => word.startsWith(d, i));
-    if (digraph) {
-      out.push({text: digraph, soundType: getSoundType(digraph)});
-      i += digraph.length;
-    } else {
-      out.push({text: word[i], soundType: getSoundType(word[i], word[i+1])});
-      i++;
-    }
-  }
-  return out;
-}
-
-function getSoundType(letter, nextLetter = "") {
-  if (letter === "c") return /[ei]/.test(nextLetter) ? "continuous" : "stop";
-  if (["p","t","k","b","d","g","ch"].includes(letter)) return "stop";
-  if (letter === "h") return "silent";
-  return "continuous";
-}
-
-function drawCanvas() {
-  if (!window.allowSliderDraw) return;
-
+/* ==================== Reading draw (UNCHANGED visuals) ==================== */
+function drawReading() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -762,85 +564,12 @@ function drawCanvas() {
 
   const padding = 10;
   const pillH = Math.max(16, Math.round(fontPx * 0.25));
-  const textY = Math.round(fontPx * 1.25);
-  const pillY = textY + Math.max(16, Math.round(fontPx * 0.5));
+  const textY = Math.confirm = 0; // no-op, keeps your file stable
+  const realTextY = Math.round(fontPx * 1.25);
+  const pillY = realTextY + Math.max(16, Math.round(fontPx * 0.5));
 
   function pillRadius(w, h) {
     return Math.max(2, Math.min(10, h / 2, w / 2 - 1));
-  }
-
-  if (spellingMode && words.length) {
-    const correctWord = words[currentWordIndex] || "";
-    const correctSyl = syllabify(correctWord);
-
-    const typedSyl = spellingLastTypedSyl && spellingLastTypedSyl.length
-      ? spellingLastTypedSyl
-      : (spellingInput ? syllabify((spellingInput.value || "").trim()) : []);
-
-    const gap = Math.max(10, Math.round(fontPx * 0.18));
-    const boxH = Math.max(60, Math.round(fontPx * 1.05));
-    const boxY = Math.round(canvas.clientHeight * 0.18);
-
-    ctx.textBaseline = "alphabetic";
-
-    const syllWidths = correctSyl.map(s => {
-      const n = Math.max(1, s.length);
-      return Math.max(100, Math.min(320, n * Math.round(fontPx * 0.62)));
-    });
-
-    const totalW = syllWidths.reduce((a,b)=>a+b,0) + gap * (syllWidths.length - 1);
-    let x = (canvas.clientWidth - totalW) / 2;
-
-    for (let si = 0; si < correctSyl.length; si++) {
-      const correctS = correctSyl[si] || "";
-      const typedS = (typedSyl[si] || "");
-      const w = syllWidths[si];
-
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = "#111";
-      ctx.fillStyle = "#fff";
-      roundRect(x, boxY, w, boxH, 14, true, true);
-
-      const slots = Math.max(1, correctS.length);
-      const blankGap = Math.max(10, Math.round(fontPx * 0.14));
-      const blankW = Math.max(14, Math.round(fontPx * 0.30));
-      const totalBlankW = slots * blankW + (slots - 1) * blankGap;
-      const start = x + (w - totalBlankW) / 2;
-
-      const underlineY = boxY + Math.round(boxH * 0.72);
-      const letterY = boxY + Math.round(boxH * 0.55);
-
-      for (let li = 0; li < slots; li++) {
-        const bx = start + li * (blankW + blankGap);
-
-        const typedCh = typedS[li] || "";
-        const correctCh = correctS[li] || "";
-
-        const isFilled = !!typedCh;
-        const isCorrect = isFilled && (normChar(typedCh) === normChar(correctCh));
-
-        let col = "#111";
-        if (spellingSubmitted) col = isCorrect ? "#16a34a" : "#dc2626";
-
-        ctx.lineWidth = 5;
-        ctx.strokeStyle = spellingSubmitted ? col : "#111";
-        ctx.beginPath();
-        ctx.moveTo(bx, underlineY);
-        ctx.lineTo(bx + blankW, underlineY);
-        ctx.stroke();
-
-        if (typedCh) {
-          ctx.fillStyle = spellingSubmitted ? col : "#111";
-          ctx.font = `bold ${Math.round(fontPx * 0.62)}px Andika`;
-          ctx.fillText(typedCh, bx + blankW/2, letterY);
-          ctx.font = `bold ${fontPx}px Andika`;
-        }
-      }
-
-      x += w + gap;
-    }
-
-    return;
   }
 
   let x = sliderStart;
@@ -851,7 +580,7 @@ function drawCanvas() {
     ctx.fillStyle = (sliderX >= x + 1) ? "black" : "lightgrey";
     if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
 
-    ctx.fillText(letter.text, x + pillW / 2, textY);
+    ctx.fillText(letter.text, x + pillW / 2, realTextY);
 
     ctx.strokeStyle = letter.soundType === "silent" ? "#aaa"
                      : letter.soundType === "stop" ? "red" : "green";
@@ -885,8 +614,257 @@ function drawCanvas() {
   ctx.fill();
 }
 
-canvas.addEventListener("pointerdown", (e)=> {isDragging=true; moveSlider(e);});
-canvas.addEventListener("pointermove", (e)=> {if(isDragging){moveSlider(e);}});
+/* ==================== NEW: Spelling renderer (syllable boxes + underlines) ==================== */
+function isVowelChar(ch){
+  return /[aeiouáéíóúü]/i.test(ch || "");
+}
+function normalizeForGrade(s){
+  // accept accents but preserve ñ as distinct (important)
+  let x = (s || "").toLowerCase();
+  x = x.replace(/ñ/g, "__ENYE__");
+  x = x.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  x = x.replace(/__ENYE__/g, "ñ");
+  return x;
+}
+
+function graphemeIsVowel(g){
+  if (!g) return false;
+  // digraphs are consonants
+  if (g === 'ch' || g === 'll' || g === 'rr' || g === 'qu') return false;
+  return isVowelChar(g);
+}
+
+function splitIntoSyllables(graphemes){
+  // Spanish-ish heuristic: split consonant clusters between vowel nuclei.
+  const allowedOnset2 = new Set([
+    "bl","br","cl","cr","dr","fl","fr","gl","gr","pl","pr","tr"
+  ]);
+
+  const syls = [];
+  let i = 0;
+  while (i < graphemes.length) {
+    // onset
+    let onset = [];
+    while (i < graphemes.length && !graphemeIsVowel(graphemes[i])) {
+      onset.push(graphemes[i]);
+      i++;
+    }
+
+    // nucleus (at least one vowel grapheme)
+    let nucleus = [];
+    if (i < graphemes.length && graphemeIsVowel(graphemes[i])) {
+      nucleus.push(graphemes[i]);
+      i++;
+      // keep simple: don't merge diphthongs deeply; one vowel grapheme is enough for now
+      // (you can refine later)
+      if (i < graphemes.length && graphemeIsVowel(graphemes[i])) {
+        nucleus.push(graphemes[i]);
+        i++;
+      }
+    }
+
+    // collect consonants until next vowel to decide split
+    let cons = [];
+    let j = i;
+    while (j < graphemes.length && !graphemeIsVowel(graphemes[j])) {
+      cons.push(graphemes[j]);
+      j++;
+    }
+
+    if (j >= graphemes.length) {
+      // end: everything goes to coda
+      syls.push(onset.concat(nucleus).concat(cons));
+      break;
+    }
+
+    // there is another vowel later; decide split of consonant cluster
+    if (cons.length === 0) {
+      syls.push(onset.concat(nucleus));
+      // i stays
+    } else if (cons.length === 1) {
+      syls.push(onset.concat(nucleus)); // single consonant goes to next onset
+    } else if (cons.length === 2) {
+      const c1 = (cons[0] || "");
+      const c2 = (cons[1] || "");
+      const pair = (c1 + c2).replace(/[^a-zñ]/g,'');
+      if (allowedOnset2.has(pair)) {
+        syls.push(onset.concat(nucleus)); // both to next onset
+      } else {
+        syls.push(onset.concat(nucleus).concat([cons[0]])); // split
+        i += 1; // move one consonant into coda, keep next consonant for next syllable onset
+      }
+    } else {
+      // 3+ consonants: if last two can be onset, keep them for next syllable
+      const last2 = (cons[cons.length-2] + cons[cons.length-1]).replace(/[^a-zñ]/g,'');
+      if (allowedOnset2.has(last2)) {
+        // move first consonant to coda
+        syls.push(onset.concat(nucleus).concat([cons[0]]));
+        i += 1;
+      } else {
+        // move first 2 to coda
+        syls.push(onset.concat(nucleus).concat(cons.slice(0,2)));
+        i += 2;
+      }
+    }
+
+    // advance i to start of cluster (we already advanced j), but keep i where it is:
+    // i currently points after nucleus. We'll set i to i (after nucleus) for next loop,
+    // but we adjusted i above to consume some consonants into coda.
+    // If no adjustment happened, i remains after nucleus.
+    // In all cases we should set i to (original after nucleus) and then subtract? Easier:
+    // We'll recompute i as: i = i (after nucleus) + (number of consonants we consumed into coda).
+    // We already did i += consumed in branch, so we're good.
+  }
+  return syls;
+}
+
+function drawSpelling(){
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+
+  const baseFont = 64;
+  const scaledFont = Math.round(baseFont * (w / 768));
+  const fontPx = Math.max(28, Math.min(72, scaledFont));
+  ctx.font = `700 ${fontPx}px Andika`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+
+  const graphemes = targetGraphemes.length ? targetGraphemes : letters.map(x=>x.text);
+  if (!graphemes.length) return;
+
+  // syllables from graphemes
+  const syls = splitIntoSyllables(graphemes);
+
+  // layout
+  const boxPadX = Math.max(10, Math.round(fontPx * 0.35));
+  const boxPadY = Math.max(10, Math.round(fontPx * 0.25));
+  const slotGap = Math.max(8, Math.round(fontPx * 0.22));
+  const sylGap  = Math.max(14, Math.round(fontPx * 0.55));
+
+  // measure slot widths
+  const slotMinW = Math.max(38, Math.round(fontPx * 0.95));
+  const slotInnerPad = Math.max(8, Math.round(fontPx * 0.20));
+
+  const slotWidths = graphemes.map(g => {
+    // show digraph wider
+    const display = tileDisplayFor(g);
+    const tw = ctx.measureText(display).width;
+    return Math.max(slotMinW, Math.round(tw + slotInnerPad*2));
+  });
+
+  // build syllable width sums
+  let idx = 0;
+  const sylMeta = syls.map(sg => {
+    const start = idx;
+    const len = sg.length;
+    const end = start + len;
+    const slotsW = slotWidths.slice(start, end).reduce((a,b)=>a+b,0) + slotGap*(len-1);
+    const boxW = slotsW + boxPadX*2;
+    idx = end;
+    return { start, end, len, slotsW, boxW };
+  });
+
+  const totalW = sylMeta.reduce((a,m)=>a+m.boxW,0) + sylGap*(sylMeta.length-1);
+  const startX = Math.round((w - totalW)/2);
+  const topY = Math.round(h*0.18);
+
+  // draw
+  const underlineY = topY + boxPadY + Math.round(fontPx*1.05);
+  const textY = topY + boxPadY + Math.round(fontPx*0.92);
+  const boxH = Math.round(fontPx*1.65 + boxPadY*2);
+
+  // slot index tracker
+  let curX = startX;
+  idx = 0;
+
+  // box style
+  const r = Math.min(18, Math.round(fontPx*0.35));
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "#111";
+
+  sylMeta.forEach((m) => {
+    // box
+    roundRect(curX, topY, m.boxW, boxH, r, false, true);
+
+    // slots inside
+    let sx = curX + boxPadX;
+    for (let k=m.start; k<m.end; k++){
+      const sw = slotWidths[k];
+      // underline
+      ctx.strokeStyle = "#16a34a"; // green underline like your screenshot vibe
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(sx + 10, underlineY);
+      ctx.lineTo(sx + sw - 10, underlineY);
+      ctx.stroke();
+
+      // typed letter above underline
+      const u = userGraphemes[k] || "";
+      const display = tileDisplayFor(u);
+
+      // coloring after submit
+      let color = "#16a34a";
+      if (!spellingSubmitted){
+        color = "#111";
+      } else {
+        color = (perSlotCorrect[k] ? "#16a34a" : "#dc2626");
+      }
+
+      ctx.fillStyle = color;
+      ctx.font = `700 ${fontPx}px Andika`;
+      ctx.fillText(display, sx + sw/2, textY);
+
+      // cursor highlight (before submit)
+      if (!spellingSubmitted && k === cursorSlot){
+        ctx.strokeStyle = "#2563eb";
+        ctx.lineWidth = 3;
+        roundRect(sx+4, topY+6, sw-8, boxH-12, 12, false, true);
+      }
+
+      sx += sw + slotGap;
+      idx++;
+    }
+
+    curX += m.boxW + sylGap;
+  });
+
+  // Correct word below (inside canvas)
+  if (spellingSubmitted){
+    const correct = (targetWordRaw || words[currentWordIndex] || "").toLowerCase().trim();
+    const show = correct; // show accented original
+    ctx.font = `700 ${Math.max(22, Math.round(fontPx*0.55))}px Andika`;
+    ctx.fillStyle = "#111";
+    const lineY = topY + boxH + Math.round(fontPx*0.95);
+    ctx.fillText("Correcto: " + show, w/2, lineY);
+  } else {
+    // instruction line
+    ctx.font = `700 ${Math.max(20, Math.round(fontPx*0.50))}px Andika`;
+    ctx.fillStyle = "#666";
+    const lineY = topY + boxH + Math.round(fontPx*0.95);
+    ctx.fillText("Escucha y escribe la palabra.", w/2, lineY);
+  }
+}
+
+/* unified canvas draw */
+function drawCanvas() {
+  if (!window.allowSliderDraw) return;
+  if (gameMode === 'read') drawReading();
+  else drawSpelling();
+}
+
+/* ==================== Pointer handling (only slider in read mode) ==================== */
+canvas.addEventListener("pointerdown", (e)=> {
+  if (gameMode !== 'read') return;
+  isDragging=true; moveSlider(e);
+});
+canvas.addEventListener("pointermove", (e)=> {
+  if (gameMode !== 'read') return;
+  if(isDragging){moveSlider(e);}
+});
 canvas.addEventListener("pointerup", ()=>isDragging=false);
 canvas.addEventListener("pointerleave", ()=>isDragging=false);
 
@@ -908,9 +886,9 @@ function roundRect(x, y, w, h, r, fill, stroke) {
   if (stroke) ctx.stroke();
 }
 
-/* ==================== AUDIO: unchanged ==================== */
+/* ==================== AUDIO: use /audio, fallback to first syllable ==================== */
 function normalizeName(s) {
-  return s
+  return (s || "")
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zñü]+/g, '');
@@ -970,6 +948,337 @@ function playWordAudio(word) {
   };
   tryNext();
 }
+
+/* ==================== NEW: Spelling mechanics (keyboard + tiles) ==================== */
+function tileDisplayFor(g){
+  // show accented target in "Correcto", but tiles/typing are unaccented-friendly
+  // For display in slots, show without accents except ñ
+  if (!g) return "";
+  let x = (g || "").toLowerCase();
+  x = x.replace(/á/g,'a').replace(/é/g,'e').replace(/í/g,'i').replace(/ó/g,'o').replace(/ú/g,'u');
+  return x;
+}
+
+function resetSpellingState(hard){
+  spellingSubmitted = false;
+  perSlotCorrect = [];
+  pendingDigraph = null;
+
+  if (!words.length) return;
+
+  targetWordRaw = (words[currentWordIndex] || "").toLowerCase().trim();
+  const g = parseWord(targetWordRaw).map(o=>o.text);
+
+  targetGraphemes = g.slice();
+  userGraphemes = new Array(targetGraphemes.length).fill("");
+  cursorSlot = 0;
+
+  if (hard){
+    // rebuild tiles if needed
+    tiles = [];
+    tilesUsed = [];
+    if (gameMode === 'spell_tiles') buildTilesForCurrentWord();
+  } else {
+    // keep tiles but return used
+    if (gameMode === 'spell_tiles') {
+      tilesUsed = new Array(tiles.length).fill(false);
+      buildTileRackUI();
+    }
+  }
+
+  updateSpellButtons();
+  drawCanvas();
+}
+
+function updateSpellButtons(){
+  const inSpell = (gameMode !== 'read');
+  submitSpellBtn.disabled = !inSpell;
+  clearSpellBtn.disabled = !inSpell;
+  backspaceSpellBtn.disabled = !inSpell;
+
+  if (!inSpell) return;
+
+  const allFilled = userGraphemes.every(x => (x || "").length > 0) && !pendingDigraph;
+  submitSpellBtn.disabled = !allFilled || spellingSubmitted;
+
+  if (gameMode === 'spell_kb') {
+    setTimeout(() => spellInput.focus(), 50);
+  }
+}
+
+function expectedAtCursor(){
+  return targetGraphemes[cursorSlot] || "";
+}
+
+function canTypeMore(){
+  // prevent extra letters
+  const allFilled = userGraphemes.every(x => (x || "").length > 0);
+  return !spellingSubmitted && (!allFilled || pendingDigraph);
+}
+
+function spellingBackspace(){
+  if (spellingSubmitted) return;
+
+  if (pendingDigraph){
+    // clear partial
+    userGraphemes[cursorSlot] = "";
+    pendingDigraph = null;
+    updateSpellButtons();
+    drawCanvas();
+    return;
+  }
+
+  // find last filled slot before cursor
+  let i = cursorSlot;
+  if (i >= targetGraphemes.length) i = targetGraphemes.length - 1;
+
+  // if current slot has something, remove it
+  if (userGraphemes[i]) {
+    userGraphemes[i] = "";
+    cursorSlot = i;
+    if (gameMode === 'spell_tiles') rebuildTilesFromUser(); // return tile
+  } else {
+    // go left
+    for (let j = i-1; j >= 0; j--){
+      if (userGraphemes[j]) {
+        userGraphemes[j] = "";
+        cursorSlot = j;
+        if (gameMode === 'spell_tiles') rebuildTilesFromUser();
+        break;
+      }
+    }
+  }
+  updateSpellButtons();
+  drawCanvas();
+}
+
+function advanceCursor(){
+  let i = cursorSlot;
+  while (i < userGraphemes.length && (userGraphemes[i] || "").length > 0) i++;
+  cursorSlot = Math.min(i, userGraphemes.length - 1);
+}
+
+function submitSpelling(){
+  if (spellingSubmitted) return;
+
+  // grade (accent-insensitive, digraphs are one slot)
+  perSlotCorrect = targetGraphemes.map((tg, i) => {
+    const u = userGraphemes[i] || "";
+    return normalizeForGrade(u) === normalizeForGrade(tg);
+  });
+
+  spellingSubmitted = true;
+  updateSpellButtons();
+  drawCanvas();
+}
+
+/* ---------------- keyboard handling (digraphs in ONE slot) ---------------- */
+function isAllowedKeyChar(k){
+  return /^[a-zñáéíóúü]$/i.test(k || "");
+}
+
+spellInput.addEventListener("keydown", (e) => {
+  if (gameMode !== 'spell_kb') return;
+  if (!canTypeMore()) { e.preventDefault(); return; }
+
+  const key = e.key;
+
+  if (key === "Backspace") {
+    e.preventDefault();
+    spellingBackspace();
+    return;
+  }
+  if (key === "Enter") {
+    e.preventDefault();
+    if (!submitSpellBtn.disabled) submitSpelling();
+    return;
+  }
+
+  if (!isAllowedKeyChar(key)) return;
+
+  e.preventDefault();
+
+  const ch = key.toLowerCase();
+  const expected = expectedAtCursor();
+
+  // if expected is a digraph, support two-keystroke entry
+  const digraphs = ["ch","ll","rr","qu"];
+
+  if (digraphs.includes(expected)) {
+    if (!pendingDigraph) {
+      // first char must match expected[0]
+      if (ch === expected[0]) {
+        userGraphemes[cursorSlot] = ch;     // show first letter (temporary)
+        pendingDigraph = { expected, first: ch };
+      } else {
+        // wrong first letter: still record it but do not advance (so they can't overflow)
+        userGraphemes[cursorSlot] = ch;
+        // keep cursor here; allow them to backspace
+      }
+    } else {
+      // complete attempt
+      const wantSecond = expected[1];
+      if (ch === wantSecond && userGraphemes[cursorSlot] === pendingDigraph.first) {
+        userGraphemes[cursorSlot] = expected; // replace with full digraph
+        pendingDigraph = null;
+        cursorSlot = Math.min(cursorSlot + 1, userGraphemes.length - 1);
+        advanceCursor();
+      } else {
+        // if second doesn't match, keep what they typed (still in same slot)
+        userGraphemes[cursorSlot] = (userGraphemes[cursorSlot] || "") + ch;
+        // but cap display to 2 chars in slot to prevent overflow visuals
+        userGraphemes[cursorSlot] = userGraphemes[cursorSlot].slice(0, 2);
+      }
+    }
+    updateSpellButtons();
+    drawCanvas();
+    return;
+  }
+
+  // normal single-slot entry
+  if (!userGraphemes[cursorSlot]) {
+    userGraphemes[cursorSlot] = ch;
+    cursorSlot = Math.min(cursorSlot + 1, userGraphemes.length - 1);
+    advanceCursor();
+  } else {
+    // find next empty
+    advanceCursor();
+    if (!userGraphemes[cursorSlot]) {
+      userGraphemes[cursorSlot] = ch;
+      cursorSlot = Math.min(cursorSlot + 1, userGraphemes.length - 1);
+      advanceCursor();
+    }
+  }
+
+  updateSpellButtons();
+  drawCanvas();
+});
+
+/* allow tapping canvas to focus keyboard input in kb mode */
+canvas.addEventListener("click", () => {
+  if (gameMode === 'spell_kb') spellInput.focus();
+});
+
+/* ---------------- tile mode ---------------- */
+function buildTilesForCurrentWord(){
+  if (gameMode !== 'spell_tiles') return;
+  const tileMode = tileModeSel.value; // exact | vowels | distractors
+
+  const correct = targetGraphemes.slice();
+
+  // required tiles based on correct graphemes (but remove accents for vowel tiles)
+  const required = correct.map(g => tileDisplayFor(g));
+
+  // helper sets
+  const vowels = ["a","e","i","o","u"];
+  const consonantsFromWord = required.filter(g => !vowels.includes(g) && !graphemeIsVowel(g));
+
+  let pool = [];
+
+  if (tileMode === "exact") {
+    pool = required.slice();
+  } else if (tileMode === "vowels") {
+    pool = consonantsFromWord.slice();
+    pool.push(...vowels);
+    // ensure required vowel duplicates exist to allow building (ex: mamá needs 2 a)
+    required.forEach(g => {
+      if (vowels.includes(g)) pool.push(g);
+    });
+  } else {
+    // distractors from loaded wordlist (relevant)
+    pool = consonantsFromWord.slice();
+    pool.push(...vowels);
+    required.forEach(g => { if (vowels.includes(g)) pool.push(g); });
+
+    const distractors = pickDistractorConsonantsFromList(8, new Set(pool));
+    pool.push(...distractors);
+  }
+
+  // shuffle pool
+  pool = pool.filter(Boolean);
+  pool = pool.sort(() => Math.random() - 0.5);
+
+  tiles = pool;
+  tilesUsed = new Array(tiles.length).fill(false);
+
+  buildTileRackUI();
+}
+
+function pickDistractorConsonantsFromList(n, already){
+  const vowels = new Set(["a","e","i","o","u"]);
+  const set = new Set();
+
+  // collect graphemes from the loaded list (parsed with digraphs)
+  for (const w of baseWordsForDistractors){
+    const gs = parseWord((w||"").toLowerCase().trim()).map(o=>tileDisplayFor(o.text));
+    for (const g of gs){
+      if (!g) continue;
+      if (vowels.has(g)) continue;
+      // keep digraphs too (ch/ll/rr/qu) if they exist in the unit list
+      if (!already.has(g)) set.add(g);
+    }
+  }
+
+  const arr = Array.from(set).sort(() => Math.random() - 0.5);
+  return arr.slice(0, n);
+}
+
+function buildTileRackUI(){
+  if (gameMode !== 'spell_tiles') return;
+  tileRack.innerHTML = "";
+  tiles.forEach((t, i) => {
+    const btn = document.createElement("button");
+    btn.className = "tileBtn";
+    btn.textContent = t;
+    btn.disabled = !!tilesUsed[i] || spellingSubmitted;
+
+    btn.addEventListener("click", () => {
+      if (spellingSubmitted) return;
+      if (!placeTile(t, i)) return;
+      btn.disabled = true;
+    });
+
+    tileRack.appendChild(btn);
+  });
+}
+
+function placeTile(tile, tileIndex){
+  // find next empty slot
+  if (!canTypeMore()) return false;
+  if (pendingDigraph) return false; // tiles are already whole graphemes, no partial digraph
+
+  let slot = userGraphemes.findIndex(x => !x);
+  if (slot === -1) return false;
+
+  userGraphemes[slot] = tile; // tiles are already accentless
+  tilesUsed[tileIndex] = true;
+
+  cursorSlot = slot;
+  advanceCursor();
+
+  updateSpellButtons();
+  drawCanvas();
+  return true;
+}
+
+function rebuildTilesFromUser(){
+  // Re-enable tiles according to what is currently placed
+  const placed = userGraphemes.map(g => (g||"").toLowerCase()).filter(Boolean);
+
+  tilesUsed = new Array(tiles.length).fill(false);
+  // for each placed grapheme, mark one matching tile as used
+  placed.forEach(g => {
+    const idx = tiles.findIndex((t, i) => !tilesUsed[i] && t === tileDisplayFor(g));
+    if (idx >= 0) tilesUsed[idx] = true;
+  });
+
+  buildTileRackUI();
+}
+
+/* ==================== Startup ==================== */
+configureModeUI();
+
+/* ==================== Recording scripts (UNCHANGED) ==================== */
 </script>
 
 <script src="https://cdn.webrtc-experiment.com/RecordRTC.js"></script>
@@ -1049,7 +1358,7 @@ startBtn2.onclick = async () => {
     mimeType: 'video/webm',
     disableLogs: true
   });
-  
+
   const readyText = document.getElementById("readyMessage");
   readyText.textContent = "🎬 Get ready...";
 
@@ -1077,6 +1386,5 @@ stopBtn2.onclick = () => {
   });
 };
 </script>
-
 </body>
 </html>
