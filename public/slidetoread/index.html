@@ -86,7 +86,9 @@
       font-size: 20px;
       margin-top: 6px;
       color: #111;
-      min-height: 24px;
+      min-height: 48px;
+      line-height: 1.35;
+      white-space: pre-line; /* allow line breaks */
     }
     .muted {
       color: #666;
@@ -362,9 +364,8 @@ let spellingMode = false;
 let spellingSubmitted = false;
 let userPrimedForAudio = false;
 
-/* NEW: store last typed (so canvas can render letters) */
-let spellingLastTypedRaw = "";     // what student typed
-let spellingLastTypedSyl = [];     // syllabified typed
+let spellingLastTypedRaw = "";
+let spellingLastTypedSyl = [];
 
 function primeAudioOnce() {
   if (userPrimedForAudio) return;
@@ -387,16 +388,41 @@ function setSpellingMode(on) {
   spellingMode = !!on;
   if (spellingPanel) spellingPanel.style.display = spellingMode ? "block" : "none";
   resetSpellingUI();
+  applySpellingMaxLen();  // NEW
   drawCanvas();
   if (spellingMode && spellingInput) spellingInput.focus();
 }
 if (spellingToggle) spellingToggle.addEventListener('change', () => setSpellingMode(spellingToggle.checked));
 
 if (submitSpelling) submitSpelling.addEventListener('click', () => gradeSpelling());
-if (clearSpelling) clearSpelling.addEventListener('click', () => { if (spellingInput) { spellingInput.value=""; spellingInput.focus(); drawCanvas(); } });
+if (clearSpelling) clearSpelling.addEventListener('click', () => {
+  if (spellingInput) {
+    spellingInput.value = "";
+    spellingLastTypedRaw = "";
+    spellingLastTypedSyl = [];
+    spellingSubmitted = false;
+    if (feedbackEl) { feedbackEl.textContent = ""; feedbackEl.style.color = "#111"; }
+    if (correctReveal) correctReveal.textContent = "";
+    spellingInput.focus();
+    drawCanvas();
+  }
+});
+
+/* NEW: prevent extra letters based on correct word length */
+function applySpellingMaxLen() {
+  if (!spellingInput) return;
+  if (!spellingMode) { spellingInput.removeAttribute('maxlength'); return; }
+  const correct = (words && words.length) ? (words[currentWordIndex] || "") : "";
+  const maxLen = Math.max(0, (correct || "").length);
+  spellingInput.maxLength = maxLen;
+  spellingInput.placeholder = maxLen ? `Escribe la palabra (${maxLen} letras)…` : "Escribe la palabra aquí…";
+  // also hard-trim if something got pasted
+  if (spellingInput.value.length > maxLen) spellingInput.value = spellingInput.value.slice(0, maxLen);
+}
 
 if (spellingInput) {
   spellingInput.addEventListener('input', () => {
+    applySpellingMaxLen(); // enforces trim on paste/IME too
     spellingLastTypedRaw = (spellingInput.value || "");
     spellingLastTypedSyl = syllabify(spellingLastTypedRaw.trim());
     drawCanvas();
@@ -409,15 +435,12 @@ if (spellingInput) {
   });
 }
 
-/* Accent-insensitive compare */
 function normalizeForCompare(s) {
   return (s || "")
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zñü]+/g, '');
 }
-
-/* Helper: compare one character accent-insensitively */
 function normChar(ch) {
   return (ch || "")
     .toLowerCase()
@@ -550,9 +573,12 @@ function gradeSpelling() {
     feedbackEl.textContent = ok ? "✅ ¡Correcto!" : "❌ Intenta otra vez.";
     feedbackEl.style.color = ok ? "#16a34a" : "#dc2626";
   }
+
+  /* NEW: show BOTH typed + correct underneath for comparison */
   if (correctReveal) {
-    correctReveal.textContent = `Correcto: ${correct}`;
+    correctReveal.textContent = `Tu respuesta: ${typed}\nCorrecto: ${correct}`;
   }
+
   drawCanvas();
 }
 
@@ -576,9 +602,8 @@ async function loadWordList() {
           .from('reading_groups')
           .update({ session_id: sessionId, current_index: 0 })
           .eq('group_code', GROUP_CODE);
-        if (sessErr) {
-          console.warn('update session_id error', sessErr);
-        }
+        if (sessErr) console.warn('update session_id error', sessErr);
+
         const seedStr = `${GROUP_CODE}::${listName}::${sessionId}`;
         words = shuffleWithSeed(baseWords, seedStr);
         currentWordIndex = 0;
@@ -610,14 +635,10 @@ async function loadWordList() {
       setupWord(words[currentWordIndex]);
       playBtn.disabled = false;
 
-      if (isTeacher && GROUP_CODE) {
-        await setReadingIndex(GROUP_CODE, currentWordIndex);
-      }
+      if (isTeacher && GROUP_CODE) await setReadingIndex(GROUP_CODE, currentWordIndex);
+      if (isStudent && GROUP_CODE) startStudentPolling();
 
-      if (isStudent && GROUP_CODE) {
-        startStudentPolling();
-      }
-
+      applySpellingMaxLen(); /* NEW */
       if (spellingMode && spellingInput) spellingInput.focus();
     });
   } catch (err) {
@@ -628,10 +649,7 @@ async function loadWordList() {
 
 async function startStudentPolling() {
   if (!isStudent || !GROUP_CODE) return;
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 
   const doPoll = async () => {
     const idx = await getReadingIndex(GROUP_CODE);
@@ -645,6 +663,7 @@ async function startStudentPolling() {
     document.fonts.ready.then(() => {
       setupWord(words[currentWordIndex]);
       playBtn.disabled = false;
+      applySpellingMaxLen(); /* NEW */
       if (spellingMode && spellingInput) spellingInput.focus();
     });
   };
@@ -659,12 +678,11 @@ function changeWord(direction) {
   document.fonts.ready.then(() => {
     setupWord(words[currentWordIndex]);
     playBtn.disabled = false;
+    applySpellingMaxLen(); /* NEW */
     if (spellingMode && spellingInput) spellingInput.focus();
   });
 
-  if (isTeacher && GROUP_CODE) {
-    setReadingIndex(GROUP_CODE, currentWordIndex);
-  }
+  if (isTeacher && GROUP_CODE) setReadingIndex(GROUP_CODE, currentWordIndex);
 }
 
 /* ==================== Layout & Drawing ==================== */
@@ -695,6 +713,8 @@ function setupWord(word) {
   sliderEnd   = sliderStart + totalWidth;
 
   sliderX = sliderStart;
+
+  applySpellingMaxLen(); /* NEW */
   drawCanvas();
 
   if (spellingMode && userPrimedForAudio) {
@@ -749,7 +769,6 @@ function drawCanvas() {
     return Math.max(2, Math.min(10, h / 2, w / 2 - 1));
   }
 
-  /* ===== spelling-mode drawing: letters above underlines + per-letter coloring ===== */
   if (spellingMode && words.length) {
     const correctWord = words[currentWordIndex] || "";
     const correctSyl = syllabify(correctWord);
@@ -766,8 +785,7 @@ function drawCanvas() {
 
     const syllWidths = correctSyl.map(s => {
       const n = Math.max(1, s.length);
-      const w = Math.max(100, Math.min(320, n * Math.round(fontPx * 0.62)));
-      return w;
+      return Math.max(100, Math.min(320, n * Math.round(fontPx * 0.62)));
     });
 
     const totalW = syllWidths.reduce((a,b)=>a+b,0) + gap * (syllWidths.length - 1);
@@ -776,16 +794,13 @@ function drawCanvas() {
     for (let si = 0; si < correctSyl.length; si++) {
       const correctS = correctSyl[si] || "";
       const typedS = (typedSyl[si] || "");
-
       const w = syllWidths[si];
 
-      // box
       ctx.lineWidth = 4;
       ctx.strokeStyle = "#111";
       ctx.fillStyle = "#fff";
       roundRect(x, boxY, w, boxH, 14, true, true);
 
-      // letter slots
       const slots = Math.max(1, correctS.length);
       const blankGap = Math.max(10, Math.round(fontPx * 0.14));
       const blankW = Math.max(14, Math.round(fontPx * 0.30));
@@ -795,23 +810,18 @@ function drawCanvas() {
       const underlineY = boxY + Math.round(boxH * 0.72);
       const letterY = boxY + Math.round(boxH * 0.55);
 
-      // draw each slot
       for (let li = 0; li < slots; li++) {
         const bx = start + li * (blankW + blankGap);
 
-        const typedCh = typedS[li] || "";          // what student typed for that position
-        const correctCh = correctS[li] || "";      // correct at that position
+        const typedCh = typedS[li] || "";
+        const correctCh = correctS[li] || "";
 
         const isFilled = !!typedCh;
         const isCorrect = isFilled && (normChar(typedCh) === normChar(correctCh));
 
-        // choose color
         let col = "#111";
-        if (spellingSubmitted) {
-          col = isCorrect ? "#16a34a" : "#dc2626";
-        }
+        if (spellingSubmitted) col = isCorrect ? "#16a34a" : "#dc2626";
 
-        // underline (colored after submit)
         ctx.lineWidth = 5;
         ctx.strokeStyle = spellingSubmitted ? col : "#111";
         ctx.beginPath();
@@ -819,7 +829,6 @@ function drawCanvas() {
         ctx.lineTo(bx + blankW, underlineY);
         ctx.stroke();
 
-        // typed letter above underline
         if (typedCh) {
           ctx.fillStyle = spellingSubmitted ? col : "#111";
           ctx.font = `bold ${Math.round(fontPx * 0.62)}px Andika`;
@@ -831,20 +840,9 @@ function drawCanvas() {
       x += w + gap;
     }
 
-    // faint rail below (keeps visual layout stable)
-    const lineY = pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "#eee";
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(sliderStart, lineY);
-    ctx.lineTo(sliderEnd, lineY);
-    ctx.stroke();
-
     return;
   }
 
-  /* ===== original reading-mode drawing ===== */
   let x = sliderStart;
 
   letters.forEach(letter => {
@@ -910,7 +908,7 @@ function roundRect(x, y, w, h, r, fill, stroke) {
   if (stroke) ctx.stroke();
 }
 
-/* ==================== AUDIO: use /audio, fallback to first syllable ==================== */
+/* ==================== AUDIO: unchanged ==================== */
 function normalizeName(s) {
   return s
     .toLowerCase()
@@ -1078,17 +1076,6 @@ stopBtn2.onclick = () => {
     stream2.getTracks().forEach(t => t.stop());
   });
 };
-</script>
-
-<script>
-/* connect toggle to UI */
-function setSpellingMode(on) {
-  spellingMode = !!on;
-  if (spellingPanel) spellingPanel.style.display = spellingMode ? "block" : "none";
-  resetSpellingUI();
-  drawCanvas();
-  if (spellingMode && spellingInput) spellingInput.focus();
-}
 </script>
 
 </body>
