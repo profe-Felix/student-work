@@ -691,29 +691,19 @@ function splitIntoSyllables(graphemes){
         syls.push(onset.concat(nucleus)); // both to next onset
       } else {
         syls.push(onset.concat(nucleus).concat([cons[0]])); // split
-        i += 1; // move one consonant into coda, keep next consonant for next syllable onset
+        i += 1; // move one consonant into coda
       }
     } else {
       // 3+ consonants: if last two can be onset, keep them for next syllable
       const last2 = (cons[cons.length-2] + cons[cons.length-1]).replace(/[^a-zñ]/g,'');
       if (allowedOnset2.has(last2)) {
-        // move first consonant to coda
         syls.push(onset.concat(nucleus).concat([cons[0]]));
         i += 1;
       } else {
-        // move first 2 to coda
         syls.push(onset.concat(nucleus).concat(cons.slice(0,2)));
         i += 2;
       }
     }
-
-    // advance i to start of cluster (we already advanced j), but keep i where it is:
-    // i currently points after nucleus. We'll set i to i (after nucleus) for next loop,
-    // but we adjusted i above to consume some consonants into coda.
-    // If no adjustment happened, i remains after nucleus.
-    // In all cases we should set i to (original after nucleus) and then subtract? Easier:
-    // We'll recompute i as: i = i (after nucleus) + (number of consonants we consumed into coda).
-    // We already did i += consumed in branch, so we're good.
   }
   return syls;
 }
@@ -777,15 +767,13 @@ function drawSpelling(){
   const textY = topY + boxPadY + Math.round(fontPx*0.92);
   const boxH = Math.round(fontPx*1.65 + boxPadY*2);
 
-  // slot index tracker
-  let curX = startX;
-  idx = 0;
-
   // box style
   const r = Math.min(18, Math.round(fontPx*0.35));
   ctx.lineWidth = 4;
   ctx.strokeStyle = "#111";
 
+  // ---------- TOP LINE: student attempt ----------
+  let curX = startX;
   sylMeta.forEach((m) => {
     // box
     roundRect(curX, topY, m.boxW, boxH, r, false, true);
@@ -794,8 +782,11 @@ function drawSpelling(){
     let sx = curX + boxPadX;
     for (let k=m.start; k<m.end; k++){
       const sw = slotWidths[k];
-      // underline
-      ctx.strokeStyle = "#16a34a"; // green underline like your screenshot vibe
+
+      // underline: green normally; after submit -> green if correct, RED if wrong
+      let uline = "#16a34a";
+      if (spellingSubmitted) uline = (perSlotCorrect[k] ? "#16a34a" : "#dc2626");
+      ctx.strokeStyle = uline;
       ctx.lineWidth = 6;
       ctx.beginPath();
       ctx.moveTo(sx + 10, underlineY);
@@ -826,20 +817,47 @@ function drawSpelling(){
       }
 
       sx += sw + slotGap;
-      idx++;
     }
 
     curX += m.boxW + sylGap;
   });
 
-  // Correct word below (inside canvas)
+  // ---------- BOTTOM LINE: correct "copy" (same size/boxes) ----------
   if (spellingSubmitted){
-    const correct = (targetWordRaw || words[currentWordIndex] || "").toLowerCase().trim();
-    const show = correct; // show accented original
-    ctx.font = `700 ${Math.max(22, Math.round(fontPx*0.55))}px Andika`;
-    ctx.fillStyle = "#111";
-    const lineY = topY + boxH + Math.round(fontPx*0.95);
-    ctx.fillText("Correcto: " + show, w/2, lineY);
+    const correctRaw = (targetWordRaw || words[currentWordIndex] || "").toLowerCase().trim();
+    const correctG = parseWord(correctRaw).map(o => o.text);
+
+    const copyTopY = topY + boxH + Math.round(fontPx * 0.75); // gap below first row
+    const underlineY2 = copyTopY + boxPadY + Math.round(fontPx*1.05);
+    const textY2 = copyTopY + boxPadY + Math.round(fontPx*0.92);
+
+    let curX2 = startX;
+    sylMeta.forEach((m) => {
+      roundRect(curX2, copyTopY, m.boxW, boxH, r, false, true);
+
+      let sx2 = curX2 + boxPadX;
+      for (let k=m.start; k<m.end; k++){
+        const sw = slotWidths[k];
+
+        // underline always green on correct copy
+        ctx.strokeStyle = "#16a34a";
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(sx2 + 10, underlineY2);
+        ctx.lineTo(sx2 + sw - 10, underlineY2);
+        ctx.stroke();
+
+        // correct letters (same size)
+        ctx.font = `700 ${fontPx}px Andika`;
+        ctx.fillStyle = "#16a34a"; // change to "#111" if you want black
+        const disp = tileDisplayFor(correctG[k] || "");
+        ctx.fillText(disp, sx2 + sw/2, textY2);
+
+        sx2 += sw + slotGap;
+      }
+
+      curX2 += m.boxW + sylGap;
+    });
   } else {
     // instruction line
     ctx.font = `700 ${Math.max(20, Math.round(fontPx*0.50))}px Andika`;
@@ -951,7 +969,6 @@ function playWordAudio(word) {
 
 /* ==================== NEW: Spelling mechanics (keyboard + tiles) ==================== */
 function tileDisplayFor(g){
-  // show accented target in "Correcto", but tiles/typing are unaccented-friendly
   // For display in slots, show without accents except ñ
   if (!g) return "";
   let x = (g || "").toLowerCase();
@@ -974,12 +991,10 @@ function resetSpellingState(hard){
   cursorSlot = 0;
 
   if (hard){
-    // rebuild tiles if needed
     tiles = [];
     tilesUsed = [];
     if (gameMode === 'spell_tiles') buildTilesForCurrentWord();
   } else {
-    // keep tiles but return used
     if (gameMode === 'spell_tiles') {
       tilesUsed = new Array(tiles.length).fill(false);
       buildTileRackUI();
@@ -1011,7 +1026,6 @@ function expectedAtCursor(){
 }
 
 function canTypeMore(){
-  // prevent extra letters
   const allFilled = userGraphemes.every(x => (x || "").length > 0);
   return !spellingSubmitted && (!allFilled || pendingDigraph);
 }
@@ -1020,7 +1034,6 @@ function spellingBackspace(){
   if (spellingSubmitted) return;
 
   if (pendingDigraph){
-    // clear partial
     userGraphemes[cursorSlot] = "";
     pendingDigraph = null;
     updateSpellButtons();
@@ -1028,17 +1041,14 @@ function spellingBackspace(){
     return;
   }
 
-  // find last filled slot before cursor
   let i = cursorSlot;
   if (i >= targetGraphemes.length) i = targetGraphemes.length - 1;
 
-  // if current slot has something, remove it
   if (userGraphemes[i]) {
     userGraphemes[i] = "";
     cursorSlot = i;
-    if (gameMode === 'spell_tiles') rebuildTilesFromUser(); // return tile
+    if (gameMode === 'spell_tiles') rebuildTilesFromUser();
   } else {
-    // go left
     for (let j = i-1; j >= 0; j--){
       if (userGraphemes[j]) {
         userGraphemes[j] = "";
@@ -1061,7 +1071,6 @@ function advanceCursor(){
 function submitSpelling(){
   if (spellingSubmitted) return;
 
-  // grade (accent-insensitive, digraphs are one slot)
   perSlotCorrect = targetGraphemes.map((tg, i) => {
     const u = userGraphemes[i] || "";
     return normalizeForGrade(u) === normalizeForGrade(tg);
@@ -1101,32 +1110,25 @@ spellInput.addEventListener("keydown", (e) => {
   const ch = key.toLowerCase();
   const expected = expectedAtCursor();
 
-  // if expected is a digraph, support two-keystroke entry
   const digraphs = ["ch","ll","rr","qu"];
 
   if (digraphs.includes(expected)) {
     if (!pendingDigraph) {
-      // first char must match expected[0]
       if (ch === expected[0]) {
-        userGraphemes[cursorSlot] = ch;     // show first letter (temporary)
+        userGraphemes[cursorSlot] = ch;     // temp
         pendingDigraph = { expected, first: ch };
       } else {
-        // wrong first letter: still record it but do not advance (so they can't overflow)
         userGraphemes[cursorSlot] = ch;
-        // keep cursor here; allow them to backspace
       }
     } else {
-      // complete attempt
       const wantSecond = expected[1];
       if (ch === wantSecond && userGraphemes[cursorSlot] === pendingDigraph.first) {
-        userGraphemes[cursorSlot] = expected; // replace with full digraph
+        userGraphemes[cursorSlot] = expected;
         pendingDigraph = null;
         cursorSlot = Math.min(cursorSlot + 1, userGraphemes.length - 1);
         advanceCursor();
       } else {
-        // if second doesn't match, keep what they typed (still in same slot)
         userGraphemes[cursorSlot] = (userGraphemes[cursorSlot] || "") + ch;
-        // but cap display to 2 chars in slot to prevent overflow visuals
         userGraphemes[cursorSlot] = userGraphemes[cursorSlot].slice(0, 2);
       }
     }
@@ -1135,13 +1137,11 @@ spellInput.addEventListener("keydown", (e) => {
     return;
   }
 
-  // normal single-slot entry
   if (!userGraphemes[cursorSlot]) {
     userGraphemes[cursorSlot] = ch;
     cursorSlot = Math.min(cursorSlot + 1, userGraphemes.length - 1);
     advanceCursor();
   } else {
-    // find next empty
     advanceCursor();
     if (!userGraphemes[cursorSlot]) {
       userGraphemes[cursorSlot] = ch;
@@ -1165,11 +1165,8 @@ function buildTilesForCurrentWord(){
   const tileMode = tileModeSel.value; // exact | vowels | distractors
 
   const correct = targetGraphemes.slice();
-
-  // required tiles based on correct graphemes (but remove accents for vowel tiles)
   const required = correct.map(g => tileDisplayFor(g));
 
-  // helper sets
   const vowels = ["a","e","i","o","u"];
   const consonantsFromWord = required.filter(g => !vowels.includes(g) && !graphemeIsVowel(g));
 
@@ -1180,12 +1177,8 @@ function buildTilesForCurrentWord(){
   } else if (tileMode === "vowels") {
     pool = consonantsFromWord.slice();
     pool.push(...vowels);
-    // ensure required vowel duplicates exist to allow building (ex: mamá needs 2 a)
-    required.forEach(g => {
-      if (vowels.includes(g)) pool.push(g);
-    });
+    required.forEach(g => { if (vowels.includes(g)) pool.push(g); });
   } else {
-    // distractors from loaded wordlist (relevant)
     pool = consonantsFromWord.slice();
     pool.push(...vowels);
     required.forEach(g => { if (vowels.includes(g)) pool.push(g); });
@@ -1194,7 +1187,6 @@ function buildTilesForCurrentWord(){
     pool.push(...distractors);
   }
 
-  // shuffle pool
   pool = pool.filter(Boolean);
   pool = pool.sort(() => Math.random() - 0.5);
 
@@ -1208,13 +1200,11 @@ function pickDistractorConsonantsFromList(n, already){
   const vowels = new Set(["a","e","i","o","u"]);
   const set = new Set();
 
-  // collect graphemes from the loaded list (parsed with digraphs)
   for (const w of baseWordsForDistractors){
     const gs = parseWord((w||"").toLowerCase().trim()).map(o=>tileDisplayFor(o.text));
     for (const g of gs){
       if (!g) continue;
       if (vowels.has(g)) continue;
-      // keep digraphs too (ch/ll/rr/qu) if they exist in the unit list
       if (!already.has(g)) set.add(g);
     }
   }
@@ -1243,14 +1233,13 @@ function buildTileRackUI(){
 }
 
 function placeTile(tile, tileIndex){
-  // find next empty slot
   if (!canTypeMore()) return false;
-  if (pendingDigraph) return false; // tiles are already whole graphemes, no partial digraph
+  if (pendingDigraph) return false;
 
   let slot = userGraphemes.findIndex(x => !x);
   if (slot === -1) return false;
 
-  userGraphemes[slot] = tile; // tiles are already accentless
+  userGraphemes[slot] = tile;
   tilesUsed[tileIndex] = true;
 
   cursorSlot = slot;
@@ -1262,11 +1251,9 @@ function placeTile(tile, tileIndex){
 }
 
 function rebuildTilesFromUser(){
-  // Re-enable tiles according to what is currently placed
   const placed = userGraphemes.map(g => (g||"").toLowerCase()).filter(Boolean);
 
   tilesUsed = new Array(tiles.length).fill(false);
-  // for each placed grapheme, mark one matching tile as used
   placed.forEach(g => {
     const idx = tiles.findIndex((t, i) => !tilesUsed[i] && t === tileDisplayFor(g));
     if (idx >= 0) tilesUsed[idx] = true;
