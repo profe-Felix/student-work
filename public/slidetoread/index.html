@@ -32,13 +32,97 @@
       font-size: 18px;
       padding: 5px 10px;
       margin: 5px;
+      font-family: 'Andika', sans-serif;
     }
     #controls { margin-top: 15px; }
+
+    /* ===== NEW: Spelling mode UI ===== */
+    .row {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 8px;
+      margin-bottom: 6px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid #ddd;
+      border-radius: 999px;
+      background: #fafafa;
+      color: #333;
+      font-size: 16px;
+    }
+    #spellingPanel {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 10px 12px;
+      display: none; /* toggled on/off */
+    }
+    #spellingInput {
+      width: min(520px, 92vw);
+      max-width: 92vw;
+      text-align: center;
+      border: 2px solid #111;
+      border-radius: 10px;
+      outline: none;
+      font-size: 20px;
+      padding: 8px 10px;
+      font-family: 'Andika', sans-serif;
+    }
+    #spellingInput:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+    }
+    #feedback {
+      font-size: 18px;
+      margin-top: 8px;
+      min-height: 24px;
+    }
+    #correctReveal {
+      font-size: 20px;
+      margin-top: 6px;
+      color: #111;
+      min-height: 24px;
+    }
+    .muted {
+      color: #666;
+      font-size: 14px;
+      margin-top: 6px;
+    }
+    .btnPrimary {
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .btnPrimary:disabled { opacity: .55; cursor: not-allowed; }
+    .btnGhost {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      cursor: pointer;
+      padding: 8px 12px;
+    }
   </style>
 </head>
 <body>
   <h2>Spanish Reading Game</h2>
   <div id="syncStatus" style="margin-bottom: 10px; font-size: 16px; color:#555;"></div>
+
+  <!-- ===== NEW: spelling mode toggle ===== -->
+  <div class="row">
+    <span class="pill">
+      <input type="checkbox" id="spellingToggle" />
+      <label for="spellingToggle" style="cursor:pointer;">Modo deletrear</label>
+    </span>
+    <span class="pill" id="autoplayHint">🔊 Auto-audio después del primer toque</span>
+  </div>
 
   <select id="wordListSelect">
     <option value="" selected disabled>Selecciona una lista</option>
@@ -57,6 +141,25 @@
   </div>
 
   <canvas id="wordCanvas" width="768" height="432"></canvas>
+
+  <!-- ===== NEW: spelling panel ===== -->
+  <div id="spellingPanel">
+    <div class="row">
+      <input id="spellingInput"
+             type="text"
+             inputmode="text"
+             autocomplete="off"
+             autocorrect="off"
+             autocapitalize="off"
+             spellcheck="false"
+             placeholder="Escribe la palabra aquí…" />
+      <button id="submitSpelling" class="btnPrimary">✅ Submit</button>
+      <button id="clearSpelling" class="btnGhost">↺ Borrar</button>
+    </div>
+    <div id="feedback"></div>
+    <div id="correctReveal"></div>
+    <div class="muted">Se aceptan sin acentos (mamá = mama). Después de Submit se muestra la forma correcta.</div>
+  </div>
 
   <div id="recording-controls">
     <button id="startRecording">🎙 Start Recording</button>
@@ -258,6 +361,198 @@ playBtn.addEventListener("click", () => {
   playWordAudio(words[currentWordIndex]);
 });
 
+/* ==================== NEW: Spelling mode wiring ==================== */
+const spellingToggle = document.getElementById('spellingToggle');
+const spellingPanel  = document.getElementById('spellingPanel');
+const spellingInput  = document.getElementById('spellingInput');
+const submitSpelling = document.getElementById('submitSpelling');
+const clearSpelling  = document.getElementById('clearSpelling');
+const feedbackEl     = document.getElementById('feedback');
+const correctReveal  = document.getElementById('correctReveal');
+const autoplayHint   = document.getElementById('autoplayHint');
+
+let spellingMode = false;
+let spellingSubmitted = false;
+let userPrimedForAudio = false; // iOS autoplay gate
+
+function primeAudioOnce() {
+  if (userPrimedForAudio) return;
+  userPrimedForAudio = true;
+  if (autoplayHint) autoplayHint.textContent = "🔊 Auto-audio activado";
+}
+window.addEventListener('pointerdown', primeAudioOnce, { passive: true });
+window.addEventListener('keydown', primeAudioOnce);
+
+function resetSpellingUI() {
+  spellingSubmitted = false;
+  if (feedbackEl) { feedbackEl.textContent = ""; feedbackEl.style.color = "#111"; }
+  if (correctReveal) correctReveal.textContent = "";
+  if (spellingInput) spellingInput.value = "";
+}
+
+function setSpellingMode(on) {
+  spellingMode = !!on;
+  if (spellingPanel) spellingPanel.style.display = spellingMode ? "block" : "none";
+  resetSpellingUI();
+  drawCanvas();
+  if (spellingMode && spellingInput) spellingInput.focus();
+}
+if (spellingToggle) spellingToggle.addEventListener('change', () => setSpellingMode(spellingToggle.checked));
+
+if (submitSpelling) submitSpelling.addEventListener('click', () => gradeSpelling());
+if (clearSpelling) clearSpelling.addEventListener('click', () => { if (spellingInput) { spellingInput.value=""; spellingInput.focus(); } });
+
+if (spellingInput) {
+  spellingInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      gradeSpelling();
+    }
+  });
+}
+
+/* Accent-insensitive compare (accept mamá == mama) */
+function normalizeForCompare(s) {
+  return (s || "")
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zñü]+/g, '');
+}
+
+/* Auto syllabify (heuristic; tune later) */
+const STRONG = new Set(['a','e','o','á','é','ó']);
+const WEAK   = new Set(['i','u','ü','í','ú']);
+function isVowelChar(ch){ return /[aeiouáéíóúü]/i.test(ch); }
+function isAccentedWeak(ch){ return ch === 'í' || ch === 'ú'; }
+function isStrong(ch){ return STRONG.has(ch); }
+function tokenizeSpanish(word) {
+  const w = (word || "").toLowerCase();
+  const tokens = [];
+  for (let i=0;i<w.length;) {
+    const two = w.slice(i,i+2);
+    if (two === 'ch' || two === 'll' || two === 'rr') { tokens.push(two); i+=2; continue; }
+    if (two === 'qu') { tokens.push(two); i+=2; continue; }
+    if (two === 'gu') { tokens.push(two); i+=2; continue; }
+    tokens.push(w[i]); i++;
+  }
+  return tokens;
+}
+function isVowelToken(tok){
+  if (tok === 'qu' || tok === 'gu') return false;
+  if (tok === 'ch' || tok === 'll' || tok === 'rr') return false;
+  return tok.length === 1 && isVowelChar(tok);
+}
+function vowelGroup(tokens, start) {
+  let i = start;
+  let group = [];
+  while (i < tokens.length && isVowelToken(tokens[i])) { group.push(tokens[i]); i++; }
+  if (group.length <= 1) return { nucleus: group, next: start + group.length };
+
+  const nuc = [group[0]];
+  for (let k=1;k<group.length;k++){
+    const prev = nuc[nuc.length-1];
+    const curr = group[k];
+    if (isStrong(prev) && isStrong(curr)) break;
+    if (isAccentedWeak(prev) || isAccentedWeak(curr)) break;
+    nuc.push(curr);
+  }
+  return { nucleus: nuc, next: start + nuc.length };
+}
+const ONSET_PAIRS = new Set(['pr','pl','br','bl','fr','fl','tr','dr','cr','cl','gr','gl']);
+function syllabify(word) {
+  const original = (word || "").toLowerCase().trim();
+  if (!original) return [];
+  const tokens = tokenizeSpanish(original);
+
+  let hasVowel = false;
+  for (const t of tokens) if (isVowelToken(t)) { hasVowel = true; break; }
+  if (!hasVowel) return [original];
+
+  const syllables = [];
+  let i = 0;
+
+  while (i < tokens.length) {
+    // onset
+    let onsetStart = i;
+    while (i < tokens.length && !isVowelToken(tokens[i])) i++;
+    if (i >= tokens.length) {
+      if (syllables.length) syllables[syllables.length-1] += tokens.slice(onsetStart).join('');
+      else syllables.push(tokens.slice(onsetStart).join(''));
+      break;
+    }
+    const onset = tokens.slice(onsetStart, i);
+
+    // nucleus
+    const vg = vowelGroup(tokens, i);
+    const nucleus = vg.nucleus;
+    i = vg.next;
+
+    // consonant cluster until next vowel
+    let consStart = i;
+    while (i < tokens.length && !isVowelToken(tokens[i])) i++;
+    const cons = tokens.slice(consStart, i);
+
+    let coda = [];
+    let nextOnset = cons;
+
+    if (cons.length === 0) { coda = []; nextOnset = []; }
+    else if (cons.length === 1) { coda = []; nextOnset = cons; }
+    else if (cons.length === 2) {
+      const pair = (cons[0] + cons[1]).replace(/[^a-zñü]/g,'');
+      if (ONSET_PAIRS.has(pair)) { coda = []; nextOnset = cons; }
+      else { coda = [cons[0]]; nextOnset = [cons[1]]; }
+    } else if (cons.length === 3) {
+      const last2 = (cons[1] + cons[2]).replace(/[^a-zñü]/g,'');
+      if (ONSET_PAIRS.has(last2)) { coda = [cons[0]]; nextOnset = [cons[1], cons[2]]; }
+      else { coda = [cons[0], cons[1]]; nextOnset = [cons[2]]; }
+    } else {
+      const last2 = (cons[cons.length-2] + cons[cons.length-1]).replace(/[^a-zñü]/g,'');
+      if (ONSET_PAIRS.has(last2)) {
+        coda = cons.slice(0, cons.length-2);
+        nextOnset = cons.slice(cons.length-2);
+      } else {
+        coda = cons.slice(0, cons.length-1);
+        nextOnset = cons.slice(cons.length-1);
+      }
+    }
+
+    const syl = onset.join('') + nucleus.join('') + coda.join('');
+    syllables.push(syl);
+
+    // rewind for next onset
+    i = i - nextOnset.length;
+  }
+
+  return syllables.filter(Boolean);
+}
+
+function gradeSpelling() {
+  if (!spellingMode) return;
+  if (!words.length) return;
+
+  const correct = words[currentWordIndex] || "";
+  const typed = (spellingInput ? spellingInput.value : "").trim();
+
+  if (!typed) {
+    if (feedbackEl) { feedbackEl.textContent = "Escribe algo primero 🙂"; feedbackEl.style.color = "#666"; }
+    if (correctReveal) correctReveal.textContent = "";
+    return;
+  }
+
+  const ok = normalizeForCompare(typed) === normalizeForCompare(correct);
+  spellingSubmitted = true;
+
+  if (feedbackEl) {
+    feedbackEl.textContent = ok ? "✅ ¡Correcto!" : "❌ Intenta otra vez.";
+    feedbackEl.style.color = ok ? "#16a34a" : "#dc2626";
+  }
+  if (correctReveal) {
+    correctReveal.textContent = `Correcto: ${correct}`;
+  }
+  drawCanvas();
+}
+
+/* ==================== ORIGINAL: loadWordList / sync stays same ==================== */
 async function loadWordList() {
   const listName = document.getElementById("wordListSelect").value; // e.g., "1. sílabas"
   const url = `wordlists/${encodeURIComponent(listName)}.txt`;      // encode spaces/accents
@@ -323,6 +618,9 @@ async function loadWordList() {
       if (isStudent && GROUP_CODE) {
         startStudentPolling();
       }
+
+      // NEW: in spelling mode, focus input
+      if (spellingMode && spellingInput) spellingInput.focus();
     });
   } catch (err) {
     console.warn(err);
@@ -349,6 +647,9 @@ async function startStudentPolling() {
     document.fonts.ready.then(() => {
       setupWord(words[currentWordIndex]);
       playBtn.disabled = false;
+
+      // NEW: spelling focus
+      if (spellingMode && spellingInput) spellingInput.focus();
     });
   };
 
@@ -362,6 +663,9 @@ function changeWord(direction) {
   document.fonts.ready.then(() => {
     setupWord(words[currentWordIndex]);
     playBtn.disabled = false;
+
+    // NEW: spelling focus
+    if (spellingMode && spellingInput) spellingInput.focus();
   });
 
   if (isTeacher && GROUP_CODE) {
@@ -371,6 +675,9 @@ function changeWord(direction) {
 
 /* ==================== Layout & Drawing ==================== */
 function setupWord(word) {
+  // NEW: reset spelling UI when word changes
+  if (spellingMode) resetSpellingUI();
+
   const baseFont = 80;
   const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
   const fontPx = Math.max(36, Math.min(96, scaledFont));
@@ -396,6 +703,13 @@ function setupWord(word) {
 
   sliderX = sliderStart;
   drawCanvas();
+
+  // NEW: auto-play audio on word load ONLY in spelling mode AND after user gesture (iOS-safe)
+  if (spellingMode && userPrimedForAudio) {
+    setTimeout(() => {
+      if (words.length) playWordAudio(words[currentWordIndex]);
+    }, 150);
+  }
 }
 
 function parseWord(word) {
@@ -443,6 +757,81 @@ function drawCanvas() {
     return Math.max(2, Math.min(10, h / 2, w / 2 - 1));
   }
 
+  /* ===== NEW: spelling-mode drawing (no hints: boxes + blanks) ===== */
+  if (spellingMode && words.length) {
+    const word = words[currentWordIndex] || "";
+    const sylls = syllabify(word);
+    const showCorrect = spellingSubmitted;
+
+    const gap = Math.max(10, Math.round(fontPx * 0.18));
+    const boxH = Math.max(52, Math.round(fontPx * 0.9));
+    const boxY = Math.round(canvas.clientHeight * 0.20);
+
+    const syllWidths = sylls.map(s => {
+      const n = Math.max(1, s.length);
+      const w = Math.max(90, Math.min(280, n * Math.round(fontPx * 0.55)));
+      return w;
+    });
+
+    const totalW = syllWidths.reduce((a,b)=>a+b,0) + gap * (syllWidths.length - 1);
+    let x = (canvas.clientWidth - totalW) / 2;
+
+    // Per-syllable correctness after submit (accent-insensitive; aligned by syllable index)
+    let sylOk = [];
+    if (showCorrect && spellingInput) {
+      const typed = (spellingInput.value || "").trim();
+      const typedSyl = syllabify(typed);
+      for (let i = 0; i < sylls.length; i++) {
+        const a = normalizeForCompare(sylls[i] || "");
+        const b = normalizeForCompare(typedSyl[i] || "");
+        sylOk[i] = (a === b && b.length > 0);
+      }
+    }
+
+    for (let i = 0; i < sylls.length; i++) {
+      const w = syllWidths[i];
+
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = showCorrect ? (sylOk[i] ? "#16a34a" : "#dc2626") : "#111";
+      ctx.fillStyle = "#fff";
+      roundRect(x, boxY, w, boxH, 14, true, true);
+
+      // blanks
+      const lettersCount = Math.max(1, sylls[i].length);
+      const blankGap = Math.max(8, Math.round(fontPx * 0.12));
+      const blankW = Math.max(12, Math.round(fontPx * 0.25));
+      const totalBlankW = lettersCount * blankW + (lettersCount - 1) * blankGap;
+      let bx = x + (w - totalBlankW) / 2;
+      const by = boxY + Math.round(boxH * 0.70);
+
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = showCorrect ? (sylOk[i] ? "#16a34a" : "#dc2626") : "#111";
+
+      for (let k = 0; k < lettersCount; k++) {
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + blankW, by);
+        ctx.stroke();
+        bx += blankW + blankGap;
+      }
+
+      x += w + gap;
+    }
+
+    // draw the slider rail faintly below (keeps layout consistent visually)
+    const lineY = pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#eee";
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(sliderStart, lineY);
+    ctx.lineTo(sliderEnd, lineY);
+    ctx.stroke();
+
+    return; // don't draw letters/pills in spelling mode
+  }
+
+  /* ===== ORIGINAL drawing (unchanged) ===== */
   let x = sliderStart;
 
   letters.forEach(letter => {
