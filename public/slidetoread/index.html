@@ -717,156 +717,156 @@ function drawSpelling(){
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
 
-  const baseFont = 64;
-  const scaledFont = Math.round(baseFont * (w / 768));
-  const fontPx = Math.max(28, Math.min(72, scaledFont));
-  ctx.font = `700 ${fontPx}px Andika`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "alphabetic";
-
   const graphemes = targetGraphemes.length ? targetGraphemes : letters.map(x=>x.text);
   if (!graphemes.length) return;
 
   // syllables from graphemes
   const syls = splitIntoSyllables(graphemes);
 
-  // layout
-  const boxPadX = Math.max(10, Math.round(fontPx * 0.35));
-  const boxPadY = Math.max(10, Math.round(fontPx * 0.25));
-  const slotGap = Math.max(8, Math.round(fontPx * 0.22));
-  const sylGap  = Math.max(14, Math.round(fontPx * 0.55));
+  // ---------- FIT LOOP (prevents bottom clipping) ----------
+  const baseFont = 64;
+  let fontPx = Math.max(24, Math.min(72, Math.round(baseFont * (w / 768))));
+  const rows = spellingSubmitted ? 2 : 1;
 
-  // measure slot widths
-  const slotMinW = Math.max(38, Math.round(fontPx * 0.95));
-  const slotInnerPad = Math.max(8, Math.round(fontPx * 0.20));
+  function computeLayout(fp){
+    const boxPadX = Math.max(10, Math.round(fp * 0.35));
+    const boxPadY = Math.max(10, Math.round(fp * 0.25));
+    const slotGap = Math.max(8,  Math.round(fp * 0.22));
+    const sylGap  = Math.max(14, Math.round(fp * 0.55));
 
-  const slotWidths = graphemes.map(g => {
-    // show digraph wider
-    const display = tileDisplayFor(g);
-    const tw = ctx.measureText(display).width;
-    return Math.max(slotMinW, Math.round(tw + slotInnerPad*2));
-  });
+    // measure slot widths at this font size
+    ctx.font = `700 ${fp}px Andika`;
+    const slotMinW = Math.max(34, Math.round(fp * 0.95));
+    const slotInnerPad = Math.max(8, Math.round(fp * 0.20));
+    const slotWidths = graphemes.map(g => {
+      const display = tileDisplayFor(g);
+      const tw = ctx.measureText(display).width;
+      return Math.max(slotMinW, Math.round(tw + slotInnerPad*2));
+    });
 
-  // build syllable width sums
-  let idx = 0;
-  const sylMeta = syls.map(sg => {
-    const start = idx;
-    const len = sg.length;
-    const end = start + len;
-    const slotsW = slotWidths.slice(start, end).reduce((a,b)=>a+b,0) + slotGap*(len-1);
-    const boxW = slotsW + boxPadX*2;
-    idx = end;
-    return { start, end, len, slotsW, boxW };
-  });
+    // syllable meta
+    let idx = 0;
+    const sylMeta = syls.map(sg => {
+      const start = idx;
+      const len = sg.length;
+      const end = start + len;
+      const slotsW = slotWidths.slice(start, end).reduce((a,b)=>a+b,0) + slotGap*(len-1);
+      const boxW = slotsW + boxPadX*2;
+      idx = end;
+      return { start, end, len, boxW };
+    });
 
-  const totalW = sylMeta.reduce((a,m)=>a+m.boxW,0) + sylGap*(sylMeta.length-1);
-  const startX = Math.round((w - totalW)/2);
-  const topY = Math.round(h*0.18);
+    const totalW = sylMeta.reduce((a,m)=>a+m.boxW,0) + sylGap*(sylMeta.length-1);
+    const startX = Math.round((w - totalW)/2);
 
-  // draw
-  const underlineY = topY + boxPadY + Math.round(fontPx*1.05);
-  const textY = topY + boxPadY + Math.round(fontPx*0.92);
-  const boxH = Math.round(fontPx*1.65 + boxPadY*2);
+    const boxH = Math.round(fp*1.65 + boxPadY*2);
+    const gapY = Math.round(fp * 0.55);   // gap between top and copy row
+    const marginTop = Math.round(fp * 0.35);
+    const marginBot = Math.round(fp * 0.35);
 
-  // box style
-  const r = Math.min(18, Math.round(fontPx*0.35));
+    const neededH = marginTop + (rows * boxH) + ((rows-1) * gapY) + marginBot
+                  + (spellingSubmitted ? 0 : Math.round(fp*0.95)); // instruction line space when 1 row
+
+    return { fp, boxPadX, boxPadY, slotGap, sylGap, slotWidths, sylMeta, totalW, startX, boxH, gapY, neededH };
+  }
+
+  let L = computeLayout(fontPx);
+  while (L.neededH > h * 0.92 && fontPx > 22) {
+    fontPx -= 2;
+    L = computeLayout(fontPx);
+  }
+
+  // ---------- DRAW ----------
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
   ctx.lineWidth = 4;
   ctx.strokeStyle = "#111";
 
-  // ---------- TOP LINE: student attempt ----------
-  let curX = startX;
-  sylMeta.forEach((m) => {
-    // box
-    roundRect(curX, topY, m.boxW, boxH, r, false, true);
+  const r = Math.min(18, Math.round(L.fp*0.35));
 
-    // slots inside
-    let sx = curX + boxPadX;
-    for (let k=m.start; k<m.end; k++){
-      const sw = slotWidths[k];
+  // Place block so everything fits vertically
+  // If 2 rows, anchor higher; if 1 row, center a bit nicer.
+  const topY = spellingSubmitted
+    ? Math.round(h * 0.10)
+    : Math.round(h * 0.18);
 
-      // underline: green normally; after submit -> green if correct, RED if wrong
-      let uline = "#16a34a";
-      if (spellingSubmitted) uline = (perSlotCorrect[k] ? "#16a34a" : "#dc2626");
-      ctx.strokeStyle = uline;
-      ctx.lineWidth = 6;
-      ctx.beginPath();
-      ctx.moveTo(sx + 10, underlineY);
-      ctx.lineTo(sx + sw - 10, underlineY);
-      ctx.stroke();
+  // If still too tall, force to top with margin.
+  const safeTopY = Math.max(Math.round(L.fp*0.25), Math.min(topY, Math.round(h*0.20)));
 
-      // typed letter above underline
-      const u = userGraphemes[k] || "";
-      const display = tileDisplayFor(u);
+  const underlineY = safeTopY + L.boxPadY + Math.round(L.fp*1.05);
+  const textY =      safeTopY + L.boxPadY + Math.round(L.fp*0.92);
 
-      // coloring after submit
-      let color = "#16a34a";
-      if (!spellingSubmitted){
-        color = "#111";
-      } else {
-        color = (perSlotCorrect[k] ? "#16a34a" : "#dc2626");
+  // helper to draw one row of boxes/slots at a given Y, with provided letters + underline color rule
+  function drawRow(rowTopY, rowLetters, underlineMode){
+    // underlineMode:
+    // - "attempt": green before submit; after submit green/red by perSlotCorrect
+    // - "correct": always green
+    let curX = L.startX;
+
+    L.sylMeta.forEach((m) => {
+      roundRect(curX, rowTopY, m.boxW, L.boxH, r, false, true);
+
+      let sx = curX + L.boxPadX;
+      for (let k=m.start; k<m.end; k++){
+        const sw = L.slotWidths[k];
+
+        // underline
+        let uline = "#16a34a";
+        if (underlineMode === "attempt" && spellingSubmitted) {
+          uline = (perSlotCorrect[k] ? "#16a34a" : "#dc2626");
+        }
+        ctx.strokeStyle = uline;
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(sx + 10, rowTopY + (underlineY - safeTopY));
+        ctx.lineTo(sx + sw - 10, rowTopY + (underlineY - safeTopY));
+        ctx.stroke();
+
+        // letter
+        const raw = rowLetters[k] || "";
+        const display = tileDisplayFor(raw);
+
+        let color = "#111";
+        if (underlineMode === "correct") color = "#16a34a";
+        if (underlineMode === "attempt" && spellingSubmitted) color = (perSlotCorrect[k] ? "#16a34a" : "#dc2626");
+
+        ctx.fillStyle = color;
+        ctx.font = `700 ${L.fp}px Andika`;
+        ctx.fillText(display, sx + sw/2, rowTopY + (textY - safeTopY));
+
+        // cursor highlight (only on attempt row, before submit)
+        if (underlineMode === "attempt" && !spellingSubmitted && k === cursorSlot){
+          ctx.strokeStyle = "#2563eb";
+          ctx.lineWidth = 3;
+          roundRect(sx+4, rowTopY+6, sw-8, L.boxH-12, 12, false, true);
+        }
+
+        sx += sw + L.slotGap;
       }
 
-      ctx.fillStyle = color;
-      ctx.font = `700 ${fontPx}px Andika`;
-      ctx.fillText(display, sx + sw/2, textY);
+      curX += m.boxW + L.sylGap;
+    });
+  }
 
-      // cursor highlight (before submit)
-      if (!spellingSubmitted && k === cursorSlot){
-        ctx.strokeStyle = "#2563eb";
-        ctx.lineWidth = 3;
-        roundRect(sx+4, topY+6, sw-8, boxH-12, 12, false, true);
-      }
+  // TOP row: student attempt
+  drawRow(safeTopY, userGraphemes, "attempt");
 
-      sx += sw + slotGap;
-    }
-
-    curX += m.boxW + sylGap;
-  });
-
-  // ---------- BOTTOM LINE: correct "copy" (same size/boxes) ----------
   if (spellingSubmitted){
+    // BOTTOM row: correct copy (same size)
     const correctRaw = (targetWordRaw || words[currentWordIndex] || "").toLowerCase().trim();
     const correctG = parseWord(correctRaw).map(o => o.text);
 
-    const copyTopY = topY + boxH + Math.round(fontPx * 0.75); // gap below first row
-    const underlineY2 = copyTopY + boxPadY + Math.round(fontPx*1.05);
-    const textY2 = copyTopY + boxPadY + Math.round(fontPx*0.92);
-
-    let curX2 = startX;
-    sylMeta.forEach((m) => {
-      roundRect(curX2, copyTopY, m.boxW, boxH, r, false, true);
-
-      let sx2 = curX2 + boxPadX;
-      for (let k=m.start; k<m.end; k++){
-        const sw = slotWidths[k];
-
-        // underline always green on correct copy
-        ctx.strokeStyle = "#16a34a";
-        ctx.lineWidth = 6;
-        ctx.beginPath();
-        ctx.moveTo(sx2 + 10, underlineY2);
-        ctx.lineTo(sx2 + sw - 10, underlineY2);
-        ctx.stroke();
-
-        // correct letters (same size)
-        ctx.font = `700 ${fontPx}px Andika`;
-        ctx.fillStyle = "#16a34a"; // change to "#111" if you want black
-        const disp = tileDisplayFor(correctG[k] || "");
-        ctx.fillText(disp, sx2 + sw/2, textY2);
-
-        sx2 += sw + slotGap;
-      }
-
-      curX2 += m.boxW + sylGap;
-    });
+    const copyTopY = safeTopY + L.boxH + L.gapY;
+    drawRow(copyTopY, correctG, "correct");
   } else {
-    // instruction line
-    ctx.font = `700 ${Math.max(20, Math.round(fontPx*0.50))}px Andika`;
+    // instruction line below single row
+    ctx.font = `700 ${Math.max(18, Math.round(L.fp*0.50))}px Andika`;
     ctx.fillStyle = "#666";
-    const lineY = topY + boxH + Math.round(fontPx*0.95);
+    const lineY = safeTopY + L.boxH + Math.round(L.fp*0.95);
     ctx.fillText("Escucha y escribe la palabra.", w/2, lineY);
   }
 }
+
 
 /* unified canvas draw */
 function drawCanvas() {
