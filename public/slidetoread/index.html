@@ -720,7 +720,6 @@ function drawSpelling(){
   const graphemes = targetGraphemes.length ? targetGraphemes : letters.map(x=>x.text);
   if (!graphemes.length) return;
 
-  // syllables from graphemes
   const syls = splitIntoSyllables(graphemes);
 
   // ---------- FIT LOOP (prevents bottom clipping) ----------
@@ -729,45 +728,50 @@ function drawSpelling(){
   const rows = spellingSubmitted ? 2 : 1;
 
   function computeLayout(fp){
-    const boxPadX = Math.max(10, Math.round(fp * 0.35));
-    const boxPadY = Math.max(10, Math.round(fp * 0.25));
-    const slotGap = Math.max(8,  Math.round(fp * 0.22));
-    const sylGap  = Math.max(14, Math.round(fp * 0.55));
-
-    // measure slot widths at this font size
     ctx.font = `700 ${fp}px Andika`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+
+    const slotGap = Math.max(10, Math.round(fp * 0.22));   // space between letters
+    const sylGap  = Math.max(18, Math.round(fp * 0.55));   // extra space between syllables
     const slotMinW = Math.max(34, Math.round(fp * 0.95));
     const slotInnerPad = Math.max(8, Math.round(fp * 0.20));
+
     const slotWidths = graphemes.map(g => {
       const display = tileDisplayFor(g);
       const tw = ctx.measureText(display).width;
       return Math.max(slotMinW, Math.round(tw + slotInnerPad*2));
     });
 
-    // syllable meta
+    // syllable boundaries (start/end indices over grapheme slots)
     let idx = 0;
     const sylMeta = syls.map(sg => {
       const start = idx;
-      const len = sg.length;
-      const end = start + len;
-      const slotsW = slotWidths.slice(start, end).reduce((a,b)=>a+b,0) + slotGap*(len-1);
-      const boxW = slotsW + boxPadX*2;
+      const end = start + sg.length;
       idx = end;
-      return { start, end, len, boxW };
+      return { start, end };
     });
 
-    const totalW = sylMeta.reduce((a,m)=>a+m.boxW,0) + sylGap*(sylMeta.length-1);
-    const startX = Math.round((w - totalW)/2);
+    // compute total width with letter gaps + extra syllable gaps
+    let totalW = 0;
+    for (let i = 0; i < graphemes.length; i++) {
+      totalW += slotWidths[i];
+      if (i < graphemes.length - 1) totalW += slotGap;
+    }
+    // add extra syll gaps where syll boundaries occur
+    for (let s = 0; s < sylMeta.length - 1; s++) {
+      const boundaryIndex = sylMeta[s].end - 1; // after this slot we already counted slotGap
+      // replace normal gap with a bigger syll gap by adding the difference
+      totalW += (sylGap - slotGap);
+    }
 
-    const boxH = Math.round(fp*1.65 + boxPadY*2);
-    const gapY = Math.round(fp * 0.55);   // gap between top and copy row
-    const marginTop = Math.round(fp * 0.35);
-    const marginBot = Math.round(fp * 0.35);
+    const startX = Math.round((w - totalW) / 2);
 
-    const neededH = marginTop + (rows * boxH) + ((rows-1) * gapY) + marginBot
-                  + (spellingSubmitted ? 0 : Math.round(fp*0.95)); // instruction line space when 1 row
+    const rowH = Math.round(fp * 2.15);            // enough for letters + underlines
+    const gapY = Math.round(fp * 0.70);            // space between attempt row and copy row
 
-    return { fp, boxPadX, boxPadY, slotGap, sylGap, slotWidths, sylMeta, totalW, startX, boxH, gapY, neededH };
+    const neededH = (rows * rowH) + ((rows - 1) * gapY) + Math.round(fp * 0.9);
+    return { fp, slotGap, sylGap, slotWidths, sylMeta, startX, rowH, gapY, neededH };
   }
 
   let L = computeLayout(fontPx);
@@ -776,96 +780,156 @@ function drawSpelling(){
     L = computeLayout(fontPx);
   }
 
-  // ---------- DRAW ----------
-  ctx.textAlign = "center";
-  ctx.textBaseline = "alphabetic";
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = "#111";
+  // vertical placement
+  const topY = spellingSubmitted ? Math.round(h * 0.10) : Math.round(h * 0.18);
 
-  const r = Math.min(18, Math.round(L.fp*0.35));
+  // Y positions within a row
+  const textY = topY + Math.round(L.fp * 0.95);
+  const underlineY = textY + Math.round(L.fp * 0.35);          // letter underline
+  const sylUnderlineY = underlineY + Math.round(L.fp * 0.28);  // syllable underline BELOW
 
-  // Place block so everything fits vertically
-  // If 2 rows, anchor higher; if 1 row, center a bit nicer.
-  const topY = spellingSubmitted
-    ? Math.round(h * 0.10)
-    : Math.round(h * 0.18);
+  function gradeSyllables(){
+    // syllable correct if ALL letters in that syll are correct
+    const sylCorrect = new Array(L.sylMeta.length).fill(false);
+    for (let s = 0; s < L.sylMeta.length; s++){
+      const {start, end} = L.sylMeta[s];
+      let ok = true;
+      for (let i = start; i < end; i++){
+        if (!perSlotCorrect[i]) { ok = false; break; }
+      }
+      sylCorrect[s] = ok;
+    }
+    return sylCorrect;
+  }
 
-  // If still too tall, force to top with margin.
-  const safeTopY = Math.max(Math.round(L.fp*0.25), Math.min(topY, Math.round(h*0.20)));
+  function drawRow(rowTopY, rowLetters, mode){
+    // mode:
+    // "attempt" = student row (black until submit, then per-slot green/red + syll green/red)
+    // "correct" = correct copy (always green)
+    ctx.font = `700 ${L.fp}px Andika`;
+    ctx.textAlign = "center";
 
-  const underlineY = safeTopY + L.boxPadY + Math.round(L.fp*1.05);
-  const textY =      safeTopY + L.boxPadY + Math.round(L.fp*0.92);
+    // precompute x positions per slot, respecting syll gaps
+    const slotX = new Array(graphemes.length).fill(0);
+    let x = L.startX;
+    let sylIndex = 0;
+    let nextSylEnd = L.sylMeta[0]?.end ?? graphemes.length;
 
-  // helper to draw one row of boxes/slots at a given Y, with provided letters + underline color rule
-  function drawRow(rowTopY, rowLetters, underlineMode){
-    // underlineMode:
-    // - "attempt": green before submit; after submit green/red by perSlotCorrect
-    // - "correct": always green
-    let curX = L.startX;
+    for (let i = 0; i < graphemes.length; i++){
+      slotX[i] = x;
 
-    L.sylMeta.forEach((m) => {
-      roundRect(curX, rowTopY, m.boxW, L.boxH, r, false, true);
+      x += L.slotWidths[i];
 
-      let sx = curX + L.boxPadX;
-      for (let k=m.start; k<m.end; k++){
-        const sw = L.slotWidths[k];
-
-        // underline
-        let uline = "#16a34a";
-        if (underlineMode === "attempt" && spellingSubmitted) {
-          uline = (perSlotCorrect[k] ? "#16a34a" : "#dc2626");
+      // decide what gap to add after this slot
+      if (i < graphemes.length - 1) {
+        if (i === nextSylEnd - 1) {
+          // move to next syllable
+          sylIndex++;
+          nextSylEnd = L.sylMeta[sylIndex]?.end ?? graphemes.length;
+          x += L.sylGap;
+        } else {
+          x += L.slotGap;
         }
-        ctx.strokeStyle = uline;
-        ctx.lineWidth = 6;
-        ctx.beginPath();
-        ctx.moveTo(sx + 10, rowTopY + (underlineY - safeTopY));
-        ctx.lineTo(sx + sw - 10, rowTopY + (underlineY - safeTopY));
-        ctx.stroke();
+      }
+    }
 
-        // letter
-        const raw = rowLetters[k] || "";
-        const display = tileDisplayFor(raw);
+    // syllable correctness colors (attempt row after submit)
+    const sylCorrect = (mode === "attempt" && spellingSubmitted) ? gradeSyllables() : null;
 
-        let color = "#111";
-        if (underlineMode === "correct") color = "#16a34a";
-        if (underlineMode === "attempt" && spellingSubmitted) color = (perSlotCorrect[k] ? "#16a34a" : "#dc2626");
+    // draw letters + letter underlines
+    for (let i = 0; i < graphemes.length; i++){
+      const sw = L.slotWidths[i];
+      const sx = slotX[i];
 
-        ctx.fillStyle = color;
-        ctx.font = `700 ${L.fp}px Andika`;
-        ctx.fillText(display, sx + sw/2, rowTopY + (textY - safeTopY));
+      const raw = rowLetters[i] || "";
+      const display = tileDisplayFor(raw);
 
-        // cursor highlight (only on attempt row, before submit)
-        if (underlineMode === "attempt" && !spellingSubmitted && k === cursorSlot){
-          ctx.strokeStyle = "#2563eb";
-          ctx.lineWidth = 3;
-          roundRect(sx+4, rowTopY+6, sw-8, L.boxH-12, 12, false, true);
+      let letterColor = "#111";
+      let ulineColor = "#111";
+
+      if (mode === "correct") {
+        letterColor = "#16a34a";
+        ulineColor = "#16a34a";
+      } else {
+        // attempt row
+        if (!spellingSubmitted) {
+          // BEFORE submit: black letters + black underline
+          letterColor = (display ? "#111" : "#111");
+          ulineColor = "#111";
+        } else {
+          // AFTER submit: green/red per slot
+          const ok = !!perSlotCorrect[i];
+          letterColor = ok ? "#16a34a" : "#dc2626";
+          ulineColor  = ok ? "#16a34a" : "#dc2626";
         }
-
-        sx += sw + L.slotGap;
       }
 
-      curX += m.boxW + L.sylGap;
-    });
+      // letter
+      ctx.fillStyle = letterColor;
+      ctx.fillText(display, sx + sw/2, rowTopY + (textY - topY));
+
+      // letter underline
+      ctx.strokeStyle = ulineColor;
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(sx + 10, rowTopY + (underlineY - topY));
+      ctx.lineTo(sx + sw - 10, rowTopY + (underlineY - topY));
+      ctx.stroke();
+
+      // cursor highlight (before submit, attempt row only)
+      if (mode === "attempt" && !spellingSubmitted && i === cursorSlot){
+        ctx.strokeStyle = "#2563eb";
+        ctx.lineWidth = 3;
+        roundRect(sx+4, rowTopY + 6, sw-8, Math.round(L.fp*1.45), 12, false, true);
+      }
+    }
+
+    // draw syllable underlines (spans groups)
+    for (let s = 0; s < L.sylMeta.length; s++){
+      const {start, end} = L.sylMeta[s];
+      const left = slotX[start] + 8;
+      const right = slotX[end-1] + L.slotWidths[end-1] - 8;
+
+      let color = "#111";
+      if (mode === "correct") {
+        color = "#16a34a";
+      } else {
+        if (!spellingSubmitted) {
+          color = "#111";
+        } else {
+          color = (sylCorrect[s] ? "#16a34a" : "#dc2626");
+        }
+      }
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 8;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(left, rowTopY + (sylUnderlineY - topY));
+      ctx.lineTo(right, rowTopY + (sylUnderlineY - topY));
+      ctx.stroke();
+    }
   }
 
   // TOP row: student attempt
-  drawRow(safeTopY, userGraphemes, "attempt");
+  drawRow(topY, userGraphemes, "attempt");
 
   if (spellingSubmitted){
     // BOTTOM row: correct copy (same size)
     const correctRaw = (targetWordRaw || words[currentWordIndex] || "").toLowerCase().trim();
     const correctG = parseWord(correctRaw).map(o => o.text);
 
-    const copyTopY = safeTopY + L.boxH + L.gapY;
+    const copyTopY = topY + L.rowH + L.gapY;
     drawRow(copyTopY, correctG, "correct");
   } else {
     // instruction line below single row
     ctx.font = `700 ${Math.max(18, Math.round(L.fp*0.50))}px Andika`;
     ctx.fillStyle = "#666";
-    const lineY = safeTopY + L.boxH + Math.round(L.fp*0.95);
+    const lineY = topY + L.rowH + Math.round(L.fp*0.70);
     ctx.fillText("Escucha y escribe la palabra.", w/2, lineY);
   }
 }
+
 
 
 /* unified canvas draw */
