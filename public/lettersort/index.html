@@ -429,7 +429,6 @@
 
     // Apply html lang attr
     document.documentElement.lang = LANG;
-
     // --- UI strings (ES/EN) ---
     const UI = {
       es: {
@@ -454,6 +453,7 @@
         alertPickLetters: 'Seleccione 1–5 letras.',
         soloPrefix: 'Modo individual:',
         soloMode: {
+          randinit: 'sonido inicial aleatorio',   /* ✅ NEW */
           row: 'modo filas',
           rowalli: 'aliteración por filas',
           allisyll: 'sílabas iniciales por filas',
@@ -505,6 +505,7 @@
         alertPickLetters: 'Select 1–5 letters.',
         soloPrefix: 'Solo mode:',
         soloMode: {
+          randinit: 'random initial sound',       /* ✅ NEW */
           row: 'row mode',
           rowalli: 'row alliteration',
           allisyll: 'row initial-syllables',
@@ -627,7 +628,7 @@
       return out;
     }
 
-    const MODE = (qs.get('mode') || '').toLowerCase();       // 'row', 'rowalli', 'allisort', 'allisyll', 'rowsyll', 'syllcount', 'stress', 'stressreveal', or classic
+    const MODE = (qs.get('mode') || '').toLowerCase();       // includes: 'randinit' ✅
     const IB = qs.get('ib') || DEFAULT_IMAGES_BUCKET;
     const AB = qs.get('ab') || DEFAULT_AUDIO_BUCKET;
     const IP = qs.get('ip') || DEFAULT_IMAGES_PREFIX;
@@ -643,10 +644,15 @@
     const TILES_ONLY = (qs.get('tilesonly') || qs.get('wordtiles') || '').toLowerCase() === 'true';
     const HIDE_WORDS = (qs.get('hidewords') || '').toLowerCase() === 'true';
 
+    // ✅ NEW: random-initial pool for ?mode=randinit&pool=b,m,s,ch,ll,rr
+    const RANDINIT_POOL = (qs.get('pool') || qs.get('randpool') || '')
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean);
+
     // syllable match mode ('initial' | 'any') and comparator ('equals' | 'contains' | 'prefix' | 'suffix')
     const SYLL_MATCH = (qs.get('syllmatch') || 'initial').toLowerCase();
     const SYLL_CMP   = (qs.get('syllcmp')   || 'equals').toLowerCase();
-
     // syllable-count columns via ?counts=1-3 or ?syllcount=1,2,3
     function parseCountsParam(v){
       const raw = (v||'').trim();
@@ -687,6 +693,7 @@
     // SOLO conditions
     const SOLO_MODE =
       !SYNC ||
+      MODE === 'randinit' ||  /* ✅ NEW */
       MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
       (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0) || (SOLO_STRESSPOS.length > 0);
 
@@ -913,7 +920,6 @@ function syllabifyEn(wordRaw){
   return syl.filter(Boolean);
 }
 
-
     function syllabifyByLang(wordPrettyOrRaw){
       if (LANG === 'en') return syllabifyEn(wordPrettyOrRaw);
       return syllabifyEs(wordPrettyOrRaw);
@@ -975,7 +981,6 @@ function syllabifyEn(wordRaw){
       } catch {}
       return null;
     }
-
     function jpgCandidatesForWord(word){
       const wMarker = (word||'').toLowerCase();
       const wPretty = markersToPretty(word||'').toLowerCase();
@@ -1264,6 +1269,7 @@ function syllabifyEn(wordRaw){
       }
       return chosen;
     }
+
     function buildRoundFromLetters(activeLetters, perCol){
       const columns = buildColumnsForLetters(activeLetters);
       const byInitial = (()=>{
@@ -1292,6 +1298,15 @@ function syllabifyEn(wordRaw){
       }
       return { columns, cards };
     }
+
+    // ✅ NEW: random initial-sound round builder (2 columns: is/not)
+    function buildRoundFromRandomInitial(pool, perCol){
+      const clean = (pool || []).map(s=>String(s).trim().toLowerCase()).filter(Boolean);
+      const fallback = SOLO_LETTERS.length ? SOLO_LETTERS : ['a'];
+      const picked = (clean.length ? clean : fallback)[Math.floor(Math.random() * (clean.length ? clean : fallback).length)];
+      return buildRoundFromLetters([picked], perCol);
+    }
+
     function buildRoundFromSyllables(sylls, perCol){
       const columns = buildColumnsForSyllables(sylls);
       const cards = [];
@@ -1311,6 +1326,7 @@ function syllabifyEn(wordRaw){
       }
       return { columns, cards };
     }
+
     function buildRoundFromSyllCount(counts, perCol){
       const columns = buildColumnsForSyllCount(counts);
       const cards = [];
@@ -1325,6 +1341,7 @@ function syllabifyEn(wordRaw){
       }
       return { columns, cards };
     }
+
     function buildRoundFromStress(positions, perCol){
       const columns = buildColumnsForStress(positions);
       const cards = [];
@@ -1339,6 +1356,7 @@ function syllabifyEn(wordRaw){
       }
       return { columns, cards };
     }
+
     function buildRoundFromWordList(activeLetters, sylls, wordsList){
       const columns = (sylls && sylls.length)
         ? buildColumnsForSyllables(sylls)
@@ -2283,6 +2301,7 @@ function everythingCorrect(){
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
       const modeTxt =
+        (MODE==='randinit')  ? T.soloMode.randinit :  /* ✅ NEW */
         (MODE==='row')       ? T.soloMode.row :
         (MODE==='rowalli' || MODE==='allisort') ? T.soloMode.rowalli :
         (MODE==='allisyll')  ? T.soloMode.allisyll :
@@ -2322,7 +2341,10 @@ function everythingCorrect(){
 
       let payload;
 
-      if (MODE === 'stressreveal') {
+      // ✅ NEW: random-initial sound mode
+      if (MODE === 'randinit') {
+        payload = buildRoundFromRandomInitial(RANDINIT_POOL, per);
+      } else if (MODE === 'stressreveal') {
         let positions = SOLO_STRESSPOS.slice();
         if (!positions.length && SOLO_WORDS.length){
           const set = new Set();
