@@ -292,9 +292,30 @@
     return !['0','off','false','none','no'].includes(lo);
   }
 
-  const BOXES_PER_ROW = clampInt(qs.get('boxCols') ?? qs.get('boxes') ?? qs.get('columns'), 4, 1, 12);
-  const NUM_ROWS      = clampInt(qs.get('boxRows') ?? qs.get('rows') ?? qs.get('r'), 1, 1, 50);
-  const BOX_COUNT     = clampInt(qs.get('boxCount') ?? qs.get('count'), null, 1, 500);
+  // ===== Prefill (per-box, by rows) =====
+  // ?prefillRows=row1box1|row1box2|.../row2box1|row2box2|...
+  // "_" means a SPACE tile inside a box.
+  function getPrefillRows(){
+    const raw = (qs.get('prefillRows') ?? qs.get('fillRows') ?? qs.get('rowFill') ?? '').trim();
+    if (!raw) return null;
+    return raw.split('/').map(r => r.trim()).filter(Boolean).map(r =>
+      r.split('|').map(x => x.trim())
+    );
+  }
+  const PREFILL_ROWS = getPrefillRows();
+
+  let BOXES_PER_ROW = clampInt(qs.get('boxCols') ?? qs.get('boxes') ?? qs.get('columns'), 4, 1, 12);
+  let NUM_ROWS      = clampInt(qs.get('boxRows') ?? qs.get('rows') ?? qs.get('r'), 1, 1, 50);
+  const BOX_COUNT   = clampInt(qs.get('boxCount') ?? qs.get('count'), null, 1, 500);
+
+  // If prefillRows is present and boxCount is NOT forcing a fixed count,
+  // auto-expand rows/cols so everything fits.
+  if (PREFILL_ROWS && !Number.isFinite(BOX_COUNT)) {
+    const needRows = PREFILL_ROWS.length;
+    const needCols = Math.max(1, ...PREFILL_ROWS.map(r => r.length || 1));
+    BOXES_PER_ROW = Math.max(BOXES_PER_ROW, Math.min(12, needCols));
+    NUM_ROWS      = Math.max(NUM_ROWS, Math.min(50, needRows));
+  }
 
   const perRow = clampInt(qs.get('perRow') ?? qs.get('perrow') ?? qs.get('cols') ?? qs.get('trayCols'), null, 1, 24);
   if (perRow) document.documentElement.style.setProperty('--tray-cols', String(perRow));
@@ -304,19 +325,6 @@
      ?caps=off    -> hides ↑ ↓ tools and disables them
      ?accent=off  -> hides ´ tool and disables it
      ?punc=off    -> hides punctuation palette
-
-     ===== Prefill (URL) =====
-     Fill EVERY box with the same text:
-       ?prefill=ma        (aliases: ?fill=ma)
-
-     Fill by ROWS (row 1, row 2, row 3...):
-       ?prefillRows=ma,me,mi,mo
-       (aliases: ?fillRows=ma,me,mi,mo)
-
-     Put MULTIPLE tiles in each box (use +):
-       ?prefill=la+ma
-       ?prefillRows=bra+vo,va+mos
-     Tip: Use %2B for + if your platform mangles plus signs.
   */
   const SPACE_ON   = getToggle('space', true);
   const CAPS_ON    = getToggle(['caps','case','upper'], true);
@@ -329,10 +337,6 @@
   if (!isNaN(spaceW) && spaceW > 0 && spaceW < 5) {
     document.documentElement.style.setProperty('--space-w', `${spaceW}ch`);
   }
-
-  // Prefill params
-  const PREFILL = (qs.get('prefill') ?? qs.get('fill') ?? '').trim();
-  const PREFILL_ROWS = getList(['prefillRows','fillRows','rowFill'], []);
 
   const DEFAULT_LETTERS = [
     'ó','o','m','t','n','g','qu',
@@ -393,19 +397,17 @@
   const plainToAcc = { a:'á', e:'é', i:'í', o:'ó', u:'ú',
                        A:'Á', E:'É', I:'Í', O:'Ó', U:'Ú' };
   const accToPlain = { á:'a', é:'e', í:'i', ó:'o', ú:'u',
-                       Á:'A', É:'É', Í:'Í', Ó:'Ó', Ú:'Ú' };
+                       Á:'A', É:'E', Í:'I', Ó:'O', Ú:'U' };
 
   function applyAccentAtPointer(tile, clientX){
     if (!tile || tile.dataset.kind !== 'text') return;
 
     const cur = tile.dataset.text ?? tile.textContent ?? '';
-    const chars = [...cur];
-    const len = chars.length;
+    const len = cur.length;
     if (!len) return;
 
     const rect = tile.getBoundingClientRect();
     const safeWidth = rect.width || 1;
-
     let relX = clientX - rect.left;
     if (relX < 0) relX = 0;
     if (relX > safeWidth) relX = safeWidth;
@@ -414,6 +416,7 @@
     if (approx < 0) approx = 0;
     if (approx >= len) approx = len - 1;
 
+    const chars = [...cur];
     const isAccentable = (ch) => !!plainToAcc[ch] || !!accToPlain[ch];
 
     let idx = approx;
@@ -434,12 +437,8 @@
 
     const c = chars[idx];
     if (plainToAcc[c]) chars[idx] = plainToAcc[c];
-    else if (accToPlain[c]) {
-      // NOTE: if you ever want toggle-off accents reliably for all vowels,
-      // keep accToPlain mapping consistent (á->a, etc). Right now we only need on/toggle.
-      const map = { 'á':'a','é':'e','í':'i','ó':'o','ú':'u','Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U' };
-      chars[idx] = map[c] ?? c;
-    } else return;
+    else if (accToPlain[c]) chars[idx] = accToPlain[c];
+    else return;
 
     const out = chars.join('');
     tile.dataset.text = out;
@@ -530,36 +529,6 @@
     }
   }
 
-  // NEW: prefill boxes (global or by rows)
-  function prefillBoxes(){
-    const lines = [...slotsEl.querySelectorAll('.line')];
-    if (!PREFILL && (!PREFILL_ROWS || PREFILL_ROWS.length === 0)) return;
-
-    const splitParts = (val) => {
-      const v = (val ?? '').trim();
-      if (!v) return [];
-      // Allow + to mean multiple tiles
-      return v.split('+').map(s => decodeURIComponent(s.trim())).filter(Boolean);
-    };
-
-    lines.forEach((line, rowIdx) => {
-      const rowVal = (PREFILL_ROWS[rowIdx] ?? '').trim();
-      const parts = splitParts(rowVal || PREFILL);
-      if (!parts.length) return;
-
-      const slots = [...line.querySelectorAll('.slot')];
-      slots.forEach(slot => {
-        // Don’t overwrite if already has something (in case you later add manual prefill)
-        if (slot.querySelector('.tile')) return;
-
-        parts.forEach(p => {
-          // Prefill uses "clone" tiles so they MOVE (not clone again when dragged)
-          slot.appendChild(makeTextTile(p, true));
-        });
-      });
-    });
-  }
-
   function fillPalettes(){
     lettersTray.innerHTML = '';
     lettersCard.style.display = LETTERS.length ? '' : 'none';
@@ -610,6 +579,58 @@
   }
   function relayoutAllSlots(){
     document.querySelectorAll('.slot').forEach(relayoutSlot);
+  }
+
+  // ===== Prefill helpers (per-box) =====
+  function isPuncChar(ch){
+    return PUNC.includes(ch);
+  }
+  function addTokenToSlot(slot, token){
+    if (token === '_') {
+      slot.appendChild(makeSpaceTile(true));
+      return;
+    }
+    if (token.length === 1 && isPuncChar(token)) {
+      slot.appendChild(makePuncTile(token, true));
+      return;
+    }
+    slot.appendChild(makeTextTile(token, true));
+  }
+  function fillSlotFromString(slot, str){
+    if (!str) return;
+
+    // Convert real spaces into "_" tokens too (so "hola mundo" works)
+    str = str.replace(/ /g, '_');
+
+    let buf = '';
+    for (const ch of [...str]){
+      if (ch === '_'){
+        if (buf) { addTokenToSlot(slot, buf); buf = ''; }
+        addTokenToSlot(slot, '_');
+        continue;
+      }
+      if (isPuncChar(ch)){
+        if (buf) { addTokenToSlot(slot, buf); buf = ''; }
+        addTokenToSlot(slot, ch);
+        continue;
+      }
+      buf += ch;
+    }
+    if (buf) addTokenToSlot(slot, buf);
+  }
+  function applyPrefillRows(){
+    if (!PREFILL_ROWS || !PREFILL_ROWS.length) return;
+    const lines = [...document.querySelectorAll('.line')];
+    for (let r = 0; r < lines.length; r++){
+      const rowData = PREFILL_ROWS[r];
+      if (!rowData) continue;
+      const slots = [...lines[r].querySelectorAll('.slot')];
+      for (let c = 0; c < slots.length; c++){
+        const content = rowData[c];
+        if (!content) continue;
+        fillSlotFromString(slots[c], content);
+      }
+    }
   }
 
   let drag = null;
@@ -840,13 +861,12 @@
     const boxesPer = clampInt(boxesInput.value, BOXES_PER_ROW, 1, 12);
     const rows     = clampInt(rowsInput.value,  NUM_ROWS,      1, 50);
     buildRows(boxesPer, rows, null);
-    prefillBoxes();       // NEW: apply prefill after rebuilding
     relayoutAllSlots();
   });
 
   buildRows(BOXES_PER_ROW, NUM_ROWS, BOX_COUNT);
   fillPalettes();
-  prefillBoxes();         // NEW: initial prefill
+  applyPrefillRows();
   relayoutAllSlots();
 </script>
 </body>
