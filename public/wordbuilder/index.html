@@ -304,6 +304,19 @@
      ?caps=off    -> hides ↑ ↓ tools and disables them
      ?accent=off  -> hides ´ tool and disables it
      ?punc=off    -> hides punctuation palette
+
+     ===== Prefill (URL) =====
+     Fill EVERY box with the same text:
+       ?prefill=ma        (aliases: ?fill=ma)
+
+     Fill by ROWS (row 1, row 2, row 3...):
+       ?prefillRows=ma,me,mi,mo
+       (aliases: ?fillRows=ma,me,mi,mo)
+
+     Put MULTIPLE tiles in each box (use +):
+       ?prefill=la+ma
+       ?prefillRows=bra+vo,va+mos
+     Tip: Use %2B for + if your platform mangles plus signs.
   */
   const SPACE_ON   = getToggle('space', true);
   const CAPS_ON    = getToggle(['caps','case','upper'], true);
@@ -316,6 +329,10 @@
   if (!isNaN(spaceW) && spaceW > 0 && spaceW < 5) {
     document.documentElement.style.setProperty('--space-w', `${spaceW}ch`);
   }
+
+  // Prefill params
+  const PREFILL = (qs.get('prefill') ?? qs.get('fill') ?? '').trim();
+  const PREFILL_ROWS = getList(['prefillRows','fillRows','rowFill'], []);
 
   const DEFAULT_LETTERS = [
     'ó','o','m','t','n','g','qu',
@@ -376,17 +393,19 @@
   const plainToAcc = { a:'á', e:'é', i:'í', o:'ó', u:'ú',
                        A:'Á', E:'É', I:'Í', O:'Ó', U:'Ú' };
   const accToPlain = { á:'a', é:'e', í:'i', ó:'o', ú:'u',
-                       Á:'A', É:'E', Í:'I', Ó:'O', Ú:'U' };
+                       Á:'A', É:'É', Í:'Í', Ó:'Ó', Ú:'Ú' };
 
   function applyAccentAtPointer(tile, clientX){
     if (!tile || tile.dataset.kind !== 'text') return;
 
     const cur = tile.dataset.text ?? tile.textContent ?? '';
-    const len = cur.length;
+    const chars = [...cur];
+    const len = chars.length;
     if (!len) return;
 
     const rect = tile.getBoundingClientRect();
     const safeWidth = rect.width || 1;
+
     let relX = clientX - rect.left;
     if (relX < 0) relX = 0;
     if (relX > safeWidth) relX = safeWidth;
@@ -395,7 +414,6 @@
     if (approx < 0) approx = 0;
     if (approx >= len) approx = len - 1;
 
-    const chars = [...cur];
     const isAccentable = (ch) => !!plainToAcc[ch] || !!accToPlain[ch];
 
     let idx = approx;
@@ -416,8 +434,12 @@
 
     const c = chars[idx];
     if (plainToAcc[c]) chars[idx] = plainToAcc[c];
-    else if (accToPlain[c]) chars[idx] = accToPlain[c];
-    else return;
+    else if (accToPlain[c]) {
+      // NOTE: if you ever want toggle-off accents reliably for all vowels,
+      // keep accToPlain mapping consistent (á->a, etc). Right now we only need on/toggle.
+      const map = { 'á':'a','é':'e','í':'i','ó':'o','ú':'u','Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U' };
+      chars[idx] = map[c] ?? c;
+    } else return;
 
     const out = chars.join('');
     tile.dataset.text = out;
@@ -506,6 +528,36 @@
       }
       slotsEl.appendChild(line);
     }
+  }
+
+  // NEW: prefill boxes (global or by rows)
+  function prefillBoxes(){
+    const lines = [...slotsEl.querySelectorAll('.line')];
+    if (!PREFILL && (!PREFILL_ROWS || PREFILL_ROWS.length === 0)) return;
+
+    const splitParts = (val) => {
+      const v = (val ?? '').trim();
+      if (!v) return [];
+      // Allow + to mean multiple tiles
+      return v.split('+').map(s => decodeURIComponent(s.trim())).filter(Boolean);
+    };
+
+    lines.forEach((line, rowIdx) => {
+      const rowVal = (PREFILL_ROWS[rowIdx] ?? '').trim();
+      const parts = splitParts(rowVal || PREFILL);
+      if (!parts.length) return;
+
+      const slots = [...line.querySelectorAll('.slot')];
+      slots.forEach(slot => {
+        // Don’t overwrite if already has something (in case you later add manual prefill)
+        if (slot.querySelector('.tile')) return;
+
+        parts.forEach(p => {
+          // Prefill uses "clone" tiles so they MOVE (not clone again when dragged)
+          slot.appendChild(makeTextTile(p, true));
+        });
+      });
+    });
   }
 
   function fillPalettes(){
@@ -788,11 +840,13 @@
     const boxesPer = clampInt(boxesInput.value, BOXES_PER_ROW, 1, 12);
     const rows     = clampInt(rowsInput.value,  NUM_ROWS,      1, 50);
     buildRows(boxesPer, rows, null);
+    prefillBoxes();       // NEW: apply prefill after rebuilding
     relayoutAllSlots();
   });
 
   buildRows(BOXES_PER_ROW, NUM_ROWS, BOX_COUNT);
   fillPalettes();
+  prefillBoxes();         // NEW: initial prefill
   relayoutAllSlots();
 </script>
 </body>
