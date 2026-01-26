@@ -427,7 +427,11 @@
   const presetId = qsLocal.get('preset');
   if (!presetId) return;
 
-  fetch('presets.json', { cache: 'no-store' })
+  fetch(
+  'https://dmlsiyyqpcupbizpxwhp.supabase.co/storage/v1/object/public/app-presets/lettersort/presets.json',
+  { cache: 'no-store' }
+)
+
     .then(r => r.ok ? r.json() : null)
     .then(allPresets => {
       if (!allPresets || !allPresets[presetId]) return;
