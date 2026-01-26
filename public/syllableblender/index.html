@@ -142,6 +142,7 @@ async function applyPresetIfAny() {
 
     /* ---- BEHAVIOR ---- */
     if (preset.behavior?.hideWord) qs.set('hideWord', '1');
+    if (preset.behavior?.hideWordUI) qs.set('hideWordUI', '1');
     if (preset.behavior?.shuffle) qs.set('shuffle', '1');
     if (preset.behavior?.seed) qs.set('seed', preset.behavior.seed);
 
@@ -256,6 +257,7 @@ let supa = null;
 let WORDS_OVERRIDE = [];
 let SOLO = false;
 let HIDE_WORD = false;
+let HIDE_WORD_UI = false;
 
 let SHUFFLE_PARAM = '';
 let SEED_PARAM = '';
@@ -507,7 +509,7 @@ function setRevealEnabled(yes){
 
 async function buildForWord(wordPretty){
   wordTitle.textContent = wordPretty;
-  wordTitle.style.display = HIDE_WORD ? 'none' : '';
+  wordTitle.style.display = (HIDE_WORD || HIDE_WORD_UI) ? 'none' : '';
 
   const syllablesSource = wordPretty;
   currentSyllables = syllabifyEs(syllablesSource);
@@ -596,6 +598,7 @@ function revealAndPlay(){
   WORDS_OVERRIDE = (qs.get('words')||'').split(',').map(s=>s.trim()).filter(Boolean);
   SOLO = WORDS_OVERRIDE.length > 0;
   HIDE_WORD = /^(1|true|yes)$/i.test((qs.get('hideWord')||'').trim());
+  HIDE_WORD_UI = /^(1|true|yes)$/i.test((qs.get('hideWordUI')||'').trim());
 
   SHUFFLE_PARAM = (qs.get('shuffle') || '').trim();
   SEED_PARAM = (qs.get('seed') || '').trim();
@@ -656,6 +659,11 @@ function revealAndPlay(){
 
   if (HIDE_WORD && wordSelectLabel) {
     wordSelectLabel.style.display = 'none';
+  }
+
+  if (HIDE_WORD_UI) {
+    if (wordSelectLabel) wordSelectLabel.style.display = 'none';
+    wordTitle.style.display = 'none';
   }
 })();
 </script>
