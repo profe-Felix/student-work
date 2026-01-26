@@ -464,6 +464,20 @@ if (changed) {
     // URL params
     const qs = new URLSearchParams(location.search);
 
+    // Hide expanded preset params after load
+if (sessionStorage.getItem('__presetExpanded') === '1') {
+  const presetOnly = qs.get('preset');
+  if (presetOnly) {
+    history.replaceState(
+      null,
+      '',
+      `${location.pathname}?preset=${encodeURIComponent(presetOnly)}`
+    );
+  }
+  sessionStorage.removeItem('__presetExpanded');
+}
+
+
     // language switch (Spanish default). Use: ?lang=en (or ?language=en / english)
     const LANG_RAW = (qs.get('lang') || qs.get('language') || 'es').toLowerCase().trim();
     const LANG = (LANG_RAW.startsWith('en') || LANG_RAW === 'english') ? 'en' : 'es';
