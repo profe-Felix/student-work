@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="es">
 <head>
   <meta charset="utf-8" />
@@ -12,7 +12,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
 
   <style>
-    /* === ORIGINAL STYLES (UNCHANGED) === */
     *{box-sizing:border-box}
     :root{--bg:#f7f7fb;--ink:#111;--muted:#666;--brand:#2563eb;--ok:#16a34a;--bad:#dc2626;--card:#fff;--drop:#eef2ff}
     html,body{height:100%}
@@ -24,243 +23,309 @@
     .spacer{flex:1}
     .switch{display:flex;gap:8px;align-items:center}
     .hidden{display:none}
-    /* (rest of CSS continues unchanged in next parts if needed) */
+    .panel{margin-top:10px}
+    .grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end}
+    .field{margin:6px 0}
+    .field .inline{display:flex;gap:8px}
+    input,button{font:inherit}
+    input{padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;width:100%}
+    .btn{padding:8px 12px;border-radius:10px;border:1px solid transparent;background:var(--brand);color:#fff;cursor:pointer}
+    .btn.outline{background:#fff;border-color:#d1d5db;color:#111}
+    .btn.ghost{background:transparent;border-color:transparent;color:#666}
+    .buttons{display:flex;gap:8px;align-items:center}
+    .note{font-size:12px;color:#666;margin-top:8px}
+    .letters{display:flex;flex-wrap:wrap;gap:6px}
+    .letters button{min-width:36px;height:36px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
+    .letters button.active{background:var(--brand);color:#fff;border-color:transparent}
+
+    main{max-width:1200px;margin:14px auto;padding:0 12px}
+
+    /* Classic columns */
+    .columns{
+      display:grid;
+      gap:16px;
+      margin-top:16px;
+      overflow-x:auto;
+      scroll-snap-type:x proximity;
+    }
+    .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px;scroll-snap-align:start}
+    .col header{display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+
+    .syllTile{
+      min-width:110px;min-height:78px;padding:10px 14px;
+      background:#6dd0ff;color:#000;font-size:38px;line-height:1;border-radius:18px;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:inset 0 0 0 2px rgba(0,0,0,.05);
+      user-select:none;
+      text-align:center;
+    }
+
+    /* --- Stress counter styles (new) --- */
+    .stressCounters{
+      display:flex;
+      gap:8px;
+      justify-content:center;
+      margin-top:6px;
+      padding-bottom:10px;          /* room for the underline */
+    }
+
+    .stressDot{
+      width:18px;
+      height:18px;
+      border-radius:999px;
+      background:#2563eb;           /* blue fill */
+      position:relative;            /* so ::after is positioned from here */
+    }
+
+    /* underline under the selected dot, with a GAP */
+    .stressDot.target::after{
+      content:"";
+      position:absolute;
+      left:50%;
+      transform:translateX(-50%);
+      width:22px;                   /* slightly wider than the dot */
+      height:3px;
+      background:#2563eb;           /* same blue as the dot */
+      top:22px;                     /* 18px (dot) + ~4px gap */
+      border-radius:999px;
+    }
+
+    .drop{
+      min-height:240px;background:var(--drop);border:2px dashed #c7d2fe;border-radius:12px;
+      padding:8px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;align-items:stretch
+    }
+
+    .rackSection{margin-top:18px}
+    .rack{
+      margin-top:8px;
+      background:#fff;
+      border:1px dashed #e5e7eb;
+      border-radius:12px;
+      padding:10px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:flex-start;  /* cards only as tall as their content */
+      min-height:0;           /* container shrinks to whatever height it needs */
+    }
+
+    .card{
+      user-select:none;touch-action:none;background:var(--card);border:1px solid #e5e7eb;border-radius:12px;
+      box-shadow:0 2px 6px rgba(0,0,0,.06);width:150px;overflow:hidden;cursor:grab;display:flex;flex-direction:column;align-items:center
+    }
+    .card:active{cursor:grabbing}
+    .card img{display:block;width:100%;aspect-ratio:4/3;object-fit:contain;background:#fafafa}
+    .card .cap{padding:6px 8px;width:100%;text-align:center;font-size:14px}
+    .card.ok{outline:3px solid var(--ok)}
+    .card.bad{outline:3px solid var(--bad)}
+    .locked{opacity:.9}
+
+    .one-per .drop .card{width:100%}
+    .card.dragging{width:150px !important; height:auto !important}
+
+    /* Word chip for rowsyll mode — keep a wide, non-shrinking basis */
+    .chip{
+      user-select:none; touch-action:none; cursor:grab;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:6px 12px;
+      border:1px solid #d1d5db;
+      border-radius:14px;
+      background:var(--drop);
+      font-size:clamp(24px, 2.8vw, 40px);
+      line-height:1.1;
+      min-height:48px;
+      flex:0 1 auto;
+      max-width:26ch;
+      white-space:normal;
+      word-break:break-word;
+    }
+    .chip:active{cursor:grabbing}
+    .chip.ok{outline:3px solid var(--ok)}
+    .chip.bad{outline:3px solid var(--bad)}
+
+    .rack.chips{
+      gap:12px;
+      padding:12px;
+      align-items:flex-start;
+    }
+    .chip.dragging{ width: auto !important; height:auto !important }
+
+    /* ===== Tiles-only cards (words instead of images) ===== */
+    body.tiles-only .card{
+      width:auto;
+      min-width:130px;
+      max-width:260px;
+    }
+    body.tiles-only .card img{
+      display:none;
+    }
+    body.tiles-only .card .cap{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:clamp(24px, 2.6vw, 40px);
+      line-height:1.1;
+      padding:12px 16px;
+      min-height:64px;
+      text-align:center;
+      white-space:normal;
+      word-break:break-word;
+    }
+
+    /* Word tiles (cards & chips) share the same rounded layout */
+    .wordTile{
+      position:relative;
+      border-radius:18px;
+      overflow:hidden;
+    }
+
+    /* Click-to-reveal blue cover that hides the text until clicked */
+    .wordCover{
+      position:absolute;
+      inset:0;
+      border:none;
+      padding:0;
+      margin:0;
+      border-radius:inherit;
+      background:#3b82f6;            /* blue cover */
+      cursor:pointer;
+      outline:none;
+    }
+    .wordCover::after{ content:""; }
+
+    .warn{padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#b91c1c}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-size:12px;margin-left:8px}
+
+    .soloBar{position:sticky;top:56px;z-index:4;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:8px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 10px rgba(0,0,0,.04)}
+    .bankActions{display:flex;gap:8px;align-items:center;margin-top:10px}
+
+    .celebrationCanvas{position:fixed;inset:0;pointer-events:none;z-index:50}
+
+    /* ---------- Row Picture Modes ---------- */
+    #rowMode{margin-top:14px;display:grid;gap:14px}
+
+    .rowLine{
+      display:grid;
+      grid-template-columns: 170px 170px 1fr; /* prompt-row mode */
+      align-items:center;
+      gap:14px;
+      background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px;
+      box-shadow:0 4px 14px rgba(0,0,0,.05)
+    }
+
+    .rowLine.twoCols{
+      grid-template-columns: minmax(220px, max-content) 1fr;
+      align-items:start;
+    }
+
+    .rowDrop{
+      min-height:160px;
+      background:var(--drop);
+      border:2px dashed #c7d2fe;
+      border-radius:12px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      align-content:flex-start;
+      align-items:flex-start;
+      padding:8px;
+    }
+
+    .rowLine.twoCols .rowDrop{
+      width:100%;
+      max-width:100%;
+      min-width:0;
+      justify-content:flex-start;
+    }
+    .rowRack{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
+    .rowCard{width:150px}
+    .rowTitle{font-size:12px;text-align:center;color:#666;margin-top:4px}
+
+    body.row-compact .wrap { padding-top:6px; }
+    body.row-compact header { border-bottom-width:1px; }
+    body.row-compact .soloBar { padding:6px; }
+    body.row-compact .columns { gap:12px; }
+
+    body.row-compact #rowMode { gap:10px; }
+    body.row-compact .rowLine{
+      grid-template-columns: 150px 140px 1fr;
+      padding:8px;
+      gap:10px;
+      border-radius:10px;
+      box-shadow:0 3px 10px rgba(0,0,0,.045);
+    }
+    body.row-compact .rowLine.twoCols{ grid-template-columns: minmax(150px, max-content) 1fr; }
+    body.row-compact .rowDrop{
+      min-height:120px;
+      padding:6px;
+      border-radius:10px;
+      gap:6px;
+    }
+    body.row-compact .rowLine.twoCols .rowDrop{
+      min-width:150px;
+      width:max-content;
+      max-width:100%;
+    }
+    body.row-compact .rowRack{ gap:6px; }
+    body.row-compact .rowCard{ width:120px; }
+    body.row-compact .rowCard img{ aspect-ratio:4/3; object-fit:contain; }
+    body.row-compact .bankActions{ margin-top:6px; }
+    body.row-compact .chip{
+      flex: 0 0 180px;
+      min-width:180px;
+      max-width:220px;
+      font-size:20px;
+      padding:10px 14px;
+    }
+    
+    /* ---------- Stress reveal background scene ---------- */
+    #stressRevealScene{
+      margin-top:16px;
+    }
+    #stressRevealScene.hidden{
+      display:none;
+    }
+    .stress-bg-wrapper{
+      position:relative;
+      max-width:520px;
+      margin:0 auto 12px auto;
+      border-radius:12px;
+      overflow:hidden;
+      box-shadow:0 6px 20px rgba(0,0,0,.12);
+      background:#fff;
+    }
+    .stress-bg-wrapper img{
+      display:block;
+      width:100%;
+      height:auto;
+    }
+    .revealBlob{
+      position:absolute;
+      background:#0f8b9c;
+      border-radius:999px;
+      padding:26px 32px;
+      opacity:0.96;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:28px;
+      font-weight:700;
+      color:#fff;
+      box-shadow:0 4px 10px rgba(0,0,0,.25);
+      transform:translate3d(0,0,0);
+      transition:opacity .3s ease, transform .3s ease;
+      pointer-events:auto;
+      user-select:none;
+    }
+    .revealBlob.hiddenBlob{
+      opacity:0;
+      pointer-events:none;
+      transform:translate3d(0,-40px,0);
+    }
   </style>
 </head>
-
 <body>
-
-<script>
-/* =========================================================
-   PART 1 / 4
-   PRESET & CONFIG INFRASTRUCTURE
-   ========================================================= */
-
-// Raw query params
-const qs = new URLSearchParams(location.search);
-
-// Optional preset id: ?preset=M5.CF.L1.A1
-const PRESET_ID = qs.get('preset');
-
-// Single normalized config object (used everywhere later)
-let CFG = {};
-
-// ---------- helpers ----------
-function parseBool(v){
-  if (typeof v === 'boolean') return v;
-  if (typeof v !== 'string') return false;
-  return ['1','true','yes','on'].includes(v.toLowerCase());
-}
-
-function parseCSV(v){
-  if (!v) return [];
-  if (Array.isArray(v)) return v;
-  return String(v).split(',').map(s=>s.trim()).filter(Boolean);
-}
-
-// ---------- config loader ----------
-async function loadConfig(){
-  // 1️⃣ Defaults (safe baseline)
-  const defaults = {
-    lang: 'es',
-    mode: '',
-    letters: [],
-    syllables: [],
-    words: [],
-    per: 0,
-
-    labelstyle: 'classic',
-    tilesonly: false,
-    hidewords: false,
-    hidetitle: false,
-
-    syllmatch: 'initial',
-    syllcmp: 'equals',
-
-    pool: [],
-    rows: '',
-    rowtitle: false,
-
-    counts: [],
-    stress: [],
-
-    sync: false,
-
-    ib: null,
-    ab: null,
-    ip: null,
-    ap: null,
-
-    titles: [],
-    bg: null
-  };
-
-  let preset = {};
-
-  // 2️⃣ Load preset if requested
-  if (PRESET_ID){
-    try{
-      const res = await fetch('/presets.json', { cache:'no-store' });
-      if (res.ok){
-        const all = await res.json();
-        if (all && all[PRESET_ID]){
-          preset = all[PRESET_ID];
-        } else {
-          console.warn('[preset] Not found:', PRESET_ID);
-        }
-      }
-    } catch(err){
-      console.warn('[preset] Failed to load presets.json', err);
-    }
-  }
-
-  // 3️⃣ Query params override everything
-  const query = Object.fromEntries(qs.entries());
-
-  // 4️⃣ Merge
-  CFG = {
-    ...defaults,
-    ...preset,
-    ...query
-  };
-
-  // 5️⃣ Normalize
-  CFG.letters   = parseCSV(CFG.letters);
-  CFG.syllables = parseCSV(CFG.syllables);
-  CFG.words     = parseCSV(CFG.words);
-  CFG.pool      = parseCSV(CFG.pool);
-  CFG.titles    = parseCSV(CFG.titles);
-
-  CFG.counts = parseCSV(CFG.counts).map(n=>parseInt(n,10)).filter(Boolean);
-  CFG.stress = parseCSV(CFG.stress).map(n=>parseInt(n,10)).filter(Boolean);
-
-  CFG.tilesonly = parseBool(CFG.tilesonly);
-  CFG.hidewords = parseBool(CFG.hidewords);
-  CFG.hidetitle = parseBool(CFG.hidetitle);
-  CFG.rowtitle  = parseBool(CFG.rowtitle);
-  CFG.sync      = parseBool(CFG.sync);
-
-  CFG.per = Math.max(0, parseInt(CFG.per || 0, 10));
-}
-
-/* =========================================================
-   END PART 1 / 4
-   ========================================================= */
-</script>
-<script>
-/* =========================================================
-   PART 2 / 4
-   CONFIG NORMALIZATION → EXISTING VARIABLES
-   ========================================================= */
-
-(async function initConfig(){
-
-  await loadConfig();
-
-  /* ---------------------------------------------------------
-     LANGUAGE
-     --------------------------------------------------------- */
-  const LANG_RAW = (CFG.lang || 'es').toLowerCase().trim();
-  const LANG = (LANG_RAW.startsWith('en') || LANG_RAW === 'english') ? 'en' : 'es';
-  document.documentElement.lang = LANG;
-
-  /* ---------------------------------------------------------
-     MODE & STORAGE
-     --------------------------------------------------------- */
-  const MODE = (CFG.mode || '').toLowerCase();
-
-  const DEFAULT_IMAGES_BUCKET = "lettersort-images";
-  const DEFAULT_AUDIO_BUCKET  = "lettersort-audio";
-  const DEFAULT_IMAGES_PREFIX = "";
-  const DEFAULT_AUDIO_PREFIX  = "";
-
-  const IB = CFG.ib || DEFAULT_IMAGES_BUCKET;
-  const AB = CFG.ab || DEFAULT_AUDIO_BUCKET;
-  const IP = CFG.ip || DEFAULT_IMAGES_PREFIX;
-  const AP = CFG.ap || DEFAULT_AUDIO_PREFIX;
-
-  /* ---------------------------------------------------------
-     SOLO PARAMS (unchanged semantics)
-     --------------------------------------------------------- */
-  const SOLO_LETTERS   = CFG.letters.map(s => s.toLowerCase());
-  const SOLO_SYLLABLES = CFG.syllables.map(s => s.toLowerCase());
-  const SOLO_WORDS     = CFG.words;
-  const SOLO_PER = CFG.per ? Math.max(1, Math.min(8, parseInt(CFG.per, 10))) : 0;
-
-
-  const LABEL_STYLE = (CFG.labelstyle || 'classic').toLowerCase();
-  const TILES_ONLY  = !!CFG.tilesonly;
-  const HIDE_WORDS  = !!CFG.hidewords;
-  const HIDE_TITLE  = !!CFG.hidetitle;
-
-  /* ---------------------------------------------------------
-     RANDOM INIT
-     --------------------------------------------------------- */
-  const RANDINIT_POOL = CFG.pool.map(s => s.toLowerCase());
-
-  /* ---------------------------------------------------------
-     SYLLABLE / STRESS
-     --------------------------------------------------------- */
-  const SYLL_MATCH = (CFG.syllmatch || 'initial').toLowerCase();
-  const SYLL_CMP   = (CFG.syllcmp   || 'equals').toLowerCase();
-
-  const SOLO_SYLLCOUNT = CFG.counts;
-  const SOLO_STRESSPOS = CFG.stress;
-
-  /* ---------------------------------------------------------
-     ROW MODES
-     --------------------------------------------------------- */
-  const ROWS_RAW  = CFG.rows || '';
-  const ROW_TITLE = !!CFG.rowtitle;
-
-  /* ---------------------------------------------------------
-     MISC
-     --------------------------------------------------------- */
-  const COL_TITLES = CFG.titles;
-  const SYNC = !!CFG.sync;
-
-  /* ---------------------------------------------------------
-     EXPOSE VARIABLES GLOBALLY (IMPORTANT)
-     --------------------------------------------------------- */
-  window.LANG = LANG;
-  window.MODE = MODE;
-
-  window.IB = IB;
-  window.AB = AB;
-  window.IP = IP;
-  window.AP = AP;
-
-  window.SOLO_LETTERS   = SOLO_LETTERS;
-  window.SOLO_SYLLABLES = SOLO_SYLLABLES;
-  window.SOLO_WORDS     = SOLO_WORDS;
-  window.SOLO_PER       = SOLO_PER;
-
-  window.LABEL_STYLE = LABEL_STYLE;
-  window.TILES_ONLY  = TILES_ONLY;
-  window.HIDE_WORDS  = HIDE_WORDS;
-  window.HIDE_TITLE  = HIDE_TITLE;
-
-  window.RANDINIT_POOL = RANDINIT_POOL;
-
-  window.SYLL_MATCH = SYLL_MATCH;
-  window.SYLL_CMP   = SYLL_CMP;
-
-  window.SOLO_SYLLCOUNT = SOLO_SYLLCOUNT;
-  window.SOLO_STRESSPOS = SOLO_STRESSPOS;
-
-  window.ROWS_RAW  = ROWS_RAW;
-  window.ROW_TITLE = ROW_TITLE;
-
-  window.COL_TITLES = COL_TITLES;
-  window.SYNC = SYNC;
-
-})();
-  
-/* =========================================================
-   END PART 2 / 4
-   ========================================================= */
-</script>
-
   <header>
     <div class="wrap">
       <div class="row">
@@ -356,6 +421,8 @@ async function loadConfig(){
     const DEFAULT_AUDIO_PREFIX  = "";
 
     // URL params
+    const qs = new URLSearchParams(location.search);
+
     // language switch (Spanish default). Use: ?lang=en (or ?language=en / english)
     const LANG_RAW = (qs.get('lang') || qs.get('language') || 'es').toLowerCase().trim();
     const LANG = (LANG_RAW.startsWith('en') || LANG_RAW === 'english') ? 'en' : 'es';
@@ -2347,39 +2414,3 @@ function everythingCorrect(){
   </script>
 </body>
 </html>
-
-<script>
-/* =========================================================
-   PART 4 / 4
-   FINAL PRESET HOOKS & BOOT FIX
-   ========================================================= */
-
-// Replace any remaining direct qs.get usage safely
-function cfgGet(key, fallback = null){
-  if (CFG[key] != null) return CFG[key];
-  return fallback;
-}
-
-// Background image (used by stress reveal)
-function backgroundUrlFromConfig(){
-  if (!CFG.bg) return null;
-  const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
-  const full = `${prefix}${CFG.bg}`;
-  const { data } = client.storage.from(IB).getPublicUrl(full);
-  return data?.publicUrl || null;
-}
-
-// Ensure app only boots AFTER config is loaded
-const __originalBoot = window.boot;
-window.boot = async function(){
-  await loadConfig();
-  return __originalBoot();
-};
-
-console.log('[presets] Loaded config:', CFG);
-
-/* =========================================================
-   END PART 4 / 4
-   ========================================================= */
-</script>
-
