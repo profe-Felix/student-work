@@ -419,49 +419,48 @@
     const DEFAULT_AUDIO_BUCKET  = "lettersort-audio";
     const DEFAULT_IMAGES_PREFIX = "";
     const DEFAULT_AUDIO_PREFIX  = "";
-<script>
 /* =========================================================
    PRESET → QUERY PARAM INJECTOR (SAFE, MINIMAL)
    ========================================================= */
-(async function presetInjector(){
-  const qs = new URLSearchParams(location.search);
-  const presetId = qs.get('preset');
+(function presetInjector(){
+  const qsLocal = new URLSearchParams(location.search);
+  const presetId = qsLocal.get('preset');
   if (!presetId) return;
 
-  try {
-    const res = await fetch('/presets.json', { cache: 'no-store' });
-    if (!res.ok) return;
+  fetch('/presets.json', { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(allPresets => {
+      if (!allPresets || !allPresets[presetId]) return;
 
-    const allPresets = await res.json();
-    const preset = allPresets[presetId];
-    if (!preset) return;
+      const preset = allPresets[presetId];
+      let changed = false;
 
-    let changed = false;
+      Object.entries(preset).forEach(([key, value]) => {
+        // do NOT override existing URL params
+        if (qsLocal.has(key)) return;
 
-    Object.entries(preset).forEach(([key, value]) => {
-      // DO NOT override existing query params
-      if (qs.has(key)) return;
+        if (Array.isArray(value)) {
+          qsLocal.set(key, value.join(','));
+        } else if (value != null) {
+          qsLocal.set(key, String(value));
+        }
 
-      if (Array.isArray(value)) {
-        qs.set(key, value.join(','));
-      } else if (value !== null && value !== undefined) {
-        qs.set(key, String(value));
+        changed = true;
+      });
+
+      if (changed) {
+        history.replaceState(
+          null,
+          '',
+          `${location.pathname}?${qsLocal.toString()}`
+        );
+        location.reload();
       }
-
-      changed = true;
+    })
+    .catch(err => {
+      console.warn('[preset injector]', err);
     });
-
-    // If we injected anything, update URL and reload once
-    if (changed) {
-      const newUrl = `${location.pathname}?${qs.toString()}`;
-      history.replaceState(null, '', newUrl);
-      location.reload();
-    }
-  } catch (err) {
-    console.warn('[preset] injector failed', err);
-  }
 })();
-</script>
 
     // URL params
     const qs = new URLSearchParams(location.search);
