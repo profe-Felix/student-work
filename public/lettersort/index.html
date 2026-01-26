@@ -419,6 +419,49 @@
     const DEFAULT_AUDIO_BUCKET  = "lettersort-audio";
     const DEFAULT_IMAGES_PREFIX = "";
     const DEFAULT_AUDIO_PREFIX  = "";
+<script>
+/* =========================================================
+   PRESET → QUERY PARAM INJECTOR (SAFE, MINIMAL)
+   ========================================================= */
+(async function presetInjector(){
+  const qs = new URLSearchParams(location.search);
+  const presetId = qs.get('preset');
+  if (!presetId) return;
+
+  try {
+    const res = await fetch('/presets.json', { cache: 'no-store' });
+    if (!res.ok) return;
+
+    const allPresets = await res.json();
+    const preset = allPresets[presetId];
+    if (!preset) return;
+
+    let changed = false;
+
+    Object.entries(preset).forEach(([key, value]) => {
+      // DO NOT override existing query params
+      if (qs.has(key)) return;
+
+      if (Array.isArray(value)) {
+        qs.set(key, value.join(','));
+      } else if (value !== null && value !== undefined) {
+        qs.set(key, String(value));
+      }
+
+      changed = true;
+    });
+
+    // If we injected anything, update URL and reload once
+    if (changed) {
+      const newUrl = `${location.pathname}?${qs.toString()}`;
+      history.replaceState(null, '', newUrl);
+      location.reload();
+    }
+  } catch (err) {
+    console.warn('[preset] injector failed', err);
+  }
+})();
+</script>
 
     // URL params
     const qs = new URLSearchParams(location.search);
