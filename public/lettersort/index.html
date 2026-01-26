@@ -185,7 +185,8 @@ async function loadConfig(){
   const SOLO_LETTERS   = CFG.letters.map(s => s.toLowerCase());
   const SOLO_SYLLABLES = CFG.syllables.map(s => s.toLowerCase());
   const SOLO_WORDS     = CFG.words;
-  const SOLO_PER       = Math.max(1, Math.min(8, CFG.per || 0));
+  const SOLO_PER = CFG.per ? Math.max(1, Math.min(8, parseInt(CFG.per, 10))) : 0;
+
 
   const LABEL_STYLE = (CFG.labelstyle || 'classic').toLowerCase();
   const TILES_ONLY  = !!CFG.tilesonly;
