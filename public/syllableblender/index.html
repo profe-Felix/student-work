@@ -120,6 +120,54 @@
 <script>
 /*** URL options ***/
 const qs = new URLSearchParams(location.search);
+
+/*** PRESET INJECTOR (Syllable Blender) ***/
+const PRESET_ID = qs.get('preset');
+
+async function applyPresetIfAny() {
+  if (!PRESET_ID) return;
+
+  try {
+    const res = await fetch(
+      'https://dmlsiyyqpcupbizpxwhp.supabase.co/storage/v1/object/public/app-presets/syllableblender/presets.json',
+      { cache: 'no-store' }
+    );
+    const allPresets = await res.json();
+    const preset = allPresets[PRESET_ID];
+    if (!preset) return;
+
+    /* ---- CONTENT ---- */
+    if (preset.content?.words) {
+      qs.set('words', preset.content.words.join(','));
+    }
+
+    /* ---- BEHAVIOR ---- */
+    if (preset.behavior?.hideWord) qs.set('hideWord', '1');
+    if (preset.behavior?.shuffle) qs.set('shuffle', '1');
+    if (preset.behavior?.seed) qs.set('seed', preset.behavior.seed);
+
+    /* ---- MEDIA (buckets + prefixes) ---- */
+    if (preset.media?.images?.bucket) qs.set('ib', preset.media.images.bucket);
+    if (preset.media?.images?.prefix) qs.set('ip', preset.media.images.prefix);
+
+    if (preset.media?.syllableAudio?.bucket) qs.set('ab', preset.media.syllableAudio.bucket);
+    if (preset.media?.syllableAudio?.prefix) qs.set('sap', preset.media.syllableAudio.prefix);
+
+    if (preset.media?.wordAudio?.bucket) qs.set('wab', preset.media.wordAudio.bucket);
+    if (preset.media?.wordAudio?.prefix) qs.set('wap', preset.media.wordAudio.prefix);
+
+    /* ---- CLEAN URL (do NOT blow up params) ---- */
+    history.replaceState(
+      null,
+      '',
+      `${location.pathname}?preset=${encodeURIComponent(PRESET_ID)}`
+    );
+  } catch (err) {
+    console.error('[preset] Failed to apply preset:', err);
+  }
+}
+
+ 
 const WORDS_OVERRIDE = (qs.get('words')||'').split(',').map(s=>s.trim()).filter(Boolean);
 const SOLO = WORDS_OVERRIDE.length > 0; // Solo mode = URL provided words
 const HIDE_WORD = /^(1|true|yes)$/i.test((qs.get('hideWord')||'').trim());
@@ -569,6 +617,7 @@ function revealAndPlay(){
 
 /*** BOOT ***/
 (async function boot(){
+  await applyPresetIfAny();
   // Build pretty word list
   if (SOLO){
     // If URL provided markers (e.g., 'sofa..'), convert to pretty for display
