@@ -94,7 +94,6 @@
     </div>
     <h2 id="wordTitle" class="wordTitle"></h2>
 
-    <!-- NEW: Under-image “Destapar y escuchar” button for easier reach -->
     <div class="underButtons">
       <button id="revealBtn2" class="btn primary wide" disabled>Destapar y escuchar</button>
     </div>
@@ -119,7 +118,7 @@
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script>
 /*** URL options ***/
-const qs = new URLSearchParams(location.search);
+let qs = new URLSearchParams(location.search);
 
 /*** PRESET INJECTOR (Syllable Blender) ***/
 const PRESET_ID = qs.get('preset');
@@ -156,35 +155,35 @@ async function applyPresetIfAny() {
     if (preset.media?.wordAudio?.bucket) qs.set('wab', preset.media.wordAudio.bucket);
     if (preset.media?.wordAudio?.prefix) qs.set('wap', preset.media.wordAudio.prefix);
 
-    /* ---- CLEAN URL (do NOT blow up params) ---- */
-    history.replaceState(
-      null,
-      '',
-      `${location.pathname}?preset=${encodeURIComponent(PRESET_ID)}`
-    );
+    /* IMPORTANT:
+       Do NOT clean the URL yet here.
+       We want the app to read the injected qs first.
+    */
   } catch (err) {
     console.error('[preset] Failed to apply preset:', err);
   }
 }
 
- 
-const WORDS_OVERRIDE = (qs.get('words')||'').split(',').map(s=>s.trim()).filter(Boolean);
-const SOLO = WORDS_OVERRIDE.length > 0; // Solo mode = URL provided words
-const HIDE_WORD = /^(1|true|yes)$/i.test((qs.get('hideWord')||'').trim());
+/* ========= marker helpers ========= */
+function normalizeName(s){
+  return (s||'').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/ñ/g,'n').replace(/ü/g,'u')
+    .replace(/[^a-z]/g,'');
+}
+function markersToPretty(s){
+  return (s||'')
+    .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
+    .replace(/n\.\./g,'ñ')
+    .replace(/u,,/g,'ü');
+}
+function prettyToMarkers(s){
+  return (s||'')
+    .replace(/á/g,'a..').replace(/é/g,'e..').replace(/í/g,'i..').replace(/ó/g,'o..').replace(/ú/g,'u..')
+    .replace(/ñ/g,'n..').replace(/ü/g,'u,,');
+}
 
-/*** NEW: shuffle options ***/
-const SHUFFLE_PARAM = (qs.get('shuffle') || '').trim();
-const SEED_PARAM = (qs.get('seed') || '').trim();
-// Turn on if: shuffle looks truthy OR a seed is provided OR a non-false-ish shuffle string exists
-const SHUFFLE =
-  /^(1|true|yes|rand|random)$/i.test(SHUFFLE_PARAM) ||
-  !!SEED_PARAM ||
-  (!!SHUFFLE_PARAM && !/^(0|false|no)$/i.test(SHUFFLE_PARAM));
-const SHUFFLE_SEED_STR =
-  SEED_PARAM ||
-  ( /^(1|true|yes|rand|random)$/i.test(SHUFFLE_PARAM) ? '' : SHUFFLE_PARAM );
-
-// Tiny seeded RNG helpers (cyrb128 + sfc32)
+/* ========= seeded shuffle helpers ========= */
 function cyrb128(str){
   let h1=1779033703,h2=3144134277,h3=1013904242,h4=2773480762;
   for(let i=0;i<str.length;i++){
@@ -217,7 +216,6 @@ function shuffleInPlace(arr, seedStr){
   if (seedStr){
     const s = cyrb128(seedStr);
     rand = sfc32(s[0],s[1],s[2],s[3]);
-    // warm up
     for(let i=0;i<15;i++) rand();
   }
   for(let i=arr.length-1;i>0;i--){
@@ -232,56 +230,46 @@ const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
 const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
-const IMAGES_BUCKET = qs.get('ib') || "lettersort-images";
-const IMAGES_PREFIX = (qs.get('ip') || "").replace(/^\//,'');   // e.g., "grade1/"
-
-/* buckets: syllable vs word */
-const SYLLABLE_AUDIO_BUCKET = qs.get('ab')  || "syllable-audio";
-const SYLLABLE_AUDIO_PREFIX = (qs.get('sap') || "").replace(/^\//,'');  // e.g., "grade1/"
-
-const WORD_AUDIO_BUCKET  = qs.get('wab') || "lettersort-audio";
-const WORD_AUDIO_PREFIX  = (qs.get('wap') || "").replace(/^\//,'');     // e.g., "grade1/"
-
-const supa = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
 /*** DOM refs ***/
 const wordSelect   = document.getElementById('wordSelect');
 const prevBtn      = document.getElementById('prevBtn');
 const nextBtn      = document.getElementById('nextBtn');
 const rebuildBtn   = document.getElementById('rebuildBtn');
 const revealBtn    = document.getElementById('revealBtn');
-const revealBtn2   = document.getElementById('revealBtn2'); // under-image button
+const revealBtn2   = document.getElementById('revealBtn2');
 const wordTitle    = document.getElementById('wordTitle');
 const pic          = document.getElementById('pic');
 const coverLayer   = document.getElementById('coverLayer');
 const slotsEl      = document.getElementById('slots');
-// label that wraps the select (for hideWord)
 const wordSelectLabel = wordSelect.closest('label');
 
-/*** Marker ↔ accents helpers ***/
-function normalizeName(s){
-  return (s||'').toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-    .replace(/ñ/g,'n').replace(/ü/g,'u')
-    .replace(/[^a-z]/g,'');
-}
-function markersToPretty(s){
-  return (s||'')
-    .replace(/a\.\./g,'á').replace(/e\.\./g,'é').replace(/i\.\./g,'í').replace(/o\.\./g,'ó').replace(/u\.\./g,'ú')
-    .replace(/n\.\./g,'ñ')
-    .replace(/u,,/g,'ü');
-}
-function prettyToMarkers(s){
-  return (s||'')
-    .replace(/á/g,'a..').replace(/é/g,'e..').replace(/í/g,'i..').replace(/ó/g,'o..').replace(/ú/g,'u..')
-    .replace(/ñ/g,'n..').replace(/ü/g,'u,,');
-}
-
 /*** Filename helpers ***/
-const IMG_EXTS = new Set(['jpg']); // keep to .jpg variants
+const IMG_EXTS = new Set(['jpg']);
 function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
 function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
 function stripImageSuffix(t){ return t.replace(/_(pic|img|image|foto)$/i,''); }
+
+/*** Create supabase client LATER (after preset), but functions need access — keep as let ***/
+let supa = null;
+
+/*** Config derived from qs (must be built after preset) ***/
+let WORDS_OVERRIDE = [];
+let SOLO = false;
+let HIDE_WORD = false;
+
+let SHUFFLE_PARAM = '';
+let SEED_PARAM = '';
+let SHUFFLE = false;
+let SHUFFLE_SEED_STR = '';
+
+let IMAGES_BUCKET = "lettersort-images";
+let IMAGES_PREFIX = "";
+
+let SYLLABLE_AUDIO_BUCKET = "syllable-audio";
+let SYLLABLE_AUDIO_PREFIX = "";
+
+let WORD_AUDIO_BUCKET = "lettersort-audio";
+let WORD_AUDIO_PREFIX = "";
 
 /*** List all images (skip in SOLO mode) ***/
 async function listAll(bucket, prefix){
@@ -316,7 +304,7 @@ async function loadWordsFromImages(){
     const ext = extOf(base);
     if(!IMG_EXTS.has(ext)) continue;
     const stem = stripImageSuffix(stemOf(base));
-    const pretty = markersToPretty(stem).toLowerCase(); // map by pretty (e.g., "sofá")
+    const pretty = markersToPretty(stem).toLowerCase();
     const { data } = supa.storage.from(IMAGES_BUCKET).getPublicUrl(f.fullpath);
     if (data?.publicUrl && !imageUrlByWord.has(pretty)) {
       imageUrlByWord.set(pretty, data.publicUrl);
@@ -328,12 +316,8 @@ async function loadWordsFromImages(){
 /*** Image fallback (for explicit WORDS) — try MARKER first, then PRETTY ***/
 function imgCandidates(wordRaw){
   const prefix = IMAGES_PREFIX ? IMAGES_PREFIX.replace(/\/$/,'')+'/' : '';
-
-  // derive both forms from whatever comes in
-  const prettyLower = markersToPretty(wordRaw || '').toLowerCase();   // e.g., "sofá"
-  const markerLower = prettyToMarkers(wordRaw || '').toLowerCase();   // e.g., "sofa.."
-
-  // try marker first, then pretty; no plain/unaccented form
+  const prettyLower = markersToPretty(wordRaw || '').toLowerCase();
+  const markerLower = prettyToMarkers(wordRaw || '').toLowerCase();
   const stems = Array.from(new Set([markerLower, prettyLower]));
 
   const names = [];
@@ -354,14 +338,12 @@ async function getPublicUrlIfExists(bucket, path){
 }
 
 async function getImageUrl(wordRaw){
-  // keys to check in preloaded map (when not SOLO)
   const prettyKey = markersToPretty(wordRaw || '').toLowerCase();
   const markerKey = prettyToMarkers(wordRaw || '').toLowerCase();
 
   if (imageUrlByWord.has(markerKey)) return imageUrlByWord.get(markerKey);
   if (imageUrlByWord.has(prettyKey)) return imageUrlByWord.get(prettyKey);
 
-  // otherwise probe storage
   for(const path of imgCandidates(wordRaw)){
     const url = await getPublicUrlIfExists(IMAGES_BUCKET, path);
     if(url) return url;
@@ -369,7 +351,7 @@ async function getImageUrl(wordRaw){
   return null;
 }
 
-/*** Syllabifier (Spanish rules incl. ch/ll/rr, qu/gu-e/i, í/ú hiatus) ***/
+/*** Syllabifier ***/
 function syllabifyEs(wordRaw){
   const word = (wordRaw || '').toLowerCase();
   const isV = ch => /[aeiouáéíóúü]/.test((ch||'')[0] || '');
@@ -437,12 +419,10 @@ function syllabifyEs(wordRaw){
 const SYLLABLE_EXTS = ['webm'];
 const WORD_EXTS     = ['mp3'];
 
-/* Soft r context */
 function isSoftRContext(syll, idx){
   return idx > 0 && /^r/i.test(syll) && !/^rr/i.test(syll);
 }
 
-/* syllable files */
 function audioPathsFor(wordPretty, syll, idx){
   const wPlain   = normalizeName(wordPretty);
   const sPlain   = normalizeName(syll);
@@ -482,7 +462,6 @@ async function resolveSyllableAudioUrl(wordPretty, syll, idx){
   return null;
 }
 
-/* whole-word file — mp3 only */
 function wordAudioPaths(wordPretty){
   const wPlain   = normalizeName(wordPretty);
   const wMarker  = prettyToMarkers(wordPretty).toLowerCase();
@@ -507,12 +486,12 @@ async function resolveWordAudioUrl(wordPretty){
 }
 
 /*** State ***/
-let WORDS = [];          // pretty display words (accents applied)
+let WORDS = [];
 let index = 0;
 let currentSyllables = [];
 let heard = [];
-let audioCache = [];     // one Audio per syllable
-let wordAudio = null;    // Audio for full word
+let audioCache = [];
+let wordAudio = null;
 
 /*** UI Handlers ***/
 prevBtn.addEventListener('click', ()=>{ index=(index-1+WORDS.length)%WORDS.length; wordSelect.value=String(index); buildForWord(WORDS[index]); });
@@ -521,32 +500,27 @@ rebuildBtn.addEventListener('click', ()=> buildForWord(WORDS[index]));
 revealBtn.addEventListener('click', ()=> revealAndPlay());
 revealBtn2.addEventListener('click', ()=> revealAndPlay());
 
-/*** Build one word (accepts pretty form) ***/
 function setRevealEnabled(yes){
   revealBtn.disabled = !yes;
   revealBtn2.disabled = !yes;
 }
 
 async function buildForWord(wordPretty){
-  // Title display (or hidden via URL param)
   wordTitle.textContent = wordPretty;
   wordTitle.style.display = HIDE_WORD ? 'none' : '';
 
-  const syllablesSource = wordPretty; // pretty is fine for syllabifier
+  const syllablesSource = wordPretty;
   currentSyllables = syllabifyEs(syllablesSource);
   heard = currentSyllables.map(()=>false);
   audioCache = new Array(currentSyllables.length).fill(null);
   setRevealEnabled(false);
   coverLayer.classList.remove('revealed');
 
-  // Image — pass pretty, function will also try marker form internally
   const imgUrl = await getImageUrl(wordPretty);
-  // (If you also want to hide the word from the placeholder, you can add that tweak back here.)
   pic.src = imgUrl || 'data:image/svg+xml;utf8,' + encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="100%" height="100%" fill="#fafafa"/></svg>`
   );
 
-  // Preload word audio (mp3)
   resolveWordAudioUrl(wordPretty).then(url=>{
     if(url){
       const a = new Audio();
@@ -559,7 +533,6 @@ async function buildForWord(wordPretty){
     }
   });
 
-  // Elkonin boxes + counters
   slotsEl.innerHTML = '';
   slotsEl.style.gridTemplateColumns = `repeat(${currentSyllables.length}, 1fr)`;
   for(let i=0;i<currentSyllables.length;i++){
@@ -618,25 +591,53 @@ function revealAndPlay(){
 /*** BOOT ***/
 (async function boot(){
   await applyPresetIfAny();
-  // Build pretty word list
+
+  /* NOW it is safe to read qs and lock values */
+  WORDS_OVERRIDE = (qs.get('words')||'').split(',').map(s=>s.trim()).filter(Boolean);
+  SOLO = WORDS_OVERRIDE.length > 0;
+  HIDE_WORD = /^(1|true|yes)$/i.test((qs.get('hideWord')||'').trim());
+
+  SHUFFLE_PARAM = (qs.get('shuffle') || '').trim();
+  SEED_PARAM = (qs.get('seed') || '').trim();
+  SHUFFLE =
+    /^(1|true|yes|rand|random)$/i.test(SHUFFLE_PARAM) ||
+    !!SEED_PARAM ||
+    (!!SHUFFLE_PARAM && !/^(0|false|no)$/i.test(SHUFFLE_PARAM));
+  SHUFFLE_SEED_STR =
+    SEED_PARAM ||
+    ( /^(1|true|yes|rand|random)$/i.test(SHUFFLE_PARAM) ? '' : SHUFFLE_PARAM );
+
+  IMAGES_BUCKET = qs.get('ib') || "lettersort-images";
+  IMAGES_PREFIX = (qs.get('ip') || "").replace(/^\//,'');
+
+  SYLLABLE_AUDIO_BUCKET = qs.get('ab')  || "syllable-audio";
+  SYLLABLE_AUDIO_PREFIX = (qs.get('sap') || "").replace(/^\//,'');
+
+  WORD_AUDIO_BUCKET  = qs.get('wab') || "lettersort-audio";
+  WORD_AUDIO_PREFIX  = (qs.get('wap') || "").replace(/^\//,'');
+
+  supa = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  /* Clean URL LAST (after app has locked injected params) */
+  if (PRESET_ID){
+    history.replaceState(null, '', `${location.pathname}?preset=${encodeURIComponent(PRESET_ID)}`);
+  }
+
   if (SOLO){
-    // If URL provided markers (e.g., 'sofa..'), convert to pretty for display
     WORDS = WORDS_OVERRIDE.map(w => markersToPretty(w));
   } else {
     try{
-      WORDS = await loadWordsFromImages(); // already pretty-mapped by loader
+      WORDS = await loadWordsFromImages();
     }catch(err){
       console.error('Error loading words from bucket:', err);
       WORDS = ['manzana','guitarra','camión','helado','caracol'];
     }
   }
 
-  // NEW: shuffle word order if requested
   if (SHUFFLE && WORDS.length > 1){
     shuffleInPlace(WORDS, SHUFFLE_SEED_STR);
   }
 
-  // Populate select with pretty labels
   wordSelect.innerHTML = '';
   WORDS.forEach((w,i)=>{
     const opt=document.createElement('option');
@@ -653,7 +654,6 @@ function revealAndPlay(){
   prevBtn.disabled = WORDS.length <= 1;
   nextBtn.disabled = WORDS.length <= 1;
 
-  // Hide the "Palabra: [select]" when ?hideWord=1/true/yes
   if (HIDE_WORD && wordSelectLabel) {
     wordSelectLabel.style.display = 'none';
   }
