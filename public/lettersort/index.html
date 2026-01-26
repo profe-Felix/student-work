@@ -448,14 +448,13 @@
         changed = true;
       });
 
-      if (changed) {
-        history.replaceState(
-          null,
-          '',
-          `${location.pathname}?${qsLocal.toString()}`
-        );
-        location.reload();
-      }
+if (changed) {
+  // Temporarily expand params to initialize the game
+  const expanded = `${location.pathname}?${qsLocal.toString()}`;
+  sessionStorage.setItem('__presetExpanded', '1');
+  location.replace(expanded);
+}
+
     })
     .catch(err => {
       console.warn('[preset injector]', err);
