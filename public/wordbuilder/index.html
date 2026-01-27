@@ -270,6 +270,8 @@
 </main>
 
 <script>
+const qs = new URLSearchParams(location.search);
+
 (async () => {
 const presetId = qs.get('preset');
 if (qs.has('__applied')) return;
@@ -313,8 +315,6 @@ if (!presetId) return;
     qs.set('__applied', '1');
   } catch {}
 })();
-
-  const qs = new URLSearchParams(location.search);
 
   function clampInt(val, fallback, min, max){
     const n = parseInt(val, 10);
