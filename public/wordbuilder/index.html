@@ -314,7 +314,7 @@ if (!presetId) return;
 
     qs.set('__applied', '1');
   } catch {}
-})();
+
 
   function clampInt(val, fallback, min, max){
     const n = parseInt(val, 10);
@@ -919,7 +919,7 @@ if (!presetId) return;
     `${location.pathname}?preset=${encodeURIComponent(qs.get('preset'))}`
   );
 }
-
+})();
 </script>
 </body>
 </html>
