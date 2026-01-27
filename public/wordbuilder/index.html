@@ -313,10 +313,11 @@ if (!presetId) return;
     }
 
     qs.set('__applied', '1');
-  } catch {}
-
+    } catch {}
+})();  // <-- ADD THIS LINE RIGHT HERE
 
   function clampInt(val, fallback, min, max){
+
     const n = parseInt(val, 10);
     if (Number.isFinite(n)) return Math.max(min, Math.min(max, n));
     return fallback;
