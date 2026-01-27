@@ -317,6 +317,7 @@ if (!presetId) return;
   location.pathname + '?' + qs.toString();
 
 history.replaceState(null, '', newUrl);
+location.reload();
 
     } catch {}
 })();  // <-- ADD THIS LINE RIGHT HERE
