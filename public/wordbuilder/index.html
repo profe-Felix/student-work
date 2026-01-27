@@ -297,6 +297,8 @@
 
     inject('boxes', c.boxes);
     inject('rows', c.rows);
+    inject('perRow', c.perRow);
+
 
     if (Array.isArray(c.letters))   inject('letters', c.letters.join(','));
     if (Array.isArray(c.syllables)) inject('syll', c.syllables.join(','));
@@ -310,11 +312,7 @@
       inject('punc',   c.toggles.punc   === false ? 'off' : undefined);
     }
 
-    const clean = new URLSearchParams();
-    clean.set('preset', presetId);
     params.set('__applied', '1');
-    history.replaceState(null, '', url.pathname + '?' + clean.toString());
-    location.search = params.toString();
   } catch {}
 })();
 
@@ -916,6 +914,14 @@
   fillPalettes();
   applyPrefillRows();
   relayoutAllSlots();
+ if (qs.has('preset')) {
+  history.replaceState(
+    null,
+    '',
+    `${location.pathname}?preset=${encodeURIComponent(qs.get('preset'))}`
+  );
+}
+
 </script>
 </body>
 </html>
