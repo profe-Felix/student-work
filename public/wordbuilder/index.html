@@ -918,14 +918,14 @@ history.replaceState(null, '', newUrl);
   fillPalettes();
   applyPrefillRows();
   relayoutAllSlots();
- if (qs.has('preset')) {
+if (qs.has('preset')) {
   history.replaceState(
     null,
     '',
     `${location.pathname}?preset=${encodeURIComponent(qs.get('preset'))}`
   );
 }
-})();
+
 </script>
 </body>
 </html>
