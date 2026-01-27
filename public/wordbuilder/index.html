@@ -274,6 +274,7 @@
   const url = new URL(location.href);
   const params = new URLSearchParams(url.search);
   const presetId = params.get('preset');
+ if (params.has('__applied')) return;
   if (!presetId) return;
 
   try {
@@ -311,7 +312,7 @@
 
     const clean = new URLSearchParams();
     clean.set('preset', presetId);
-
+    params.set('__applied', '1');
     history.replaceState(null, '', url.pathname + '?' + clean.toString());
     location.search = params.toString();
   } catch {}
