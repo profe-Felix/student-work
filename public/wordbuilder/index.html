@@ -271,11 +271,9 @@
 
 <script>
 (async () => {
-  const url = new URL(location.href);
-  const params = new URLSearchParams(url.search);
-  const presetId = params.get('preset');
- if (params.has('__applied')) return;
-  if (!presetId) return;
+const presetId = qs.get('preset');
+if (qs.has('__applied')) return;
+if (!presetId) return;
 
   try {
     const res = await fetch(
@@ -292,7 +290,7 @@
 
     const inject = (key, value) => {
       if (value === undefined || value === null) return;
-      if (!params.has(key)) params.set(key, value);
+      if (!qs.has(key)) qs.set(key, value);
     };
 
     inject('boxes', c.boxes);
@@ -312,7 +310,7 @@
       inject('punc',   c.toggles.punc   === false ? 'off' : undefined);
     }
 
-    params.set('__applied', '1');
+    qs.set('__applied', '1');
   } catch {}
 })();
 
