@@ -270,6 +270,53 @@
 </main>
 
 <script>
+(async () => {
+  const url = new URL(location.href);
+  const params = new URLSearchParams(url.search);
+  const presetId = params.get('preset');
+  if (!presetId) return;
+
+  try {
+    const res = await fetch(
+      'https://dmlsiyyqpcupbizpxwhp.supabase.co/storage/v1/object/public/app-presets/wordbuilder/presets.json',
+      { cache: 'no-store' }
+    );
+    if (!res.ok) return;
+
+    const allPresets = await res.json();
+    const preset = allPresets[presetId];
+    if (!preset || !preset.content) return;
+
+    const c = preset.content;
+
+    const inject = (key, value) => {
+      if (value === undefined || value === null) return;
+      if (!params.has(key)) params.set(key, value);
+    };
+
+    inject('boxes', c.boxes);
+    inject('rows', c.rows);
+
+    if (Array.isArray(c.letters))   inject('letters', c.letters.join(','));
+    if (Array.isArray(c.syllables)) inject('syll', c.syllables.join(','));
+    if (Array.isArray(c.words))     inject('words', c.words.join(','));
+    if (Array.isArray(c.images))    inject('imgs', c.images.join(','));
+
+    if (c.toggles) {
+      inject('space',  c.toggles.space  === false ? 'off' : undefined);
+      inject('caps',   c.toggles.caps   === false ? 'off' : undefined);
+      inject('accent', c.toggles.accent === false ? 'off' : undefined);
+      inject('punc',   c.toggles.punc   === false ? 'off' : undefined);
+    }
+
+    const clean = new URLSearchParams();
+    clean.set('preset', presetId);
+
+    history.replaceState(null, '', url.pathname + '?' + clean.toString());
+    location.search = params.toString();
+  } catch {}
+})();
+
   const qs = new URLSearchParams(location.search);
 
   function clampInt(val, fallback, min, max){
