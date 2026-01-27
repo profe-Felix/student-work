@@ -54,36 +54,62 @@
 <iframe id="appFrame"></iframe>
 
 <script>
-const lesson = [
-  {
-    title: 'Sílabas',
-    url: 'syllableblender/?preset=M5.L19.CF.A1'
-  },
-  {
-    title: 'Clasificar letras',
-    url: 'lettersort/?preset=M4.L16.CF.A1'
-  },
-  {
-    title: 'Construye palabras',
-    url: 'wordbuilder/?preset=M5.L19.F.A1'
-  }
-];
+const qs = new URLSearchParams(location.search);
+const lessonId = qs.get('lesson');
 
+if (!lessonId) {
+  alert('❌ No lesson specified');
+  throw new Error('Missing lesson param');
+}
+
+const LESSONS_URL =
+  'https://dmlsiyyqpcupbizpxwhp.supabase.co/storage/v1/object/public/app-lessons/lessons.json';
+
+let lesson = null;
 let step = 0;
 
 const frame = document.getElementById('appFrame');
 const titleEl = document.getElementById('title');
 const nextBtn = document.getElementById('nextBtn');
 
+/* OPTIONAL: Back button support (easy to toggle later) */
+const backBtn = document.createElement('button');
+backBtn.textContent = '⬅️ Atrás';
+backBtn.style.display = 'none';
+nextBtn.before(backBtn);
+
+async function loadLesson() {
+  const res = await fetch(LESSONS_URL, { cache: 'no-store' });
+  if (!res.ok) {
+    alert('❌ Could not load lessons.json');
+    return;
+  }
+
+  const allLessons = await res.json();
+  lesson = allLessons[lessonId];
+
+  if (!lesson || !Array.isArray(lesson.steps)) {
+    alert(`❌ Lesson not found: ${lessonId}`);
+    return;
+  }
+
+  document.title = lesson.title || 'Lección';
+  loadStep();
+}
+
 function loadStep() {
-  const s = lesson[step];
+  const s = lesson.steps[step];
+
   titleEl.textContent = `Parte ${step + 1}: ${s.title}`;
   frame.src = s.url;
-  nextBtn.textContent = step === lesson.length - 1 ? '✅ Terminar' : '➡️ Siguiente';
+
+  backBtn.style.display = step > 0 ? '' : 'none';
+  nextBtn.textContent =
+    step === lesson.steps.length - 1 ? '✅ Terminar' : '➡️ Siguiente';
 }
 
 nextBtn.addEventListener('click', () => {
-  if (step < lesson.length - 1) {
+  if (step < lesson.steps.length - 1) {
     step++;
     loadStep();
   } else {
@@ -91,8 +117,16 @@ nextBtn.addEventListener('click', () => {
   }
 });
 
-loadStep();
+backBtn.addEventListener('click', () => {
+  if (step > 0) {
+    step--;
+    loadStep();
+  }
+});
+
+loadLesson();
 </script>
+
 
 </body>
 </html>
