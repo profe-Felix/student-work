@@ -313,6 +313,11 @@ if (!presetId) return;
     }
 
     qs.set('__applied', '1');
+   const newUrl =
+  location.pathname + '?' + qs.toString();
+
+history.replaceState(null, '', newUrl);
+
     } catch {}
 })();  // <-- ADD THIS LINE RIGHT HERE
 
