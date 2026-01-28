@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SlideToRead — Fluency</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: Andika, system-ui, sans-serif;
+  background: #f8fafc;
+}
+
+header {
+  padding: 10px 16px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+header h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+header .spacer { flex: 1; }
+
+button {
+  font-size: 15px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: none;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+}
+
+main {
+  padding: 24px;
+  display: flex;
+  justify-content: center;
+}
+
+.table {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 14px;
+  max-width: 900px;
+  width: 100%;
+}
+
+.box {
+  position: relative;
+  height: 72px;
+  border-radius: 14px;
+  border: 2px solid #111827;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  overflow: hidden;
+}
+
+.word { z-index: 1; }
+
+.sweep {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,.8);
+  transform: translateX(-100%);
+  pointer-events: none;
+  z-index: 2;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>Fluidez</h1>
+  <div class="spacer"></div>
+  <button id="shuffleBtn" hidden>🔀 Nueva tabla</button>
+  <button id="sweepBtn" hidden>▶️ Iniciar</button>
+</header>
+
+<main>
+  <div id="table" class="table"></div>
+</main>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+/* ================= CONFIG ================= */
+
+const SUPABASE_URL = 'https://dmlsiyyqpcupbizpxwhp.supabase.co';
+const SUPABASE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg';
+
+const LESSON_ID = 'M5.L19.FLUENCY.A';
+
+const ROWS = 5;
+const COLS = 8;
+const SWEEP_MS = 1200;
+
+const CONTENT = ['a','e','i','o','u','ma','me','mi','mo','mu'];
+
+/* ================= SETUP ================= */
+
+const qs = new URLSearchParams(location.search);
+const IS_TEACHER = qs.get('role') === 'teacher';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const tableEl = document.getElementById('table');
+const shuffleBtn = document.getElementById('shuffleBtn');
+const sweepBtn = document.getElementById('sweepBtn');
+
+if (IS_TEACHER) {
+  shuffleBtn.hidden = false;
+  sweepBtn.hidden = false;
+}
+
+/* ================= STATE ================= */
+
+let lastSeed = null;
+
+/* ================= UTIL ================= */
+
+function normalizeSeed(seed) {
+  if (typeof seed === 'number') return seed;
+  if (typeof seed === 'string') {
+    const n = Number(seed.replace(/\D/g, ''));
+    return n || 1;
+  }
+  return 1;
+}
+
+function seededShuffle(arr, seed) {
+  let x = seed;
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    x = (x * 16807) % 2147483647;
+    const j = x % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/* ================= TABLE ================= */
+
+function buildTable(seed) {
+  lastSeed = seed;
+  tableEl.innerHTML = '';
+
+  const baseSeed = normalizeSeed(seed);
+  const total = ROWS * COLS;
+
+  let pool = [];
+  let s = baseSeed;
+
+  while (pool.length < total) {
+    pool.push(...seededShuffle(CONTENT, s++));
+  }
+
+  pool.slice(0, total).forEach(text => {
+    const box = document.createElement('div');
+    box.className = 'box';
+
+    const word = document.createElement('div');
+    word.className = 'word';
+    word.textContent = text;
+
+    const sweep = document.createElement('div');
+    sweep.className = 'sweep';
+
+    box.append(word, sweep);
+    tableEl.appendChild(box);
+  });
+}
+
+function sweepBox(index) {
+  const boxes = document.querySelectorAll('.box');
+  if (!boxes[index]) return;
+
+  const sweep = boxes[index].querySelector('.sweep');
+  sweep.style.transition = 'none';
+  sweep.style.transform = 'translateX(-100%)';
+
+  requestAnimationFrame(() => {
+    sweep.style.transition = `transform ${SWEEP_MS}ms linear`;
+    sweep.style.transform = 'translateX(0%)';
+  });
+}
+
+/* ================= SUPABASE ================= */
+
+async function init() {
+  const { data } = await supabase
+    .from('fluency_sessions')
+    .select('*')
+    .eq('lesson_id', LESSON_ID)
+    .single();
+
+  if (!data) return;
+
+  buildTable(data.seed);
+
+  supabase
+    .channel('fluency')
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'fluency_sessions',
+        filter: `lesson_id=eq.${LESSON_ID}`
+      },
+      payload => {
+        const s = payload.new;
+
+        if (s.seed !== lastSeed) {
+          buildTable(s.seed);
+        }
+
+        if (s.sweep_index >= 0) {
+          sweepBox(s.sweep_index);
+        }
+      }
+    )
+    .subscribe();
+
+  if (IS_TEACHER) {
+    shuffleBtn.onclick = async () => {
+      await supabase
+        .from('fluency_sessions')
+        .update({
+          seed: `seed-${Date.now()}`,
+          sweep_index: -1
+        })
+        .eq('lesson_id', LESSON_ID);
+    };
+
+    sweepBtn.onclick = async () => {
+      let i = 0;
+      const total = ROWS * COLS;
+
+      const interval = setInterval(async () => {
+        await supabase
+          .from('fluency_sessions')
+          .update({ sweep_index: i })
+          .eq('lesson_id', LESSON_ID);
+
+        i++;
+        if (i >= total) clearInterval(interval);
+      }, SWEEP_MS);
+    };
+  }
+}
+
+init();
+</script>
+
+</body>
+</html>
