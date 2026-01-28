@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -47,7 +46,6 @@ main {
 
 .table {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
   gap: 14px;
   max-width: 900px;
   width: 100%;
@@ -68,10 +66,10 @@ main {
 
 .word { z-index: 1; }
 
-.sweep {
+.mask {
   position: absolute;
   inset: 0;
-  background: rgba(255,255,255,.8);
+  background: rgba(255,255,255,0.8);
   transform: translateX(-100%);
   pointer-events: none;
   z-index: 2;
@@ -82,10 +80,10 @@ main {
 <body>
 
 <header>
-  <h1>Fluidez</h1>
+  <h1 id="title">Fluidez</h1>
   <div class="spacer"></div>
   <button id="shuffleBtn" hidden>🔀 Nueva tabla</button>
-  <button id="sweepBtn" hidden>▶️ Iniciar</button>
+  <button id="sweepBtn">▶️ Iniciar</button>
 </header>
 
 <main>
@@ -101,44 +99,40 @@ const SUPABASE_URL = 'https://dmlsiyyqpcupbizpxwhp.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg';
 
-const LESSON_ID = 'M5.L19.FLUENCY.A';
+const PRESETS_URL =
+  'https://dmlsiyyqpcupbizpxwhp.supabase.co/storage/v1/object/public/app-presets/fluency/presets.json';
 
-const ROWS = 5;
-const COLS = 8;
-const SWEEP_MS = 1200;
-
-const CONTENT = ['a','e','i','o','u','ma','me','mi','mo','mu'];
-
-/* ================= SETUP ================= */
+/* ================= URL PARAMS ================= */
 
 const qs = new URLSearchParams(location.search);
+const PRESET_ID = qs.get('preset');
 const IS_TEACHER = qs.get('role') === 'teacher';
 
+if (!PRESET_ID) {
+  document.body.innerHTML = '<h2 style="padding:20px">❌ Missing preset</h2>';
+  throw new Error('Missing preset');
+}
+
+/* ================= SUPABASE ================= */
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ================= DOM ================= */
 
 const tableEl = document.getElementById('table');
 const shuffleBtn = document.getElementById('shuffleBtn');
 const sweepBtn = document.getElementById('sweepBtn');
+const titleEl = document.getElementById('title');
 
-if (IS_TEACHER) {
-  shuffleBtn.hidden = false;
-  sweepBtn.hidden = false;
-}
+if (IS_TEACHER) shuffleBtn.hidden = false;
 
 /* ================= STATE ================= */
 
-let lastSeed = null;
+let PRESET;
+let ROWS, COLS, SWEEP_MS, CONTENT;
+let currentRow = 0;
 
 /* ================= UTIL ================= */
-
-function normalizeSeed(seed) {
-  if (typeof seed === 'number') return seed;
-  if (typeof seed === 'string') {
-    const n = Number(seed.replace(/\D/g, ''));
-    return n || 1;
-  }
-  return 1;
-}
 
 function seededShuffle(arr, seed) {
   let x = seed;
@@ -154,14 +148,13 @@ function seededShuffle(arr, seed) {
 /* ================= TABLE ================= */
 
 function buildTable(seed) {
-  lastSeed = seed;
+  currentRow = 0;
   tableEl.innerHTML = '';
+  tableEl.style.gridTemplateColumns = `repeat(${COLS}, 1fr)`;
 
-  const baseSeed = normalizeSeed(seed);
   const total = ROWS * COLS;
-
   let pool = [];
-  let s = baseSeed;
+  let s = seed;
 
   while (pool.length < total) {
     pool.push(...seededShuffle(CONTENT, s++));
@@ -175,40 +168,67 @@ function buildTable(seed) {
     word.className = 'word';
     word.textContent = text;
 
-    const sweep = document.createElement('div');
-    sweep.className = 'sweep';
+    const mask = document.createElement('div');
+    mask.className = 'mask';
 
-    box.append(word, sweep);
+    box.append(word, mask);
     tableEl.appendChild(box);
   });
 }
 
-function sweepBox(index) {
+/* ================= SWEEP ================= */
+
+async function sweepRow(rowIndex) {
+  const start = rowIndex * COLS;
+  const end = start + COLS;
   const boxes = document.querySelectorAll('.box');
-  if (!boxes[index]) return;
 
-  const sweep = boxes[index].querySelector('.sweep');
-  sweep.style.transition = 'none';
-  sweep.style.transform = 'translateX(-100%)';
+  for (let i = start; i < end; i++) {
+    const mask = boxes[i]?.querySelector('.mask');
+    if (!mask) continue;
 
-  requestAnimationFrame(() => {
-    sweep.style.transition = `transform ${SWEEP_MS}ms linear`;
-    sweep.style.transform = 'translateX(0%)';
-  });
+    // reset (just in case)
+    mask.style.transition = 'none';
+    mask.style.transform = 'translateX(-100%)';
+    mask.getBoundingClientRect(); // force reflow
+
+    // animate
+    mask.style.transition = `transform ${SWEEP_MS}ms linear`;
+    mask.style.transform = 'translateX(0%)';
+
+    // ⏱️ wait before next tile
+    await new Promise(r => setTimeout(r, SWEEP_MS));
+  }
 }
 
-/* ================= SUPABASE ================= */
+/* ================= INIT ================= */
 
 async function init() {
+  const presetRes = await fetch(PRESETS_URL, { cache: 'no-store' });
+  const allPresets = await presetRes.json();
+  PRESET = allPresets[PRESET_ID];
+
+  if (!PRESET) {
+    document.body.innerHTML = `<h2 style="padding:20px">❌ Preset not found</h2>`;
+    return;
+  }
+
+  ROWS = PRESET.rows;
+  COLS = PRESET.cols;
+  SWEEP_MS = PRESET.sweep_ms;
+  CONTENT = PRESET.content.filter(Boolean);
+
+  titleEl.textContent = PRESET.title || 'Fluidez';
+
   const { data } = await supabase
     .from('fluency_sessions')
     .select('*')
-    .eq('lesson_id', LESSON_ID)
+    .eq('lesson_id', PRESET_ID)
     .single();
 
   if (!data) return;
 
-  buildTable(data.seed);
+  buildTable(Number(data.seed));
 
   supabase
     .channel('fluency')
@@ -218,46 +238,26 @@ async function init() {
         event: 'UPDATE',
         schema: 'public',
         table: 'fluency_sessions',
-        filter: `lesson_id=eq.${LESSON_ID}`
+        filter: `lesson_id=eq.${PRESET_ID}`
       },
       payload => {
-        const s = payload.new;
-
-        if (s.seed !== lastSeed) {
-          buildTable(s.seed);
-        }
-
-        if (s.sweep_index >= 0) {
-          sweepBox(s.sweep_index);
-        }
+        buildTable(Number(payload.new.seed));
       }
     )
     .subscribe();
+
+  sweepBtn.onclick = () => {
+    if (currentRow >= ROWS) return;
+    sweepRow(currentRow);
+    currentRow++;
+  };
 
   if (IS_TEACHER) {
     shuffleBtn.onclick = async () => {
       await supabase
         .from('fluency_sessions')
-        .update({
-          seed: `seed-${Date.now()}`,
-          sweep_index: -1
-        })
-        .eq('lesson_id', LESSON_ID);
-    };
-
-    sweepBtn.onclick = async () => {
-      let i = 0;
-      const total = ROWS * COLS;
-
-      const interval = setInterval(async () => {
-        await supabase
-          .from('fluency_sessions')
-          .update({ sweep_index: i })
-          .eq('lesson_id', LESSON_ID);
-
-        i++;
-        if (i >= total) clearInterval(interval);
-      }, SWEEP_MS);
+        .update({ seed: Date.now() })
+        .eq('lesson_id', PRESET_ID);
     };
   }
 }
