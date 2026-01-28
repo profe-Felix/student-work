@@ -66,13 +66,33 @@ main {
 
 .word { z-index: 1; }
 
-.mask {
+.sweep {
   position: absolute;
   inset: 0;
   background: rgba(255,255,255,0.8);
   transform: translateX(-100%);
   pointer-events: none;
   z-index: 2;
+}
+
+/* ---------- QR MODAL ---------- */
+#qrModal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+#qrBox {
+  background: #fff;
+  padding: 20px 22px 24px;
+  border-radius: 16px;
+  text-align: center;
+  max-width: 320px;
+  width: 90%;
 }
 </style>
 </head>
@@ -82,6 +102,7 @@ main {
 <header>
   <h1 id="title">Fluidez</h1>
   <div class="spacer"></div>
+  <button id="qrBtn" hidden>📱 QR Estudiantes</button>
   <button id="shuffleBtn" hidden>🔀 Nueva tabla</button>
   <button id="sweepBtn">▶️ Iniciar</button>
 </header>
@@ -90,8 +111,17 @@ main {
   <div id="table" class="table"></div>
 </main>
 
+<div id="qrModal">
+  <div id="qrBox">
+    <h2>Escanea para entrar</h2>
+    <div id="qrCode"></div>
+    <div id="qrLink"></div>
+  </div>
+</div>
+
 <script type="module">
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import QRCode from 'https://esm.sh/qrcode@1.5.4';
 
 /* ================= CONFIG ================= */
 
@@ -122,13 +152,20 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const tableEl = document.getElementById('table');
 const shuffleBtn = document.getElementById('shuffleBtn');
 const sweepBtn = document.getElementById('sweepBtn');
+const qrBtn = document.getElementById('qrBtn');
 const titleEl = document.getElementById('title');
 
-if (IS_TEACHER) shuffleBtn.hidden = false;
+const qrModal = document.getElementById('qrModal');
+const qrCodeEl = document.getElementById('qrCode');
+const qrLinkEl = document.getElementById('qrLink');
+
+if (IS_TEACHER) {
+  shuffleBtn.hidden = false;
+  qrBtn.hidden = false;
+}
 
 /* ================= STATE ================= */
 
-let PRESET;
 let ROWS, COLS, SWEEP_MS, CONTENT;
 let currentRow = 0;
 
@@ -168,35 +205,29 @@ function buildTable(seed) {
     word.className = 'word';
     word.textContent = text;
 
-    const mask = document.createElement('div');
-    mask.className = 'mask';
+    const sweep = document.createElement('div');
+    sweep.className = 'sweep';
 
-    box.append(word, mask);
+    box.append(word, sweep);
     tableEl.appendChild(box);
   });
 }
 
-/* ================= SWEEP ================= */
-
 async function sweepRow(rowIndex) {
+  const boxes = [...document.querySelectorAll('.box')];
   const start = rowIndex * COLS;
   const end = start + COLS;
-  const boxes = document.querySelectorAll('.box');
 
   for (let i = start; i < end; i++) {
-    const mask = boxes[i]?.querySelector('.mask');
-    if (!mask) continue;
+    const sweep = boxes[i]?.querySelector('.sweep');
+    if (!sweep) continue;
 
-    // reset (just in case)
-    mask.style.transition = 'none';
-    mask.style.transform = 'translateX(-100%)';
-    mask.getBoundingClientRect(); // force reflow
+    sweep.style.transition = 'none';
+    sweep.style.transform = 'translateX(-100%)';
+    sweep.getBoundingClientRect();
+    sweep.style.transition = `transform ${SWEEP_MS}ms linear`;
+    sweep.style.transform = 'translateX(0%)';
 
-    // animate
-    mask.style.transition = `transform ${SWEEP_MS}ms linear`;
-    mask.style.transform = 'translateX(0%)';
-
-    // ⏱️ wait before next tile
     await new Promise(r => setTimeout(r, SWEEP_MS));
   }
 }
@@ -205,52 +236,40 @@ async function sweepRow(rowIndex) {
 
 async function init() {
   const presetRes = await fetch(PRESETS_URL, { cache: 'no-store' });
-  const allPresets = await presetRes.json();
-  PRESET = allPresets[PRESET_ID];
-
-  if (!PRESET) {
-    document.body.innerHTML = `<h2 style="padding:20px">❌ Preset not found</h2>`;
-    return;
-  }
+  const presets = await presetRes.json();
+  const PRESET = presets[PRESET_ID];
 
   ROWS = PRESET.rows;
   COLS = PRESET.cols;
   SWEEP_MS = PRESET.sweep_ms;
   CONTENT = PRESET.content.filter(Boolean);
-
   titleEl.textContent = PRESET.title || 'Fluidez';
 
-  const { data } = await supabase
+let { data, error } = await supabase
+  .from('fluency_sessions')
+  .select('*')
+  .eq('lesson_id', PRESET_ID)
+  .maybeSingle();
+
+// If missing, create it
+if (!data) {
+  const seed = Date.now();
+
+  const insert = await supabase
     .from('fluency_sessions')
-    .select('*')
-    .eq('lesson_id', PRESET_ID)
+    .insert({
+      lesson_id: PRESET_ID,
+      seed
+    })
+    .select()
     .single();
 
-  if (!data) return;
+  data = insert.data;
+}
 
-  buildTable(Number(data.seed));
+// Always build the table
+buildTable(Number(data.seed));
 
-  supabase
-    .channel('fluency')
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'fluency_sessions',
-        filter: `lesson_id=eq.${PRESET_ID}`
-      },
-      payload => {
-        buildTable(Number(payload.new.seed));
-      }
-    )
-    .subscribe();
-
-  sweepBtn.onclick = () => {
-    if (currentRow >= ROWS) return;
-    sweepRow(currentRow);
-    currentRow++;
-  };
 
   if (IS_TEACHER) {
     shuffleBtn.onclick = async () => {
@@ -258,9 +277,34 @@ async function init() {
         .from('fluency_sessions')
         .update({ seed: Date.now() })
         .eq('lesson_id', PRESET_ID);
+
+      location.reload();
+    };
+
+    qrBtn.onclick = async () => {
+      const studentUrl =
+        `${location.origin}${location.pathname}?role=student&preset=${encodeURIComponent(PRESET_ID)}`;
+
+      qrCodeEl.innerHTML = '';
+      const canvas = document.createElement('canvas');
+      await QRCode.toCanvas(canvas, studentUrl, { width: 260, margin: 2 });
+
+      qrCodeEl.appendChild(canvas);
+      qrLinkEl.textContent = studentUrl;
+      qrModal.style.display = 'flex';
     };
   }
+
+  sweepBtn.onclick = async () => {
+    if (currentRow >= ROWS) return;
+    await sweepRow(currentRow);
+    currentRow++;
+  };
 }
+
+qrModal.addEventListener('click', e => {
+  if (e.target === qrModal) qrModal.style.display = 'none';
+});
 
 init();
 </script>
