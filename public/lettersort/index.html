@@ -420,50 +420,45 @@
     const DEFAULT_IMAGES_PREFIX = "";
     const DEFAULT_AUDIO_PREFIX  = "";
 /* =========================================================
-   PRESET → QUERY PARAM INJECTOR (SAFE, MINIMAL)
+   PRESET LOADER — Supabase (Fluency-style)
    ========================================================= */
-(function presetInjector(){
+(async function loadPresetFromSupabase(){
   const qsLocal = new URLSearchParams(location.search);
   const presetId = qsLocal.get('preset');
   if (!presetId) return;
 
-  fetch(
-  'https://dmlsiyyqpcupbizpxwhp.supabase.co/storage/v1/object/public/app-presets/lettersort/presets.json',
-  { cache: 'no-store' }
-)
+  try {
+    const { data, error } = await client
+      .from('app_presets')
+      .select('params')
+      .eq('tool', 'lettersort')
+      .eq('preset', presetId)
+      .single();
 
-    .then(r => r.ok ? r.json() : null)
-    .then(allPresets => {
-      if (!allPresets || !allPresets[presetId]) return;
+    if (error || !data?.params) return;
 
-      const preset = allPresets[presetId];
-      let changed = false;
+    let changed = false;
 
-      Object.entries(preset).forEach(([key, value]) => {
-        // do NOT override existing URL params
-        if (qsLocal.has(key)) return;
+    Object.entries(data.params).forEach(([key, value]) => {
+      if (qsLocal.has(key)) return;
 
-        if (Array.isArray(value)) {
-          qsLocal.set(key, value.join(','));
-        } else if (value != null) {
-          qsLocal.set(key, String(value));
-        }
-
-        changed = true;
-      });
-
-if (changed) {
-  // Temporarily expand params to initialize the game
-  const expanded = `${location.pathname}?${qsLocal.toString()}`;
-  sessionStorage.setItem('__presetExpanded', '1');
-  location.replace(expanded);
-}
-
-    })
-    .catch(err => {
-      console.warn('[preset injector]', err);
+      qsLocal.set(
+        key,
+        Array.isArray(value) ? value.join(',') : String(value)
+      );
+      changed = true;
     });
+
+    if (changed) {
+      sessionStorage.setItem('__presetExpanded', '1');
+      location.replace(`${location.pathname}?${qsLocal.toString()}`);
+    }
+
+  } catch (err) {
+    console.warn('[lettersort preset]', err);
+  }
 })();
+
 
     // URL params
     const qs = new URLSearchParams(location.search);
@@ -477,9 +472,13 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
       '',
       `${location.pathname}?preset=${encodeURIComponent(presetOnly)}`
     );
+
+    // 🔁 notify QR to refresh if open
+    window.dispatchEvent(new Event('popstate'));
   }
   sessionStorage.removeItem('__presetExpanded');
 }
+
 
 
     // language switch (Spanish default). Use: ?lang=en (or ?language=en / english)
@@ -2471,5 +2470,79 @@ function everythingCorrect(){
       studentPanel.classList.remove('hidden');
     })();
   </script>
+  <!-- ===============================
+     QR CODE (AUTO-GENERATED)
+     =============================== -->
+<style>
+  .qrWrap{
+    position:fixed;
+    bottom:14px;
+    right:14px;
+    z-index:20;
+  }
+  .qrBtn{
+    padding:6px 10px;
+    border-radius:10px;
+    border:1px solid #d1d5db;
+    background:#fff;
+    cursor:pointer;
+    font-size:13px;
+  }
+  .qrPanel{
+    margin-top:6px;
+    background:#fff;
+    border:1px solid #e5e7eb;
+    border-radius:12px;
+    padding:10px;
+    box-shadow:0 6px 20px rgba(0,0,0,.15);
+  }
+</style>
+
+<div class="qrWrap">
+  <button id="qrToggle" class="qrBtn">QR</button>
+  <div id="qrPanel" class="qrPanel hidden">
+    <canvas id="qrCanvas" width="180" height="180"></canvas>
+    <div style="font-size:11px;color:#666;margin-top:6px;text-align:center">
+      Escanear para abrir esta actividad
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+
+<script>
+(function initQR(){
+  const btn   = document.getElementById('qrToggle');
+  const panel = document.getElementById('qrPanel');
+  const cvs   = document.getElementById('qrCanvas');
+
+  if (!btn || !panel || !cvs) return;
+
+  function currentCleanUrl(){
+    return location.href;
+  }
+
+  async function renderQR(){
+    const url = currentCleanUrl();
+    await QRCode.toCanvas(cvs, url, {
+      width: 180,
+      margin: 1
+    });
+  }
+
+  btn.addEventListener('click', async () => {
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) {
+      await renderQR();
+    }
+  });
+
+  // Auto-refresh QR after preset expansion cleanup
+  window.addEventListener('popstate', () => {
+    if (!panel.classList.contains('hidden')) renderQR();
+  });
+})();
+</script>
+
 </body>
 </html>
