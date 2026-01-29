@@ -420,15 +420,21 @@
     const DEFAULT_IMAGES_PREFIX = "";
     const DEFAULT_AUDIO_PREFIX  = "";
 /* =========================================================
-   PRESET LOADER — Supabase (Fluency-style)
+   PRESET LOADER — Supabase (Fluency-style, order-safe)
    ========================================================= */
 (async function loadPresetFromSupabase(){
   const qsLocal = new URLSearchParams(location.search);
   const presetId = qsLocal.get('preset');
   if (!presetId) return;
 
+  // 🔑 create local client (do NOT depend on global order)
+  const presetClient = supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+  );
+
   try {
-    const { data, error } = await client
+    const { data, error } = await presetClient
       .from('app_presets')
       .select('params')
       .eq('tool', 'lettersort')
@@ -458,6 +464,7 @@
     console.warn('[lettersort preset]', err);
   }
 })();
+
 
 
     // URL params
