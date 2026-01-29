@@ -2505,58 +2505,55 @@ function everythingCorrect(){
   </div>
 </div>
 <!-- QR CODE LOGIC -->
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <script>
-(function () {
-  const qrBtn   = document.getElementById('qrBtn');
-  const qrModal = document.getElementById('qrModal');
-  const qrCode  = document.getElementById('qrCode');
-  const qrLink  = document.getElementById('qrLink');
+(function loadQRCodeThenInit(){
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js';
+  script.onload = initQR;
+  document.head.appendChild(script);
 
-  if (!qrBtn || !qrModal || !qrCode) {
-    console.warn('[QR] Missing elements');
-    return;
-  }
+  function initQR(){
+    const qrBtn   = document.getElementById('qrBtn');
+    const qrModal = document.getElementById('qrModal');
+    const qrCode  = document.getElementById('qrCode');
+    const qrLink  = document.getElementById('qrLink');
 
-  function cleanUrl() {
-    return location.href;
-  }
+    if (!qrBtn || !qrModal || !qrCode) {
+      console.warn('[QR] Missing elements');
+      return;
+    }
 
-  async function showQR() {
-    const url = cleanUrl();
+    function cleanUrl(){
+      return location.href;
+    }
 
-    qrCode.innerHTML = '';
-    const canvas = document.createElement('canvas');
+    async function showQR(){
+      const url = cleanUrl();
+      qrCode.innerHTML = '';
 
-    try {
-      await QRCode.toCanvas(canvas, url, {
-        width: 260,
-        margin: 2
-      });
+      const canvas = document.createElement('canvas');
+      QRCode.toCanvas(canvas, url, { width: 260, margin: 2 });
       qrCode.appendChild(canvas);
+
       if (qrLink) qrLink.textContent = url;
       qrModal.style.display = 'flex';
-    } catch (err) {
-      console.error('[QR] Failed to render', err);
     }
+
+    qrBtn.addEventListener('click', showQR);
+
+    qrModal.addEventListener('click', (e)=>{
+      if (e.target === qrModal) {
+        qrModal.style.display = 'none';
+      }
+    });
+
+    window.addEventListener('popstate', ()=>{
+      if (qrModal.style.display === 'flex') showQR();
+    });
   }
-
-  qrBtn.addEventListener('click', showQR);
-
-  qrModal.addEventListener('click', (e) => {
-    if (e.target === qrModal) {
-      qrModal.style.display = 'none';
-    }
-  });
-
-  // Re-render if URL cleaned after preset expansion
-  window.addEventListener('popstate', () => {
-    if (qrModal.style.display === 'flex') {
-      showQR();
-    }
-  });
 })();
 </script>
+
 
 
 </body>
