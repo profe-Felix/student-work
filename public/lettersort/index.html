@@ -332,6 +332,8 @@
         <div class="brand" id="uiBrand">Clasificador de letras</div>
         <span id="soloPill" class="pill" style="display:none"></span>
         <div class="spacer"></div>
+        <button id="qrBtn" class="btn outline">📱 QR</button>
+
         <label class="switch">
           <input id="modeToggle" type="checkbox" />
           <span id="uiModeLabel">Modo Maestro</span>
@@ -2472,79 +2474,90 @@ function everythingCorrect(){
       studentPanel.classList.remove('hidden');
     })();
   </script>
-  <!-- ===============================
-     QR CODE (AUTO-GENERATED)
-     =============================== -->
-<style>
-  .qrWrap{
-    position:fixed;
-    bottom:14px;
-    right:14px;
-    z-index:20;
-  }
-  .qrBtn{
-    padding:6px 10px;
-    border-radius:10px;
-    border:1px solid #d1d5db;
+<!-- ---------- QR MODAL ---------- -->
+<div id="qrModal" style="
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.45);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:9999;
+">
+  <div style="
     background:#fff;
-    cursor:pointer;
-    font-size:13px;
-  }
-  .qrPanel{
-    margin-top:6px;
-    background:#fff;
-    border:1px solid #e5e7eb;
-    border-radius:12px;
-    padding:10px;
-    box-shadow:0 6px 20px rgba(0,0,0,.15);
-  }
-</style>
-
-<div class="qrWrap">
-  <button id="qrToggle" class="qrBtn">QR</button>
-  <div id="qrPanel" class="qrPanel hidden">
-    <canvas id="qrCanvas" width="180" height="180"></canvas>
-    <div style="font-size:11px;color:#666;margin-top:6px;text-align:center">
-      Escanear para abrir esta actividad
-    </div>
+    padding:20px 22px 24px;
+    border-radius:16px;
+    text-align:center;
+    max-width:320px;
+    width:90%;
+  ">
+    <h2 style="margin:0 0 12px 0;font-size:18px">
+      Escanea para abrir
+    </h2>
+    <div id="qrCode"></div>
+    <div id="qrLink" style="
+      margin-top:10px;
+      font-size:12px;
+      color:#374151;
+      word-break:break-all;
+    "></div>
   </div>
 </div>
-
+<!-- QR CODE LOGIC -->
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
-
 <script>
-(function initQR(){
-  const btn   = document.getElementById('qrToggle');
-  const panel = document.getElementById('qrPanel');
-  const cvs   = document.getElementById('qrCanvas');
+(function () {
+  const qrBtn   = document.getElementById('qrBtn');
+  const qrModal = document.getElementById('qrModal');
+  const qrCode  = document.getElementById('qrCode');
+  const qrLink  = document.getElementById('qrLink');
 
-  if (!btn || !panel || !cvs) return;
+  if (!qrBtn || !qrModal || !qrCode) {
+    console.warn('[QR] Missing elements');
+    return;
+  }
 
-  function currentCleanUrl(){
+  function cleanUrl() {
     return location.href;
   }
 
-  async function renderQR(){
-    const url = currentCleanUrl();
-    await QRCode.toCanvas(cvs, url, {
-      width: 180,
-      margin: 1
-    });
+  async function showQR() {
+    const url = cleanUrl();
+
+    qrCode.innerHTML = '';
+    const canvas = document.createElement('canvas');
+
+    try {
+      await QRCode.toCanvas(canvas, url, {
+        width: 260,
+        margin: 2
+      });
+      qrCode.appendChild(canvas);
+      if (qrLink) qrLink.textContent = url;
+      qrModal.style.display = 'flex';
+    } catch (err) {
+      console.error('[QR] Failed to render', err);
+    }
   }
 
-  btn.addEventListener('click', async () => {
-    panel.classList.toggle('hidden');
-    if (!panel.classList.contains('hidden')) {
-      await renderQR();
+  qrBtn.addEventListener('click', showQR);
+
+  qrModal.addEventListener('click', (e) => {
+    if (e.target === qrModal) {
+      qrModal.style.display = 'none';
     }
   });
 
-  // Auto-refresh QR after preset expansion cleanup
+  // Re-render if URL cleaned after preset expansion
   window.addEventListener('popstate', () => {
-    if (!panel.classList.contains('hidden')) renderQR();
+    if (qrModal.style.display === 'flex') {
+      showQR();
+    }
   });
 })();
 </script>
+
 
 </body>
 </html>
