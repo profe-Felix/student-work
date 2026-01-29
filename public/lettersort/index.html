@@ -420,50 +420,45 @@
     const DEFAULT_IMAGES_PREFIX = "";
     const DEFAULT_AUDIO_PREFIX  = "";
 /* =========================================================
-   PRESET LOADER — Supabase (Fluency-style, order-safe)
+   PRESET LOADER — Storage presets.json (LetterSort-native)
    ========================================================= */
-(async function loadPresetFromSupabase(){
+(function loadPresetFromStorage(){
   const qsLocal = new URLSearchParams(location.search);
   const presetId = qsLocal.get('preset');
   if (!presetId) return;
 
-  // 🔑 create local client (do NOT depend on global order)
-  const presetClient = supabase.createClient(
-    SUPABASE_URL,
-    SUPABASE_ANON_KEY
-  );
+  fetch(
+    'https://dmlsiyyqpcupbizpxwhp.supabase.co/storage/v1/object/public/app-presets/lettersort/presets.json',
+    { cache: 'no-store' }
+  )
+    .then(r => r.ok ? r.json() : null)
+    .then(allPresets => {
+      if (!allPresets || !allPresets[presetId]) return;
 
-  try {
-    const { data, error } = await presetClient
-      .from('app_presets')
-      .select('params')
-      .eq('tool', 'lettersort')
-      .eq('preset', presetId)
-      .single();
+      const preset = allPresets[presetId];
+      let changed = false;
 
-    if (error || !data?.params) return;
+      Object.entries(preset).forEach(([key, value]) => {
+        // URL params always win
+        if (qsLocal.has(key)) return;
 
-    let changed = false;
+        qsLocal.set(
+          key,
+          Array.isArray(value) ? value.join(',') : String(value)
+        );
+        changed = true;
+      });
 
-    Object.entries(data.params).forEach(([key, value]) => {
-      if (qsLocal.has(key)) return;
-
-      qsLocal.set(
-        key,
-        Array.isArray(value) ? value.join(',') : String(value)
-      );
-      changed = true;
+      if (changed) {
+        sessionStorage.setItem('__presetExpanded', '1');
+        location.replace(`${location.pathname}?${qsLocal.toString()}`);
+      }
+    })
+    .catch(err => {
+      console.warn('[lettersort preset]', err);
     });
-
-    if (changed) {
-      sessionStorage.setItem('__presetExpanded', '1');
-      location.replace(`${location.pathname}?${qsLocal.toString()}`);
-    }
-
-  } catch (err) {
-    console.warn('[lettersort preset]', err);
-  }
 })();
+
 
 
 
