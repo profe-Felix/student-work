@@ -141,6 +141,13 @@ const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // URL params: ?role=teacher&group=A or ?role=student&group=A
 const qs = new URLSearchParams(location.search);
+// Optional inline word override: ?words=ma,me,mi,mo,mu
+const WORDS_OVERRIDE =
+  (qs.get('words') || '')
+    .split(',')
+    .map(w => w.trim())
+    .filter(Boolean);
+
 const ROLE = (qs.get('role') || '').toLowerCase();     // 'teacher' or 'student'
 const GROUP_CODE = (qs.get('group') || '').toUpperCase();
 const isTeacher = ROLE === 'teacher' && !!GROUP_CODE;
@@ -384,6 +391,26 @@ function configureModeUI(){
 let baseWordsForDistractors = []; // keep raw list for mode 3 distractors
 
 async function loadWordList() {
+    // --- Step 1: inline words override ---
+  if (WORDS_OVERRIDE.length) {
+    words = WORDS_OVERRIDE.slice();
+    currentWordIndex = 0;
+
+    document.fonts.ready.then(async () => {
+      setupWord(words[currentWordIndex]);
+      playBtn.disabled = false;
+
+      if (isTeacher && GROUP_CODE) {
+        await setReadingIndex(GROUP_CODE, currentWordIndex);
+      }
+      if (isStudent && GROUP_CODE) {
+        startStudentPolling();
+      }
+    });
+
+    return; // skip normal txt loading
+  }
+
   const listName = document.getElementById("wordListSelect").value;
   const url = `wordlists/${encodeURIComponent(listName)}.txt`;
 
