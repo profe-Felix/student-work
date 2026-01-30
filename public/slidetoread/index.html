@@ -323,15 +323,12 @@ const hintLine = document.getElementById("hintLine");
 const spellInput = document.getElementById("spellInput");
 
 // Hide list + navigation when using inline words
+// Hide list selector when using inline words
 if (WORDS_OVERRIDE.length) {
   const listSel = document.getElementById("wordListSelect");
-  const prevBtn = document.getElementById("prevWord");
-  const nextBtn = document.getElementById("nextWord");
-
   if (listSel) listSel.style.display = "none";
-  if (prevBtn) prevBtn.style.display = "none";
-  if (nextBtn) nextBtn.style.display = "none";
 }
+
 
 
 document.getElementById("wordListSelect").addEventListener("change", loadWordList);
@@ -409,10 +406,15 @@ async function loadWordList() {
   const seed = qs.get('seed') || '';
 
   if (doShuffle) {
-    words = shuffleWithSeed(WORDS_OVERRIDE, seed || 'inline');
+    if (seed) {
+      words = shuffleWithSeed(WORDS_OVERRIDE, seed);
+    } else {
+      words = WORDS_OVERRIDE.slice().sort(() => Math.random() - 0.5);
+    }
   } else {
     words = WORDS_OVERRIDE.slice();
   }
+
 
   currentWordIndex = 0;
 
