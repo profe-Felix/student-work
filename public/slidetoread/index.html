@@ -405,8 +405,17 @@ let baseWordsForDistractors = []; // keep raw list for mode 3 distractors
 async function loadWordList() {
     // --- Step 1: inline words override ---
   if (WORDS_OVERRIDE.length) {
+  const doShuffle = qs.get('shuffle');
+  const seed = qs.get('seed') || '';
+
+  if (doShuffle) {
+    words = shuffleWithSeed(WORDS_OVERRIDE, seed || 'inline');
+  } else {
     words = WORDS_OVERRIDE.slice();
-    currentWordIndex = 0;
+  }
+
+  currentWordIndex = 0;
+
 
     document.fonts.ready.then(async () => {
       setupWord(words[currentWordIndex]);
