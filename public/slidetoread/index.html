@@ -322,6 +322,18 @@ const backspaceSpellBtn = document.getElementById("backspaceSpell");
 const hintLine = document.getElementById("hintLine");
 const spellInput = document.getElementById("spellInput");
 
+// Hide list + navigation when using inline words
+if (WORDS_OVERRIDE.length) {
+  const listSel = document.getElementById("wordListSelect");
+  const prevBtn = document.getElementById("prevWord");
+  const nextBtn = document.getElementById("nextWord");
+
+  if (listSel) listSel.style.display = "none";
+  if (prevBtn) prevBtn.style.display = "none";
+  if (nextBtn) nextBtn.style.display = "none";
+}
+
+
 document.getElementById("wordListSelect").addEventListener("change", loadWordList);
 document.getElementById("nextWord").addEventListener("click", () => changeWord(1));
 document.getElementById("prevWord").addEventListener("click", () => changeWord(-1));
@@ -1356,6 +1368,11 @@ function rebuildTilesFromUser(){
 
 /* ==================== Startup ==================== */
 configureModeUI();
+// Auto-start if inline words are provided
+if (WORDS_OVERRIDE.length) {
+  loadWordList();
+}
+
 
 /* ==================== Recording scripts (UNCHANGED) ==================== */
 </script>
