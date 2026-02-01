@@ -4,106 +4,111 @@
 <meta charset="UTF-8">
 <title>Syllable Train</title>
 
-<!-- iPad zoom OFF -->
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport"
+content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 
 <style>
 html,body{
-  margin:0;
-  height:100%;
+margin:0;
+height:100%;
+overscroll-behavior:none;
 }
 
 body{
-  font-family: Andika, system-ui, sans-serif;
-  background:#fff;
-  touch-action:none;
+font-family:Andika,system-ui,sans-serif;
+background:#fff;
+-webkit-user-select:none;
+user-select:none;
 }
 
-/* iframe-safe centered frame */
 #frame{
-  width:100%;
-  height:100%;
-  display:flex;
-  align-items:center;
-  justify-content:center;
+width:100%;
+height:100%;
+display:flex;
+justify-content:center;
+align-items:center;
+overflow-x:auto;
 }
 
 #stage{
-  padding:40px;
+padding:40px;
+min-width:900px;
 }
 
 #trainRow{
-  display:flex;
-  align-items:flex-start;
+display:flex;
+align-items:flex-start;
 }
 
 #rail{
-  display:flex;
-  align-items:flex-end;
-  margin-left:-120px;
+display:flex;
+align-items:flex-end;
+margin-left:-120px;
 }
 
 /* Controls */
 
 #slotControls{
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-  align-items:center;
+display:flex;
+flex-direction:column;
+gap:6px;
+align-items:center;
+margin-right:12px;
 }
 
 .ctrlBtn{
-  width:36px;
-  height:30px;
-  border:2px solid #cbd5e1;
-  border-radius:10px;
-  background:#f8fafc;
-  color:#2563eb;
-  font-size:16px;
-  box-shadow:0 2px 0 rgba(0,0,0,.08);
+width:36px;
+height:30px;
+border:2px solid #cbd5e1;
+border-radius:10px;
+background:#f8fafc;
+color:#2563eb;
+font-size:16px;
+box-shadow:0 2px 0 rgba(0,0,0,.08);
+cursor:pointer;
 }
 
 /* Engine */
 
 #engine{
-  width:280px;
-  height:80px;
-  background:url("train.png") center bottom/contain no-repeat;
-  transform:scale(1.6);
-  transform-origin:left bottom;
+width:280px;
+height:80px;
+background:url("train.png") center bottom/contain no-repeat;
+transform:scale(1.6);
+transform-origin:left bottom;
 }
 
 /* Slots */
 
 #slotsWrap{
-  display:flex;
-  margin-left:15px;
+display:flex;
+margin-left:15px;
 }
 
 #slotsWrap .slot:not(:first-child){
-  margin-left:-5px;
+margin-left:-5px;
 }
 
 .slot{
-  width:120px;
-  height:60px;
-  border:2px dashed #bbb;
-  border-radius:12px;
-  position:relative;
+width:120px;
+height:60px;
+border:2px dashed #bbb;
+border-radius:12px;
+position:relative;
 }
 
 /* Sources */
 
 #sources{
-  margin-top:26px;
-  display:flex;
-  gap:28px;
-  justify-content:center;
+margin-top:26px;
+display:flex;
+gap:28px;
+justify-content:center;
 }
 
 .source{
-  width:120px;
-  height:60px;
+width:120px;
+height:60px;
 }
 
 .source.red{background:url("redtraincar.png") center/contain no-repeat}
@@ -112,38 +117,38 @@ body{
 /* Cars */
 
 .car{
-  position:absolute;
-  inset:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background-size:100% 100%;
+position:absolute;
+inset:0;
+display:flex;
+align-items:center;
+justify-content:center;
+background-size:100% 100%;
 }
 
 .car.red{background-image:url("redtraincar.png")}
 .car.blue{background-image:url("bluetraincar.png")}
 
 .car input{
-  border:none;
-  background:transparent;
-  color:white;
-  font-size:20px;
-  font-weight:bold;
-  text-align:center;
-  width:80%;
-  outline:none;
-  pointer-events:none;
+border:none;
+background:transparent;
+color:white;
+font-size:20px;
+font-weight:bold;
+text-align:center;
+width:80%;
+outline:none;
+pointer-events:none;
 }
 
 /* Drag */
 
 .dragGhost{
-  position:fixed;
-  width:120px;
-  height:60px;
-  transform:translate(-50%,-50%);
-  pointer-events:none;
-  z-index:9999;
+position:fixed;
+width:120px;
+height:60px;
+transform:translate(-50%,-50%);
+pointer-events:none;
+z-index:9999;
 }
 </style>
 </head>
@@ -179,124 +184,99 @@ body{
 <script>
 const slotsWrap=document.getElementById("slotsWrap");
 const slotCountEl=document.getElementById("slotCount");
+const btnUp=document.getElementById("btnUp");
+const btnDown=document.getElementById("btnDown");
 
 let slotCount=4;
 const MIN=1,MAX=12;
 
 function renderSlots(){
-  const keep=[...slotsWrap.children].map(s=>s.firstChild);
-  slotsWrap.innerHTML="";
-  for(let i=0;i<slotCount;i++){
-    const s=document.createElement("div");
-    s.className="slot";
-    if(keep[i]) s.appendChild(keep[i]);
-    slotsWrap.appendChild(s);
-  }
-  slotCountEl.textContent=slotCount;
+const keep=[...slotsWrap.children].map(s=>s.firstChild);
+slotsWrap.innerHTML="";
+for(let i=0;i<slotCount;i++){
+const s=document.createElement("div");
+s.className="slot";
+if(keep[i]) s.appendChild(keep[i]);
+slotsWrap.appendChild(s);
+}
+slotCountEl.textContent=slotCount;
 }
 
-const btnUp = document.getElementById("btnUp");
-const btnDown = document.getElementById("btnDown");
+btnUp.onclick=()=>{
+if(slotCount<MAX){slotCount++;renderSlots();}
+};
 
-btnUp.addEventListener("pointerdown", e=>{
-  e.preventDefault();
-  if(slotCount<MAX){
-    slotCount++;
-    renderSlots();
-  }
-});
-
-btnDown.addEventListener("pointerdown", e=>{
-  e.preventDefault();
-  if(slotCount>MIN){
-    slotCount--;
-    renderSlots();
-  }
-});
+btnDown.onclick=()=>{
+if(slotCount>MIN){slotCount--;renderSlots();}
+};
 
 renderSlots();
 
-
-/* -------- Drag -------- */
+/* ---- Drag ---- */
 
 let dragging=null;
 
 function makeCar(color){
-  const c=document.createElement("div");
-  c.className="car "+color;
-  c.innerHTML="<input>";
-  c.addEventListener("pointerdown",e=>startExisting(e,c));
-  return c;
+const c=document.createElement("div");
+c.className="car "+color;
+c.innerHTML="<input>";
+c.addEventListener("pointerdown",e=>startExisting(e,c));
+return c;
 }
 
 function startExisting(e,car){
-  e.preventDefault();
-  dragging={ghost:car};
-  car.remove();
-  car.classList.add("dragGhost");
-  document.body.appendChild(car);
-  move(e);
+e.preventDefault();
+dragging={ghost:car};
+car.remove();
+car.classList.add("dragGhost");
+document.body.appendChild(car);
+move(e);
 }
 
 document.querySelectorAll(".source").forEach(s=>{
-  s.addEventListener("pointerdown",e=>{
-    e.preventDefault();
-    const g=makeCar(s.dataset.color);
-    g.classList.add("dragGhost");
-    document.body.appendChild(g);
-    dragging={ghost:g};
-    move(e);
-  });
+s.addEventListener("pointerdown",e=>{
+e.preventDefault();
+const g=makeCar(s.dataset.color);
+g.classList.add("dragGhost");
+document.body.appendChild(g);
+dragging={ghost:g};
+move(e);
+});
 });
 
-function getXY(e){
-  return {x:e.clientX,y:e.clientY};
-}
-
 function move(e){
-  const p=getXY(e);
-  dragging.ghost.style.left=p.x+"px";
-  dragging.ghost.style.top=p.y+"px";
+dragging.ghost.style.left=e.clientX+"px";
+dragging.ghost.style.top=e.clientY+"px";
 }
 
 document.addEventListener("pointermove",e=>dragging&&move(e));
 
 function end(e){
-  if(!dragging) return;
+if(!dragging) return;
 
-  const p=getXY(e);
-  let best=null,dist=9999;
+let best=null,dist=9999;
 
-  document.querySelectorAll(".slot").forEach(slot=>{
-    const r=slot.getBoundingClientRect();
-    const cx=r.left+r.width/2;
-    const cy=r.top+r.height/2;
-    const d=Math.hypot(p.x-cx,p.y-cy);
-    if(d<dist){dist=d;best=slot;}
-  });
+document.querySelectorAll(".slot").forEach(slot=>{
+const r=slot.getBoundingClientRect();
+const cx=r.left+r.width/2;
+const cy=r.top+r.height/2;
+const d=Math.hypot(e.clientX-cx,e.clientY-cy);
+if(d<dist){dist=d;best=slot;}
+});
 
-  if(best && dist<140){
-    best.innerHTML="";
-    best.appendChild(dragging.ghost);
-    dragging.ghost.classList.remove("dragGhost");
-    dragging.ghost.style.left="";
-    dragging.ghost.style.top="";
-  }else dragging.ghost.remove();
+if(best && dist<140){
+best.innerHTML="";
+best.appendChild(dragging.ghost);
+dragging.ghost.classList.remove("dragGhost");
+dragging.ghost.style.left="";
+dragging.ghost.style.top="";
+}else dragging.ghost.remove();
 
-  dragging=null;
+dragging=null;
 }
 
 document.addEventListener("pointerup",end);
-
-/* ---- kill iOS double-tap zoom ---- */
-let lastTouchEnd=0;
-document.addEventListener("touchend",e=>{
-  const now=Date.now();
-  if(now-lastTouchEnd<=300) e.preventDefault();
-  lastTouchEnd=now;
-},false);
 </script>
 
 </body>
 </html>
-
