@@ -11,7 +11,6 @@ content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 html,body{
 margin:0;
 height:100%;
-overscroll-behavior:none;
 }
 
 body{
@@ -19,6 +18,7 @@ font-family:Andika,system-ui,sans-serif;
 background:#fff;
 -webkit-user-select:none;
 user-select:none;
+touch-action:none;
 }
 
 #frame{
@@ -66,6 +66,7 @@ color:#2563eb;
 font-size:16px;
 box-shadow:0 2px 0 rgba(0,0,0,.08);
 cursor:pointer;
+touch-action:manipulation;
 }
 
 /* Engine */
@@ -202,13 +203,13 @@ slotsWrap.appendChild(s);
 slotCountEl.textContent=slotCount;
 }
 
-btnUp.onclick=()=>{
+btnUp.addEventListener("click",()=>{
 if(slotCount<MAX){slotCount++;renderSlots();}
-};
+});
 
-btnDown.onclick=()=>{
+btnDown.addEventListener("click",()=>{
 if(slotCount>MIN){slotCount--;renderSlots();}
-};
+});
 
 renderSlots();
 
@@ -245,13 +246,14 @@ move(e);
 });
 
 function move(e){
+if(!dragging) return;
 dragging.ghost.style.left=e.clientX+"px";
 dragging.ghost.style.top=e.clientY+"px";
 }
 
-document.addEventListener("pointermove",e=>dragging&&move(e));
+document.addEventListener("pointermove",move);
 
-function end(e){
+document.addEventListener("pointerup",e=>{
 if(!dragging) return;
 
 let best=null,dist=9999;
@@ -273,9 +275,7 @@ dragging.ghost.style.top="";
 }else dragging.ghost.remove();
 
 dragging=null;
-}
-
-document.addEventListener("pointerup",end);
+});
 </script>
 
 </body>
