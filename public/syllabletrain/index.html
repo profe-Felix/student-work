@@ -195,9 +195,27 @@ function renderSlots(){
   slotCountEl.textContent=slotCount;
 }
 
-btnUp.onclick=()=>{if(slotCount<MAX){slotCount++;renderSlots();}};
-btnDown.onclick=()=>{if(slotCount>MIN){slotCount--;renderSlots();}};
+const btnUp = document.getElementById("btnUp");
+const btnDown = document.getElementById("btnDown");
+
+btnUp.addEventListener("pointerdown", e=>{
+  e.preventDefault();
+  if(slotCount<MAX){
+    slotCount++;
+    renderSlots();
+  }
+});
+
+btnDown.addEventListener("pointerdown", e=>{
+  e.preventDefault();
+  if(slotCount>MIN){
+    slotCount--;
+    renderSlots();
+  }
+});
+
 renderSlots();
+
 
 /* -------- Drag -------- */
 
@@ -281,3 +299,4 @@ document.addEventListener("touchend",e=>{
 
 </body>
 </html>
+
