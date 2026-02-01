@@ -17,9 +17,17 @@ body{
   touch-action:none;
 }
 
+/* iframe-safe centered frame */
+#frame{
+  width:100%;
+  height:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
 #stage{
-  padding:60px;
-  overflow:hidden;
+  padding:40px;
 }
 
 #trainRow{
@@ -52,6 +60,8 @@ body{
   font-size:16px;
   box-shadow:0 2px 0 rgba(0,0,0,.08);
 }
+
+/* Engine */
 
 #engine{
   width:280px;
@@ -86,6 +96,7 @@ body{
   margin-top:26px;
   display:flex;
   gap:28px;
+  justify-content:center;
 }
 
 .source{
@@ -119,12 +130,13 @@ body{
   text-align:center;
   width:80%;
   outline:none;
+  pointer-events:none;   /* prevents keyboard popup */
 }
 
 /* Drag */
 
 .dragGhost{
-  position:absolute;
+  position:fixed;
   width:120px;
   height:60px;
   transform:translate(-50%,-50%);
@@ -136,6 +148,7 @@ body{
 
 <body>
 
+<div id="frame">
 <div id="stage">
 
 <div id="trainRow">
@@ -158,6 +171,7 @@ body{
 <div class="source blue" data-color="blue"></div>
 </div>
 
+</div>
 </div>
 
 <script>
@@ -191,35 +205,31 @@ function makeCar(color){
   const c=document.createElement("div");
   c.className="car "+color;
   c.innerHTML="<input>";
-  c.addEventListener("mousedown",e=>startCar(e,c));
-  c.addEventListener("touchstart",e=>startCar(e,c),{passive:false});
+  c.addEventListener("pointerdown",e=>startExisting(e,c));
   return c;
 }
 
-function startCar(e,car){
+function startExisting(e,car){
   e.preventDefault();
   dragging={ghost:car};
+  car.remove();
   car.classList.add("dragGhost");
   document.body.appendChild(car);
   move(e);
 }
 
 document.querySelectorAll(".source").forEach(s=>{
-  s.addEventListener("mousedown",e=>startGhost(e,s.dataset.color));
-  s.addEventListener("touchstart",e=>startGhost(e,s.dataset.color),{passive:false});
+  s.addEventListener("pointerdown",e=>{
+    e.preventDefault();
+    const g=makeCar(s.dataset.color);
+    g.classList.add("dragGhost");
+    document.body.appendChild(g);
+    dragging={ghost:g};
+    move(e);
+  });
 });
 
-function startGhost(e,color){
-  e.preventDefault();
-  const g=makeCar(color);
-  g.classList.add("dragGhost");
-  document.body.appendChild(g);
-  dragging={ghost:g};
-  move(e);
-}
-
 function getXY(e){
-  if(e.touches) return {x:e.touches[0].clientX,y:e.touches[0].clientY};
   return {x:e.clientX,y:e.clientY};
 }
 
@@ -229,31 +239,34 @@ function move(e){
   dragging.ghost.style.top=p.y+"px";
 }
 
-document.addEventListener("mousemove",e=>dragging&&move(e));
-document.addEventListener("touchmove",e=>dragging&&move(e),{passive:false});
+document.addEventListener("pointermove",e=>dragging&&move(e));
 
 function end(e){
   if(!dragging) return;
-  let placed=false;
+
+  const p=getXY(e);
+  let best=null,dist=9999;
+
   document.querySelectorAll(".slot").forEach(slot=>{
     const r=slot.getBoundingClientRect();
-    const p=getXY(e);
-    if(p.x>r.left&&p.x<r.right&&p.y>r.top&&p.y<r.bottom){
-      slot.innerHTML="";
-      slot.appendChild(dragging.ghost);
-      dragging.ghost.classList.remove("dragGhost");
-      dragging.ghost.style.left="";
-      dragging.ghost.style.top="";
-      dragging.ghost.querySelector("input")?.focus();
-      placed=true;
-    }
+    const cx=r.left+r.width/2;
+    const cy=r.top+r.height/2;
+    const d=Math.hypot(p.x-cx,p.y-cy);
+    if(d<dist){dist=d;best=slot;}
   });
-  if(!placed) dragging.ghost.remove();
+
+  if(best && dist<140){
+    best.innerHTML="";
+    best.appendChild(dragging.ghost);
+    dragging.ghost.classList.remove("dragGhost");
+    dragging.ghost.style.left="";
+    dragging.ghost.style.top="";
+  }else dragging.ghost.remove();
+
   dragging=null;
 }
 
-document.addEventListener("mouseup",end);
-document.addEventListener("touchend",end);
+document.addEventListener("pointerup",end);
 </script>
 
 </body>
