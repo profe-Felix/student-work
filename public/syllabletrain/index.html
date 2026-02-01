@@ -9,147 +9,149 @@ content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 
 <style>
 html,body{
-margin:0;
-height:100%;
+  margin:0;
+  height:100%;
 }
 
 body{
-font-family:Andika,system-ui,sans-serif;
-background:#fff;
--webkit-user-select:none;
-user-select:none;
-touch-action:none;
+  font-family:Andika,system-ui,sans-serif;
+  background:#fff;
+  -webkit-user-select:none;
+  user-select:none;
+  /* don't globally kill all touch behavior; we handle drag explicitly */
 }
 
 #frame{
-width:100%;
-height:100%;
-display:flex;
-justify-content:center;
-align-items:center;
-overflow-x:auto;
+  width:100%;
+  height:100%;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  overflow:auto;            /* iPad needs real scroll container */
+  -webkit-overflow-scrolling:touch;
 }
 
 #stage{
-padding:40px;
-min-width:900px;
+  padding:40px;
+  min-width:900px;          /* keep your wide layout */
+  touch-action:none;        /* drag surface only */
 }
 
 #trainRow{
-display:flex;
-align-items:flex-start;
+  display:flex;
+  align-items:flex-start;
 }
 
 #rail{
-display:flex;
-align-items:flex-end;
-margin-left:-120px;
+  display:flex;
+  align-items:flex-end;
+  margin-left:-120px;
 }
 
 /* Controls */
-
 #slotControls{
-display:flex;
-flex-direction:column;
-gap:6px;
-align-items:center;
-margin-right:12px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  align-items:center;
+  margin-right:12px;
+  touch-action:manipulation; /* allow taps */
 }
 
 .ctrlBtn{
-width:36px;
-height:30px;
-border:2px solid #cbd5e1;
-border-radius:10px;
-background:#f8fafc;
-color:#2563eb;
-font-size:16px;
-box-shadow:0 2px 0 rgba(0,0,0,.08);
-cursor:pointer;
-touch-action:manipulation;
+  width:36px;
+  height:30px;
+  border:2px solid #cbd5e1;
+  border-radius:10px;
+  background:#f8fafc;
+  color:#2563eb;
+  font-size:16px;
+  box-shadow:0 2px 0 rgba(0,0,0,.08);
+  cursor:pointer;
+  touch-action:manipulation; /* allow taps */
 }
 
 /* Engine */
-
 #engine{
-width:280px;
-height:80px;
-background:url("train.png") center bottom/contain no-repeat;
-transform:scale(1.6);
-transform-origin:left bottom;
+  width:280px;
+  height:80px;
+  background:url("train.png") center bottom/contain no-repeat;
+  transform:scale(1.6);
+  transform-origin:left bottom;
 }
 
 /* Slots */
-
 #slotsWrap{
-display:flex;
-margin-left:15px;
+  display:flex;
+  margin-left:15px;
 }
 
 #slotsWrap .slot:not(:first-child){
-margin-left:-5px;
+  margin-left:-5px;
 }
 
 .slot{
-width:120px;
-height:60px;
-border:2px dashed #bbb;
-border-radius:12px;
-position:relative;
+  width:120px;
+  height:60px;
+  border:2px dashed #bbb;
+  border-radius:12px;
+  position:relative;
 }
 
 /* Sources */
-
 #sources{
-margin-top:26px;
-display:flex;
-gap:28px;
-justify-content:center;
+  margin-top:26px;
+  display:flex;
+  gap:28px;
+  justify-content:center;
+  touch-action:manipulation; /* allow taps */
 }
 
 .source{
-width:120px;
-height:60px;
+  width:120px;
+  height:60px;
+  cursor:grab;
+  touch-action:none;         /* we are dragging from here */
 }
 
 .source.red{background:url("redtraincar.png") center/contain no-repeat}
 .source.blue{background:url("bluetraincar.png") center/contain no-repeat}
 
 /* Cars */
-
 .car{
-position:absolute;
-inset:0;
-display:flex;
-align-items:center;
-justify-content:center;
-background-size:100% 100%;
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background-size:100% 100%;
+  background-position:center;
+  background-repeat:no-repeat;
 }
 
 .car.red{background-image:url("redtraincar.png")}
 .car.blue{background-image:url("bluetraincar.png")}
 
 .car input{
-border:none;
-background:transparent;
-color:white;
-font-size:20px;
-font-weight:bold;
-text-align:center;
-width:80%;
-outline:none;
-pointer-events:none;
+  border:none;
+  background:transparent;
+  color:white;
+  font-size:20px;
+  font-weight:bold;
+  text-align:center;
+  width:80%;
+  outline:none;
+  pointer-events:none; /* prevents keyboard popup */
 }
 
-/* Drag */
-
+/* Drag ghost */
 .dragGhost{
-position:fixed;
-width:120px;
-height:60px;
-transform:translate(-50%,-50%);
-pointer-events:none;
-z-index:9999;
+  position:fixed;
+  width:120px;
+  height:60px;
+  transform:translate(-50%,-50%);
+  pointer-events:none;
+  z-index:9999;
 }
 </style>
 </head>
@@ -157,124 +159,178 @@ z-index:9999;
 <body>
 
 <div id="frame">
-<div id="stage">
+  <div id="stage">
 
-<div id="trainRow">
+    <div id="trainRow">
 
-<div id="slotControls">
-<button class="ctrlBtn" id="btnUp">⬆️</button>
-<button class="ctrlBtn" id="btnDown">⬇️</button>
-<div>Slots: <span id="slotCount"></span></div>
-</div>
+      <div id="slotControls">
+        <button class="ctrlBtn" id="btnUp" type="button">⬆️</button>
+        <button class="ctrlBtn" id="btnDown" type="button">⬇️</button>
+        <div>Slots: <span id="slotCount"></span></div>
+      </div>
 
-<div id="rail">
-<div id="engine"></div>
-<div id="slotsWrap"></div>
-</div>
+      <div id="rail">
+        <div id="engine"></div>
+        <div id="slotsWrap"></div>
+      </div>
 
-</div>
+    </div>
 
-<div id="sources">
-<div class="source red" data-color="red"></div>
-<div class="source blue" data-color="blue"></div>
-</div>
+    <div id="sources">
+      <div class="source red" data-color="red"></div>
+      <div class="source blue" data-color="blue"></div>
+    </div>
 
-</div>
+  </div>
 </div>
 
 <script>
-const slotsWrap=document.getElementById("slotsWrap");
-const slotCountEl=document.getElementById("slotCount");
-const btnUp=document.getElementById("btnUp");
-const btnDown=document.getElementById("btnDown");
+const frame = document.getElementById("frame");
+const stage = document.getElementById("stage");
 
-let slotCount=4;
-const MIN=1,MAX=12;
+const slotsWrap = document.getElementById("slotsWrap");
+const slotCountEl = document.getElementById("slotCount");
+const btnUp = document.getElementById("btnUp");
+const btnDown = document.getElementById("btnDown");
+
+let slotCount = 4;
+const MIN = 1, MAX = 12;
+
+function centerFrame(){
+  // center horizontally if content wider than viewport
+  const maxScroll = frame.scrollWidth - frame.clientWidth;
+  if(maxScroll > 0){
+    frame.scrollLeft = Math.max(0, Math.round(maxScroll / 2));
+  } else {
+    frame.scrollLeft = 0;
+  }
+}
 
 function renderSlots(){
-const keep=[...slotsWrap.children].map(s=>s.firstChild);
-slotsWrap.innerHTML="";
-for(let i=0;i<slotCount;i++){
-const s=document.createElement("div");
-s.className="slot";
-if(keep[i]) s.appendChild(keep[i]);
-slotsWrap.appendChild(s);
-}
-slotCountEl.textContent=slotCount;
+  const keep = [...slotsWrap.children].map(s => s.firstChild);
+  slotsWrap.innerHTML = "";
+  for(let i=0;i<slotCount;i++){
+    const s = document.createElement("div");
+    s.className = "slot";
+    if(keep[i]) s.appendChild(keep[i]);
+    slotsWrap.appendChild(s);
+  }
+  slotCountEl.textContent = slotCount;
+  // re-center after layout change (important for iPad)
+  requestAnimationFrame(centerFrame);
 }
 
-btnUp.addEventListener("click",()=>{
-if(slotCount<MAX){slotCount++;renderSlots();}
+// IMPORTANT: use pointerdown instead of click for iPad reliability
+btnUp.addEventListener("pointerdown", (e)=>{
+  e.preventDefault();
+  e.stopPropagation();
+  if(slotCount < MAX){
+    slotCount++;
+    renderSlots();
+  }
 });
 
-btnDown.addEventListener("click",()=>{
-if(slotCount>MIN){slotCount--;renderSlots();}
+btnDown.addEventListener("pointerdown", (e)=>{
+  e.preventDefault();
+  e.stopPropagation();
+  if(slotCount > MIN){
+    slotCount--;
+    renderSlots();
+  }
 });
 
 renderSlots();
+window.addEventListener("resize", ()=>requestAnimationFrame(centerFrame));
+window.addEventListener("orientationchange", ()=>setTimeout(centerFrame, 50));
 
 /* ---- Drag ---- */
 
-let dragging=null;
+let dragging = null;
 
 function makeCar(color){
-const c=document.createElement("div");
-c.className="car "+color;
-c.innerHTML="<input>";
-c.addEventListener("pointerdown",e=>startExisting(e,c));
-return c;
+  const c = document.createElement("div");
+  c.className = "car " + color;
+  c.innerHTML = "<input>";
+  c.addEventListener("pointerdown", e => startExisting(e, c));
+  return c;
 }
 
-function startExisting(e,car){
-e.preventDefault();
-dragging={ghost:car};
-car.remove();
-car.classList.add("dragGhost");
-document.body.appendChild(car);
-move(e);
+function startExisting(e, car){
+  e.preventDefault();
+  e.stopPropagation();
+
+  dragging = { ghost: car };
+
+  // remove from slot immediately (so it "lifts" out)
+  car.remove();
+
+  car.classList.add("dragGhost");
+  document.body.appendChild(car);
+
+  // capture pointer for smoother iPad drag
+  try { car.setPointerCapture(e.pointerId); } catch(_){}
+
+  move(e);
 }
 
-document.querySelectorAll(".source").forEach(s=>{
-s.addEventListener("pointerdown",e=>{
-e.preventDefault();
-const g=makeCar(s.dataset.color);
-g.classList.add("dragGhost");
-document.body.appendChild(g);
-dragging={ghost:g};
-move(e);
-});
+document.querySelectorAll(".source").forEach(src=>{
+  src.addEventListener("pointerdown", e=>{
+    e.preventDefault();
+    e.stopPropagation();
+
+    const g = makeCar(src.dataset.color);
+    g.classList.add("dragGhost");
+    document.body.appendChild(g);
+
+    dragging = { ghost: g };
+
+    try { g.setPointerCapture(e.pointerId); } catch(_){}
+
+    move(e);
+  });
 });
 
 function move(e){
-if(!dragging) return;
-dragging.ghost.style.left=e.clientX+"px";
-dragging.ghost.style.top=e.clientY+"px";
+  if(!dragging) return;
+  dragging.ghost.style.left = e.clientX + "px";
+  dragging.ghost.style.top  = e.clientY + "px";
 }
 
-document.addEventListener("pointermove",move);
+// only move while dragging
+document.addEventListener("pointermove", (e)=>{
+  if(dragging) move(e);
+}, {passive:false});
 
-document.addEventListener("pointerup",e=>{
-if(!dragging) return;
+document.addEventListener("pointerup", (e)=>{
+  if(!dragging) return;
 
-let best=null,dist=9999;
+  const x = e.clientX, y = e.clientY;
 
-document.querySelectorAll(".slot").forEach(slot=>{
-const r=slot.getBoundingClientRect();
-const cx=r.left+r.width/2;
-const cy=r.top+r.height/2;
-const d=Math.hypot(e.clientX-cx,e.clientY-cy);
-if(d<dist){dist=d;best=slot;}
-});
+  let best = null, dist = 9999;
 
-if(best && dist<140){
-best.innerHTML="";
-best.appendChild(dragging.ghost);
-dragging.ghost.classList.remove("dragGhost");
-dragging.ghost.style.left="";
-dragging.ghost.style.top="";
-}else dragging.ghost.remove();
+  document.querySelectorAll(".slot").forEach(slot=>{
+    const r = slot.getBoundingClientRect();
+    const cx = r.left + r.width/2;
+    const cy = r.top  + r.height/2;
+    const d = Math.hypot(x - cx, y - cy);
+    if(d < dist){ dist = d; best = slot; }
+  });
 
-dragging=null;
+  if(best && dist < 140){
+    best.innerHTML = "";
+    best.appendChild(dragging.ghost);
+
+    dragging.ghost.classList.remove("dragGhost");
+    dragging.ghost.style.left = "";
+    dragging.ghost.style.top  = "";
+  } else {
+    dragging.ghost.remove();
+  }
+
+  // release pointer capture if any
+  try { dragging.ghost.releasePointerCapture(e.pointerId); } catch(_){}
+
+  dragging = null;
 });
 </script>
 
