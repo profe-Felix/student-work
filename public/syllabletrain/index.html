@@ -6,23 +6,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <style>
-body{
+html,body{
   margin:0;
-  font-family: Andika, system-ui, sans-serif;
-  background:#fff;
-
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  min-height:100vh;
+  height:100%;
 }
 
-/* invisible outer frame (iframe friendly) */
-#frame{
-  width:100%;
-  max-width:1200px;
-  display:flex;
-  justify-content:center;
+body{
+  font-family: Andika, system-ui, sans-serif;
+  background:#fff;
+  touch-action:none;
 }
 
 #stage{
@@ -30,21 +22,16 @@ body{
   overflow:hidden;
 }
 
-
 #trainRow{
   display:flex;
   align-items:flex-start;
-  gap:0px;
 }
 
 #rail{
   display:flex;
   align-items:flex-end;
-  gap:4px;
   margin-left:-120px;
 }
-
-
 
 /* Controls */
 
@@ -53,7 +40,6 @@ body{
   flex-direction:column;
   gap:6px;
   align-items:center;
-  user-select:none;
 }
 
 .ctrlBtn{
@@ -64,44 +50,27 @@ body{
   background:#f8fafc;
   color:#2563eb;
   font-size:16px;
-  cursor:pointer;
   box-shadow:0 2px 0 rgba(0,0,0,.08);
 }
-
-.ctrlBtn:active{
-  transform:translateY(1px);
-  box-shadow:0 1px 0 rgba(0,0,0,.08);
-}
-
-
-#countLabel{font-size:13px}
-
-/* Engine */
 
 #engine{
   width:280px;
   height:80px;
   background:url("train.png") center bottom/contain no-repeat;
-  margin-right:4px;
   transform:scale(1.6);
   transform-origin:left bottom;
 }
-
-
 
 /* Slots */
 
 #slotsWrap{
   display:flex;
-  gap:0;
   margin-left:15px;
 }
 
 #slotsWrap .slot:not(:first-child){
   margin-left:-5px;
 }
-
-
 
 .slot{
   width:120px;
@@ -110,8 +79,6 @@ body{
   border-radius:12px;
   position:relative;
 }
-
-
 
 /* Sources */
 
@@ -124,41 +91,24 @@ body{
 .source{
   width:120px;
   height:60px;
-  cursor:grab;
 }
 
-.source.red{
-  background:url("redtraincar.png") center/contain no-repeat;
-}
-
-.source.blue{
-  background:url("bluetraincar.png") center/contain no-repeat;
-}
+.source.red{background:url("redtraincar.png") center/contain no-repeat}
+.source.blue{background:url("bluetraincar.png") center/contain no-repeat}
 
 /* Cars */
 
 .car{
-  inset:0;
   position:absolute;
+  inset:0;
   display:flex;
   align-items:center;
   justify-content:center;
   background-size:100% 100%;
-  background-position:center;
-  background-repeat:no-repeat;
 }
 
-
-
-.car.red{
-  background-image:url("redtraincar.png");
-}
-
-.car.blue{
-  background-image:url("bluetraincar.png");
-}
-
-/* syllable text */
+.car.red{background-image:url("redtraincar.png")}
+.car.blue{background-image:url("bluetraincar.png")}
 
 .car input{
   border:none;
@@ -169,158 +119,141 @@ body{
   text-align:center;
   width:80%;
   outline:none;
-  pointer-events:auto;
 }
 
-/* Drag ghost */
+/* Drag */
 
 .dragGhost{
-  position:fixed;
+  position:absolute;
   width:120px;
   height:60px;
   transform:translate(-50%,-50%);
-  z-index:9999;
   pointer-events:none;
+  z-index:9999;
 }
 </style>
-
 </head>
 
 <body>
 
-<div id="frame">
 <div id="stage">
 
 <div id="trainRow">
 
-  <div id="slotControls">
-    <button class="ctrlBtn" id="btnUp">⬆️</button>
-    <button class="ctrlBtn" id="btnDown">⬇️</button>
-    <div id="countLabel">Slots: <span id="slotCount"></span></div>
-  </div>
+<div id="slotControls">
+<button class="ctrlBtn" id="btnUp">⬆️</button>
+<button class="ctrlBtn" id="btnDown">⬇️</button>
+<div>Slots: <span id="slotCount"></span></div>
+</div>
 
-  <div id="rail">
-    <div id="engine"></div>
-    <div id="slotsWrap"></div>
-  </div>
+<div id="rail">
+<div id="engine"></div>
+<div id="slotsWrap"></div>
+</div>
 
 </div>
 
 <div id="sources">
-  <div class="source red" data-color="red"></div>
-  <div class="source blue" data-color="blue"></div>
+<div class="source red" data-color="red"></div>
+<div class="source blue" data-color="blue"></div>
 </div>
 
-</div>
 </div>
 
 <script>
-const slotsWrap=document.getElementById('slotsWrap');
-const slotCountEl=document.getElementById('slotCount');
+const slotsWrap=document.getElementById("slotsWrap");
+const slotCountEl=document.getElementById("slotCount");
 
 let slotCount=4;
 const MIN=1,MAX=12;
 
 function renderSlots(){
-  const existing=[...slotsWrap.children].map(s=>s.firstChild);
-  slotsWrap.innerHTML='';
+  const keep=[...slotsWrap.children].map(s=>s.firstChild);
+  slotsWrap.innerHTML="";
   for(let i=0;i<slotCount;i++){
-    const slot=document.createElement('div');
-    slot.className='slot';
-    if(existing[i]) slot.appendChild(existing[i]);
-    slotsWrap.appendChild(slot);
+    const s=document.createElement("div");
+    s.className="slot";
+    if(keep[i]) s.appendChild(keep[i]);
+    slotsWrap.appendChild(s);
   }
   slotCountEl.textContent=slotCount;
 }
 
-document.getElementById('btnUp').onclick=()=>{
-  if(slotCount<MAX){slotCount++;renderSlots();}
-};
-
-document.getElementById('btnDown').onclick=()=>{
-  if(slotCount>MIN){slotCount--;renderSlots();}
-};
-
+btnUp.onclick=()=>{if(slotCount<MAX){slotCount++;renderSlots();}};
+btnDown.onclick=()=>{if(slotCount>MIN){slotCount--;renderSlots();}};
 renderSlots();
 
-/* -------- Drag system -------- */
+/* -------- Drag -------- */
 
 let dragging=null;
 
 function makeCar(color){
-  const c=document.createElement('div');
-  c.className='car '+color;
-  c.innerHTML='<input>';
-  c.addEventListener('pointerdown',e=>startDragFromCar(e,c));
+  const c=document.createElement("div");
+  c.className="car "+color;
+  c.innerHTML="<input>";
+  c.addEventListener("mousedown",e=>startCar(e,c));
+  c.addEventListener("touchstart",e=>startCar(e,c),{passive:false});
   return c;
 }
 
-document.querySelectorAll('.source').forEach(src=>{
-  src.addEventListener('pointerdown',e=>{
-    startGhost(e,src.dataset.color);
-  });
-});
-
-function startDragFromCar(e,car){
-  const color=car.classList.contains('red')?'red':'blue';
-
-  dragging={ghost:car,color,car};
-
-  car.classList.add('dragGhost');
+function startCar(e,car){
+  e.preventDefault();
+  dragging={ghost:car};
+  car.classList.add("dragGhost");
   document.body.appendChild(car);
-
   move(e);
 }
+
+document.querySelectorAll(".source").forEach(s=>{
+  s.addEventListener("mousedown",e=>startGhost(e,s.dataset.color));
+  s.addEventListener("touchstart",e=>startGhost(e,s.dataset.color),{passive:false});
+});
 
 function startGhost(e,color){
-  const ghost=makeCar(color);
-  ghost.classList.add('dragGhost');
-  document.body.appendChild(ghost);
-
-  dragging={ghost,color,car:null};
-
+  e.preventDefault();
+  const g=makeCar(color);
+  g.classList.add("dragGhost");
+  document.body.appendChild(g);
+  dragging={ghost:g};
   move(e);
 }
 
-document.addEventListener('pointermove',e=>{
-  if(dragging) move(e);
-});
+function getXY(e){
+  if(e.touches) return {x:e.touches[0].clientX,y:e.touches[0].clientY};
+  return {x:e.clientX,y:e.clientY};
+}
 
-document.addEventListener('pointerup',e=>{
+function move(e){
+  const p=getXY(e);
+  dragging.ghost.style.left=p.x+"px";
+  dragging.ghost.style.top=p.y+"px";
+}
+
+document.addEventListener("mousemove",e=>dragging&&move(e));
+document.addEventListener("touchmove",e=>dragging&&move(e),{passive:false});
+
+function end(e){
   if(!dragging) return;
-
   let placed=false;
-
-  document.querySelectorAll('.slot').forEach(slot=>{
+  document.querySelectorAll(".slot").forEach(slot=>{
     const r=slot.getBoundingClientRect();
-
-    if(e.clientX>r.left&&e.clientX<r.right&&e.clientY>r.top&&e.clientY<r.bottom){
-      slot.innerHTML='';
+    const p=getXY(e);
+    if(p.x>r.left&&p.x<r.right&&p.y>r.top&&p.y<r.bottom){
+      slot.innerHTML="";
       slot.appendChild(dragging.ghost);
-
-      dragging.ghost.classList.remove('dragGhost');
+      dragging.ghost.classList.remove("dragGhost");
       dragging.ghost.style.left="";
       dragging.ghost.style.top="";
-
-      if(dragging.ghost.querySelector('input')){
-        dragging.ghost.querySelector('input').focus();
-      }
-
+      dragging.ghost.querySelector("input")?.focus();
       placed=true;
     }
   });
-
-  if(!placed){
-    dragging.ghost.remove();
-  }
-
+  if(!placed) dragging.ghost.remove();
   dragging=null;
-});
-
-function move(e){
-  dragging.ghost.style.left=e.clientX+'px';
-  dragging.ghost.style.top=e.clientY+'px';
 }
+
+document.addEventListener("mouseup",end);
+document.addEventListener("touchend",end);
 </script>
 
 </body>
