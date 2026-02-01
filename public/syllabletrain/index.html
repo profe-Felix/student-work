@@ -45,18 +45,20 @@ body{
 #rail{
   display:flex;
   align-items:flex-end;
-  margin-left:-120px;
+  margin-left:0px;
 }
 
 /* Controls */
 #slotControls{
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-  align-items:center;
-  margin-right:12px;
-  touch-action:manipulation; /* allow taps */
+display:flex;
+flex-direction:column;
+gap:6px;
+align-items:center;
+margin-right:12px;
+position:relative;
+z-index:10;
 }
+
 
 .ctrlBtn{
   width:36px;
@@ -73,12 +75,14 @@ body{
 
 /* Engine */
 #engine{
-  width:448px;          /* 280 * 1.6 */
-  height:128px;         /* 80 * 1.6 */
-  background:url("train.png") center bottom/contain no-repeat;
-  flex-shrink:0;
-  pointer-events:none; /* engine never eats clicks */
+width:448px;
+height:128px;
+background:url("train.png") center bottom/contain no-repeat;
+flex-shrink:0;
+margin-right:-140px;
+pointer-events:none;
 }
+
 
 
 /* Slots */
@@ -336,4 +340,5 @@ document.addEventListener("pointerup", (e)=>{
 
 </body>
 </html>
+
 
