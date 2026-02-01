@@ -36,8 +36,17 @@ body{
 #stage{
   padding:40px;
   min-width:900px;
-  touch-action:none;        /* IMPORTANT: stop iPad panning */
+  touch-action:none;
 }
+
+/* Desktop boost */
+@media (hover:hover){
+  #stage{
+    transform:scale(1.35);
+    transform-origin:center top;
+  }
+}
+
 
 #trainRow{
   display:flex;
@@ -319,3 +328,4 @@ document.addEventListener("pointerup",e=>{
 
 </body>
 </html>
+
