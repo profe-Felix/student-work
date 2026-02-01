@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <title>Syllable Train</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- iPad zoom OFF -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
 <style>
 html,body{
@@ -130,7 +132,7 @@ body{
   text-align:center;
   width:80%;
   outline:none;
-  pointer-events:none;   /* prevents keyboard popup */
+  pointer-events:none;
 }
 
 /* Drag */
@@ -267,6 +269,14 @@ function end(e){
 }
 
 document.addEventListener("pointerup",end);
+
+/* ---- kill iOS double-tap zoom ---- */
+let lastTouchEnd=0;
+document.addEventListener("touchend",e=>{
+  const now=Date.now();
+  if(now-lastTouchEnd<=300) e.preventDefault();
+  lastTouchEnd=now;
+},false);
 </script>
 
 </body>
