@@ -73,12 +73,13 @@ body{
 
 /* Engine */
 #engine{
-  width:280px;
-  height:80px;
+  width:448px;          /* 280 * 1.6 */
+  height:128px;         /* 80 * 1.6 */
   background:url("train.png") center bottom/contain no-repeat;
-  transform:scale(1.6);
-  transform-origin:left bottom;
+  flex-shrink:0;
+  pointer-events:none; /* engine never eats clicks */
 }
+
 
 /* Slots */
 #slotsWrap{
@@ -132,17 +133,16 @@ body{
 .car.red{background-image:url("redtraincar.png")}
 .car.blue{background-image:url("bluetraincar.png")}
 
-.car input{
-  border:none;
-  background:transparent;
-  color:white;
-  font-size:20px;
-  font-weight:bold;
-  text-align:center;
-  width:80%;
-  outline:none;
-  pointer-events:none; /* prevents keyboard popup */
+.car{
+position:absolute;
+inset:0;
+display:flex;
+align-items:center;
+justify-content:center;
+background-size:100% 100%;
+pointer-events:none;
 }
+
 
 /* Drag ghost */
 .dragGhost{
@@ -336,3 +336,4 @@ document.addEventListener("pointerup", (e)=>{
 
 </body>
 </html>
+
