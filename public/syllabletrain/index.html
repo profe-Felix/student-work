@@ -7,6 +7,9 @@
 <meta name="viewport"
 content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 
+<!-- QR Library -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
 <style>
 html,body{
   margin:0;
@@ -147,9 +150,6 @@ body{
 .car.red{background-image:url("redtraincar.png")}
 .car.blue{background-image:url("bluetraincar.png")}
 
-/* Editable label */
-
-
 /* Drag ghost */
 
 .dragGhost{
@@ -160,7 +160,6 @@ body{
   pointer-events:none;
   z-index:9999;
 }
-
 </style>
 </head>
 
@@ -174,6 +173,7 @@ body{
 <div id="slotControls">
 <button class="ctrlBtn" id="btnUp" type="button">⬆️</button>
 <button class="ctrlBtn" id="btnDown" type="button">⬇️</button>
+<button class="ctrlBtn" id="btnQR" type="button">📱</button>
 <div>Slots: <span id="slotCount"></span></div>
 </div>
 
@@ -192,12 +192,56 @@ body{
 </div>
 </div>
 
+<!-- QR Overlay -->
+<div id="qrOverlay" style="
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.35);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:99999;
+">
+  <div style="
+    background:#fff;
+    padding:20px 22px;
+    border-radius:16px;
+    text-align:center;
+    box-shadow:0 10px 30px rgba(0,0,0,.25);
+  ">
+    <div style="font-size:18px;margin-bottom:10px">Student QR</div>
+    <div id="qrBox"></div>
+    <button id="qrClose" class="ctrlBtn" style="margin-top:12px">Close</button>
+  </div>
+</div>
+
 <script>
 const frame = document.getElementById("frame");
 const slotsWrap = document.getElementById("slotsWrap");
 const slotCountEl = document.getElementById("slotCount");
 const btnUp = document.getElementById("btnUp");
 const btnDown = document.getElementById("btnDown");
+const btnQR = document.getElementById("btnQR");
+const qrOverlay = document.getElementById("qrOverlay");
+const qrBox = document.getElementById("qrBox");
+const qrClose = document.getElementById("qrClose");
+
+let qrInstance=null;
+
+btnQR.addEventListener("click",()=>{
+  qrOverlay.style.display="flex";
+  qrBox.innerHTML="";
+  qrInstance=new QRCode(qrBox,{
+    text:location.href,
+    width:220,
+    height:220
+  });
+});
+
+qrClose.addEventListener("click",()=>{
+  qrOverlay.style.display="none";
+  qrBox.innerHTML="";
+});
 
 let slotCount = 4;
 const MIN = 1, MAX = 12;
@@ -249,11 +293,8 @@ function makeCar(color){
   return c;
 }
 
-
-
 function startExisting(e,car){
   e.preventDefault();
-
   dragging={ghost:car};
   car.remove();
   car.classList.add("dragGhost");
@@ -313,11 +354,3 @@ document.addEventListener("pointerup",e=>{
 
 </body>
 </html>
-
-
-
-
-
-
-
-
