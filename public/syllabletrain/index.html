@@ -341,17 +341,20 @@ document.addEventListener("pointerup",e=>{
   const slots=[...document.querySelectorAll(".slot")];
   const x=e.clientX;
 
-  // remove ghost styling FIRST (prevents Safari zoom)
+  // remove ghost styling immediately (Safari safety)
   dragging.ghost.classList.remove("dragGhost");
   dragging.ghost.style.left="";
   dragging.ghost.style.top="";
 
-  // collect existing cars (excluding dragged one)
-  let cars=slots
-    .map(s=>s.firstChild)
-    .filter(c=>c && c!==dragging.ghost);
+  // capture cars INCLUDING empties (preserve slot structure)
+  let cars=slots.map(s=>s.firstChild || null);
 
-  // nearest slot
+  const from=dragging.fromSlot;
+
+  // remove dragged car from its original place
+  if(from>-1) cars[from]=null;
+
+  // nearest slot center
   let bestSlot=-1,slotDist=9999;
 
   slots.forEach((s,i)=>{
@@ -364,9 +367,18 @@ document.addEventListener("pointerup",e=>{
     }
   });
 
-  // couplers
-  let coupler=-1,cDist=9999;
+  // couplers INCLUDING engine -> first slot
+  let coupler=0,cDist=9999;
 
+  // engine coupler
+  if(slots[0]){
+    const r=slots[0].getBoundingClientRect();
+    const d=Math.abs(x-(r.left-30));
+    cDist=d;
+    coupler=0;
+  }
+
+  // middle couplers
   for(let i=0;i<slots.length-1;i++){
     const a=slots[i].getBoundingClientRect();
     const b=slots[i+1].getBoundingClientRect();
@@ -380,38 +392,35 @@ document.addEventListener("pointerup",e=>{
 
   const COUPLER=40;
 
-  // SOURCE → insert new slot
-  if(dragging.fromSlot===-1 && coupler>-1 && cDist<COUPLER && cars.length<MAX){
+  // SOURCE → insert (grow train)
+  if(dragging.fromSlot===-1 && cDist<COUPLER && slotCount<MAX){
     cars.splice(coupler,0,dragging.ghost);
+    slotCount++;
   }
 
   // SLOT → swap
-  else if(dragging.fromSlot>-1 && bestSlot>-1){
-    const from=dragging.fromSlot;
-    const to=bestSlot;
-    if(from!==to){
-      const tmp=cars[from];
-      cars[from]=cars[to];
-      cars[to]=tmp;
-    }
+  else if(from>-1 && bestSlot>-1){
+    const tmp=cars[bestSlot];
+    cars[bestSlot]=dragging.ghost;
+    if(tmp) cars[from]=tmp;
   }
 
-  // fallback drop
+  // simple drop into empty slot
   else if(bestSlot>-1){
     cars[bestSlot]=dragging.ghost;
   }
 
+  // dropped in white space → delete
   else{
     dragging.ghost.remove();
     dragging=null;
+    renderSlots();
     return;
   }
 
-  // resize slot count to match cars
-  slotCount=Math.max(cars.length,MIN);
+  // rebuild slots
   renderSlots();
 
-  // reattach cars cleanly
   const newSlots=[...document.querySelectorAll(".slot")];
   newSlots.forEach((s,i)=>{
     s.innerHTML="";
@@ -421,10 +430,12 @@ document.addEventListener("pointerup",e=>{
   dragging=null;
 });
 
+
 </script>
 
 
 </body>
 </html>
+
 
 
