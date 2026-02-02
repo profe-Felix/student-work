@@ -341,6 +341,16 @@ document.addEventListener("pointerup",e=>{
   const slots=[...document.querySelectorAll(".slot")];
   const x=e.clientX;
 
+  // remove ghost styling FIRST (prevents Safari zoom)
+  dragging.ghost.classList.remove("dragGhost");
+  dragging.ghost.style.left="";
+  dragging.ghost.style.top="";
+
+  // collect existing cars (excluding dragged one)
+  let cars=slots
+    .map(s=>s.firstChild)
+    .filter(c=>c && c!==dragging.ghost);
+
   // nearest slot
   let bestSlot=-1,slotDist=9999;
 
@@ -354,7 +364,7 @@ document.addEventListener("pointerup",e=>{
     }
   });
 
-  // couplers (between slots)
+  // couplers
   let coupler=-1,cDist=9999;
 
   for(let i=0;i<slots.length-1;i++){
@@ -371,53 +381,50 @@ document.addEventListener("pointerup",e=>{
   const COUPLER=40;
 
   // SOURCE → insert new slot
-  if(dragging.fromSlot===-1 && coupler>-1 && cDist<COUPLER && slotCount<MAX){
-
-    slotCount++;
-    renderSlots();
-
-    const newSlots=[...document.querySelectorAll(".slot")];
-    newSlots[coupler].appendChild(dragging.ghost);
-
+  if(dragging.fromSlot===-1 && coupler>-1 && cDist<COUPLER && cars.length<MAX){
+    cars.splice(coupler,0,dragging.ghost);
   }
 
   // SLOT → swap
   else if(dragging.fromSlot>-1 && bestSlot>-1){
-
     const from=dragging.fromSlot;
     const to=bestSlot;
-
     if(from!==to){
-      const a=slots[from].firstChild;
-      const b=slots[to].firstChild;
-
-      slots[from].innerHTML="";
-      slots[to].innerHTML="";
-
-      if(b) slots[from].appendChild(b);
-      if(a) slots[to].appendChild(a);
-    }else{
-      slots[from].appendChild(dragging.ghost);
+      const tmp=cars[from];
+      cars[from]=cars[to];
+      cars[to]=tmp;
     }
-
   }
 
   // fallback drop
   else if(bestSlot>-1){
-    slots[bestSlot].appendChild(dragging.ghost);
+    cars[bestSlot]=dragging.ghost;
   }
 
-  else dragging.ghost.remove();
+  else{
+    dragging.ghost.remove();
+    dragging=null;
+    return;
+  }
 
-  dragging.ghost.classList.remove("dragGhost");
-  dragging.ghost.style.left="";
-  dragging.ghost.style.top="";
+  // resize slot count to match cars
+  slotCount=Math.max(cars.length,MIN);
+  renderSlots();
+
+  // reattach cars cleanly
+  const newSlots=[...document.querySelectorAll(".slot")];
+  newSlots.forEach((s,i)=>{
+    s.innerHTML="";
+    if(cars[i]) s.appendChild(cars[i]);
+  });
 
   dragging=null;
 });
+
 </script>
 
 
 </body>
 </html>
+
 
