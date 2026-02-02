@@ -150,17 +150,6 @@ body{
 
 /* Editable label */
 
-.car .label{
-  color:white;
-  font-size:20px;
-  font-weight:bold;
-  text-align:center;
-  width:80%;
-  outline:none;
-  user-select:text;
-  pointer-events:auto;
-  caret-color:white;
-}
 
 /* Drag ghost */
 
@@ -173,10 +162,6 @@ body{
   z-index:9999;
 }
 
-[contenteditable]{
-  -webkit-user-select:text;
-  touch-action:manipulation;
-}
 </style>
 </head>
 
@@ -256,37 +241,15 @@ let dragging=null;
 function makeCar(color){
   const c=document.createElement("div");
   c.className="car "+color;
-  c.innerHTML="<div class='label' contenteditable='true'></div>";
-
-  let startX=0,startY=0,maybeDrag=false;
 
   c.addEventListener("pointerdown",e=>{
-    if(e.target.classList.contains("label")){
-      // allow editing
-      return;
-    }
-
     e.preventDefault();
-    startX=e.clientX;
-    startY=e.clientY;
-    maybeDrag=true;
-  });
-
-  document.addEventListener("pointermove",e=>{
-    if(!maybeDrag) return;
-
-    if(Math.hypot(e.clientX-startX,e.clientY-startY)>6){
-      maybeDrag=false;
-      startExisting(e,c);
-    }
-  });
-
-  document.addEventListener("pointerup",()=>{
-    maybeDrag=false;
+    startExisting(e,c);
   });
 
   return c;
 }
+
 
 
 function startExisting(e,car){
@@ -351,5 +314,6 @@ document.addEventListener("pointerup",e=>{
 
 </body>
 </html>
+
 
 
