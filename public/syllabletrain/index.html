@@ -258,13 +258,36 @@ function makeCar(color){
   c.className="car "+color;
   c.innerHTML="<div class='label' contenteditable='true'></div>";
 
+  let startX=0,startY=0,maybeDrag=false;
+
   c.addEventListener("pointerdown",e=>{
-    if(e.target.classList.contains("label")) return;
-    startExisting(e,c);
+    if(e.target.classList.contains("label")){
+      // allow editing
+      return;
+    }
+
+    e.preventDefault();
+    startX=e.clientX;
+    startY=e.clientY;
+    maybeDrag=true;
+  });
+
+  document.addEventListener("pointermove",e=>{
+    if(!maybeDrag) return;
+
+    if(Math.hypot(e.clientX-startX,e.clientY-startY)>6){
+      maybeDrag=false;
+      startExisting(e,c);
+    }
+  });
+
+  document.addEventListener("pointerup",()=>{
+    maybeDrag=false;
   });
 
   return c;
 }
+
 
 function startExisting(e,car){
   e.preventDefault();
@@ -328,4 +351,5 @@ document.addEventListener("pointerup",e=>{
 
 </body>
 </html>
+
 
