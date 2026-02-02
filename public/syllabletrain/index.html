@@ -392,11 +392,22 @@ document.addEventListener("pointerup",e=>{
 
   const COUPLER=40;
 
-  // SOURCE → insert (grow train)
+  // SOURCE → insert (grow train) ONLY if coupling next to a car
   if(dragging.fromSlot===-1 && cDist<COUPLER && slotCount<MAX){
+
+  const left=coupler>0 ? cars[coupler-1] : null;
+  const right=cars[coupler] || null;
+
+  // only grow if at least one neighbor has a car
+  if(left || right){
     cars.splice(coupler,0,dragging.ghost);
     slotCount++;
+  }else{
+    // otherwise snap into nearest empty slot
+    if(bestSlot>-1) cars[bestSlot]=dragging.ghost;
   }
+}
+
 
   // SLOT → swap
   else if(from>-1 && bestSlot>-1){
@@ -436,6 +447,7 @@ document.addEventListener("pointerup",e=>{
 
 </body>
 </html>
+
 
 
 
