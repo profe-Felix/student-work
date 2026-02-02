@@ -17,7 +17,7 @@
     border-bottom: 1px solid #e5e7eb;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
   }
   header h1 {
     font-size: 18px;
@@ -41,6 +41,35 @@
     border: none;
     background: #fff;
   }
+
+  /* QR modal */
+  #qrOverlay{
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.35);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    z-index:999;
+  }
+  #qrBox{
+    background:#fff;
+    padding:18px 20px 16px;
+    border-radius:14px;
+    text-align:center;
+    min-width:260px;
+  }
+  #qrUrl{
+    font-size:12px;
+    color:#555;
+    word-break:break-all;
+    margin-top:8px;
+  }
+  #closeQR{
+    margin-top:10px;
+    background:#111;
+    border-color:#111;
+  }
 </style>
 </head>
 <body>
@@ -48,10 +77,23 @@
 <header>
   <h1 id="title">Lección</h1>
   <div class="spacer"></div>
+  <button id="qrBtn">📱 QR</button>
   <button id="nextBtn">➡️ Siguiente</button>
 </header>
 
 <iframe id="appFrame"></iframe>
+
+<!-- QR Modal -->
+<div id="qrOverlay">
+  <div id="qrBox">
+    <div id="qrCode"></div>
+    <div id="qrUrl"></div>
+    <button id="closeQR">Cerrar</button>
+  </div>
+</div>
+
+<!-- QR library -->
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
 <script>
 const qs = new URLSearchParams(location.search);
@@ -72,11 +114,37 @@ const frame = document.getElementById('appFrame');
 const titleEl = document.getElementById('title');
 const nextBtn = document.getElementById('nextBtn');
 
-/* OPTIONAL: Back button support (easy to toggle later) */
+/* Back button */
 const backBtn = document.createElement('button');
 backBtn.textContent = '⬅️ Atrás';
 backBtn.style.display = 'none';
 nextBtn.before(backBtn);
+
+/* QR elements */
+const qrBtn = document.getElementById("qrBtn");
+const qrOverlay = document.getElementById("qrOverlay");
+const qrBox = document.getElementById("qrCode");
+const qrUrl = document.getElementById("qrUrl");
+const closeQR = document.getElementById("closeQR");
+
+let qr = null;
+
+qrBtn.onclick = () => {
+  const url = location.href;
+
+  qrBox.innerHTML = "";
+  qr = new QRCode(qrBox, {
+    text: url,
+    width: 220,
+    height: 220
+  });
+
+  qrUrl.textContent = url;
+  qrOverlay.style.display = "flex";
+};
+
+closeQR.onclick = () => qrOverlay.style.display = "none";
+qrOverlay.onclick = e => { if (e.target === qrOverlay) qrOverlay.style.display = "none"; };
 
 async function loadLesson() {
   const res = await fetch(LESSONS_URL, { cache: 'no-store' });
@@ -126,7 +194,6 @@ backBtn.addEventListener('click', () => {
 
 loadLesson();
 </script>
-
 
 </body>
 </html>
