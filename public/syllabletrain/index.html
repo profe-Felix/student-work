@@ -279,7 +279,7 @@ window.addEventListener("resize",()=>requestAnimationFrame(centerFrame));
 
 /* ---- Drag ---- */
 
-let dragging=null;
+let dragging=null; // { ghost, fromSlot }
 
 function makeCar(color){
   const c=document.createElement("div");
@@ -295,7 +295,15 @@ function makeCar(color){
 
 function startExisting(e,car){
   e.preventDefault();
-  dragging={ghost:car};
+
+  const slots=[...document.querySelectorAll(".slot")];
+  const idx=slots.findIndex(s=>s.firstChild===car);
+
+  dragging={
+    ghost:car,
+    fromSlot:idx
+  };
+
   car.remove();
   car.classList.add("dragGhost");
   document.body.appendChild(car);
@@ -308,7 +316,7 @@ document.querySelectorAll(".source").forEach(src=>{
     const g=makeCar(src.dataset.color);
     g.classList.add("dragGhost");
     document.body.appendChild(g);
-    dragging={ghost:g};
+    dragging={ghost:g,fromSlot:-1};
     move(e);
   });
 });
@@ -330,27 +338,86 @@ document.addEventListener("pointermove",e=>{
 document.addEventListener("pointerup",e=>{
   if(!dragging) return;
 
-  let best=null,dist=9999;
+  const slots=[...document.querySelectorAll(".slot")];
+  const x=e.clientX;
 
-  document.querySelectorAll(".slot").forEach(slot=>{
-    const r=slot.getBoundingClientRect();
+  // nearest slot
+  let bestSlot=-1,slotDist=9999;
+
+  slots.forEach((s,i)=>{
+    const r=s.getBoundingClientRect();
     const cx=r.left+r.width/2;
-    const cy=r.top+r.height/2;
-    const d=Math.hypot(e.clientX-cx,e.clientY-cy);
-    if(d<dist){dist=d;best=slot;}
+    const d=Math.abs(x-cx);
+    if(d<slotDist){
+      slotDist=d;
+      bestSlot=i;
+    }
   });
 
-  if(best && dist<140){
-    best.innerHTML="";
-    best.appendChild(dragging.ghost);
-    dragging.ghost.classList.remove("dragGhost");
-    dragging.ghost.style.left="";
-    dragging.ghost.style.top="";
-  }else dragging.ghost.remove();
+  // couplers (between slots)
+  let coupler=-1,cDist=9999;
+
+  for(let i=0;i<slots.length-1;i++){
+    const a=slots[i].getBoundingClientRect();
+    const b=slots[i+1].getBoundingClientRect();
+    const mid=(a.right+b.left)/2;
+    const d=Math.abs(x-mid);
+    if(d<cDist){
+      cDist=d;
+      coupler=i+1;
+    }
+  }
+
+  const COUPLER=40;
+
+  // SOURCE → insert new slot
+  if(dragging.fromSlot===-1 && coupler>-1 && cDist<COUPLER && slotCount<MAX){
+
+    slotCount++;
+    renderSlots();
+
+    const newSlots=[...document.querySelectorAll(".slot")];
+    newSlots[coupler].appendChild(dragging.ghost);
+
+  }
+
+  // SLOT → swap
+  else if(dragging.fromSlot>-1 && bestSlot>-1){
+
+    const from=dragging.fromSlot;
+    const to=bestSlot;
+
+    if(from!==to){
+      const a=slots[from].firstChild;
+      const b=slots[to].firstChild;
+
+      slots[from].innerHTML="";
+      slots[to].innerHTML="";
+
+      if(b) slots[from].appendChild(b);
+      if(a) slots[to].appendChild(a);
+    }else{
+      slots[from].appendChild(dragging.ghost);
+    }
+
+  }
+
+  // fallback drop
+  else if(bestSlot>-1){
+    slots[bestSlot].appendChild(dragging.ghost);
+  }
+
+  else dragging.ghost.remove();
+
+  dragging.ghost.classList.remove("dragGhost");
+  dragging.ghost.style.left="";
+  dragging.ghost.style.top="";
 
   dragging=null;
 });
 </script>
 
+
 </body>
 </html>
+
