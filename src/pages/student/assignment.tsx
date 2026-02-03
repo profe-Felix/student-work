@@ -295,7 +295,7 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
 
 export default function StudentAssignment(){
   // 🔎 enable realtime meter once
-  useEffect(() => { enableRealtimeMeter() }, [])
+   enableRealtimeMeter() }, [])
 
   const location = useLocation()
   const nav = useNavigate()
@@ -325,7 +325,7 @@ export default function StudentAssignment(){
   // optional ?page= from URL (student deep-link)
   const initialPageFromUrlRef = useRef<number | null>(null)
 
-  useEffect(() => {
+  
     const qs = new URLSearchParams(location.search)
     const p = qs.get('page')
     if (p != null) {
@@ -350,7 +350,7 @@ export default function StudentAssignment(){
     k = k.replace(/^pdfs\//, '')
     return k
   }
-  useEffect(() => {
+  
     let cancelled = false
     ;(async () => {
       if (!pdfStoragePath) { if (!cancelled){ setPdfUrl(''); setHasTask(false) } return }
@@ -385,7 +385,7 @@ export default function StudentAssignment(){
   const scrollHostRef = useRef<HTMLDivElement | null>(null)
 
   // 2-finger pan on the scroll host while in draw mode
-  useEffect(() => {
+  
     const host = scrollHostRef.current
     if (!host) return
 
@@ -702,10 +702,13 @@ setNavLocked(!!(focus && lock));
   useEffect(() => {
     if (!classBootDone) return
     if (rtAssignmentId || assignmentNameFromUrl) {
-      snapToTeacherIfAvailable(rtAssignmentId)
-      ensurePresenceFromServer(rtAssignmentId)
+      if (!assignmentNameFromUrl && initialPageFromUrlRef.current == null) {
+        snapToTeacherIfAvailable(rtAssignmentId)
+        ensurePresenceFromServer(rtAssignmentId)
+      }
       return
     }
+
     ;(async () => {
       const latest = await fetchLatestAssignmentIdWithPages()
       if (latest) {
