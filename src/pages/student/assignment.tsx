@@ -294,8 +294,12 @@ async function fetchPresenceSnapshot(assignmentId: string): Promise<TeacherPrese
 }
 
 export default function StudentAssignment(){
+
   // 🔎 enable realtime meter once
-   enableRealtimeMeter() }, [])
+  useEffect(() => {
+    enableRealtimeMeter()
+  }, [])
+
 
   const location = useLocation()
   const nav = useNavigate()
@@ -322,10 +326,10 @@ export default function StudentAssignment(){
     return qs.get('name') || ''
   }, [location.search])
 
-  // optional ?page= from URL (student deep-link)
+    // optional ?page= from URL (student deep-link)
   const initialPageFromUrlRef = useRef<number | null>(null)
 
-  
+  useEffect(() => {
     const qs = new URLSearchParams(location.search)
     const p = qs.get('page')
     if (p != null) {
@@ -336,6 +340,7 @@ export default function StudentAssignment(){
     }
   }, [location.search])
 
+
   // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
 
@@ -343,6 +348,10 @@ export default function StudentAssignment(){
   const [pdfUrl, setPdfUrl] = useState<string>('')
   const [hasTask, setHasTask] = useState<boolean>(false)
   const STORAGE_BUCKET = 'pdfs'
+    
+  
+  useEffect(() => {
+
   function keyForBucket(path: string) {
     if (!path) return ''
     let k = path.replace(/^\/+/, '')
@@ -384,9 +393,10 @@ export default function StudentAssignment(){
   const drawRef = useRef<DrawCanvasHandle>(null)
   const scrollHostRef = useRef<HTMLDivElement | null>(null)
 
-  // 2-finger pan on the scroll host while in draw mode
-  
-    const host = scrollHostRef.current
+    // 2-finger pan on the scroll host while in draw mode
+      useEffect(() => {
+        const host = scrollHostRef.current
+
     if (!host) return
 
     let pan = false, startY = 0, startX = 0, startTop = 0, startLeft = 0
