@@ -5,6 +5,17 @@ import { useLocation, useNavigate, Link } from 'react-router-dom'
 export default function Start() {
   const location = useLocation()
   const navigate = useNavigate()
+  
+  // Preserve lesson deep-link params (?name=...&page=...)
+  const lessonParams = useMemo(() => {
+    const qs = new URLSearchParams(location.search)
+    const name = qs.get('name')
+    const page = qs.get('page')
+    const parts: string[] = []
+    if (name) parts.push(`name=${encodeURIComponent(name)}`)
+    if (page) parts.push(`page=${encodeURIComponent(page)}`)
+    return parts.length ? `&${parts.join('&')}` : ''
+  }, [location.search])
 
   // Read class from the URL; default to 'A'
   const classCode = useMemo(() => {
@@ -52,11 +63,12 @@ export default function Start() {
         gap: 10
       }}>
         {students.map((sid) => {
-          const url = `#/student/assignment?student=${encodeURIComponent(sid)}&class=${encodeURIComponent(classCode)}`
-          return (
-            <Link
-              key={sid}
-              to={`/student/assignment?student=${encodeURIComponent(sid)}&class=${encodeURIComponent(classCode)}`}
+        const url = `#/student/assignment?student=${encodeURIComponent(sid)}&class=${encodeURIComponent(classCode)}${lessonParams}`
+        return (
+          <Link
+            key={sid}
+            to={`/student/assignment?student=${encodeURIComponent(sid)}&class=${encodeURIComponent(classCode)}${lessonParams}`}
+
               style={{
                 border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff',
                 padding: 12, textDecoration: 'none', color: '#111', textAlign: 'center'
