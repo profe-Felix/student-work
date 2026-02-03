@@ -723,7 +723,7 @@ useEffect(() => {
         const s = await fetchPresenceSnapshot(rtAssignmentId);
         if (s) {
           setCachedPresence(classCode, rtAssignmentId, s);
-          applyPresenceSnapshot(s, { snap: true, assignmentId: rtAssignmentId });
+          applyPresenceSnapshot(s, { snap: !(assignmentNameFromUrl || initialPageFromUrlRef.current != null), assignmentId: rtAssignmentId });
         }
       })();
     }
@@ -776,11 +776,6 @@ useEffect(() => {
       setPdfStoragePath('')
       setHasTask(false)
       return null
-    }
-
-    if (!assignmentNameFromUrl && initialPageFromUrlRef.current == null) {
-      snapToTeacherIfAvailable(latest)
-      await ensurePresenceFromServer(latest)
     }
 
 
