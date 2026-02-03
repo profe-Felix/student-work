@@ -670,7 +670,11 @@ setNavLocked(!!(focus && lock));
       const p = await fetchPresenceSnapshot(assignmentId);
       if (p) {
         setCachedPresence(classCode, assignmentId, p);
-        applyPresenceSnapshot(p, { snap: true, assignmentId });
+        applyPresenceSnapshot(p, {
+          snap: !(assignmentNameFromUrl || initialPageFromUrlRef.current != null),
+          assignmentId
+        });
+
       }
     }
   }
