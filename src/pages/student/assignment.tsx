@@ -680,9 +680,13 @@ setNavLocked(!!(focus && lock));
     const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
       if (!assignmentNameFromUrl) setRtAssignmentId(nextAssignmentId)
-      snapToTeacherIfAvailable(nextAssignmentId)
-      ensurePresenceFromServer(nextAssignmentId)
-      currIds.current = {}
+      if (!assignmentNameFromUrl && initialPageFromUrlRef.current == null) {
+        snapToTeacherIfAvailable(nextAssignmentId)
+        ensurePresenceFromServer(nextAssignmentId)
+}
+
+currIds.current = {}
+
     })
     return off
   }, [classCode])
