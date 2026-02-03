@@ -5,6 +5,17 @@ import { useLocation, useNavigate } from 'react-router-dom'
 export default function StudentStart() {
   const location = useLocation()
   const nav = useNavigate()
+  
+  // optional lesson deep-link params to preserve across student switch
+  const lessonParams = useMemo(() => {
+    const qs = new URLSearchParams(location.search)
+    const name = qs.get('name')
+    const page = qs.get('page')
+    const parts: string[] = []
+    if (name) parts.push(`name=${encodeURIComponent(name)}`)
+    if (page) parts.push(`page=${encodeURIComponent(page)}`)
+    return parts.length ? `&${parts.join('&')}` : ''
+  }, [location.search])
 
   // read ?class= (default 'A')
   const classCode = useMemo(() => {
@@ -37,7 +48,7 @@ export default function StudentStart() {
             key={sid}
             onClick={() => {
               // navigate to assignment and keep class in the URL
-              nav(`/student/assignment?class=${encodeURIComponent(classCode)}&student=${encodeURIComponent(sid)}`)
+              nav(`/student/assignment?class=${encodeURIComponent(classCode)}&student=${encodeURIComponent(sid)}${lessonParams}`)
             }}
             style={{
               padding:'10px 12px',
