@@ -1532,7 +1532,7 @@ const canNext = baseOk && canMoveTo(pageIndex + 1)
             RT usage
           </button>
           <button
-            onClick={()=> nav(`/start?class=${encodeURIComponent(classCode)}`)}
+            onClick={()=> nav(`/start?class=${encodeURIComponent(classCode)}&name=${encodeURIComponent(assignmentNameFromUrl)}&page=${initialPageFromUrlRef.current ?? pageIndex}`)}
             style={{ padding:'6px 10px', borderRadius:8, border:'1px solid #e5e7eb', background:'#f3f4f6' }}
           >
             Switch
