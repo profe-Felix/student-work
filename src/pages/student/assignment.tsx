@@ -233,6 +233,22 @@ async function fetchLatestAssignmentIdWithPages(): Promise<string | null> {
     return null
   }
 }
+async function resolveAssignmentIdByName(name: string): Promise<string | null> {
+  if (!name) return null
+  try {
+    const { data, error } = await supabase
+      .from('assignments')
+      .select('id')
+      .eq('title', name)
+      .limit(1)
+      .maybeSingle()
+
+    if (error || !data?.id) return null
+    return data.id as string
+  } catch {
+    return null
+  }
+}
 
 /* ---------- initial page index from cached presence (best effort) ---------- */
 function initialPageIndexFromPresence(classCode: string): number {
@@ -300,7 +316,12 @@ export default function StudentAssignment(){
     try { localStorage.setItem(key, id) } catch {}
     return id
   }, [location.search, classCode])
-  
+    // optional ?name= (assignment title)
+  const assignmentNameFromUrl = useMemo(() => {
+    const qs = new URLSearchParams(location.search)
+    return qs.get('name') || ''
+  }, [location.search])
+
   // optional ?page= from URL (student deep-link)
   const initialPageFromUrlRef = useRef<number | null>(null)
 
@@ -513,6 +534,21 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
 
   // Persist assignment id from teacher (or DB fallback)
   const [rtAssignmentId, setRtAssignmentId] = useState<string>('')
+  // Resolve assignment from URL (?name=...) on first load
+  useEffect(() => {
+    let cancelled = false
+
+    ;(async () => {
+      if (!assignmentNameFromUrl) return
+      const id = await resolveAssignmentIdByName(assignmentNameFromUrl)
+      if (id && !cancelled) {
+        setRtAssignmentId(id)
+        try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, id) } catch {}
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [assignmentNameFromUrl])
 
   // flag to sequence boot: wait for class snapshot before using "latest"
   const [classBootDone, setClassBootDone] = useState(false)
@@ -628,7 +664,7 @@ setNavLocked(!!(focus && lock));
     if (!classCode) return
     const off = subscribeToGlobal(classCode, (nextAssignmentId) => {
       try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, nextAssignmentId) } catch {}
-      setRtAssignmentId(nextAssignmentId)
+      if (!assignmentNameFromUrl) setRtAssignmentId(nextAssignmentId)
       snapToTeacherIfAvailable(nextAssignmentId)
       ensurePresenceFromServer(nextAssignmentId)
       currIds.current = {}
@@ -643,7 +679,7 @@ setNavLocked(!!(focus && lock));
         const snap = await fetchClassState(classCode)
         if (!snap || cancelled) { setClassBootDone(true); return }
 
-        setRtAssignmentId(snap.assignment_id)
+        if (!assignmentNameFromUrl) setRtAssignmentId(snap.assignment_id)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, snap.assignment_id) } catch {}
 
         if (typeof snap.page_index === 'number') {
@@ -659,7 +695,7 @@ setNavLocked(!!(focus && lock));
 
   useEffect(() => {
     if (!classBootDone) return
-    if (rtAssignmentId) {
+    if (rtAssignmentId || assignmentNameFromUrl) {
       snapToTeacherIfAvailable(rtAssignmentId)
       ensurePresenceFromServer(rtAssignmentId)
       return
