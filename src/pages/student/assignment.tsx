@@ -717,7 +717,7 @@ useEffect(() => {
   try {
     const p = getCachedPresence(classCode, rtAssignmentId);
     if (p) {
-      applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
+      applyPresenceSnapshot(p, { snap: !(assignmentNameFromUrl || initialPageFromUrlRef.current != null), assignmentId: rtAssignmentId });
     } else {
       ;(async () => {
         const s = await fetchPresenceSnapshot(rtAssignmentId);
@@ -740,7 +740,8 @@ useEffect(() => {
         const p = msg?.payload as TeacherPresenceState | undefined
         if (!p) return
         setCachedPresence(classCode, rtAssignmentId, p);
-        applyPresenceSnapshot(p, { snap: true, assignmentId: rtAssignmentId });
+        applyPresenceSnapshot(p, { snap: !(assignmentNameFromUrl || initialPageFromUrlRef.current != null), assignmentId: rtAssignmentId });
+
       })
       .subscribe()
 
