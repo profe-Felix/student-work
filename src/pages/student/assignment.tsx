@@ -300,6 +300,20 @@ export default function StudentAssignment(){
     try { localStorage.setItem(key, id) } catch {}
     return id
   }, [location.search, classCode])
+  
+  // optional ?page= from URL (student deep-link)
+  const initialPageFromUrlRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    const qs = new URLSearchParams(location.search)
+    const p = qs.get('page')
+    if (p != null) {
+      const n = Number(p)
+      if (Number.isFinite(n) && n >= 0) {
+        initialPageFromUrlRef.current = Math.floor(n)
+      }
+    }
+  }, [location.search])
 
   // pdf path resolved from DB page row
   const [pdfStoragePath, setPdfStoragePath] = useState<string>('')
@@ -329,7 +343,11 @@ export default function StudentAssignment(){
   }, [pdfStoragePath])
 
   /* ---------- start page using cached teacher presence if any ---------- */
-  const [pageIndex, setPageIndex]   = useState<number>(initialPageIndexFromPresence(classCode))
+    const [pageIndex, setPageIndex] = useState<number>(() => {
+    if (initialPageFromUrlRef.current != null) return initialPageFromUrlRef.current
+    return initialPageIndexFromPresence(classCode)
+  })
+
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 })
 
   const [color, setColor] = useState('#1F75FE')
@@ -561,7 +579,12 @@ setNavLocked(!!(focus && lock));
       teacherPageIndexRef.current = tpi;
 
       // Snap only if: caller requested snap, autoFollow is on, and we haven't snapped yet in this boot
-      const shouldSnap = (opts?.snap ?? true) && auto && !initialSnappedRef.current;
+      const shouldSnap =
+        (opts?.snap ?? true) &&
+        auto &&
+        !initialSnappedRef.current &&
+        initialPageFromUrlRef.current == null
+
       if (shouldSnap) {
         setPageIndex(tpi);
         initialSnappedRef.current = true;
@@ -1400,7 +1423,9 @@ const goToPage = useCallback(async (i:number) => {
   }
 
   // Do NOT force-unlock here; leave lock state to focus handlers
+  initialPageFromUrlRef.current = null
   setPageIndex(target)
+
 }, [canMoveTo, submitIfNeeded])
 
 const goPrev = useCallback(() => { void goToPage(Math.max(0, pageIndex - 1)) }, [goToPage, pageIndex])
