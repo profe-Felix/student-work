@@ -644,10 +644,15 @@ setNavLocked(!!(focus && lock));
     try {
       const p = getCachedPresence(classCode, assignmentId);
       if (p) {
-        applyPresenceSnapshot(p, { snap: true, assignmentId });
+        applyPresenceSnapshot(p, {
+          snap: !(assignmentNameFromUrl || initialPageFromUrlRef.current != null),
+          assignmentId
+        });
       }
     } catch {/* ignore */}
   }
+
+
 
   const ensurePresenceFromServer = async (assignmentId: string) => {
     const cached = getCachedPresence(classCode, assignmentId);
@@ -1180,8 +1185,11 @@ setAllowedPages(Array.isArray(snapshot.allowedPages) ? snapshot.allowedPages : n
       },
       onPresence: (p: TeacherPresenceState) => {
         try { setCachedPresence(classCode, rtAssignmentId, p) } catch {}
-        applyPresenceSnapshot(p, { snap: true });
+        applyPresenceSnapshot(p, {
+          snap: !(assignmentNameFromUrl || initialPageFromUrlRef.current != null)
+        });
       },
+
 
       // NEW: force-submit → submit immediately (scoped or all)
       onForceSubmit: async (p: { studentId?: string; pageIndex?: number }) => {
