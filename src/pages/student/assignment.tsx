@@ -605,7 +605,7 @@ const onPdfReady = useCallback((_pdf:any, canvas:HTMLCanvasElement, dims?:{cssW:
     const lock  = !!p.lockNav;
     const tpi   = (typeof p.teacherPageIndex === 'number') ? p.teacherPageIndex : undefined;
 
-setAutoFollow(!!auto);
+setAutoFollow(assignmentNameFromUrl || initialPageFromUrlRef.current != null ? false : !!auto);
 setAllowedPages(Array.isArray(p.allowedPages) ? p.allowedPages : null);
 setFocusOn(!!focus);
 setNavLocked(!!(focus && lock));
@@ -682,9 +682,10 @@ setNavLocked(!!(focus && lock));
         if (!assignmentNameFromUrl) setRtAssignmentId(snap.assignment_id)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, snap.assignment_id) } catch {}
 
-        if (typeof snap.page_index === 'number') {
+        if (typeof snap.page_index === 'number' && !assignmentNameFromUrl && initialPageFromUrlRef.current == null) {
           setPageIndex(snap.page_index)
         }
+
       } catch {
       } finally {
         if (!cancelled) setClassBootDone(true)
@@ -778,7 +779,7 @@ useEffect(() => {
 
     let targetIndex = pageIndex
     const tpi = teacherPageIndexRef.current
-    if (autoFollow && typeof tpi === 'number') {
+    if (!assignmentNameFromUrl && initialPageFromUrlRef.current == null && autoFollow && typeof tpi === 'number') {
       targetIndex = tpi
       if (pageIndex !== tpi) setPageIndex(tpi)
     }
@@ -1121,12 +1122,17 @@ useEffect(() => {
   useEffect(() => {
     if (!rtAssignmentId) return
     const ch = subscribeToAssignment(classCode, rtAssignmentId, {
-      onSetPage: ({ pageIndex: tpi }: SetPagePayload) => {
-        teacherPageIndexRef.current = tpi
-        if (autoFollow && typeof tpi === 'number') {
-          setPageIndex(prev => (prev !== tpi ? tpi : prev))
-        }
-      },
+        onSetPage: ({ pageIndex: tpi }: SetPagePayload) => {
+          teacherPageIndexRef.current = tpi
+        
+          // If launched via URL (?name or ?page), ignore teacher paging
+          if (assignmentNameFromUrl || initialPageFromUrlRef.current != null) return
+        
+          if (autoFollow && typeof tpi === 'number') {
+            setPageIndex(prev => (prev !== tpi ? tpi : prev))
+          }
+        },
+
       onFocus: ({ on, lockNav }: FocusPayload) => {
         const focus = !!on;
         const lock  = !!on && !!lockNav;
