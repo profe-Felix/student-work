@@ -763,8 +763,11 @@ useEffect(() => {
       if (assignmentId) {
         setRtAssignmentId(assignmentId)
         try { localStorage.setItem(ASSIGNMENT_CACHE_KEY, assignmentId) } catch {}
-        snapToTeacherIfAvailable(assignmentId)
-        await ensurePresenceFromServer(assignmentId)
+        if (!assignmentNameFromUrl && initialPageFromUrlRef.current == null) {
+          snapToTeacherIfAvailable(assignmentId)
+          await ensurePresenceFromServer(assignmentId)
+        }
+
       }
     }
 
@@ -775,8 +778,11 @@ useEffect(() => {
       return null
     }
 
-    snapToTeacherIfAvailable(assignmentId)
-    await ensurePresenceFromServer(assignmentId)
+    if (!assignmentNameFromUrl && initialPageFromUrlRef.current == null) {
+      snapToTeacherIfAvailable(latest)
+      await ensurePresenceFromServer(latest)
+    }
+
 
     let targetIndex = pageIndex
     const tpi = teacherPageIndexRef.current
