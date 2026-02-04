@@ -546,19 +546,33 @@ function changeWord(direction) {
 function parseWord(word) {
   const digraphs = ["ch", "ll", "rr", "qu"];
   const out = [];
-  const w = (word || "").toLowerCase();
+  const w = (word || "");
+
   for (let i = 0; i < w.length;) {
-    const dg = digraphs.find(d => w.startsWith(d, i));
+    const ch = w[i];
+
+    // ✅ treat spaces as layout separators (not letters)
+    if (ch === " ") {
+      out.push({ text: " ", isSpace: true });
+      i++;
+      continue;
+    }
+
+    const lower = w.toLowerCase();
+    const dg = digraphs.find(d => lower.startsWith(d, i));
+
     if (dg) {
       out.push({ text: dg, soundType: getSoundType(dg) });
       i += dg.length;
     } else {
-      out.push({ text: w[i], soundType: getSoundType(w[i], w[i+1]) });
+      out.push({ text: lower[i], soundType: getSoundType(lower[i], lower[i+1]) });
       i++;
     }
   }
+
   return out;
 }
+
 
 function getSoundType(letter, nextLetter = "") {
   if (letter === "c") return /[ei]/.test(nextLetter) ? "continuous" : "stop";
@@ -624,25 +638,47 @@ function drawReading() {
   }
 
   let x = sliderStart;
+  const maxRowWidth = canvas.clientWidth * 0.9;
+  let row = 0;
 
-  letters.forEach(letter => {
-    const pillW = letter.w;
 
-    ctx.fillStyle = (sliderX >= x + 1) ? "black" : "lightgrey";
-    if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
+letters.forEach(letter => {
 
-    ctx.fillText(letter.text, x + pillW / 2, realTextY);
+  // ✅ space = advance cursor, no pill, no underline
+  if (letter.isSpace) {
+    x += Math.max(fontPx * 0.6, 24);
+    return;
+  }
 
-    ctx.strokeStyle = letter.soundType === "silent" ? "#aaa"
-                     : letter.soundType === "stop" ? "red" : "green";
-    ctx.lineWidth = 3;
-    ctx.fillStyle = (sliderX >= x + 1) ? ctx.strokeStyle : "white";
+  const pillW = letter.w;
 
-    const r = pillRadius(pillW, pillH);
-    roundRect(x, pillY, pillW, pillH, r, true, true);
+  ctx.fillStyle = (sliderX >= x + 1) ? "black" : "lightgrey";
+  if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
 
-    x += pillW + padding;
-  });
+  ctx.fillText(letter.text, x + pillW / 2, realTextY);
+
+  ctx.strokeStyle =
+    letter.soundType === "silent" ? "#aaa" :
+    letter.soundType === "stop" ? "red" : "green";
+
+  ctx.lineWidth = 3;
+  ctx.fillStyle = (sliderX >= x + 1) ? ctx.strokeStyle : "white";
+
+  const r = pillRadius(pillW, pillH);
+  roundRect(x, pillY, pillW, pillH, r, true, true);
+
+  x += pillW + padding;
+
+// ✅ wrap to next row if too wide
+if (x > sliderStart + maxRowWidth) {
+  row++;
+  x = sliderStart;
+  realTextY += fontPx * 1.6;
+  pillY += fontPx * 1.6;
+}
+
+});
+
 
   const lineY = pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
   ctx.lineCap = "round";
