@@ -640,6 +640,7 @@ function drawReading() {
   let x = sliderStart;
   const maxRowWidth = canvas.clientWidth * 0.9;
   let row = 0;
+  const rowStep = fontPx * 1.6;
 
 
 letters.forEach(letter => {
@@ -673,11 +674,57 @@ letters.forEach(letter => {
 if (x > sliderStart + maxRowWidth) {
   row++;
   x = sliderStart;
-  realTextY += fontPx * 1.6;
-  pillY += fontPx * 1.6;
 }
 
+
 });
+  // ================= CENTER WRAPPED ROWS =================
+const totalRows = row + 1;
+const blockHeight = totalRows * rowStep;
+const startY = (canvas.clientHeight - blockHeight) / 2;
+
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+ctx.fillStyle = "white";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+x = sliderStart;
+row = 0;
+
+letters.forEach(letter => {
+
+  if (letter.isSpace) {
+    x += Math.max(fontPx * 0.6, 24);
+    return;
+  }
+
+  const yText = startY + row * rowStep + realTextY;
+  const yPill = startY + row * rowStep + pillY;
+
+  const pillW = letter.w;
+
+  ctx.fillStyle = (sliderX >= x + 1) ? "black" : "lightgrey";
+  if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
+
+  ctx.fillText(letter.text, x + pillW / 2, yText);
+
+  ctx.strokeStyle =
+    letter.soundType === "silent" ? "#aaa" :
+    letter.soundType === "stop" ? "red" : "green";
+
+  ctx.lineWidth = 3;
+  ctx.fillStyle = (sliderX >= x + 1) ? ctx.strokeStyle : "white";
+
+  const r = pillRadius(pillW, pillH);
+  roundRect(x, yPill, pillW, pillH, r, true, true);
+
+  x += pillW + padding;
+
+  if (x > sliderStart + maxRowWidth) {
+    row++;
+    x = sliderStart;
+  }
+});
+
 
 
   const lineY = pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
