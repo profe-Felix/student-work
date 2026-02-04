@@ -376,6 +376,12 @@ let tiles = [];                // array of tile strings displayed
 let tilesUsed = [];            // boolean per tile
 
 function configureModeUI(){
+  
+  if (gameMode !== 'read' && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  
   const inSpelling = (gameMode !== 'read');
   tileModeSel.style.display = (gameMode === 'spell_tiles') ? 'inline-block' : 'none';
   tileRack.style.display = (gameMode === 'spell_tiles') ? 'flex' : 'none';
@@ -629,7 +635,7 @@ function drawReading() {
 
   const padding = 10;
   const pillH = Math.max(16, Math.round(fontPx * 0.25));
-  const textY = Math.confirm = 0; // no-op, keeps your file stable
+  const textY = 0; // no-op, keeps your file stable
   const realTextY = Math.round(fontPx * 1.25);
   const pillY = realTextY + Math.max(16, Math.round(fontPx * 0.5));
 
@@ -637,8 +643,10 @@ function drawReading() {
     return Math.max(2, Math.min(10, h / 2, w / 2 - 1));
   }
 
-  let x = sliderStart;
   const maxRowWidth = canvas.clientWidth * 0.9;
+  const rowLeft = (canvas.clientWidth - maxRowWidth) / 2;
+  let x = rowLeft;
+
   let row = 0;
   const rowStep = fontPx * 1.6;
 
@@ -646,15 +654,15 @@ function drawReading() {
 letters.forEach(letter => {
 
   if (letter.isSpace) {
-    x += Math.max(fontPx * 0.6, 24);
+    x += Math.max(fontPx * 0.6, 24) + padding;
     return;
   }
 
   x += letter.w + padding;
 
-  if (x > sliderStart + maxRowWidth) {
+  if (x > rowLeft + maxRowWidth) {
     row++;
-    x = sliderStart;
+    x = rowLeft;
   }
 });
 
@@ -706,13 +714,14 @@ ctx.clearRect(0, 0, canvas.width, canvas.height);
 ctx.fillStyle = "white";
 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-x = sliderStart;
+x = rowLeft;
+
 row = 0;
 
 letters.forEach(letter => {
 
   if (letter.isSpace) {
-    x += Math.max(fontPx * 0.6, 24);
+    x += Math.max(fontPx * 0.6, 24) + padding;
     return;
   }
 
@@ -738,9 +747,9 @@ letters.forEach(letter => {
 
   x += pillW + padding;
 
-  if (x > sliderStart + maxRowWidth) {
+  if (x > rowLeft + maxRowWidth) {
     row++;
-    x = sliderStart;
+    x = rowLeft;
   }
 });
 
@@ -751,13 +760,13 @@ letters.forEach(letter => {
   ctx.strokeStyle = "#ccc";
   ctx.lineWidth = 6;
   ctx.beginPath();
-  ctx.moveTo(sliderStart, lineY);
-  ctx.lineTo(sliderEnd, lineY);
+  ctx.moveTo(rowLeft, lineY);
+  ctx.lineTo(rowLeft + maxRowWidth, lineY);
   ctx.stroke();
 
   ctx.strokeStyle = "#007bff";
   ctx.beginPath();
-  ctx.moveTo(sliderStart, lineY);
+  ctx.moveTo(rowLeft, lineY);
   ctx.lineTo(sliderX, lineY);
   ctx.stroke();
 
@@ -765,6 +774,10 @@ letters.forEach(letter => {
   ctx.fillStyle = "#007bff";
   ctx.arc(sliderX, lineY, 10, 0, Math.PI * 2);
   ctx.fill();
+  sliderStart = rowLeft;
+  sliderEnd = rowLeft + maxRowWidth;
+  sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
+
 }
 
 /* ==================== NEW: Spelling renderer (syllable boxes + underlines) ==================== */
@@ -1105,9 +1118,13 @@ canvas.addEventListener("pointerleave", ()=>isDragging=false);
 
 function moveSlider(e){
   const rect = canvas.getBoundingClientRect();
-  sliderX = Math.min(Math.max(e.clientX - rect.left, sliderStart), sliderEnd);
+  sliderX = Math.min(
+    Math.max(e.clientX - rect.left, sliderStart),
+    sliderEnd
+  );
   drawCanvas();
 }
+
 
 function roundRect(x, y, w, h, r, fill, stroke) {
   r = Math.max(0, Math.min(r, w/2, h/2));
@@ -1507,12 +1524,12 @@ startBtn.onclick = async () => {
 
   const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const canvasStream = canvas.captureStream(30);
-  const combinedStream = new MediaStream([
+  stream = new MediaStream([
     ...canvasStream.getVideoTracks(),
     ...audioStream.getAudioTracks()
   ]);
 
-  recorder = RecordRTC(combinedStream, {
+  recorder = RecordRTC(stream, {
     type: 'video',
     mimeType: 'video/webm',
     disableLogs: true
@@ -1542,56 +1559,6 @@ stopBtn.onclick = () => {
     previewContainer.innerHTML = "";
     previewContainer.appendChild(video);
     stream?.getTracks().forEach(t => t.stop());
-  });
-};
-</script>
-
-<script>
-let recorder2, stream2;
-
-const startBtn2 = document.getElementById("startRecording");
-const stopBtn2 = document.getElementById("stopRecording");
-const previewContainer2 = document.getElementById("previewContainer");
-
-startBtn2.onclick = async () => {
-  startBtn2.disabled = true;
-  stopBtn2.disabled = false;
-  previewContainer2.innerHTML = "";
-
-  const audio = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const canvasStream = canvas.captureStream(30);
-  stream2 = new MediaStream([...canvasStream.getVideoTracks(), ...audio.getAudioTracks()]);
-
-  recorder2 = RecordRTC(stream2, {
-    type: 'video',
-    mimeType: 'video/webm',
-    disableLogs: true
-  });
-
-  const readyText = document.getElementById("readyMessage");
-  readyText.textContent = "🎬 Get ready...";
-
-  setTimeout(() => {
-    recorder2.startRecording();
-    readyText.textContent = "";
-    window.allowSliderDraw = false;
-    setTimeout(() => { window.allowSliderDraw = true; drawCanvas(); }, 200);
-  }, 600);
-};
-
-stopBtn2.onclick = () => {
-  stopBtn2.disabled = true;
-  startBtn2.disabled = false;
-  recorder2.stopRecording(() => {
-    const blob = recorder2.getBlob();
-    const videoURL = URL.createObjectURL(blob);
-    const video = document.createElement("video");
-    video.src = videoURL;
-    video.controls = true;
-    video.style.maxWidth = "100%";
-    previewContainer2.innerHTML = "";
-    previewContainer2.appendChild(video);
-    stream2.getTracks().forEach(t => t.stop());
   });
 };
 </script>
