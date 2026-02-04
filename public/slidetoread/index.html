@@ -655,7 +655,7 @@ function drawReading() {
   let x = rowLeft;
 
   let row = 0;
-  const rowStep = fontPx * 1.6;
+  const rowStep = fontPx * 1.9;
 
   rowWidths = [];
   rowWidths[0] = 0;
@@ -664,21 +664,25 @@ function drawReading() {
   // ---- first pass: count rows only (no drawing) ----
 letters.forEach(letter => {
 
-  if (letter.isSpace) {
-    x += Math.max(fontPx * 0.6, 24) + padding;
-    rowWidths[row] += Math.max(fontPx * 0.6, 24) + padding;
-    return;
-  }
+  const advance = letter.isSpace
+    ? Math.max(fontPx * 0.6, 24)
+    : letter.w;
 
-  x += letter.w + padding;
-  rowWidths[row] += letter.w + padding;
-
-  if (x > rowLeft + maxRowWidth) {
+  if (x + advance > rowLeft + maxRowWidth && rowWidths[row] > 0) {
     row++;
     x = rowLeft;
     rowWidths[row] = 0;
   }
+
+  x += advance;
+  rowWidths[row] += advance;
+
+  if (!letter.isSpace) {
+    x += padding;
+    rowWidths[row] += padding;
+  }
 });
+
 
 
 
