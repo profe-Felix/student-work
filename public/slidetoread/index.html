@@ -784,11 +784,7 @@ letters.forEach(letter => {
   sliderEnd = rowLeft + maxRowWidth;
   sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
   
-  // advance to next row when slider reaches end
-  if (sliderX >= sliderEnd - 2 && activeRow < row) {
-    activeRow++;
-    sliderX = sliderStart;
-  }
+
 
 }
 
