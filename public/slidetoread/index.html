@@ -694,7 +694,7 @@ letters.forEach(letter => {
     letter.soundType === "stop" ? "red" : "green";
 
   ctx.lineWidth = 3;
-  ctx.fillStyle = (sliderX >= x + 1) ? ctx.strokeStyle : "white";
+  
 
   const r = pillRadius(pillW, pillH);
   roundRect(x, pillY, pillW, pillH, r, true, true);
@@ -746,7 +746,7 @@ letters.forEach(letter => {
     letter.soundType === "stop" ? "red" : "green";
 
   ctx.lineWidth = 3;
-  ctx.fillStyle = (sliderX >= x + 1) ? ctx.strokeStyle : "white";
+  ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? ctx.strokeStyle : "white";
 
   const r = pillRadius(pillW, pillH);
   roundRect(x, yPill, pillW, pillH, r, true, true);
@@ -761,7 +761,7 @@ letters.forEach(letter => {
 
 
 
-  const lineY = pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
+  const lineY = startY + activeRow * rowStep + pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
   ctx.lineCap = "round";
   ctx.strokeStyle = "#ccc";
   ctx.lineWidth = 6;
