@@ -799,10 +799,17 @@ letters.forEach(letter => {
   ctx.fillStyle = "#007bff";
   ctx.arc(sliderX, lineY, 10, 0, Math.PI * 2);
   ctx.fill();
+ 
   sliderStart = rowLeft;
   sliderEnd = rowLeft + thisRowWidth;
+  
+  // FORCE reset when only one row (single word / single line)
+  if (rowCount === 1) {
+    sliderX = sliderStart;
+  } else {
+    sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
+  }
 
-  sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
   
 
 
