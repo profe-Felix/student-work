@@ -285,6 +285,8 @@ let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
 let letters = [];
 let pollTimer = null; // for student polling
 let activeRow = 0;
+let rowCount = 1;
+
 
 const DPR = window.devicePixelRatio || 1;
 const BASE_W = 768, BASE_H = 432, BASE_AR = BASE_H / BASE_W;
@@ -710,6 +712,7 @@ if (x > sliderStart + maxRowWidth) {
 */
   // ================= CENTER WRAPPED ROWS =================
 const totalRows = row + 1;
+rowCount = totalRows;
 const blockHeight = totalRows * rowStep;
 const startY = (canvas.clientHeight - blockHeight) / 2;
 
@@ -1127,12 +1130,21 @@ canvas.addEventListener("pointerleave", ()=>isDragging=false);
 
 function moveSlider(e){
   const rect = canvas.getBoundingClientRect();
-  sliderX = Math.min(
-    Math.max(e.clientX - rect.left, sliderStart),
-    sliderEnd
-  );
+
+  sliderX = e.clientX - rect.left;
+
+  // clamp to current row
+  sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
+
+  // if we hit end of this row, advance
+  if (sliderX >= sliderEnd - 2 && activeRow < rowCount - 1) {
+    activeRow++;
+    sliderX = sliderStart;
+  }
+
   drawCanvas();
 }
+
 
 
 function roundRect(x, y, w, h, r, fill, stroke) {
