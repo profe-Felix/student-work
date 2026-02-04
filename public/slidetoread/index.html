@@ -666,16 +666,20 @@ letters.forEach(letter => {
 
   if (letter.isSpace) {
     x += Math.max(fontPx * 0.6, 24) + padding;
+    rowWidths[row] += Math.max(fontPx * 0.6, 24) + padding;
     return;
   }
 
   x += letter.w + padding;
+  rowWidths[row] += letter.w + padding;
 
   if (x > rowLeft + maxRowWidth) {
     row++;
     x = rowLeft;
+    rowWidths[row] = 0;
   }
 });
+
 
 
 
