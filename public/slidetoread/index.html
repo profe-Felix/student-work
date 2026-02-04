@@ -634,9 +634,10 @@ function drawReading() {
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const baseFont = 80;
+  const baseFont = 70;
   const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
-  const fontPx = Math.max(36, Math.min(96, scaledFont));
+  const fontPx = Math.max(32, Math.min(84, scaledFont));
+
   ctx.font = `bold ${fontPx}px Andika`;
   ctx.textAlign = "center";
 
@@ -728,7 +729,8 @@ if (x > sliderStart + maxRowWidth) {
 const totalRows = row + 1;
 rowCount = totalRows;
 const blockHeight = totalRows * rowStep;
-const startY = (canvas.clientHeight - blockHeight) / 2;
+const startY = (canvas.clientHeight - blockHeight) / 2 - fontPx * 0.4;
+
 
 ctx.clearRect(0, 0, canvas.width, canvas.height);
 ctx.fillStyle = "white";
