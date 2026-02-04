@@ -642,6 +642,23 @@ function drawReading() {
   let row = 0;
   const rowStep = fontPx * 1.6;
 
+  // ---- first pass: count rows only (no drawing) ----
+letters.forEach(letter => {
+
+  if (letter.isSpace) {
+    x += Math.max(fontPx * 0.6, 24);
+    return;
+  }
+
+  x += letter.w + padding;
+
+  if (x > sliderStart + maxRowWidth) {
+    row++;
+    x = sliderStart;
+  }
+});
+
+
 
 /*
 letters.forEach(letter => {
