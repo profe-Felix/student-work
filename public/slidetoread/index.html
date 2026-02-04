@@ -284,6 +284,7 @@ let words = [], currentWordIndex = 0;
 let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
 let letters = [];
 let pollTimer = null; // for student polling
+let activeRow = 0;
 
 const DPR = window.devicePixelRatio || 1;
 const BASE_W = 768, BASE_H = 432, BASE_AR = BASE_H / BASE_W;
@@ -613,6 +614,8 @@ function setupWord(word) {
   sliderEnd   = sliderStart + totalWidth;
 
   sliderX = sliderStart;
+  activeRow = 0;
+
 
   // NEW: reset spelling state when word changes
   resetSpellingState(true);
@@ -730,7 +733,7 @@ letters.forEach(letter => {
 
   const pillW = letter.w;
 
-  ctx.fillStyle = (sliderX >= x + 1) ? "black" : "lightgrey";
+  ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? "black" : "lightgrey";
   if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
 
   ctx.fillText(letter.text, x + pillW / 2, yText);
@@ -777,6 +780,12 @@ letters.forEach(letter => {
   sliderStart = rowLeft;
   sliderEnd = rowLeft + maxRowWidth;
   sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
+  
+  // advance to next row when slider reaches end
+  if (sliderX >= sliderEnd - 2 && activeRow < row) {
+    activeRow++;
+    sliderX = sliderStart;
+  }
 
 }
 
