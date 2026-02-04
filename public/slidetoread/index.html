@@ -772,13 +772,16 @@ letters.forEach(letter => {
 
 
   const lineY = startY + activeRow * rowStep + pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
+  const thisRowWidth = rowWidths[activeRow] || maxRowWidth;
+  
   ctx.lineCap = "round";
   ctx.strokeStyle = "#ccc";
   ctx.lineWidth = 6;
   ctx.beginPath();
   ctx.moveTo(rowLeft, lineY);
-  ctx.lineTo(rowLeft + maxRowWidth, lineY);
+  ctx.lineTo(rowLeft + thisRowWidth, lineY);
   ctx.stroke();
+
 
   ctx.strokeStyle = "#007bff";
   ctx.beginPath();
@@ -791,7 +794,8 @@ letters.forEach(letter => {
   ctx.arc(sliderX, lineY, 10, 0, Math.PI * 2);
   ctx.fill();
   sliderStart = rowLeft;
-  sliderEnd = rowLeft + maxRowWidth;
+  sliderEnd = rowLeft + thisRowWidth;
+
   sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
   
 
