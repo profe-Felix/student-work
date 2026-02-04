@@ -1131,7 +1131,19 @@ canvas.addEventListener("pointermove", (e)=> {
   if (gameMode !== 'read') return;
   if(isDragging){moveSlider(e);}
 });
-canvas.addEventListener("pointerup", ()=>isDragging=false);
+canvas.addEventListener("pointerup", ()=>{
+
+  isDragging = false;
+
+  // advance row only after release
+  if (sliderX >= sliderEnd - 2 && activeRow < rowCount - 1) {
+    activeRow++;
+    sliderX = sliderStart;
+    drawCanvas();
+  }
+
+});
+
 canvas.addEventListener("pointerleave", ()=>isDragging=false);
 
 function moveSlider(e){
@@ -1142,11 +1154,7 @@ function moveSlider(e){
   // clamp to current row
   sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
 
-  // if we hit end of this row, advance
-  if (sliderX >= sliderEnd - 2 && activeRow < rowCount - 1) {
-    activeRow++;
-    sliderX = sliderStart;
-  }
+
 
   drawCanvas();
 }
