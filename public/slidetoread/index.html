@@ -568,6 +568,13 @@ function parseWord(word) {
       i++;
       continue;
     }
+    // ✅ skip punctuation entirely (no pills, no width)
+    if (/[.,!?;]/.test(ch)) {
+      out.push({ text: ch, isPunctuation: true });
+      i++;
+      continue;
+    }
+
 
     const lower = w.toLowerCase();
     const dg = digraphs.find(d => lower.startsWith(d, i));
@@ -692,7 +699,7 @@ letters.forEach(letter => {
 letters.forEach(letter => {
 
   // ✅ space = advance cursor, no pill, no underline
-  if (letter.isSpace) {
+  if (letter.isSpace || letter.isPunctuation) {
     x += Math.max(fontPx * 0.6, 24);
     return;
   }
@@ -742,7 +749,7 @@ row = 0;
 
 letters.forEach(letter => {
 
-  if (letter.isSpace) {
+  if (letter.isSpace || letter.isPunctuation) {
     x += Math.max(fontPx * 0.6, 24) + padding;
     return;
   }
