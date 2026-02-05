@@ -763,7 +763,14 @@ wordsBlocks.forEach(block => {
 
   block.forEach(letter => {
 
-    if (letter.isPunctuation) return;
+    if (letter.isPunctuation) {
+      const yText = startY + row * rowStep + realTextY;
+      ctx.fillStyle = "lightgrey";
+      ctx.fillText(letter.text, x + letter.w / 2, yText);
+      x += letter.w + padding;
+      return;
+    }
+
 
     const yText = startY + row * rowStep + realTextY;
     const yPill = startY + row * rowStep + pillY;
