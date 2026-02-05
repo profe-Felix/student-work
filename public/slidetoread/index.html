@@ -747,7 +747,8 @@ wordsBlocks.forEach(block => {
 
 
 // remove trailing padding per row so slider reaches last pill
-rowWidths = rowWidths.map(w => Math.max(0, w - padding));
+rowWidths = rowWidths.map(w => Math.max(0, w - wordGap));
+
   
 
 
