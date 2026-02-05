@@ -658,6 +658,23 @@ ctx.textAlign = "center";
 // auto-shrink until rows fit vertically
 while (fontPx > 28) {
   ctx.font = `bold ${fontPx}px Andika`;
+  // recompute glyph + pill widths with FINAL font size
+  const em = fontPx;
+  const minPill = Math.max(18, em * 0.55);
+  const innerPad = Math.max(4, Math.round(em * 0.06));
+  
+  letters.forEach(l => {
+    if (l.isPunctuation) {
+      l.gw = 0;
+      l.w = 0;
+      return;
+    }
+    if (l.isSpace) return;
+  
+    const gw = ctx.measureText(l.text).width;
+    l.gw = gw;
+    l.w = Math.max(gw + innerPad * 2, minPill);
+  });
 
   const testRowStep = fontPx * 1.9;
   const maxRowsGuess = Math.ceil(letters.length / 4); // safe upper bound
@@ -775,14 +792,22 @@ row = 0;
 
 letters.forEach(letter => {
 
+  const advance = letter.isSpace
+    ? Math.max(fontPx * 0.6, 24)
+    : letter.w;
+
+  if (x + advance > rowLeft + maxRowWidth && rowWidths[row] > 0) {
+    row++;
+    x = rowLeft;
+  }
+
   if (letter.isSpace || letter.isPunctuation) {
-    x += Math.max(fontPx * 0.6, 24) + padding;
+    x += advance + padding;
     return;
   }
 
   const yText = startY + row * rowStep + realTextY;
   const yPill = startY + row * rowStep + pillY;
-
   const pillW = letter.w;
 
   ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? "black" : "lightgrey";
@@ -801,13 +826,8 @@ letters.forEach(letter => {
   roundRect(x, yPill, pillW, pillH, r, true, true);
 
   x += pillW + padding;
-
-    if (letter.isSpace && x > rowLeft + maxRowWidth && rowWidths[row] > 0) {
-      row++;
-      x = rowLeft;
-    }
-
 });
+
 
 
 
