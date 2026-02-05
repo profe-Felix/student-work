@@ -685,7 +685,7 @@ const usableH = canvas.clientHeight;
 // scale from the smaller dimension (phone safe)
 const scale = Math.min(usableW / 768, usableH / 432);
 
-let baseFont = 60;
+let baseFont = 52;
 let fontPx = Math.round(baseFont * scale);
 
 // hard safety clamps
@@ -726,7 +726,7 @@ while (fontPx > 28) {
 ctx.font = `bold ${fontPx}px Andika`;
 
 
-  const padding = 10;
+  const padding = Math.round(fontPx * 0.10);
   const wordGap = padding * 2;
   const pillH = Math.max(16, Math.round(fontPx * 0.25));
   const textY = 0; // no-op, keeps your file stable
