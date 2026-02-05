@@ -583,7 +583,7 @@ function parseWord(word) {
       out.push({ text: dg, soundType: getSoundType(dg) });
       i += dg.length;
     } else {
-      out.push({ text: lower[i], soundType: getSoundType(lower[i], lower[i+1]) });
+      out.push({ text: w[i], soundType: getSoundType(lower[i], lower[i+1]) });
       i++;
     }
   }
@@ -614,10 +614,19 @@ function setupWord(word) {
   const innerPad = Math.max(4, Math.round(em * 0.06));
 
   letters.forEach(l => {
+
+    // punctuation gets ZERO width
+    if (l.isPunctuation) {
+      l.gw = 0;
+      l.w = 0;
+      return;
+    }
+  
     const gw = ctx.measureText(l.text).width;
     l.gw = gw;
     l.w  = Math.max(gw + innerPad * 2, minPill);
   });
+
 
   const totalWidth = letters.reduce((s, l) => s + l.w, 0) + padding * (letters.length - 1);
 
@@ -641,12 +650,25 @@ function drawReading() {
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const baseFont = 70;
-  const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
-  const fontPx = Math.max(32, Math.min(84, scaledFont));
+let baseFont = 70;
+let fontPx = Math.max(32, Math.min(84, Math.round(baseFont * (canvas.clientWidth / 768))));
 
+ctx.textAlign = "center";
+
+// auto-shrink until rows fit vertically
+while (fontPx > 28) {
   ctx.font = `bold ${fontPx}px Andika`;
-  ctx.textAlign = "center";
+
+  const testRowStep = fontPx * 1.9;
+  const maxRowsGuess = Math.ceil(letters.length / 4); // safe upper bound
+  const needed = maxRowsGuess * testRowStep;
+
+  if (needed < canvas.clientHeight * 0.8) break;
+  fontPx -= 2;
+}
+
+ctx.font = `bold ${fontPx}px Andika`;
+
 
   const padding = 10;
   const pillH = Math.max(16, Math.round(fontPx * 0.25));
@@ -690,6 +712,10 @@ letters.forEach(letter => {
     rowWidths[row] += padding;
   }
 });
+
+// remove trailing padding per row so slider reaches last pill
+rowWidths = rowWidths.map(w => Math.max(0, w - padding));
+  
 
 
 
@@ -776,10 +802,11 @@ letters.forEach(letter => {
 
   x += pillW + padding;
 
-  if (x > rowLeft + maxRowWidth) {
-    row++;
-    x = rowLeft;
-  }
+    if (letter.isSpace && x > rowLeft + maxRowWidth && rowWidths[row] > 0) {
+      row++;
+      x = rowLeft;
+    }
+
 });
 
 
@@ -810,12 +837,8 @@ letters.forEach(letter => {
   sliderStart = rowLeft;
   sliderEnd = rowLeft + thisRowWidth;
   
-  // FORCE reset when only one row (single word / single line)
-  if (rowCount === 1) {
-    sliderX = sliderStart;
-  } else {
-    sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
-  }
+  sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
+
 
   
 
