@@ -590,6 +590,22 @@ function parseWord(word) {
 
   return out;
 }
+function groupIntoWords(letters){
+  const out = [];
+  let current = [];
+
+  letters.forEach(l => {
+    if (l.isSpace){
+      if (current.length) out.push(current);
+      current = [];
+    } else {
+      current.push(l);
+    }
+  });
+
+  if (current.length) out.push(current);
+  return out;
+}
 
 
 function getSoundType(letter, nextLetter = "") {
@@ -709,26 +725,24 @@ ctx.font = `bold ${fontPx}px Andika`;
 
 
   // ---- first pass: count rows only (no drawing) ----
-letters.forEach(letter => {
+const wordsBlocks = groupIntoWords(letters);
 
-  const advance = letter.isSpace
-    ? Math.max(fontPx * 0.6, 24)
-    : letter.w;
+wordsBlocks.forEach(block => {
 
-  if (x + advance > rowLeft + maxRowWidth && rowWidths[row] > 0) {
+  const blockWidth =
+    block.reduce((s,l)=>s+l.w,0) +
+    padding * (block.length-1);
+
+  if (x + blockWidth > rowLeft + maxRowWidth && rowWidths[row] > 0){
     row++;
     x = rowLeft;
     rowWidths[row] = 0;
   }
 
-  x += advance;
-  rowWidths[row] += advance;
-
-  if (!letter.isSpace) {
-    x += padding;
-    rowWidths[row] += padding;
-  }
+  x += blockWidth + padding;
+  rowWidths[row] += blockWidth + padding;
 });
+
 
 // remove trailing padding per row so slider reaches last pill
 rowWidths = rowWidths.map(w => Math.max(0, w - padding));
@@ -738,43 +752,7 @@ rowWidths = rowWidths.map(w => Math.max(0, w - padding));
 
 
 
-/*
-letters.forEach(letter => {
 
-  // ✅ space = advance cursor, no pill, no underline
-  if (letter.isSpace || letter.isPunctuation) {
-    x += Math.max(fontPx * 0.6, 24);
-    return;
-  }
-
-  const pillW = letter.w;
-
-  ctx.fillStyle = (sliderX >= x + 1) ? "black" : "lightgrey";
-  if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
-
-  ctx.fillText(letter.text, x + pillW / 2, realTextY);
-
-  ctx.strokeStyle =
-    letter.soundType === "silent" ? "#aaa" :
-    letter.soundType === "stop" ? "red" : "green";
-
-  ctx.lineWidth = 3;
-  
-
-  const r = pillRadius(pillW, pillH);
-  roundRect(x, pillY, pillW, pillH, r, true, true);
-
-  x += pillW + padding;
-
-// ✅ wrap to next row if too wide
-if (x > sliderStart + maxRowWidth) {
-  row++;
-  x = sliderStart;
-}
-
-
-});
-*/
   // ================= CENTER WRAPPED ROWS =================
 const totalRows = row + 1;
 rowCount = totalRows;
@@ -790,43 +768,50 @@ x = rowLeft;
 
 row = 0;
 
-letters.forEach(letter => {
+x = rowLeft;
+row = 0;
 
-  const advance = letter.isSpace
-    ? Math.max(fontPx * 0.6, 24)
-    : letter.w;
+wordsBlocks.forEach(block => {
 
-  if (x + advance > rowLeft + maxRowWidth && rowWidths[row] > 0) {
+  const blockWidth =
+    block.reduce((s,l)=>s+l.w,0) +
+    padding * (block.length-1);
+
+  if (x + blockWidth > rowLeft + maxRowWidth && rowWidths[row] > 0){
     row++;
     x = rowLeft;
   }
 
-  if (letter.isSpace || letter.isPunctuation) {
-    x += advance + padding;
-    return;
-  }
+  block.forEach(letter => {
 
-  const yText = startY + row * rowStep + realTextY;
-  const yPill = startY + row * rowStep + pillY;
-  const pillW = letter.w;
+    if (letter.isPunctuation) return;
 
-  ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? "black" : "lightgrey";
-  if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
+    const yText = startY + row * rowStep + realTextY;
+    const yPill = startY + row * rowStep + pillY;
+    const pillW = letter.w;
 
-  ctx.fillText(letter.text, x + pillW / 2, yText);
+    ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? "black" : "lightgrey";
+    if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
 
-  ctx.strokeStyle =
-    letter.soundType === "silent" ? "#aaa" :
-    letter.soundType === "stop" ? "red" : "green";
+    ctx.fillText(letter.text, x + pillW / 2, yText);
 
-  ctx.lineWidth = 3;
-  ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? ctx.strokeStyle : "white";
+    ctx.strokeStyle =
+      letter.soundType === "silent" ? "#aaa" :
+      letter.soundType === "stop" ? "red" : "green";
 
-  const r = pillRadius(pillW, pillH);
-  roundRect(x, yPill, pillW, pillH, r, true, true);
+    ctx.lineWidth = 3;
+    ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? ctx.strokeStyle : "white";
 
-  x += pillW + padding;
+    const r = pillRadius(pillW, pillH);
+    roundRect(x, yPill, pillW, pillH, r, true, true);
+
+    x += pillW + padding;
+  });
+
+  // space between words
+  x += padding;
 });
+
 
 
 
