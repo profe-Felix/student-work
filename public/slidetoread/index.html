@@ -793,6 +793,10 @@ wordsBlocks.forEach(block => {
   x += wordGap;
 });
 
+  rowCount = row + 1;
+  activeRow = Math.min(activeRow, rowCount - 1);
+
+
 
 
   const lineY = startY + activeRow * rowStep + pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
