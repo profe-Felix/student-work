@@ -725,32 +725,7 @@ ctx.font = `bold ${fontPx}px Andika`;
   rowWidths[0] = 0;
 
 
-  // ---- first pass: count rows only (no drawing) ----
-const wordsBlocks = groupIntoWords(letters);
-
-wordsBlocks.forEach(block => {
-
-  const blockWidth =
-    block.reduce((s,l)=>s+l.w,0) +
-    padding * (block.length-1);
-
-  if (x + blockWidth > rowLeft + maxRowWidth && rowWidths[row] > 0){
-    row++;
-    x = rowLeft;
-    rowWidths[row] = 0;
-  }
-
-  x += blockWidth + wordGap;
-  rowWidths[row] += blockWidth + wordGap;
-
-});
-
-
-// remove trailing padding per row so slider reaches last pill
-rowWidths = rowWidths.map(w => Math.max(0, w - wordGap));
-
-  
-
+  const wordsBlocks = groupIntoWords(letters);
 
 
 
@@ -771,6 +746,7 @@ x = rowLeft;
 
 row = 0;
 
+rowWidths = [];
 x = rowLeft;
 row = 0;
 
@@ -810,10 +786,12 @@ wordsBlocks.forEach(block => {
 
     x += pillW + padding;
   });
+
+  // RECORD ACTUAL ROW WIDTH HERE
+  rowWidths[row] = Math.max(rowWidths[row] || 0, x - rowLeft);
+
   x += wordGap;
 });
-
-
 
 
 
