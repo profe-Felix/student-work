@@ -765,11 +765,18 @@ wordsBlocks.forEach(block => {
 
     if (letter.isPunctuation) {
       const yText = startY + row * rowStep + realTextY;
-      ctx.fillStyle = "lightgrey";
-      ctx.fillText(letter.text, x + letter.w / 2, yText);
-      x += letter.w + padding;
+    
+      // tiny visual width so slider can pass it
+      const pw = Math.max(10, ctx.measureText(letter.text).width);
+    
+      ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? "black" : "lightgrey";
+      ctx.fillText(letter.text, x + pw / 2, yText);
+    
+      x += pw + padding;
       return;
     }
+
+
 
 
     const yText = startY + row * rowStep + realTextY;
@@ -781,23 +788,36 @@ wordsBlocks.forEach(block => {
 
     ctx.fillText(letter.text, x + pillW / 2, yText);
 
-    ctx.strokeStyle =
-      letter.soundType === "silent" ? "#aaa" :
-      letter.soundType === "stop" ? "red" : "green";
+    if (row === activeRow) {
 
-    ctx.lineWidth = 3;
-    ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? ctx.strokeStyle : "white";
+      // draw pills ONLY on active row
+    if (row === activeRow) {
+    
+      ctx.strokeStyle =
+        letter.soundType === "silent" ? "#aaa" :
+        letter.soundType === "stop" ? "red" : "green";
+    
+      ctx.lineWidth = 3;
+      ctx.fillStyle = (sliderX >= x + 1) ? ctx.strokeStyle : "white";
+    
+      const r = pillRadius(pillW, pillH);
+      roundRect(x, yPill, pillW, pillH, r, true, true);
+    }
 
-    const r = pillRadius(pillW, pillH);
-    roundRect(x, yPill, pillW, pillH, r, true, true);
+    }
+
 
     x += pillW + padding;
   });
 
   // RECORD ACTUAL ROW WIDTH HERE
   rowWidths[row] = Math.max(rowWidths[row] || 0, x - rowLeft);
+  
+  // only add gap if NOT last block
+  if (block !== wordsBlocks[wordsBlocks.length - 1]) {
+    x += wordGap;
+  }
 
-  x += wordGap;
 });
 
   rowCount = row + 1;
@@ -832,11 +852,8 @@ wordsBlocks.forEach(block => {
   sliderStart = rowLeft;
   sliderEnd = rowLeft + thisRowWidth;
   
-  sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
-
-
-  
-
+  if (activeRow === 0 && !isDragging) sliderX = sliderStart;
+  else sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
 
 }
 
