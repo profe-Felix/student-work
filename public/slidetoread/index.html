@@ -666,8 +666,18 @@ function drawReading() {
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-let baseFont = 70;
-let fontPx = Math.max(32, Math.min(84, Math.round(baseFont * (canvas.clientWidth / 768))));
+const usableW = canvas.clientWidth;
+const usableH = canvas.clientHeight;
+
+// scale from the smaller dimension (phone safe)
+const scale = Math.min(usableW / 768, usableH / 432);
+
+let baseFont = 60;
+let fontPx = Math.round(baseFont * scale);
+
+// hard safety clamps
+fontPx = Math.max(26, Math.min(72, fontPx));
+
 
 ctx.textAlign = "center";
 
@@ -826,7 +836,12 @@ wordsBlocks.forEach(block => {
 
 
 
-  const lineY = startY + activeRow * rowStep + pillY + pillH + Math.max(16, Math.round(fontPx * 0.25));
+  const lineY =
+  startY +
+  activeRow * rowStep +
+  realTextY +
+  Math.round(fontPx * 0.85);
+
   const thisRowWidth = rowWidths[activeRow] || maxRowWidth;
   
   ctx.lineCap = "round";
