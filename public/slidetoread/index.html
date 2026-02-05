@@ -299,21 +299,31 @@ const BASE_W = 768, BASE_H = 432, BASE_AR = BASE_H / BASE_W;
 function resizeCanvas() {
   const maxWidth = 768;
   const width = Math.min(window.innerWidth * 0.95, maxWidth);
-  const height = Math.round(width * BASE_AR);
+
+  // allow taller canvas on phones
+  const maxHeight = window.innerHeight * 0.55;
+
+  let height = width * 0.6; // desktop-ish default
+
+  if (window.innerHeight > window.innerWidth) {
+    // portrait phones: much taller
+    height = Math.min(window.innerHeight * 0.5, width * 1.1);
+  }
+
+  height = Math.min(height, maxHeight);
 
   canvas.style.width = width + "px";
   canvas.style.height = height + "px";
 
   canvas.width = Math.round(width * DPR);
   canvas.height = Math.round(height * DPR);
+
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 
-  if (words.length) {
-    setupWord(words[currentWordIndex]);
-  } else {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
+  if (words.length) setupWord(words[currentWordIndex]);
+  else ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
+
 
 window.addEventListener("resize", () => requestAnimationFrame(resizeCanvas));
 window.addEventListener("orientationchange", () => requestAnimationFrame(resizeCanvas));
@@ -748,8 +758,14 @@ ctx.font = `bold ${fontPx}px Andika`;
 const totalRows = row + 1;
 rowCount = totalRows;
 const blockHeight = totalRows * rowStep;
-const topPad = Math.round(fontPx * 0.6);
-const startY = Math.max(topPad, (canvas.clientHeight - blockHeight) / 2);
+
+const isPortrait = window.innerHeight > window.innerWidth;
+
+// phones anchor near top, desktop gently centered
+const startY = isPortrait
+  ? Math.round(fontPx * 0.6)
+  : Math.max(Math.round(fontPx * 0.4), (canvas.clientHeight - blockHeight) / 3);
+
 
 
 
