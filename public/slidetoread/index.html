@@ -704,6 +704,7 @@ ctx.font = `bold ${fontPx}px Andika`;
 
 
   const padding = 10;
+  const wordGap = padding * 2;
   const pillH = Math.max(16, Math.round(fontPx * 0.25));
   const textY = 0; // no-op, keeps your file stable
   const realTextY = Math.round(fontPx * 1.25);
@@ -739,8 +740,9 @@ wordsBlocks.forEach(block => {
     rowWidths[row] = 0;
   }
 
-  x += blockWidth + padding;
-  rowWidths[row] += blockWidth + padding;
+  x += blockWidth + wordGap;
+  rowWidths[row] += blockWidth + wordGap;
+
 });
 
 
@@ -807,6 +809,7 @@ wordsBlocks.forEach(block => {
 
     x += pillW + padding;
   });
+  x += wordGap;
 });
 
 
