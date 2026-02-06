@@ -1851,9 +1851,12 @@ function rebuildTilesFromUser(){
     listSel.appendChild(opt);
   });
   
-  if (listSel && listSel.options.length > 1) {
-    listSel.selectedIndex = 1;
-  }
+if (listSel && listSel.options.length > 1) {
+  listSel.selectedIndex = 1;
+  loadWordList(); // 🔴 REQUIRED
+  return;         // prevent double-load later
+}
+
 
   }
 
@@ -1861,9 +1864,6 @@ function rebuildTilesFromUser(){
   configureModeUI();
 
   // Always load once after dropdown is ready
-  loadWordList();
-
-
 })();
 
   
