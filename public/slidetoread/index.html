@@ -330,7 +330,7 @@ const ctx = canvas.getContext("2d");
 
 let words = [], currentWordIndex = 0;
 let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
-let freshWord = false;
+let freshWord = true;
 
 let letters = [];
 let pollTimer = null; // for student polling
@@ -1155,7 +1155,13 @@ wordsBlocks.forEach(block => {
   sliderStart = rowLeft;
   sliderEnd = rowLeft + thisRowWidth;
   
-  sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
+  if (freshWord) {
+    sliderX = sliderStart;
+    freshWord = false;
+  } else {
+    sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
+  }
+
 
 
 
