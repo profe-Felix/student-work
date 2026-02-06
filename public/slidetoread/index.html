@@ -882,7 +882,12 @@ function setupWord(word) {
     letters = parseWord(word);
 
   const padding = 6; // tighter between letters
-  const em = fontPx;
+
+  // local provisional font size (real one is calculated later in drawReading)
+  const scale = Math.min(canvas.clientWidth / 768, canvas.clientHeight / 432);
+  const em = Math.round((isDesktop ? 64 : 52) * scale);
+  ctx.font = `bold ${em}px Andika`;
+
   
   // much smaller minimum + much smaller side padding
   const minPill = Math.max(8, Math.round(em * 0.22));
