@@ -565,7 +565,8 @@ if (supaLists && Array.isArray(supaLists[listName])) {
   return;
 }
 
-if (supaLists?.syllables?.[listName]) {
+if (supaLists?.[listName]) {
+
 
   // If you later add modules, you can build "all" arrays here.
   // For now this line is harmless if buildModuleAll doesn't exist yet.
@@ -573,7 +574,18 @@ if (supaLists?.syllables?.[listName]) {
     supaLists.syllables = buildModuleAll(supaLists.syllables);
   }
 
-  words = (supaLists.syllables[listName].all || supaLists.syllables[listName] || []).slice();
+  const entry = supaLists[listName];
+  
+  if (Array.isArray(entry)) {
+    words = entry.slice();
+  } else if (entry.all) {
+    words = entry.all.slice();
+  } else if (entry.new) {
+    words = entry.new.slice();
+  } else {
+    words = [];
+  }
+
   currentWordIndex = 0;
 
   document.fonts.ready.then(async () => {
