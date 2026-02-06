@@ -329,11 +329,6 @@ async function fetchSupabaseLists() {
   }
 }
 
-/* Ensure this exists before first draw */
-if (window.allowSliderDraw === undefined) {
-  window.allowSliderDraw = true;
-}
-
 /* ==================== Canvas + responsive scaling ==================== */
 const canvas = document.getElementById("wordCanvas");
 const ctx = canvas.getContext("2d");
@@ -1394,10 +1389,10 @@ function drawSpelling(){
 
 /* unified canvas draw */
 function drawCanvas() {
-  if (!window.allowSliderDraw) return;
   if (gameMode === 'read') drawReading();
   else drawSpelling();
 }
+
 
 /* ==================== Pointer handling (only slider in read mode) ==================== */
 canvas.addEventListener("pointerdown", (e)=> {
@@ -1878,7 +1873,7 @@ if (!words.length) {
 
 <script>
 let recorder, stream;
-window.allowSliderDraw = true;
+
 
 const startBtn = document.getElementById("startRecording");
 const stopBtn = document.getElementById("stopRecording");
@@ -1908,8 +1903,6 @@ startBtn.onclick = async () => {
   setTimeout(() => {
     recorder.startRecording();
     readyText.textContent = "";
-    window.allowSliderDraw = false;
-    setTimeout(() => { window.allowSliderDraw = true; drawCanvas(); }, 200);
   }, 600);
 };
 
