@@ -356,7 +356,7 @@ let isDesktop = window.innerWidth >= 1100;
 
 
 function resizeCanvas() {
-  const maxWidth = isDesktop ? 1200 : 768;
+  const maxWidth = isDesktop ? window.innerWidth : 768;
   const width = Math.min(window.innerWidth * 0.95, maxWidth);
 
 
@@ -918,51 +918,33 @@ function drawReading() {
   // auto-shrink on mobile if needed
   while (!isDesktop && fontPx > 28) {
     ctx.font = `bold ${fontPx}px Andika`;
-    // ALWAYS compute glyph widths (desktop + mobile)
+  
     const em = fontPx;
     const minPill = Math.max(8, Math.round(em * 0.22));
     const innerPad = Math.max(2, Math.round(em * 0.03));
-    
+  
     letters.forEach(l => {
       if (l.isPunctuation || l.isSpace) {
         l.gw = 0;
         l.w = 0;
         return;
       }
-    
+  
       let gw = ctx.measureText(l.text).width;
       if (window.innerWidth < 700) gw *= 0.65;
-    
+  
       l.gw = gw;
       l.w = Math.max(gw + innerPad * 2, minPill);
     });
-
-    const em = fontPx;
-    const minPill = Math.max(8, Math.round(em * 0.22));
-    const innerPad = Math.max(2, Math.round(em * 0.03));
-
-    letters.forEach(l => {
-      if (l.isPunctuation || l.isSpace) {
-        l.gw = 0;
-        l.w = 0;
-        return;
-      }
-
-
-      let gw = ctx.measureText(l.text).width;
-      if (window.innerWidth < 700) gw *= 0.65;
-
-      l.gw = gw;
-      l.w = Math.max(gw + innerPad * 2, minPill);
-    });
-
+  
     const testRowStep = fontPx * 1.9;
     const maxRowsGuess = Math.ceil(letters.length / 4);
     const needed = maxRowsGuess * testRowStep;
-
+  
     if (needed < canvas.clientHeight * 0.8) break;
     fontPx -= 2;
   }
+
 
   ctx.font = `bold ${fontPx}px Andika`;
 
