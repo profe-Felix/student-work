@@ -570,21 +570,31 @@ if (supaLists?.[listName]) {
 
   // If you later add modules, you can build "all" arrays here.
   // For now this line is harmless if buildModuleAll doesn't exist yet.
-  if (typeof buildModuleAll === "function") {
-    supaLists.syllables = buildModuleAll(supaLists.syllables);
+  if (listName === "Sílabas" && typeof buildModuleAll === "function") {
+    supaLists["Sílabas"] = buildModuleAll(supaLists["Sílabas"]);
   }
 
+
   const entry = supaLists[listName];
+
+  // If Sílabas chosen, default to Module M1
+  let resolvedEntry = entry;
   
-  if (Array.isArray(entry)) {
-    words = entry.slice();
-  } else if (entry.all) {
-    words = entry.all.slice();
-  } else if (entry.new) {
-    words = entry.new.slice();
+  if (listName === "Sílabas") {
+    resolvedEntry = entry["M1"];
+  }
+
+  
+  if (Array.isArray(resolvedEntry)) {
+    words = resolvedEntry.slice();
+  } else if (resolvedEntry.all) {
+    words = resolvedEntry.all.slice();
+  } else if (resolvedEntry.new) {
+    words = resolvedEntry.new.slice();
   } else {
     words = [];
   }
+
 
   currentWordIndex = 0;
 
