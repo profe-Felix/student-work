@@ -1218,8 +1218,10 @@ wordsBlocks.forEach(block => {
   ctx.strokeStyle = "#ccc";
   ctx.lineWidth = 6;
   ctx.beginPath();
-  ctx.moveTo(rowLeft, lineY);
-  ctx.lineTo(rowLeft + thisRowWidth, lineY);
+  const dynamicLeft = (canvas.clientWidth - thisRowWidth) / 2;
+  ctx.moveTo(dynamicLeft, lineY);
+  ctx.lineTo(dynamicLeft + thisRowWidth, lineY);
+
   ctx.stroke();
 
 
@@ -1234,8 +1236,9 @@ wordsBlocks.forEach(block => {
   ctx.arc(sliderX, lineY, 10, 0, Math.PI * 2);
   ctx.fill();
  
-  sliderStart = rowLeft;
-  sliderEnd = rowLeft + thisRowWidth;
+  sliderStart = dynamicLeft;
+  sliderEnd = dynamicLeft + thisRowWidth;
+
   
   if (freshWord) {
     sliderX = sliderStart;
