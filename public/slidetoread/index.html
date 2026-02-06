@@ -786,7 +786,8 @@ ctx.font = `bold ${fontPx}px Andika`;
   // ================= CENTER WRAPPED ROWS =================
 const totalRows = row + 1;
 rowCount = totalRows;
-const blockHeight = totalRows * rowStep;
+const blockHeight = totalRows * baseRowStep + sliderClearance;
+
 
 const isPortrait = window.innerHeight > window.innerWidth;
 
