@@ -717,7 +717,7 @@ fontPx = Math.max(26, Math.min(maxFont, fontPx));
 ctx.textAlign = "center";
 
 // auto-shrink until rows fit vertically
-while (fontPx > 28) {
+while (!isDesktop && fontPx > 28) {
   ctx.font = `bold ${fontPx}px Andika`;
   // recompute glyph + pill widths with FINAL font size
   const em = fontPx;
