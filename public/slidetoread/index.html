@@ -299,8 +299,9 @@ let isDesktop = window.innerWidth >= 1100;
 
 
 function resizeCanvas() {
-  const maxWidth = 768;
+  const maxWidth = isDesktop ? 1200 : 768;
   const width = Math.min(window.innerWidth * 0.95, maxWidth);
+
 
   // allow taller canvas on phones
   const maxHeight = window.innerHeight * 0.72;
