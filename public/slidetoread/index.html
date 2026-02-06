@@ -1069,10 +1069,9 @@ if (isDesktop) {
   const sliderClearance = pillH + fontPx * 0.9; // space needed for slider
   
   function rowY(r){
-    // rows below active get pushed down
-    const push = r > activeRow ? sliderClearance : 0;
-    return startY + r * baseRowStep + push;
+    return startY + r * baseRowStep;
   }
+
 
 
   rowWidths = [];
