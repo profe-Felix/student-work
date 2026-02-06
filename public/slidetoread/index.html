@@ -727,9 +727,10 @@ while (fontPx > 28) {
 ctx.font = `bold ${fontPx}px Andika`;
 
 
-  const padding = Math.round(fontPx * 0.10);
+  const padding = Math.round(fontPx * 0.08);
   const wordGap = padding * 2;
-  const pillH = Math.max(16, Math.round(fontPx * 0.25));
+  const pillH = Math.max(12, Math.round(fontPx * 0.20));
+
   const textY = 0; // no-op, keeps your file stable
   const realTextY = Math.round(fontPx * 1.25);
   const pillY = realTextY + Math.max(16, Math.round(fontPx * 0.5));
