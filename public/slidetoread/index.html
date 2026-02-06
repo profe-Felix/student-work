@@ -84,12 +84,8 @@
 
   <select id="wordListSelect">
     <option value="" selected disabled>Selecciona una lista</option>
-    <option value="1. sílabas">1. sílabas</option>
-    <option value="2. palabras">2. palabras</option>
-    <option value="cvc">cvc</option>
-    <option value="inversas">inversas</option>
-    <option value="trabadas">trabadas</option>
   </select>
+
 
   <div id="controls">
     <button id="playAudio" disabled>🔊 Play Audio</button>
@@ -141,6 +137,21 @@ const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
 const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// ==================== Supabase lists + presets ====================
+let ALL_LISTS = {};
+let ALL_PRESETS = {};
+
+async function loadAppData() {
+  const base = SUPABASE_URL + "/storage/v1/object/public/app-wordlists/slidetoread";
+
+  const [listsRes, presetsRes] = await Promise.all([
+    fetch(`${base}/lists.json`),
+    fetch(`${base}/presets.json`)
+  ]);
+
+  ALL_LISTS = await listsRes.json();
+  ALL_PRESETS = await presetsRes.json();
+}
 
 // URL params: ?role=teacher&group=A or ?role=student&group=A
 const qs = new URLSearchParams(location.search);
@@ -463,6 +474,34 @@ async function loadWordList() {
     });
 
     return; // skip normal txt loading
+  }
+  // --- Step 2: Supabase preset support ---
+  const presetId = qs.get('preset');
+  if (presetId && ALL_PRESETS[presetId]) {
+
+    const P = ALL_PRESETS[presetId];
+
+    if (P.words) {
+      words = P.words.split(",").map(w => w.trim()).filter(Boolean);
+    } else if (P.list) {
+      words = (ALL_LISTS[P.list] || []).slice();
+    }
+
+    if (P.shuffle) {
+      words.sort(() => Math.random() - 0.5);
+    }
+
+    currentWordIndex = 0;
+
+    document.fonts.ready.then(() => {
+      setupWord(words[currentWordIndex]);
+      playBtn.disabled = false;
+    });
+
+    const listSel = document.getElementById("wordListSelect");
+    if (listSel) listSel.style.display = "none";
+
+    return;
   }
 
   const listName = document.getElementById("wordListSelect").value;
@@ -1740,11 +1779,31 @@ function rebuildTilesFromUser(){
 }
 
 /* ==================== Startup ==================== */
-configureModeUI();
-// Auto-start if inline words are provided
-if (WORDS_OVERRIDE.length) {
-  loadWordList();
-}
+(async () => {
+
+  await loadAppData();
+  // populate list dropdown from Supabase lists
+  const listSel = document.getElementById("wordListSelect");
+  if (listSel) {
+    Object.keys(ALL_LISTS).forEach(name => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      listSel.appendChild(opt);
+    });
+  }
+
+  configureModeUI();
+
+  // Auto-start if inline words are provided
+  if (WORDS_OVERRIDE.length) {
+    loadWordList();
+  }
+
+})();
+
+  
+
 
 
 /* ==================== Recording scripts (UNCHANGED) ==================== */
