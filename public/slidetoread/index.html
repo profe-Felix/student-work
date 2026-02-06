@@ -464,18 +464,26 @@ function configureModeUI(){
 /* ==================== Load list (unchanged behavior) ==================== */
 /* ==================== Module auto-builder ==================== */
 
-function buildModuleAll(syllableModules) {
-  const ordered = Object.keys(syllableModules).sort(); // M1,M2,M3...
+function buildModuleAll(modules) {
+  const ordered = Object.keys(modules).sort(); // M1,M2,M3...
   let running = [];
 
   ordered.forEach(k => {
-    const fresh = syllableModules[k].new || [];
+    const entry = modules[k];
+
+    let fresh = [];
+
+    if (Array.isArray(entry)) fresh = entry;
+    else if (entry.new) fresh = entry.new;
+
     running = running.concat(fresh);
-    syllableModules[k].all = Array.from(new Set(running));
+
+    modules[k].all = Array.from(new Set(running));
   });
 
-  return syllableModules;
+  return modules;
 }
+
 
   let baseWordsForDistractors = []; // keep raw list for mode 3 distractors
 
@@ -570,9 +578,12 @@ if (supaLists?.[listName]) {
 
   // If you later add modules, you can build "all" arrays here.
   // For now this line is harmless if buildModuleAll doesn't exist yet.
-  if (listName === "Sílabas" && typeof buildModuleAll === "function") {
-    supaLists["Sílabas"] = buildModuleAll(supaLists["Sílabas"]);
-  }
+  Object.keys(supaLists).forEach(k => {
+    if (supaLists[k] && !Array.isArray(supaLists[k])) {
+      buildModuleAll(supaLists[k]);
+    }
+  });
+
 
 
   const entry = supaLists[listName];
