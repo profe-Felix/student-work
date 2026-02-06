@@ -330,6 +330,8 @@ const ctx = canvas.getContext("2d");
 
 let words = [], currentWordIndex = 0;
 let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
+let freshWord = false;
+
 let letters = [];
 let pollTimer = null; // for student polling
 let activeRow = 0;
@@ -855,6 +857,8 @@ function setupWord(word) {
 
   sliderX = sliderStart;
   activeRow = 0;
+  freshWord = true;
+
 
 
   // NEW: reset spelling state when word changes
