@@ -703,7 +703,8 @@ const scale = Math.min(usableW / 768, usableH / 432);
 
 let baseFont = isDesktop ? 64 : 52;
 
-let fontPx = Math.round(baseFont * scale);
+let fontPx = Math.round(baseFont * scale * (isDesktop ? 1.5 : 1));
+
 
 // hard safety clamps
 fontPx = Math.max(26, Math.min(72, fontPx));
