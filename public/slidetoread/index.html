@@ -641,11 +641,13 @@ if (supaLists?.[listName]) {
   // If Sílabas chosen, default to Module M1
   let resolvedEntry = entry;
   
-  if (listName === "Sílabas") {
+  // If this list has modules (Sílabas, Palabras, Palabras 💙, Oraciones)
+  if (!Array.isArray(entry)) {
     const moduleSel = document.getElementById("moduleSelect");
     const mod = moduleSel ? moduleSel.value : "M1";
     resolvedEntry = entry[mod] || entry["M1"];
   }
+
 
 
   
