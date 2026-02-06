@@ -284,6 +284,21 @@ function makeSessionId() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
 }
+async function fetchSupabaseLists() {
+  try {
+    const { data, error } = await sbClient
+      .storage
+      .from("app-presets")
+      .download("slidetoread/lists.json");
+
+    if (error || !data) return null;
+
+    const text = await data.text();
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
 /* Ensure this exists before first draw */
 if (window.allowSliderDraw === undefined) {
@@ -439,7 +454,22 @@ function configureModeUI(){
 }
 
 /* ==================== Load list (unchanged behavior) ==================== */
-let baseWordsForDistractors = []; // keep raw list for mode 3 distractors
+/* ==================== Module auto-builder ==================== */
+
+function buildModuleAll(syllableModules) {
+  const ordered = Object.keys(syllableModules).sort(); // M1,M2,M3...
+  let running = [];
+
+  ordered.forEach(k => {
+    const fresh = syllableModules[k].new || [];
+    running = running.concat(fresh);
+    syllableModules[k].all = Array.from(new Set(running));
+  });
+
+  return syllableModules;
+}
+
+  let baseWordsForDistractors = []; // keep raw list for mode 3 distractors
 
 async function loadWordList() {
     // --- Step 1: inline words override ---
@@ -505,6 +535,35 @@ async function loadWordList() {
   }
 
   const listName = document.getElementById("wordListSelect").value;
+  // ---- try Supabase first ----
+const supaLists = await fetchSupabaseLists();
+
+if (supaLists?.syllables?.[listName]) {
+
+  // If you later add modules, you can build "all" arrays here.
+  // For now this line is harmless if buildModuleAll doesn't exist yet.
+  if (typeof buildModuleAll === "function") {
+    supaLists.syllables = buildModuleAll(supaLists.syllables);
+  }
+
+  words = (supaLists.syllables[listName].all || supaLists.syllables[listName] || []).slice();
+  currentWordIndex = 0;
+
+  document.fonts.ready.then(async () => {
+    setupWord(words[currentWordIndex]);
+    playBtn.disabled = false;
+
+    if (isTeacher && GROUP_CODE) {
+      await setReadingIndex(GROUP_CODE, currentWordIndex);
+    }
+    if (isStudent && GROUP_CODE) {
+      startStudentPolling();
+    }
+  });
+
+  return; // stop here if Supabase succeeded
+}
+
   const url = `wordlists/${encodeURIComponent(listName)}.txt`;
 
   try {
