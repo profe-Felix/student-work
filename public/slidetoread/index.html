@@ -95,6 +95,12 @@
     <option value="M6">Módulo 6</option>
     <option value="M7">Módulo 7</option>
     <option value="M8">Módulo 8</option>
+    <option value="M9">Módulo 9</option>
+  </select>
+  
+  <select id="scopeSelect">
+    <option value="all" selected>📚 Hasta este módulo</option>
+    <option value="new">⭐ Solo este módulo</option>
   </select>
 
 
@@ -409,6 +415,8 @@ if (WORDS_OVERRIDE.length) {
 
 document.getElementById("wordListSelect").addEventListener("change", loadWordList);
 document.getElementById("moduleSelect").addEventListener("change", loadWordList);
+document.getElementById("scopeSelect").addEventListener("change", loadWordList);
+
 document.getElementById("nextWord").addEventListener("click", () => changeWord(1));
 document.getElementById("prevWord").addEventListener("click", () => changeWord(-1));
 
@@ -481,6 +489,15 @@ function configureModeUI(){
 
 /* ==================== Load list (unchanged behavior) ==================== */
 /* ==================== Module auto-builder ==================== */
+function updateModuleUIVisibility(listName, entry){
+  const modSel = document.getElementById("moduleSelect");
+  const scopeSel = document.getElementById("scopeSelect");
+
+  const isModuleList = entry && !Array.isArray(entry) && (entry.M1 || entry.M2 || entry.M3);
+
+  if (modSel) modSel.style.display = isModuleList ? "inline-block" : "none";
+  if (scopeSel) scopeSel.style.display = isModuleList ? "inline-block" : "none";
+}
 
 function buildModuleAll(modules) {
   const ordered = Object.keys(modules).sort(); // M1,M2,M3...
@@ -572,6 +589,9 @@ if (WORDS_OVERRIDE.length) {
   }
 
   const listName = document.getElementById("wordListSelect").value;
+  const entryForUI = (supaLists && supaLists[listName]) ? supaLists[listName] : null;
+  updateModuleUIVisibility(listName, entryForUI);
+
   // ---- try Supabase first ----
 const supaLists = await fetchSupabaseLists();
 if (supaLists && Array.isArray(supaLists[listName])) {
@@ -630,8 +650,15 @@ if (supaLists?.[listName]) {
   if (Array.isArray(resolvedEntry)) {
     words = resolvedEntry.slice();
   } else if (resolvedEntry.all) {
-    words = resolvedEntry.all.slice();
-  } else if (resolvedEntry.new) {
+  
+    const scopeSel = document.getElementById("scopeSelect");
+    const scope = scopeSel ? scopeSel.value : "all";  // "all" | "new"
+  
+    words = (scope === "new")
+      ? (resolvedEntry.new || []).slice()
+      : resolvedEntry.all.slice();
+  }
+ else if (resolvedEntry.new) {
     words = resolvedEntry.new.slice();
   } else {
     words = [];
