@@ -141,6 +141,14 @@ const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let ALL_LISTS = {};
 let ALL_PRESETS = {};
 
+// ---- LOCAL FALLBACK LISTS (used if Supabase fails) ----
+const LOCAL_FALLBACK_LISTS = {
+  "Palabras": [],
+  "Sílabas": [],
+  "CVC": []
+};
+
+  
 async function loadAppData() {
   const base = SUPABASE_URL + "/storage/v1/object/public/app-presets/slidetoread";
 
@@ -1841,16 +1849,23 @@ function rebuildTilesFromUser(){
 (async () => {
 
   await loadAppData();
-  // populate list dropdown from Supabase lists
+  // populate list dropdown (Supabase first, fallback if empty)
   const listSel = document.getElementById("wordListSelect");
   if (listSel) {
-    Object.keys(ALL_LISTS).forEach(name => {
+  
+    const source =
+      Object.keys(ALL_LISTS || {}).length
+        ? ALL_LISTS
+        : LOCAL_FALLBACK_LISTS;
+  
+    Object.keys(source).forEach(name => {
       const opt = document.createElement("option");
       opt.value = name;
       opt.textContent = name;
       listSel.appendChild(opt);
     });
   }
+
 
   configureModeUI();
 
