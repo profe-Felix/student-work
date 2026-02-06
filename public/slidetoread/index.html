@@ -603,8 +603,11 @@ if (supaLists?.[listName]) {
   let resolvedEntry = entry;
   
   if (listName === "Sílabas") {
-    resolvedEntry = entry["M1"];
+    const moduleSel = document.getElementById("moduleSelect");
+    const mod = moduleSel ? moduleSel.value : "M1";
+    resolvedEntry = entry[mod] || entry["M1"];
   }
+
 
   
   if (Array.isArray(resolvedEntry)) {
