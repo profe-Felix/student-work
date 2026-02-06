@@ -577,7 +577,14 @@ const supaLists = await fetchSupabaseLists();
 if (supaLists && Array.isArray(supaLists[listName])) {
 
   words = supaLists[listName].slice();
+
+  // 👇 ADD THIS
+  if (ORDER_MODE !== 'fixed') {
+    words = words.sort(() => Math.random() - 0.5);
+  }
+
   currentWordIndex = 0;
+
 
   document.fonts.ready.then(async () => {
     setupWord(words[currentWordIndex]);
