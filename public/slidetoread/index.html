@@ -708,7 +708,9 @@ let fontPx = Math.round(baseFont * scale * (isDesktop ? 1.5 : 1));
 
 
 // hard safety clamps
-fontPx = Math.max(26, Math.min(72, fontPx));
+const maxFont = isDesktop ? 130 : 72;
+fontPx = Math.max(26, Math.min(maxFont, fontPx));
+
 
 
 ctx.textAlign = "center";
