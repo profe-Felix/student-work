@@ -1072,10 +1072,9 @@ if (isDesktop) {
   activeRow = Math.min(activeRow, rowCount - 1);
 
   // center each row based on its actual width
-  const rowStartX = new Array(rowCount).fill(0).map((_, r) => {
-    const wRow = rowWidths[r] || 0;
-    return Math.round((canvas.clientWidth - wRow) / 2);
-  });
+const leftMargin = 30;
+const rowStartX = new Array(rowCount).fill(leftMargin);
+
 
   // vertical placement (NOW that we know rowCount)
   const baseRowStep = fontPx * 1.6;
