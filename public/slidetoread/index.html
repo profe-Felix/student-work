@@ -754,6 +754,29 @@ while (!isDesktop && fontPx > 28) {
 }
 
 ctx.font = `bold ${fontPx}px Andika`;
+// ===== DESKTOP: shrink only if sentence wraps =====
+if (isDesktop) {
+  const testMaxW = canvas.clientWidth * 0.9;
+  let testX = 0;
+  let testRows = 1;
+
+  letters.forEach(l => {
+    if (l.isSpace) {
+      testX += fontPx * 0.4;
+      return;
+    }
+    testX += l.w;
+    if (testX > testMaxW) {
+      testRows++;
+      testX = l.w;
+    }
+  });
+
+  if (testRows > 1) {
+    fontPx = Math.round(fontPx * 0.65);
+    ctx.font = `bold ${fontPx}px Andika`;
+  }
+}
 
 
   const padding = Math.max(2, Math.round(fontPx * 0.005));   // tighter letters
@@ -890,12 +913,7 @@ wordsBlocks.forEach(block => {
 
 });
 
-  rowCount = row + 1;
-  // shrink sentences (multi-row) but keep single words huge
-  if (isDesktop && rowCount > 1) {
-    fontPx = Math.round(fontPx * 0.65);
-    ctx.font = `bold ${fontPx}px Andika`;
-  }
+  
 
   activeRow = Math.min(activeRow, rowCount - 1);
 
