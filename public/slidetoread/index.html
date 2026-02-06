@@ -1335,27 +1335,24 @@ canvas.addEventListener("pointercancel", ()=> {
 
 canvas.addEventListener("pointerleave", ()=>isDragging=false);
 function tryAdvanceRow() {
-  const SNAP = 24; // CSS pixels
+  const SNAP = 60;
 
   if (sliderX >= sliderEnd - SNAP) {
-    sliderX = sliderEnd;
 
     if (activeRow < rowCount - 1) {
       activeRow++;
-      sliderX = rowStartX(activeRow);
-      
-      // IMPORTANT: break the drag so it doesn't carry over
+
+      // jump to start of next row
+      sliderX = sliderStart;
+
+      // break drag so finger doesn't carry over
       isDragging = false;
-
-      
-      // force thumb to true start
-      sliderX = rowStartX(activeRow);
-
     }
 
     drawCanvas();
   }
 }
+
 
 function moveSlider(e){
   const rect = canvas.getBoundingClientRect();
