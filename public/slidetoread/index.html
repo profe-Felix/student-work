@@ -1345,8 +1345,8 @@ function tryAdvanceRow() {
       sliderX = rowStartX(activeRow);
       
       // IMPORTANT: break the drag so it doesn't carry over
-      dragging = false;
-      pointerDown = false;
+      isDragging = false;
+
       
       // force thumb to true start
       sliderX = rowStartX(activeRow);
@@ -1366,7 +1366,6 @@ function moveSlider(e){
   sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
 
   drawCanvas();      // first: compute rows + sliderEnd
-  tryAdvanceRow();  // second: now rowCount is correct
 }
 
 
