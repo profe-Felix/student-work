@@ -941,293 +941,235 @@ function drawReading() {
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-const usableW = canvas.clientWidth;
-const usableH = canvas.clientHeight;
+  const usableW = canvas.clientWidth;
+  const usableH = canvas.clientHeight;
 
-// scale from the smaller dimension (phone safe)
-const scale = Math.min(usableW / 768, usableH / 432);
+  // scale from the smaller dimension (phone safe)
+  const scale = Math.min(usableW / 768, usableH / 432);
 
-let baseFont = isDesktop ? 64 : 52;
+  let baseFont = isDesktop ? 64 : 52;
+  let fontPx = Math.round(baseFont * scale * (isDesktop ? 1.5 : 1));
 
-let fontPx = Math.round(baseFont * scale * (isDesktop ? 1.5 : 1));
+  // clamps
+  const maxFont = isDesktop ? 130 : 72;
+  fontPx = Math.max(26, Math.min(maxFont, fontPx));
 
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
 
-// hard safety clamps
-const maxFont = isDesktop ? 130 : 72;
-fontPx = Math.max(26, Math.min(maxFont, fontPx));
-
-
-
-ctx.textAlign = "center";
-
-// auto-shrink until rows fit vertically
-while (!isDesktop && fontPx > 28) {
-  ctx.font = `bold ${fontPx}px Andika`;
-  // recompute glyph + pill widths with FINAL font size
-  const em = fontPx;
-  const minPill = Math.max(8, Math.round(em * 0.22));
-  const innerPad = Math.max(2, Math.round(em * 0.03));
-
-
-  
-  letters.forEach(l => {
-    if (l.isPunctuation) {
-      l.gw = 0;
-      l.w = 0;
-      return;
-    }
-    if (l.isSpace) return;
-  
-    let gw = ctx.measureText(l.text).width;
-
-    if (window.innerWidth < 700) {
-      gw *= 0.65;
-    }
-    
-    l.gw = gw;
-    l.w = Math.max(gw + innerPad * 2, minPill);
-
-  });
-
-  const testRowStep = fontPx * 1.9;
-  const maxRowsGuess = Math.ceil(letters.length / 4); // safe upper bound
-  const needed = maxRowsGuess * testRowStep;
-
-  if (needed < canvas.clientHeight * 0.8) break;
-  fontPx -= 2;
-}
-
-ctx.font = `bold ${fontPx}px Andika`;
-// ===== DESKTOP: shrink sentences + recompute widths =====
-if (isDesktop) {
-
-  const maxRowWidth = canvas.clientWidth * 0.9;
-
-  let xTest = 0;
-  let rows = 1;
-
-  letters.forEach(l => {
-    if (l.isSpace) {
-      xTest += fontPx * 0.4;
-      return;
-    }
-    xTest += l.w;
-    if (xTest > maxRowWidth) {
-      rows++;
-      xTest = l.w;
-    }
-  });
-
-  if (rows > 1) {
-
-    // shrink sentence
-    fontPx = Math.round(fontPx * 0.55);
+  // auto-shrink on mobile if needed
+  while (!isDesktop && fontPx > 28) {
     ctx.font = `bold ${fontPx}px Andika`;
 
-    // 🔑 recompute glyph + pill widths using NEW font
     const em = fontPx;
     const minPill = Math.max(8, Math.round(em * 0.22));
     const innerPad = Math.max(2, Math.round(em * 0.03));
 
     letters.forEach(l => {
-      if (l.isPunctuation) {
-        l.gw = 0;
-        l.w = 0;
-        return;
-      }
+      if (l.isPunctuation) { l.gw = 0; l.w = 0; return; }
       if (l.isSpace) return;
 
       let gw = ctx.measureText(l.text).width;
+      if (window.innerWidth < 700) gw *= 0.65;
+
       l.gw = gw;
       l.w = Math.max(gw + innerPad * 2, minPill);
     });
+
+    const testRowStep = fontPx * 1.9;
+    const maxRowsGuess = Math.ceil(letters.length / 4);
+    const needed = maxRowsGuess * testRowStep;
+
+    if (needed < canvas.clientHeight * 0.8) break;
+    fontPx -= 2;
   }
-}
 
+  ctx.font = `bold ${fontPx}px Andika`;
 
+  // desktop: shrink sentences if they wrap
+  if (isDesktop) {
+    const maxRowWidthTest = canvas.clientWidth * 0.9;
+    let xTest = 0;
+    let rows = 1;
 
-  const padding = Math.max(2, Math.round(fontPx * 0.005));   // tighter letters
-  const wordGap = padding * 12;                             // clearer word breaks
+    letters.forEach(l => {
+      if (l.isSpace) { xTest += fontPx * 0.4; return; }
+      xTest += l.w || 0;
+      if (xTest > maxRowWidthTest) {
+        rows++;
+        xTest = l.w || 0;
+      }
+    });
 
+    if (rows > 1) {
+      fontPx = Math.round(fontPx * 0.55);
+      ctx.font = `bold ${fontPx}px Andika`;
+
+      // recompute widths after shrink
+      const em = fontPx;
+      const minPill = Math.max(8, Math.round(em * 0.22));
+      const innerPad = Math.max(2, Math.round(em * 0.03));
+
+      letters.forEach(l => {
+        if (l.isPunctuation) { l.gw = 0; l.w = 0; return; }
+        if (l.isSpace) return;
+
+        const gw = ctx.measureText(l.text).width;
+        l.gw = gw;
+        l.w = Math.max(gw + innerPad * 2, minPill);
+      });
+    }
+  }
+
+  const padding = Math.max(2, Math.round(fontPx * 0.005));
+  const wordGap = padding * 12;
   const pillH = Math.max(8, Math.round(fontPx * 0.10));
 
-
-  const textY = 0; // no-op, keeps your file stable
   const realTextY = Math.round(fontPx * 1.25);
-  const pillY = realTextY + Math.max(16, Math.round(fontPx * 0.5));
+  const pillYOff = realTextY + Math.max(16, Math.round(fontPx * 0.5));
 
   function pillRadius(w, h) {
     return Math.max(2, Math.min(10, h / 2, w / 2 - 1));
   }
 
   const maxRowWidth = canvas.clientWidth * 0.9;
-  const rowLeft = (canvas.clientWidth - maxRowWidth) / 2;
-  let x = rowLeft;
 
+  // Break into word blocks (your existing helper)
+  const wordsBlocks = groupIntoWords(letters);
+
+  // ---------- PASS 1: decide which row each block goes on + rowWidths ----------
+  const blockRow = [];
+  rowWidths = [];
   let row = 0;
-  const baseRowStep = fontPx * 1.6;   // tighter normal spacing
-  const sliderClearance = pillH + fontPx * 0.9; // space needed for slider
+  let x = 0;
 
-  const totalRows = rowCount;
-  const blockHeight = totalRows * baseRowStep + sliderClearance;
-  
+  for (let bi = 0; bi < wordsBlocks.length; bi++) {
+    const block = wordsBlocks[bi];
+
+    const blockWidth =
+      block.reduce((s, l) => s + (l.isPunctuation ? Math.max(10, ctx.measureText(l.text).width) : l.w), 0) +
+      padding * (block.length - 1);
+
+    if (x > 0 && (x + blockWidth) > maxRowWidth) {
+      row++;
+      x = 0;
+    }
+
+    blockRow[bi] = row;
+
+    x += blockWidth;
+    rowWidths[row] = Math.max(rowWidths[row] || 0, x);
+
+    if (bi !== wordsBlocks.length - 1) {
+      x += wordGap;
+      rowWidths[row] = Math.max(rowWidths[row] || 0, x);
+    }
+  }
+
+  rowCount = row + 1;
+  activeRow = Math.min(activeRow, rowCount - 1);
+
+  // center each row based on its actual width
+  const rowStartX = new Array(rowCount).fill(0).map((_, r) => {
+    const wRow = rowWidths[r] || 0;
+    return Math.round((canvas.clientWidth - wRow) / 2);
+  });
+
+  // vertical placement (NOW that we know rowCount)
+  const baseRowStep = fontPx * 1.6;
+  const sliderGap = Math.round(fontPx * 0.9);
+  const sliderClearance = pillH + fontPx * 0.9;
+
+  const blockHeight = rowCount * baseRowStep + sliderClearance;
   const isPortrait = window.innerHeight > window.innerWidth;
-  
-  const startY = isPortrait
+
+  const layoutTopY = isPortrait
     ? Math.round(fontPx * 0.4)
     : Math.max(Math.round(fontPx * 0.25), (canvas.clientHeight - blockHeight) / 3.5);
 
-  
-  function rowY(r){
-    return startY + r * baseRowStep;
-  }
+  const rowY = (r) => layoutTopY + r * baseRowStep;
 
+  // ---------- PASS 2: draw ----------
+  for (let bi = 0; bi < wordsBlocks.length; bi++) {
+    const block = wordsBlocks[bi];
+    const r = blockRow[bi];
+    let drawX = rowStartX[r];
 
+    // advance drawX by summing earlier blocks in same row
+    // (cheap approach: walk back until row changes)
+    for (let bj = bi - 1; bj >= 0; bj--) {
+      if (blockRow[bj] !== r) break;
 
-  rowWidths = [];
-  rowWidths[0] = 0;
+      const prev = wordsBlocks[bj];
+      const prevW =
+        prev.reduce((s, l) => s + (l.isPunctuation ? Math.max(10, ctx.measureText(l.text).width) : l.w), 0) +
+        padding * (prev.length - 1);
 
-
-  const wordsBlocks = groupIntoWords(letters);
-
-
-
-
-
-  // ================= CENTER WRAPPED ROWS =================
-
-
-wordsBlocks.forEach(block => {
-
-  const blockWidth =
-    block.reduce((s,l)=>s+l.w,0) +
-    padding * (block.length-1);
-
-  if (x + blockWidth > rowLeft + maxRowWidth && rowWidths[row] > 0){
-    row++;
-    x = rowLeft;
-  }
-
-  block.forEach(letter => {
-
-   
-
-
-
-    const yText = rowY(row) + realTextY;
-    const yPill = rowY(row) + pillY;
-    const pillW = letter.w;
-
-    
-
- 
-
-
-    x += pillW + padding;
-  });
-
-  // RECORD ACTUAL ROW WIDTH HERE
-  rowWidths[row] = Math.max(rowWidths[row] || 0, x - rowLeft);
-  
-  // only add gap if NOT last block
-  if (block !== wordsBlocks[wordsBlocks.length - 1]) {
-    x += wordGap;
-  }
-
-});
-
-  
-  rowCount = row + 1;   // 👈 total wrapped rows
-  // ================= DRAW PASS =================
-
-x = rowLeft;
-row = 0;
-
-wordsBlocks.forEach(block => {
-
-  const blockWidth =
-    block.reduce((s,l)=>s+l.w,0) +
-    padding * (block.length-1);
-
-  if (x + blockWidth > rowLeft + maxRowWidth && x > rowLeft){
-    row++;
-    x = rowLeft;
-  }
-
-  block.forEach(letter => {
-
-    if (letter.isPunctuation) {
-      const yText = rowY(row) + realTextY;
-      const pw = Math.max(10, ctx.measureText(letter.text).width);
-
-      ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? "black" : "lightgrey";
-      ctx.fillText(letter.text, x + pw / 2, yText);
-
-      x += pw + padding;
-      return;
+      drawX += prevW;
+      drawX += wordGap; // because if bj exists, there was a gap after it
     }
 
-    const yText = rowY(row) + realTextY;
-    const yPill = rowY(row) + pillY;
-    const pillW = letter.w;
+    for (let li = 0; li < block.length; li++) {
+      const letter = block[li];
 
-    ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? "black" : "lightgrey";
-    if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
+      // punctuation
+      if (letter.isPunctuation) {
+        const yText = rowY(r) + realTextY;
+        const pw = Math.max(10, ctx.measureText(letter.text).width);
 
-    ctx.fillText(letter.text, x + pillW / 2, yText);
+        ctx.fillStyle = (r === activeRow && sliderX >= drawX + 1) ? "black" : "lightgrey";
+        ctx.fillText(letter.text, drawX + pw / 2, yText);
 
-    if (row === activeRow) {
+        drawX += pw + padding;
+        continue;
+      }
 
-      ctx.strokeStyle =
-        letter.soundType === "silent" ? "#aaa" :
-        letter.soundType === "stop" ? "red" : "green";
+      const yText = rowY(r) + realTextY;
+      const yPill = rowY(r) + pillYOff;
+      const pillW = letter.w;
 
-      ctx.lineWidth = 3;
-      ctx.fillStyle = (sliderX >= x + 1) ? ctx.strokeStyle : "white";
+      ctx.fillStyle = (r === activeRow && sliderX >= drawX + 1) ? "black" : "lightgrey";
+      if (letter.text === "h" && letter.soundType === "silent") ctx.fillStyle = "#ccc";
+      ctx.fillText(letter.text, drawX + pillW / 2, yText);
 
-      const r = pillRadius(pillW, pillH);
-      roundRect(x, yPill, pillW, pillH, r, true, true);
+      if (r === activeRow) {
+        ctx.strokeStyle =
+          letter.soundType === "silent" ? "#aaa" :
+          letter.soundType === "stop" ? "red" : "green";
+
+        ctx.lineWidth = 3;
+        ctx.fillStyle = (sliderX >= drawX + 1) ? ctx.strokeStyle : "white";
+
+        const rr = pillRadius(pillW, pillH);
+        roundRect(drawX, yPill, pillW, pillH, rr, true, true);
+      }
+
+      drawX += pillW + padding;
     }
-
-    x += pillW + padding;
-  });
-
-  if (block !== wordsBlocks[wordsBlocks.length - 1]) {
-    x += wordGap;
   }
-});
 
-  activeRow = Math.min(activeRow, rowCount - 1);
+  // slider line for active row
+  const thisRowW = rowWidths[activeRow] || maxRowWidth;
+  sliderStart = rowStartX[activeRow];
+  sliderEnd = sliderStart + thisRowW;
 
-
-
-
-  const sliderGap = Math.round(fontPx * 0.9);
-  
   const lineY =
     rowY(activeRow) +
-    pillY +
+    pillYOff +
     pillH +
     sliderGap;
 
-
-
-  const thisRowWidth = rowWidths[activeRow] || maxRowWidth;
-  
   ctx.lineCap = "round";
   ctx.strokeStyle = "#ccc";
   ctx.lineWidth = 6;
   ctx.beginPath();
-  const dynamicLeft = (canvas.clientWidth - thisRowWidth) / 2;
-  ctx.moveTo(dynamicLeft, lineY);
-  ctx.lineTo(dynamicLeft + thisRowWidth, lineY);
-
+  ctx.moveTo(sliderStart, lineY);
+  ctx.lineTo(sliderEnd, lineY);
   ctx.stroke();
-
 
   ctx.strokeStyle = "#007bff";
   ctx.beginPath();
-  ctx.moveTo(rowLeft, lineY);
+  ctx.moveTo(sliderStart, lineY);
   ctx.lineTo(sliderX, lineY);
   ctx.stroke();
 
@@ -1235,22 +1177,15 @@ wordsBlocks.forEach(block => {
   ctx.fillStyle = "#007bff";
   ctx.arc(sliderX, lineY, 10, 0, Math.PI * 2);
   ctx.fill();
- 
-  sliderStart = dynamicLeft;
-  sliderEnd = dynamicLeft + thisRowWidth;
 
-  
   if (freshWord) {
     sliderX = sliderStart;
     freshWord = false;
   } else {
     sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
   }
-
-
-
-
 }
+
 
 /* ==================== NEW: Spelling renderer (syllable boxes + underlines) ==================== */
 function isVowelChar(ch){
