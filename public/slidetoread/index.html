@@ -898,8 +898,9 @@ function drawReading() {
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const usableW = canvas.clientWidth;
-  const usableH = canvas.clientHeight;
+  const usableW = canvas.width / DPR;
+  const usableH = canvas.height / DPR;
+
 
   // scale from the smaller dimension (phone safe)
   const scale = Math.min(usableW / 768, usableH / 432);
