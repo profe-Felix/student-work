@@ -978,8 +978,8 @@ wordsBlocks.forEach(block => {
   sliderStart = rowLeft;
   sliderEnd = rowLeft + thisRowWidth;
   
-  if (activeRow === 0 && !isDragging) sliderX = sliderStart;
-  else sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
+  sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
+
 
 }
 
