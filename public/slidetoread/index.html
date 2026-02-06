@@ -891,6 +891,12 @@ wordsBlocks.forEach(block => {
 });
 
   rowCount = row + 1;
+  // shrink sentences (multi-row) but keep single words huge
+  if (isDesktop && rowCount > 1) {
+    fontPx = Math.round(fontPx * 0.65);
+    ctx.font = `bold ${fontPx}px Andika`;
+  }
+
   activeRow = Math.min(activeRow, rowCount - 1);
 
 
