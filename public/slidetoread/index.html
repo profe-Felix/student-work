@@ -142,7 +142,7 @@ let ALL_LISTS = {};
 let ALL_PRESETS = {};
 
 async function loadAppData() {
-  const base = SUPABASE_URL + "/storage/v1/object/public/app-wordlists/slidetoread";
+  const base = SUPABASE_URL + "/storage/v1/object/public/app-presets/slidetoread";
 
   const [listsRes, presetsRes] = await Promise.all([
     fetch(`${base}/lists.json`),
