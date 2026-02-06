@@ -637,10 +637,13 @@ function setupWord(word) {
 
   letters = parseWord(word);
 
-  const padding = 10;
+  const padding = 6; // tighter between letters
   const em = fontPx;
-  const minPill = Math.max(12, em * 0.40);
-  const innerPad = Math.max(4, Math.round(em * 0.06));
+  
+  // much smaller minimum + much smaller side padding
+  const minPill = Math.max(8, Math.round(em * 0.22));
+  const innerPad = Math.max(2, Math.round(em * 0.03));
+
 
   letters.forEach(l => {
 
@@ -699,8 +702,9 @@ while (fontPx > 28) {
   ctx.font = `bold ${fontPx}px Andika`;
   // recompute glyph + pill widths with FINAL font size
   const em = fontPx;
-  const minPill = Math.max(14, em * 0.45);
-  const innerPad = Math.max(2, Math.round(em * 0.04));
+  const minPill = Math.max(8, Math.round(em * 0.22));
+  const innerPad = Math.max(2, Math.round(em * 0.03));
+
 
   
   letters.forEach(l => {
@@ -727,7 +731,7 @@ while (fontPx > 28) {
 ctx.font = `bold ${fontPx}px Andika`;
 
 
-  const padding = Math.round(fontPx * 0.08);
+  const padding = Math.max(3, Math.round(fontPx * 0.05));
   const wordGap = padding * 2;
   const pillH = Math.max(12, Math.round(fontPx * 0.20));
 
