@@ -589,11 +589,13 @@ if (WORDS_OVERRIDE.length) {
   }
 
   const listName = document.getElementById("wordListSelect").value;
+
+  // ---- try Supabase first ----
+  const supaLists = await fetchSupabaseLists();
+  
   const entryForUI = (supaLists && supaLists[listName]) ? supaLists[listName] : null;
   updateModuleUIVisibility(listName, entryForUI);
 
-  // ---- try Supabase first ----
-const supaLists = await fetchSupabaseLists();
 if (supaLists && Array.isArray(supaLists[listName])) {
 
   words = supaLists[listName].slice();
