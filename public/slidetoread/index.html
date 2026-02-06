@@ -1319,11 +1319,22 @@ canvas.addEventListener("pointermove", (e)=> {
 canvas.addEventListener("pointerup", ()=>{
 
   isDragging = false;
+  tryAdvanceRow();
 
-  const SNAP = 24; // generous snap zone (CSS pixels)
+});
+
+canvas.addEventListener("pointercancel", ()=> {
+  isDragging = false;
+  tryAdvanceRow();
+});
+
+
+canvas.addEventListener("pointerleave", ()=>isDragging=false);
+function tryAdvanceRow() {
+  const SNAP = 24; // CSS pixels
 
   if (sliderX >= sliderEnd - SNAP) {
-    sliderX = sliderEnd; // hard snap to end
+    sliderX = sliderEnd;
 
     if (activeRow < rowCount - 1) {
       activeRow++;
@@ -1332,10 +1343,7 @@ canvas.addEventListener("pointerup", ()=>{
 
     drawCanvas();
   }
-});
-
-
-canvas.addEventListener("pointerleave", ()=>isDragging=false);
+}
 
 function moveSlider(e){
   const rect = canvas.getBoundingClientRect();
@@ -1345,10 +1353,11 @@ function moveSlider(e){
   // clamp to current row
   sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
 
-
+  tryAdvanceRow();   // 👈 ADD THIS LINE
 
   drawCanvas();
 }
+
 
 
 
