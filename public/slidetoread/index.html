@@ -654,9 +654,16 @@ function setupWord(word) {
       return;
     }
   
-    const gw = ctx.measureText(l.text).width;
+    let gw = ctx.measureText(l.text).width;
+    
+    // iPhone / small screens: compress glyph width
+    if (window.innerWidth < 700) {
+      gw *= 0.65;
+    }
+    
     l.gw = gw;
-    l.w  = Math.max(gw + innerPad * 2, minPill);
+    l.w = Math.max(gw + innerPad * 2, minPill);
+
   });
 
 
@@ -715,9 +722,15 @@ while (fontPx > 28) {
     }
     if (l.isSpace) return;
   
-    const gw = ctx.measureText(l.text).width;
+    let gw = ctx.measureText(l.text).width;
+
+    if (window.innerWidth < 700) {
+      gw *= 0.65;
+    }
+    
     l.gw = gw;
     l.w = Math.max(gw + innerPad * 2, minPill);
+
   });
 
   const testRowStep = fontPx * 1.9;
