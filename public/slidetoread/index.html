@@ -1320,14 +1320,20 @@ canvas.addEventListener("pointerup", ()=>{
 
   isDragging = false;
 
-  // advance row only after release
-  if (sliderX >= sliderEnd - 2 && activeRow < rowCount - 1) {
-    activeRow++;
-    sliderX = sliderStart;
+  const SNAP = 24; // generous snap zone (CSS pixels)
+
+  if (sliderX >= sliderEnd - SNAP) {
+    sliderX = sliderEnd; // hard snap to end
+
+    if (activeRow < rowCount - 1) {
+      activeRow++;
+      sliderX = sliderStart;
+    }
+
     drawCanvas();
   }
-
 });
+
 
 canvas.addEventListener("pointerleave", ()=>isDragging=false);
 
