@@ -295,6 +295,8 @@ let rowWidths = [];
 
 const DPR = window.devicePixelRatio || 1;
 const BASE_W = 768, BASE_H = 432, BASE_AR = BASE_H / BASE_W;
+let isDesktop = window.innerWidth >= 1100;
+
 
 function resizeCanvas() {
   const maxWidth = 768;
@@ -325,7 +327,11 @@ function resizeCanvas() {
 }
 
 
-window.addEventListener("resize", () => requestAnimationFrame(resizeCanvas));
+window.addEventListener("resize", () => {
+  isDesktop = window.innerWidth >= 1100;
+  requestAnimationFrame(resizeCanvas);
+});
+
 window.addEventListener("orientationchange", () => requestAnimationFrame(resizeCanvas));
 document.addEventListener("DOMContentLoaded", resizeCanvas);
 
