@@ -763,7 +763,15 @@ ctx.font = `bold ${fontPx}px Andika`;
   let x = rowLeft;
 
   let row = 0;
-  const rowStep = fontPx * 1.9;
+  const baseRowStep = fontPx * 1.6;   // tighter normal spacing
+  const sliderClearance = pillH + fontPx * 0.9; // space needed for slider
+  
+  function rowY(r){
+    // rows below active get pushed down
+    const push = r > activeRow ? sliderClearance : 0;
+    return startY + r * baseRowStep + push;
+  }
+
 
   rowWidths = [];
   rowWidths[0] = 0;
@@ -813,7 +821,7 @@ wordsBlocks.forEach(block => {
   block.forEach(letter => {
 
     if (letter.isPunctuation) {
-      const yText = startY + row * rowStep + realTextY;
+      const yText = rowY(row) + realTextY;
     
       // tiny visual width so slider can pass it
       const pw = Math.max(10, ctx.measureText(letter.text).width);
@@ -828,8 +836,8 @@ wordsBlocks.forEach(block => {
 
 
 
-    const yText = startY + row * rowStep + realTextY;
-    const yPill = startY + row * rowStep + pillY;
+    const yText = rowY(row) + realTextY;
+    const yPill = rowY(row) + pillY;
     const pillW = letter.w;
 
     ctx.fillStyle = (row === activeRow && sliderX >= x + 1) ? "black" : "lightgrey";
@@ -878,11 +886,11 @@ wordsBlocks.forEach(block => {
   const sliderGap = Math.round(fontPx * 0.9);
   
   const lineY =
-    startY +
-    activeRow * rowStep +
+    rowY(activeRow) +
     pillY +
     pillH +
     sliderGap;
+
 
 
   const thisRowWidth = rowWidths[activeRow] || maxRowWidth;
