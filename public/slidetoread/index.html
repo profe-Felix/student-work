@@ -924,8 +924,12 @@ function drawReading() {
     const innerPad = Math.max(2, Math.round(em * 0.03));
 
     letters.forEach(l => {
-      if (l.isPunctuation) { l.gw = 0; l.w = 0; return; }
-      if (l.isSpace) return;
+      if (l.isPunctuation || l.isSpace) {
+        l.gw = 0;
+        l.w = 0;
+        return;
+      }
+
 
       let gw = ctx.measureText(l.text).width;
       if (window.innerWidth < 700) gw *= 0.65;
