@@ -545,6 +545,25 @@ async function loadWordList() {
   const listName = document.getElementById("wordListSelect").value;
   // ---- try Supabase first ----
 const supaLists = await fetchSupabaseLists();
+if (supaLists && Array.isArray(supaLists[listName])) {
+
+  words = supaLists[listName].slice();
+  currentWordIndex = 0;
+
+  document.fonts.ready.then(async () => {
+    setupWord(words[currentWordIndex]);
+    playBtn.disabled = false;
+
+    if (isTeacher && GROUP_CODE) {
+      await setReadingIndex(GROUP_CODE, currentWordIndex);
+    }
+    if (isStudent && GROUP_CODE) {
+      startStudentPolling();
+    }
+  });
+
+  return;
+}
 
 if (supaLists?.syllables?.[listName]) {
 
