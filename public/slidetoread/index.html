@@ -639,8 +639,9 @@ function getSoundType(letter, nextLetter = "") {
 function setupWord(word) {
   const baseFont = 80;
   const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
-  const fontPx = Math.max(36, Math.min(96, scaledFont));
+  const fontPx = Math.max(36, scaledFont); // remove upper clamp
   ctx.font = `bold ${fontPx}px Andika`;
+
 
   letters = parseWord(word);
 
