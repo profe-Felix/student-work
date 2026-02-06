@@ -677,10 +677,17 @@ if (supaLists?.[listName]) {
 
   currentWordIndex = 0;
 
+  // ---- SAFETY: if list is empty, don't crash ----
+  if (!words.length) {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    playBtn.disabled = true;
+    return;
+  }
+  
   document.fonts.ready.then(async () => {
     setupWord(words[currentWordIndex]);
     playBtn.disabled = false;
-
+  
     if (isTeacher && GROUP_CODE) {
       await setReadingIndex(GROUP_CODE, currentWordIndex);
     }
@@ -688,72 +695,10 @@ if (supaLists?.[listName]) {
       startStudentPolling();
     }
   });
+  
+  return;
 
-  return; // stop here if Supabase succeeded
 }
-
-  const url = `wordlists/${encodeURIComponent(listName)}.txt`;
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`No encontrado: ${url}`);
-    const data = await response.text();
-    let baseWords = data.trim().split("\n").map(w => w.trim()).filter(Boolean);
-    baseWordsForDistractors = baseWords.slice();
-
-    if (GROUP_CODE && (isTeacher || isStudent)) {
-      await ensureReadingGroup(GROUP_CODE);
-
-      if (isTeacher) {
-        const sessionId = makeSessionId();
-        const { error: sessErr } = await sbClient
-          .from('reading_groups')
-          .update({ session_id: sessionId, current_index: 0 })
-          .eq('group_code', GROUP_CODE);
-        if (sessErr) console.warn('update session_id error', sessErr);
-
-        const seedStr = `${GROUP_CODE}::${listName}::${sessionId}`;
-        words = shuffleWithSeed(baseWords, seedStr);
-        currentWordIndex = 0;
-        console.log('[SYNC] teacher session', GROUP_CODE, listName, sessionId, words);
-      } else if (isStudent) {
-        const { data: row, error: rowErr } = await sbClient
-          .from('reading_groups')
-          .select('session_id, current_index')
-          .eq('group_code', GROUP_CODE)
-          .maybeSingle();
-
-        if (!rowErr && row && row.session_id) {
-          const seedStr = `${GROUP_CODE}::${listName}::${row.session_id}`;
-          words = shuffleWithSeed(baseWords, seedStr);
-          currentWordIndex = row.current_index ?? 0;
-          console.log('[SYNC] student using session', GROUP_CODE, listName, row.session_id, 'index', currentWordIndex);
-        } else {
-          words = baseWords.sort(() => Math.random() - 0.5);
-          currentWordIndex = 0;
-          console.log('[SYNC] student fallback random (no session_id yet)');
-        }
-      }
-    } else {
-      words = baseWords.sort(() => Math.random() - 0.5);
-      currentWordIndex = 0;
-    }
-
-    document.fonts.ready.then(async () => {
-      setupWord(words[currentWordIndex]);
-      playBtn.disabled = false;
-
-      if (isTeacher && GROUP_CODE) {
-        await setReadingIndex(GROUP_CODE, currentWordIndex);
-      }
-      if (isStudent && GROUP_CODE) {
-        startStudentPolling();
-      }
-    });
-  } catch (err) {
-    console.warn(err);
-    alert(`No pude cargar "${url}". Verifica el nombre y las mayúsculas/minúsculas en GitHub Pages.`);
-  }
 }
 
 async function startStudentPolling() {
