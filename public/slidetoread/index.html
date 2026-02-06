@@ -750,7 +750,23 @@ function changeWord(direction) {
   // keep teacher-only guidance in sync mode
   if (isStudent && GROUP_CODE) return;
 
-  currentWordIndex = (currentWordIndex + direction + words.length) % words.length;
+  let nextIndex = currentWordIndex + direction;
+
+  // reached end → reshuffle (unless fixed order)
+  if (nextIndex >= words.length) {
+    if (ORDER_MODE !== 'fixed') {
+      words = words.sort(() => Math.random() - 0.5);
+    }
+    nextIndex = 0;
+  }
+  
+  // reached beginning
+  if (nextIndex < 0) {
+    nextIndex = words.length - 1;
+  }
+  
+  currentWordIndex = nextIndex;
+
   document.fonts.ready.then(() => {
     setupWord(words[currentWordIndex]);
     playBtn.disabled = false;
