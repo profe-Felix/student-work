@@ -918,6 +918,24 @@ function drawReading() {
   // auto-shrink on mobile if needed
   while (!isDesktop && fontPx > 28) {
     ctx.font = `bold ${fontPx}px Andika`;
+    // ALWAYS compute glyph widths (desktop + mobile)
+    const em = fontPx;
+    const minPill = Math.max(8, Math.round(em * 0.22));
+    const innerPad = Math.max(2, Math.round(em * 0.03));
+    
+    letters.forEach(l => {
+      if (l.isPunctuation || l.isSpace) {
+        l.gw = 0;
+        l.w = 0;
+        return;
+      }
+    
+      let gw = ctx.measureText(l.text).width;
+      if (window.innerWidth < 700) gw *= 0.65;
+    
+      l.gw = gw;
+      l.w = Math.max(gw + innerPad * 2, minPill);
+    });
 
     const em = fontPx;
     const minPill = Math.max(8, Math.round(em * 0.22));
