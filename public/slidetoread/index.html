@@ -341,7 +341,7 @@ const ctx = canvas.getContext("2d");
 let words = [], currentWordIndex = 0;
 let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
 let freshWord = true;
-
+let fontPx = 64;
 let letters = [];
 let pollTimer = null; // for student polling
 let activeRow = 0;
@@ -380,7 +380,7 @@ function resizeCanvas() {
 
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 
-  if (words.length) setupWord(words[currentWordIndex]);
+  if (words.length) drawCanvas();
   else ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
