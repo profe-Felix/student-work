@@ -1067,6 +1067,16 @@ if (isDesktop) {
   let row = 0;
   const baseRowStep = fontPx * 1.6;   // tighter normal spacing
   const sliderClearance = pillH + fontPx * 0.9; // space needed for slider
+
+  const totalRows = rowCount;
+  const blockHeight = totalRows * baseRowStep + sliderClearance;
+  
+  const isPortrait = window.innerHeight > window.innerWidth;
+  
+  const startY = isPortrait
+    ? Math.round(fontPx * 0.4)
+    : Math.max(Math.round(fontPx * 0.25), (canvas.clientHeight - blockHeight) / 3.5);
+
   
   function rowY(r){
     return startY + r * baseRowStep;
@@ -1189,14 +1199,6 @@ wordsBlocks.forEach(block => {
 
   activeRow = Math.min(activeRow, rowCount - 1);
 
-  const totalRows = rowCount;
-  const blockHeight = totalRows * baseRowStep + sliderClearance;
-  
-  const isPortrait = window.innerHeight > window.innerWidth;
-  
-  const startY = isPortrait
-    ? Math.round(fontPx * 0.4)
-    : Math.max(Math.round(fontPx * 0.25), (canvas.clientHeight - blockHeight) / 3.5);
 
 
 
