@@ -879,13 +879,7 @@ function getSoundType(letter, nextLetter = "") {
 
 /* ==================== Word setup (keeps original reading behavior) ==================== */
 function setupWord(word) {
-  const baseFont = 80;
-  const scaledFont = Math.round(baseFont * (canvas.clientWidth / 768));
-  const fontPx = Math.max(36, scaledFont); // remove upper clamp
-  ctx.font = `bold ${fontPx}px Andika`;
-
-
-  letters = parseWord(word);
+    letters = parseWord(word);
 
   const padding = 6; // tighter between letters
   const em = fontPx;
