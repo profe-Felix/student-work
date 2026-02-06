@@ -301,7 +301,7 @@ function resizeCanvas() {
   const width = Math.min(window.innerWidth * 0.95, maxWidth);
 
   // allow taller canvas on phones
-  const maxHeight = window.innerHeight * 0.55;
+  const maxHeight = window.innerHeight * 0.72;
 
   let height = width * 0.6; // desktop-ish default
 
@@ -699,8 +699,9 @@ while (fontPx > 28) {
   ctx.font = `bold ${fontPx}px Andika`;
   // recompute glyph + pill widths with FINAL font size
   const em = fontPx;
-  const minPill = Math.max(18, em * 0.55);
-  const innerPad = Math.max(4, Math.round(em * 0.06));
+  const minPill = Math.max(14, em * 0.45);
+  const innerPad = Math.max(2, Math.round(em * 0.04));
+
   
   letters.forEach(l => {
     if (l.isPunctuation) {
@@ -763,11 +764,8 @@ const isPortrait = window.innerHeight > window.innerWidth;
 
 // phones anchor near top, desktop gently centered
 const startY = isPortrait
-  ? Math.round(fontPx * 0.6)
-  : Math.max(Math.round(fontPx * 0.4), (canvas.clientHeight - blockHeight) / 3);
-
-
-
+  ? Math.round(fontPx * 0.4)
+  : Math.max(Math.round(fontPx * 0.25), (canvas.clientHeight - blockHeight) / 3.5);
 
 ctx.clearRect(0, 0, canvas.width, canvas.height);
 ctx.fillStyle = "white";
