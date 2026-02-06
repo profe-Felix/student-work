@@ -1342,7 +1342,15 @@ function tryAdvanceRow() {
 
     if (activeRow < rowCount - 1) {
       activeRow++;
-      sliderX = sliderStart;
+      sliderX = rowStartX(activeRow);
+      
+      // IMPORTANT: break the drag so it doesn't carry over
+      dragging = false;
+      pointerDown = false;
+      
+      // force thumb to true start
+      sliderX = rowStartX(activeRow);
+
     }
 
     drawCanvas();
