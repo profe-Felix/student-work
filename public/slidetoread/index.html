@@ -695,7 +695,8 @@ const usableH = canvas.clientHeight;
 // scale from the smaller dimension (phone safe)
 const scale = Math.min(usableW / 768, usableH / 432);
 
-let baseFont = 52;
+let baseFont = isDesktop ? 64 : 52;
+
 let fontPx = Math.round(baseFont * scale);
 
 // hard safety clamps
