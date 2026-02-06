@@ -1854,7 +1854,6 @@ function rebuildTilesFromUser(){
 if (listSel && listSel.options.length > 1) {
   listSel.selectedIndex = 1;
   loadWordList(); // 🔴 REQUIRED
-  return;         // prevent double-load later
 }
 
 
@@ -1862,8 +1861,10 @@ if (listSel && listSel.options.length > 1) {
 
 
   configureModeUI();
-
-  // Always load once after dropdown is ready
+// 🔒 absolute safety net
+if (!words.length) {
+  loadWordList();
+}
 })();
 
   
