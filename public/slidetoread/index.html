@@ -629,6 +629,12 @@ if (supaLists?.[listName]) {
   } else {
     words = [];
   }
+  
+  // 👇 NEW: ordering logic (same as inline words)
+  if (ORDER_MODE !== 'fixed') {
+    words = words.sort(() => Math.random() - 0.5);
+  }
+
 
 
   currentWordIndex = 0;
