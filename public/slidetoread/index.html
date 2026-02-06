@@ -1319,14 +1319,18 @@ canvas.addEventListener("pointermove", (e)=> {
 canvas.addEventListener("pointerup", ()=>{
 
   isDragging = false;
-  tryAdvanceRow();
+  drawCanvas();      // recompute rows
+  tryAdvanceRow();  // now advance
 
 });
+
 
 canvas.addEventListener("pointercancel", ()=> {
   isDragging = false;
-  tryAdvanceRow();
+  drawCanvas();      // recompute rows
+  tryAdvanceRow();  // now advance
 });
+
 
 
 canvas.addEventListener("pointerleave", ()=>isDragging=false);
@@ -1353,10 +1357,10 @@ function moveSlider(e){
   // clamp to current row
   sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
 
-  tryAdvanceRow();   // 👈 ADD THIS LINE
-
-  drawCanvas();
+  drawCanvas();      // first: compute rows + sliderEnd
+  tryAdvanceRow();  // second: now rowCount is correct
 }
+
 
 
 
