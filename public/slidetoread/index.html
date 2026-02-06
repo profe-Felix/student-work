@@ -1085,29 +1085,7 @@ if (isDesktop) {
 
 
   // ================= CENTER WRAPPED ROWS =================
-const totalRows = row + 1;
-rowCount = totalRows;
-const blockHeight = totalRows * baseRowStep + sliderClearance;
 
-
-const isPortrait = window.innerHeight > window.innerWidth;
-
-// phones anchor near top, desktop gently centered
-const startY = isPortrait
-  ? Math.round(fontPx * 0.4)
-  : Math.max(Math.round(fontPx * 0.25), (canvas.clientHeight - blockHeight) / 3.5);
-
-ctx.clearRect(0, 0, canvas.width, canvas.height);
-ctx.fillStyle = "white";
-ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-x = rowLeft;
-
-row = 0;
-
-rowWidths = [];
-x = rowLeft;
-row = 0;
 
 wordsBlocks.forEach(block => {
 
@@ -1183,6 +1161,14 @@ wordsBlocks.forEach(block => {
   rowCount = row + 1;   // 👈 total wrapped rows
   activeRow = Math.min(activeRow, rowCount - 1);
 
+  const totalRows = rowCount;
+  const blockHeight = totalRows * baseRowStep + sliderClearance;
+  
+  const isPortrait = window.innerHeight > window.innerWidth;
+  
+  const startY = isPortrait
+    ? Math.round(fontPx * 0.4)
+    : Math.max(Math.round(fontPx * 0.25), (canvas.clientHeight - blockHeight) / 3.5);
 
 
 
