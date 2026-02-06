@@ -591,7 +591,8 @@ if (WORDS_OVERRIDE.length) {
   const listName = document.getElementById("wordListSelect").value;
 
   // ---- try Supabase first ----
-  const supaLists = await fetchSupabaseLists();
+ const supaLists = ALL_LISTS;
+
   
   const entryForUI = (supaLists && supaLists[listName]) ? supaLists[listName] : null;
   updateModuleUIVisibility(listName, entryForUI);
