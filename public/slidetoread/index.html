@@ -987,39 +987,42 @@ function drawReading() {
   ctx.font = `bold ${fontPx}px Andika`;
 
   // desktop: shrink sentences if they wrap
-  if (isDesktop) {
-    const maxRowWidthTest = canvas.clientWidth * 0.9;
-    let xTest = 0;
-    let rows = 1;
+// desktop: always recompute widths (and shrink if wrapping)
+if (isDesktop) {
+  const maxRowWidthTest = canvas.clientWidth * 0.9;
+  let xTest = 0;
+  let rows = 1;
 
-    letters.forEach(l => {
-      if (l.isSpace) { xTest += fontPx * 0.4; return; }
-      xTest += l.w || 0;
-      if (xTest > maxRowWidthTest) {
-        rows++;
-        xTest = l.w || 0;
-      }
-    });
-
-    if (rows > 1) {
-      fontPx = Math.round(fontPx * 0.55);
-      ctx.font = `bold ${fontPx}px Andika`;
-
-      // recompute widths after shrink
-      const em = fontPx;
-      const minPill = Math.max(8, Math.round(em * 0.22));
-      const innerPad = Math.max(2, Math.round(em * 0.03));
-
-      letters.forEach(l => {
-        if (l.isPunctuation) { l.gw = 0; l.w = 0; return; }
-        if (l.isSpace) return;
-
-        const gw = ctx.measureText(l.text).width;
-        l.gw = gw;
-        l.w = Math.max(gw + innerPad * 2, minPill);
-      });
+  letters.forEach(l => {
+    if (l.isSpace) { xTest += fontPx * 0.4; return; }
+    xTest += l.w || 0;
+    if (xTest > maxRowWidthTest) {
+      rows++;
+      xTest = l.w || 0;
     }
+  });
+
+  // shrink only if wrapping
+  if (rows > 1) {
+    fontPx = Math.round(fontPx * 0.55);
+    ctx.font = `bold ${fontPx}px Andika`;
   }
+
+  // 🔴 ALWAYS recompute widths on desktop (this fixes centering)
+  const em = fontPx;
+  const minPill = Math.max(8, Math.round(em * 0.22));
+  const innerPad = Math.max(2, Math.round(em * 0.03));
+
+  letters.forEach(l => {
+    if (l.isPunctuation) { l.gw = 0; l.w = 0; return; }
+    if (l.isSpace) return;
+
+    const gw = ctx.measureText(l.text).width;
+    l.gw = gw;
+    l.w = Math.max(gw + innerPad * 2, minPill);
+  });
+}
+
 
   const padding = Math.max(2, Math.round(fontPx * 0.005));
   const wordGap = padding * 12;
