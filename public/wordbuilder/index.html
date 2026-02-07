@@ -366,6 +366,21 @@ header .btn{
     transform:scale(1);
   }
 }
+/* ===== VALIDATION STATES ===== */
+.slot.correct{
+  outline:3px solid #22c55e; /* green */
+  outline-offset:2px;
+}
+
+.slot.incorrect{
+  outline:3px solid #ef4444; /* red */
+  outline-offset:2px;
+}
+
+.slot.unanswered{
+  outline:3px dashed #9ca3af; /* gray */
+  outline-offset:2px;
+}
 
 </style>
 </head>
@@ -475,6 +490,14 @@ header .btn{
 
 <script>
 const qs = new URLSearchParams(location.search);
+ // ===== Correct answers (case + accent sensitive) =====
+ // ?answers=respuesta1|respuesta2|respuesta3
+ const ANSWERS = (() => {
+   const raw = qs.get('answers');
+   if (!raw) return null;
+   return raw.split('|').map(s => s.trim());
+ })();
+
 const IS_STUDENT = qs.has('student');
 
 
@@ -1179,34 +1202,61 @@ function applyPreview(slot, index, movingEl){
     });
   });
 
-  validateBtn.addEventListener('click', ()=>{
-    const result = [];
-    document.querySelectorAll('.slot').forEach(slot=>{
-      let s = '';
-      [...slot.querySelectorAll('.tile')].forEach(t=>{
-        const k = t.dataset.kind;
-        if (k === 'text') {
-          s += t.dataset.text ?? t.textContent ?? '';
-        } else if (k === 'space') {
-          s += ' ';
-        } else if (k === 'img') {
-          s += (s.endsWith(' ') ? '' : ' ') + '[img]' + ' ';
-        } else if (k === 'punc') {
-          const ch = t.dataset.text || t.textContent || '';
-          if (',.?!'.includes(ch)) {
-            s = s.replace(/\s+$/,'');
-            s += ch;
-          } else if ('¿¡'.includes(ch)) {
-            s += ch;
-          } else {
-            s += ch;
-          }
-        }
-      });
-      result.push(s.trim());
-    });
-    alert('Cajas:\n' + result.map((w,i)=>`#${i+1}: ${w || '—'}`).join('\n'));
+validateBtn.addEventListener('click', ()=>{
+  // Reset validation outlines
+  document.querySelectorAll('.slot').forEach(slot=>{
+    slot.classList.remove('correct','incorrect','unanswered');
   });
+
+  // If no answer key, do nothing
+  if (!ANSWERS) return;
+
+  const slots = [...document.querySelectorAll('.slot')];
+
+  slots.forEach((slot, i)=>{
+    let built = '';
+
+    [...slot.querySelectorAll('.tile')].forEach(t=>{
+      const k = t.dataset.kind;
+
+      if (k === 'text') {
+        built += t.dataset.text ?? t.textContent ?? '';
+      }
+      else if (k === 'space') {
+        built += ' ';
+      }
+      else if (k === 'img') {
+        built += '[img]';
+      }
+      else if (k === 'punc') {
+        const ch = t.dataset.text || t.textContent || '';
+        if (',.?!'.includes(ch)) {
+          built = built.replace(/\s+$/,'');
+          built += ch;
+        } else {
+          built += ch;
+        }
+      }
+    });
+
+    built = built.trim();
+    const expected = ANSWERS[i];
+
+    if (!expected) return; // no answer for this box
+
+    if (!built) {
+      slot.classList.add('unanswered');
+    }
+    else if (built === expected) {
+      slot.classList.add('correct');
+    }
+    else {
+      slot.classList.add('incorrect');
+    }
+  });
+});
+
+
  
 qrBtn.addEventListener('click', () => {
   qrModal.style.display = 'flex';
