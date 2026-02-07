@@ -1252,6 +1252,8 @@ validateBtn.addEventListener('click', ()=>{
   document.querySelectorAll('.slot').forEach(slot=>{
     slot.classList.remove('correct','incorrect','unanswered');
   });
+ 
+  let allCorrect = true;
 
   // If no answer key, do nothing
   if (!ANSWERS) return;
@@ -1291,14 +1293,27 @@ validateBtn.addEventListener('click', ()=>{
 
     if (!built) {
       slot.classList.add('unanswered');
+      allCorrect = false;
     }
     else if (built === expected) {
       slot.classList.add('correct');
     }
     else {
       slot.classList.add('incorrect');
+      allCorrect = false;
     }
+
   });
+    slots.forEach((slot, i)=>{
+    ...
+  });
+
+  // 🎉 All correct → celebrate
+  if (allCorrect) {
+    launchConfetti();
+  }
+});
+
 });
 
 
