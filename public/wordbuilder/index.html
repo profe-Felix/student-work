@@ -1207,6 +1207,45 @@ function applyPreview(slot, index, movingEl){
       }
     });
   });
+// ===== CONFETTI (LetterSort-style, no library) =====
+function launchConfetti(){
+  const count = 80;
+  const duration = 900;
+  const end = Date.now() + duration;
+
+  (function frame(){
+    const now = Date.now();
+    if (now > end) return;
+
+    for (let i = 0; i < 4; i++){
+      const conf = document.createElement('div');
+      conf.style.position = 'fixed';
+      conf.style.left = Math.random() * 100 + 'vw';
+      conf.style.top = '-10px';
+      conf.style.width = '8px';
+      conf.style.height = '8px';
+      conf.style.background = `hsl(${Math.random()*360},90%,60%)`;
+      conf.style.borderRadius = '50%';
+      conf.style.opacity = '0.9';
+      conf.style.zIndex = 3000;
+      conf.style.pointerEvents = 'none';
+
+      document.body.appendChild(conf);
+
+      const fall = conf.animate([
+        { transform: 'translateY(0)', opacity: 1 },
+        { transform: `translateY(${window.innerHeight + 100}px)`, opacity: 0 }
+      ], {
+        duration: 700 + Math.random() * 400,
+        easing: 'ease-in'
+      });
+
+      fall.onfinish = () => conf.remove();
+    }
+
+    requestAnimationFrame(frame);
+  })();
+}
 
 validateBtn.addEventListener('click', ()=>{
   // Reset validation outlines
