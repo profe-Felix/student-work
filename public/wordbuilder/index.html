@@ -390,15 +390,9 @@ location.reload();
     document.documentElement.style.setProperty('--space-w', `${spaceW}ch`);
   }
 
-  const DEFAULT_LETTERS = [
-    'ó','o','m','t','n','g','qu',
-    'á','a','p','d','f','ch','z',
-    'í','i','s','r','b','ñ','h',
-    'ú','u','l','c','j','v','y',
-    'é','e','ll','k','w','x'
-  ];
-  const DEFAULT_SYLL  = ['ma','me','mi','mo','mu','la','le','li','lo','lu','pa','pe','pi','po','pu','sa','se','si','so','su','bra','bre','bri','bro','bru','cha','che','chi','cho','chu','que','qui'];
-  const DEFAULT_WORDS = ['yo','tú','mi','la','el','un','una','me','te','va','no','sí'];
+  const DEFAULT_LETTERS = ['a','e','i','o','u'];
+  const DEFAULT_SYLL  = ['ma','me','mi','mo','mu'];
+  const DEFAULT_WORDS = ['la','el'];
   const DEFAULT_PUNC  = ['¿','?','¡','!',',','.'];
 
   const LETTERS  = getList('letters', DEFAULT_LETTERS);
