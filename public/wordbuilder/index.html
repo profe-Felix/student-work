@@ -1009,17 +1009,17 @@ function applyPreview(slot, index, movingEl){
     const kind = drag.el.dataset.kind;
 
     if (kind === 'captool'){
-      if (!CAPS_ON) { drag.el.remove(); cleanupHighlights(); cleanup(); return; }
+      if (!CAPS_ON) { drag.el.remove();  cleanup(); return; }
       const tile = t?.closest?.('.tile[data-kind="text"]');
       if (tile) applyCapToTile(tile, drag.el.dataset.mode === 'down' ? 'down' : 'up');
       drag.el.remove();
-      cleanupHighlights();
+      
       cleanup();
       return;
     }
 
     if (kind === 'accenttool'){
-      if (!ACCENT_ON) { drag.el.remove(); cleanupHighlights(); cleanup(); return; }
+      if (!ACCENT_ON) { drag.el.remove();  cleanup(); return; }
       const tile = t?.closest?.('.tile[data-kind="text"]');
       if (tile) {
         const accRect = drag.el.getBoundingClientRect();
@@ -1027,7 +1027,7 @@ function applyPreview(slot, index, movingEl){
         applyAccentAtPointer(tile, centerX);
       }
       drag.el.remove();
-      cleanupHighlights();
+      
       cleanup();
       return;
     }
@@ -1035,7 +1035,7 @@ function applyPreview(slot, index, movingEl){
     const onTrash = !!t?.closest?.('#trash');
     const slot = t?.closest?.('.slot');
 
-    cleanupHighlights();
+    
 
     drag.el.classList.remove('dragging');
     Object.assign(drag.el.style, {position:'', left:'', top:'', zIndex:'', pointerEvents:'', width:'', height:''});
