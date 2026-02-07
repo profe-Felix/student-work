@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
 
 <style>
   *{box-sizing:border-box}
@@ -383,6 +385,7 @@ header .btn{
         </label>
         <button id="applyBoxes" class="btn ghost">Aplicar</button>
         <button id="validateBtn" class="btn">Validar</button>
+        <button id="qrBtn" class="btn ghost">QR</button>
       </div>
     </div>
   </div>
@@ -596,6 +599,13 @@ location.reload();
   const rowsInput  = document.getElementById('rowsInput');
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn= document.getElementById('validateBtn');
+  const qrBtn    = document.getElementById('qrBtn');
+  const qrModal  = document.getElementById('qrModal');
+  const qrClose  = document.getElementById('qrClose');
+  const qrCodeEl = document.getElementById('qrCode');
+  
+  let qrInstance = null;
+
 
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
@@ -1159,6 +1169,24 @@ function applyPreview(slot, index, movingEl){
     });
     alert('Cajas:\n' + result.map((w,i)=>`#${i+1}: ${w || '—'}`).join('\n'));
   });
+ 
+ qrBtn.addEventListener('click', () => {
+   qrModal.style.display = 'flex';
+   qrCodeEl.innerHTML = '';
+ 
+   const cleanUrl = location.origin + location.pathname + location.search;
+ 
+   qrInstance = new QRCode(qrCodeEl, {
+     text: cleanUrl,
+     width: 220,
+     height: 220
+   });
+ });
+ 
+ qrClose.addEventListener('click', () => {
+   qrModal.style.display = 'none';
+   qrCodeEl.innerHTML = '';
+ });
 
   applyBoxes.addEventListener('click', ()=>{
     const boxesPer = clampInt(boxesInput.value, BOXES_PER_ROW, 1, 12);
@@ -1180,5 +1208,27 @@ if (qs.has('preset')) {
 }
 
 </script>
+ <div id="qrModal" style="
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.4);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:2000;
+">
+  <div style="
+    background:#fff;
+    border-radius:16px;
+    padding:16px;
+    width:min(90vw,320px);
+    text-align:center;
+  ">
+    <strong>Escanea para abrir</strong>
+    <div id="qrCode" style="margin:12px auto;"></div>
+    <button id="qrClose" class="btn ghost" style="margin-top:8px">Cerrar</button>
+  </div>
+</div>
+
 </body>
 </html>
