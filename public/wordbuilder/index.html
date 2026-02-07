@@ -442,7 +442,27 @@ header .btn{
     </div>
   </aside>
 </main>
-
+ <div id="qrModal" style="
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.4);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:2000;
+">
+  <div style="
+    background:#fff;
+    border-radius:16px;
+    padding:16px;
+    width:min(90vw,320px);
+    text-align:center;
+  ">
+    <strong>Escanea para abrir</strong>
+    <div id="qrCode" style="margin:12px auto;"></div>
+    <button id="qrClose" class="btn ghost" style="margin-top:8px">Cerrar</button>
+  </div>
+</div>
 <script>
 const qs = new URLSearchParams(location.search);
 
@@ -1208,27 +1228,7 @@ if (qs.has('preset')) {
 }
 
 </script>
- <div id="qrModal" style="
-  position:fixed;
-  inset:0;
-  background:rgba(0,0,0,.4);
-  display:none;
-  align-items:center;
-  justify-content:center;
-  z-index:2000;
-">
-  <div style="
-    background:#fff;
-    border-radius:16px;
-    padding:16px;
-    width:min(90vw,320px);
-    text-align:center;
-  ">
-    <strong>Escanea para abrir</strong>
-    <div id="qrCode" style="margin:12px auto;"></div>
-    <button id="qrClose" class="btn ghost" style="margin-top:8px">Cerrar</button>
-  </div>
-</div>
+
 
 </body>
 </html>
