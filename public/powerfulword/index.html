@@ -10,6 +10,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
 
+  <!-- Supabase -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
   <style>
     * { box-sizing: border-box; }
 
@@ -19,8 +22,8 @@
       --border:#e5e7eb;
       --accent:#2563eb;
       --accent-soft:#dbeafe;
-      --spanish:#dc2626; /* red */
-      --english:#1d4ed8; /* blue */
+      --spanish:#dc2626;
+      --english:#1d4ed8;
     }
 
     body {
@@ -35,7 +38,6 @@
       padding: 24px;
     }
 
-    /* FULL-WIDTH GRID – 3 big cards side by side */
     .cards {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -53,24 +55,17 @@
       display: flex;
       flex-direction: column;
       gap: 24px;
-      height: 100%;
     }
 
-    /* BIG text that scales with screen width */
     .spanish-word,
     .english-box {
       font-size: clamp(3rem, 4vw, 5rem);
       font-weight: 700;
-
-      /* 🔧 FIX: prevent letters touching (fl, ff, lt, etc.) */
       letter-spacing: 0.03em;
-      font-kerning: normal;
-      text-rendering: optimizeLegibility;
     }
 
     .spanish-word {
       color: var(--spanish);
-      margin-bottom: 8px;
     }
 
     .english-box {
@@ -104,15 +99,8 @@
       cursor: pointer;
     }
 
-    button:active { transform: translateY(1px); }
-
-    @media (max-width: 700px) {
-      body {
-        padding: 16px;
-      }
-      .card {
-        padding: 32px 16px;
-      }
+    button:active {
+      transform: translateY(1px);
     }
   </style>
 </head>
@@ -121,73 +109,108 @@
   <div id="cardsContainer" class="cards"></div>
 
   <script>
-    function getPairsFromURL() {
-      const raw = new URLSearchParams(window.location.search).get("pairs");
-      if (!raw) return null;
+    /************************************************************
+     * SUPABASE CONFIG
+     ************************************************************/
+    const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
-      return raw.split(",").map(set => {
-        const [es, en] = set.split(";").map(s => s.trim());
-        return es && en ? { es, en } : null;
-      }).filter(Boolean);
+    const supabase = supabasejs.createClient(
+      SUPABASE_URL,
+      SUPABASE_ANON_KEY
+    );
+
+    // Storage location
+    const BUCKET = "app-presets";
+    const PRESET_FILE = "powerfulwords/presets.json";
+
+    /************************************************************
+     * URL PARAMS
+     ************************************************************/
+    const params = new URLSearchParams(window.location.search);
+    const presetId = params.get("preset");
+    const nOverride = parseInt(params.get("n"), 10);
+
+    /************************************************************
+     * LOAD PRESETS
+     ************************************************************/
+    async function loadPresets() {
+      const { data, error } = await supabase
+        .storage
+        .from(BUCKET)
+        .download(PRESET_FILE);
+
+      if (error) throw error;
+      return JSON.parse(await data.text());
     }
 
-    const defaultPairs = [
-      { es: "la casa", en: "the house" },
-      { es: "el perro", en: "the dog" },
-      { es: "la escuela", en: "the school" },
-      { es: "el libro", en: "the book" },
-      { es: "la mesa", en: "the table" }
-    ];
-
-    const urlPairs = getPairsFromURL();
-    const wordPairs = urlPairs || defaultPairs;
-
-    function getCountFromURL(defaultN = 3) {
-      const n = parseInt(new URLSearchParams(window.location.search).get("n"), 10);
-      return (!n || n <= 0) ? defaultN : Math.min(n, wordPairs.length);
-    }
-
-    const count = getCountFromURL(3);
-    const cardsContainer = document.getElementById("cardsContainer");
-
+    /************************************************************
+     * CARD FACTORY
+     ************************************************************/
     function createCard(pair) {
       const card = document.createElement("div");
       card.className = "card";
 
       card.innerHTML = `
         <div class="spanish-word">${pair.es}</div>
-        <div class="english-box hidden"><span class="english-text">${pair.en}</span></div>
-        <button class="toggleBtn">Show</button>
+        <div class="english-box hidden">
+          <span class="english-text">${pair.en}</span>
+        </div>
+        <button>Show</button>
       `;
 
-      const btn = card.querySelector(".toggleBtn");
+      const btn = card.querySelector("button");
       const box = card.querySelector(".english-box");
-      const text = card.querySelector(".english-text");
 
-      function show() {
-        box.classList.remove("hidden");
-        text.style.visibility = "visible";
-        btn.textContent = "Hide";
-      }
-
-      function hide() {
-        box.classList.add("hidden");
-        text.style.visibility = "hidden";
-        btn.textContent = "Show";
-      }
-
-      hide();
       btn.addEventListener("click", () => {
-        if (box.classList.contains("hidden")) show();
-        else hide();
+        const hidden = box.classList.toggle("hidden");
+        btn.textContent = hidden ? "Show" : "Hide";
       });
 
       return card;
     }
 
-    for (let i = 0; i < count; i++) {
-      cardsContainer.appendChild(createCard(wordPairs[i]));
+    /************************************************************
+     * BOOTSTRAP
+     ************************************************************/
+    async function start() {
+      if (!presetId) {
+        throw new Error("Missing preset parameter");
+      }
+
+      const presets = await loadPresets();
+      const preset = presets[presetId];
+
+      if (!preset) {
+        throw new Error("Preset not found: " + presetId);
+      }
+
+      const pairs = preset.pairs || [];
+      let count = preset.defaultCount || pairs.length;
+
+      if (!isNaN(nOverride) && nOverride > 0) {
+        count = Math.min(nOverride, pairs.length);
+      }
+
+      // Clean URL → keep preset (+ n if used)
+      const clean = new URL(window.location);
+      clean.search = "";
+      clean.searchParams.set("preset", presetId);
+      if (!isNaN(nOverride)) clean.searchParams.set("n", count);
+      history.replaceState({}, "", clean);
+
+      const container = document.getElementById("cardsContainer");
+      container.innerHTML = "";
+
+      pairs.slice(0, count).forEach(pair => {
+        container.appendChild(createCard(pair));
+      });
     }
+
+    start().catch(err => {
+      console.error(err);
+      alert("Error loading flashcards preset.");
+    });
   </script>
 
 </body>
