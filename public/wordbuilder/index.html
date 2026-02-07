@@ -330,6 +330,19 @@ header .btn{
     transform:scale(1);
   }
 }
+/* STEP G-1 — insertion preview visuals */
+.slot.preview-gap{
+  outline:3px dashed #93c5fd;
+  outline-offset:4px;
+}
+
+.slot.preview-left .tile{
+  margin-left:14px;
+}
+
+.slot.preview-right .tile{
+  margin-right:14px;
+}
 
 </style>
 </head>
@@ -875,11 +888,36 @@ location.reload();
     if(!drag || e.pointerId!==drag.pointerId) return;
     moveTo(drag.el, e.clientX, e.clientY);
 
-    document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
-    const t = document.elementFromPoint(e.clientX, e.clientY);
-    const slot = t?.closest?.('.slot');
-    const kind = drag.el.dataset.kind;
-    if (slot && kind !== 'captool' && kind !== 'accenttool') slot.classList.add('highlight');
+  // Clear previous previews
+  document.querySelectorAll('.slot').forEach(s=>{
+    s.classList.remove('preview-left','preview-right','preview-gap');
+  });
+  
+  const t = document.elementFromPoint(e.clientX, e.clientY);
+  const slot = t?.closest?.('.slot');
+  const kind = drag.el.dataset.kind;
+  
+  if (slot && kind !== 'captool' && kind !== 'accenttool') {
+    const tiles = [...slot.querySelectorAll('.tile')];
+  
+    if (!tiles.length) {
+      // Empty slot → show full gap
+      slot.classList.add('preview-gap');
+    } else {
+      // Find insertion point
+      const target = tiles.find(tile => {
+        const r = tile.getBoundingClientRect();
+        return (r.left + r.width / 2) >= e.clientX;
+      });
+  
+      if (target) {
+        target.classList.add('preview-left');
+      } else {
+        tiles[tiles.length - 1].classList.add('preview-right');
+      }
+    }
+  }
+
 
     trashEl.classList.toggle(
       'highlight',
@@ -902,9 +940,12 @@ location.reload();
   }
 
   function cleanupHighlights(){
-    document.querySelectorAll('.slot').forEach(s => s.classList.remove('highlight'));
+    document.querySelectorAll('.slot').forEach(s=>{
+      s.classList.remove('highlight','preview-left','preview-right','preview-gap');
+    });
     trashEl.classList.remove('highlight');
   }
+
 
   function onUp(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
