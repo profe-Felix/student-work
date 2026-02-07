@@ -851,6 +851,7 @@ location.reload();
   }
 
   let drag = null;
+  const DRAG_Y_OFFSET = 48; // pixels above finger (tweak later if needed)
 
 
 
@@ -968,7 +969,11 @@ function applyPreview(slot, index, movingEl){
     });
   }
 
-  function moveTo(el,x,y){ el.style.left=(x-28)+'px'; el.style.top=(y-28)+'px'; }
+  function moveTo(el, x, y){
+  el.style.left = (x - 28) + 'px';
+  el.style.top  = (y - 28 - DRAG_Y_OFFSET) + 'px';
+}
+
 
   function onMove(e){
     if(!drag || e.pointerId !== drag.pointerId) return;
@@ -977,7 +982,9 @@ function applyPreview(slot, index, movingEl){
   
     clearPreview();
   
-    const t = document.elementFromPoint(e.clientX, e.clientY);
+    const virtualY = e.clientY - DRAG_Y_OFFSET;
+    const t = document.elementFromPoint(e.clientX, virtualY);
+
     const slot = t?.closest?.('.slot');
     const kind = drag.el.dataset.kind;
   
@@ -993,6 +1000,7 @@ function applyPreview(slot, index, movingEl){
     if (!slot || kind === 'captool' || kind === 'accenttool') return;
   
     const index = getNearestIndex(slot, e.clientX, drag.el);
+
     applyPreview(slot, index, drag.el);
   }
 
@@ -1005,7 +1013,9 @@ function applyPreview(slot, index, movingEl){
 
   function onUp(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
-    const t = document.elementFromPoint(e.clientX, e.clientY);
+    const virtualY = e.clientY - DRAG_Y_OFFSET;
+    const t = document.elementFromPoint(e.clientX, virtualY);
+
     const kind = drag.el.dataset.kind;
 
     if (kind === 'captool'){
