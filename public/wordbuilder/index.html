@@ -48,7 +48,10 @@
   small.note{color:var(--muted)}
 
   main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
-  @media (max-width:1000px){ main{grid-template-columns:1fr} }
+  /* MOBILE ONLY */
+ @media (max-width:700px){main{grid-template-columns:1fr}
+ }
+
 
   .board{
     background:var(--drop);
@@ -194,6 +197,24 @@
     padding:0 10px;
     font-size:18px;
   }
+ /* STEP 2 — PHONE SHRINK MODE */
+ @media (max-width:700px){
+   :root{
+     --tile-h:40px;
+     --tile-fs:22px;
+     --gap:8px;
+     --inner-gap:6px;
+   }
+ 
+   body{
+     font-size:16px;
+   }
+ 
+   h1{
+     font-size:18px;
+   }
+ }
+
 </style>
 </head>
 <body>
