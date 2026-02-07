@@ -534,6 +534,12 @@ if (!presetId) return;
     if (Array.isArray(c.words))     inject('words', c.words.join(','));
     if (Array.isArray(c.images))    inject('imgs', c.images.join(','));
 
+   // Inject correct answers from preset (case + accent sensitive)
+   if (Array.isArray(c.answers)) {
+     inject('answers', c.answers.join('|'));
+   }
+
+   
     if (c.toggles) {
       inject('space',  c.toggles.space  === false ? 'off' : undefined);
       inject('caps',   c.toggles.caps   === false ? 'off' : undefined);
