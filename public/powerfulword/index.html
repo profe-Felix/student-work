@@ -115,10 +115,11 @@
     const SUPABASE_URL = "https://dmlsiyyqpcupbizpxwhp.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtbHNpeXlxcGN1cGJpenB4d2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg0MDI1NjUsImV4cCI6MjA3Mzk3ODU2NX0.mkgeUtjC8ulLyHHVVOic4LmhhQP_JJtMi2JQztdzjsg";
 
-    const supabase = supabasejs.createClient(
+    const sb = supabasejs.createClient(
       SUPABASE_URL,
       SUPABASE_ANON_KEY
     );
+
 
     // Storage location
     const BUCKET = "app-presets";
@@ -135,7 +136,7 @@
      * LOAD PRESETS
      ************************************************************/
     async function loadPresets() {
-      const { data, error } = await supabase
+      const { data, error } = await sb
         .storage
         .from(BUCKET)
         .download(PRESET_FILE);
