@@ -310,6 +310,7 @@ if (!presetId) return;
       inject('caps',   c.toggles.caps   === false ? 'off' : undefined);
       inject('accent', c.toggles.accent === false ? 'off' : undefined);
       inject('punc',   c.toggles.punc   === false ? 'off' : undefined);
+      inject('images', c.toggles.images === false ? 'off' : undefined);
     }
 
     qs.set('__applied', '1');
