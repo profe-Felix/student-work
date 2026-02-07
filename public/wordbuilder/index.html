@@ -376,17 +376,23 @@ header .btn{
       <h1>Construye palabras</h1>
       <span class="pill">Arrastra desde los paneles → se clona</span>
       <div class="spacer"></div>
-      <div class="toolbar">
-        <label>Cajas:
-          <input id="boxesInput" type="number" min="1" max="12" value="4"/>
-        </label>
-        <label>Filas:
-          <input id="rowsInput" type="number" min="1" max="50" value="1"/>
-        </label>
-        <button id="applyBoxes" class="btn ghost">Aplicar</button>
-        <button id="validateBtn" class="btn">Validar</button>
-        <button id="qrBtn" class="btn ghost">QR</button>
-      </div>
+       <div class="toolbar">
+       
+         <div id="teacherControls">
+           <label>Cajas:
+             <input id="boxesInput" type="number" min="1" max="12" value="4"/>
+           </label>
+           <label>Filas:
+             <input id="rowsInput" type="number" min="1" max="50" value="1"/>
+           </label>
+           <button id="applyBoxes" class="btn ghost">Aplicar</button>
+         </div>
+       
+         <button id="validateBtn" class="btn">Validar</button>
+         <button id="qrBtn" class="btn ghost">QR</button>
+       
+       </div>
+
     </div>
   </div>
 </header>
@@ -465,6 +471,8 @@ header .btn{
 </div>
 <script>
 const qs = new URLSearchParams(location.search);
+const IS_STUDENT = qs.has('student');
+
 
 (async () => {
 const presetId = qs.get('preset');
@@ -620,13 +628,21 @@ location.reload();
   const applyBoxes = document.getElementById('applyBoxes');
   const validateBtn= document.getElementById('validateBtn');
   const qrBtn    = document.getElementById('qrBtn');
+  const teacherControls = document.getElementById('teacherControls');
+
   const qrModal  = document.getElementById('qrModal');
   const qrClose  = document.getElementById('qrClose');
   const qrCodeEl = document.getElementById('qrCode');
   
   let qrInstance = null;
 
+  const teacherControls = document.getElementById('teacherControls');
+  
+  if (IS_STUDENT && teacherControls) {
+    teacherControls.style.display = 'none';
+  }
 
+ 
   boxesInput.value = BOXES_PER_ROW;
   rowsInput.value  = NUM_ROWS;
 
@@ -1190,18 +1206,26 @@ function applyPreview(slot, index, movingEl){
     alert('Cajas:\n' + result.map((w,i)=>`#${i+1}: ${w || '—'}`).join('\n'));
   });
  
- qrBtn.addEventListener('click', () => {
-   qrModal.style.display = 'flex';
-   qrCodeEl.innerHTML = '';
- 
-   const cleanUrl = location.origin + location.pathname + location.search;
- 
-   qrInstance = new QRCode(qrCodeEl, {
-     text: cleanUrl,
-     width: 220,
-     height: 220
-   });
- });
+qrBtn.addEventListener('click', () => {
+  qrModal.style.display = 'flex';
+  qrCodeEl.innerHTML = '';
+
+  const qrQs = new URLSearchParams(location.search);
+  qrQs.set('student', '1'); // force student mode
+
+  const cleanUrl =
+    location.origin +
+    location.pathname +
+    '?' +
+    qrQs.toString();
+
+  qrInstance = new QRCode(qrCodeEl, {
+    text: cleanUrl,
+    width: 220,
+    height: 220
+  });
+});
+
  
  qrClose.addEventListener('click', () => {
    qrModal.style.display = 'none';
