@@ -311,7 +311,7 @@ header .btn{
   .trash-row{
     position:fixed;
     left:50%;
-    bottom:12px;
+    bottom:calc(80px + env(safe-area-inset-bottom));
     transform:translateX(-50%);
     z-index:1000;
     background:transparent;
