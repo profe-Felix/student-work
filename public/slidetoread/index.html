@@ -1085,12 +1085,14 @@ function typesetReadingLayout() {
   const sliderGap = Math.round(fontPx * 0.9);
   const sliderClearance = pillH + fontPx * 0.9;
 
-  const blockHeight = rowCountLocal * baseRowStep + sliderClearance;
+  // 🔒 Anchor layout toward top for guided reading (no vertical centering)
   const isPortrait = window.innerHeight > window.innerWidth;
-
+  
+  // fixed top anchor with mild portrait adjustment
   const layoutTopY = isPortrait
-    ? Math.round(fontPx * 0.4)
-    : Math.max(Math.round(fontPx * 0.25), (canvas.clientHeight - blockHeight) / 3.5);
+    ? Math.round(fontPx * 0.5)
+    : Math.round(fontPx * 0.35);
+
 
   // ---------- CACHE EVERYTHING ----------
   READ_LAYOUT = {
