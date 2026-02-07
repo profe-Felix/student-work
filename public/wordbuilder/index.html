@@ -279,6 +279,33 @@ header .btn{
     font-size:14px;
   }
 }
+/* STEP E — PHONE: shrink word boxes */
+@media (max-width:700px){
+
+  /* Outer slot (the box) */
+  .slot{
+    padding:4px 6px;
+    min-width:60px;
+    border-radius:10px;
+  }
+
+  /* Empty box placeholder height */
+  .slot:empty::before{
+    height:32px;
+    width:6ch;
+  }
+
+  /* Tiles inside boxes */
+  .slot .tile.in-slot{
+    height:32px;
+    font-size:20px;
+  }
+
+  /* Image tiles inside boxes */
+  .slot .tile.img.in-slot img{
+    max-height:32px;
+  }
+}
 
 </style>
 </head>
