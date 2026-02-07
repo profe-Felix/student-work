@@ -197,6 +197,35 @@
     padding:0 10px;
     font-size:18px;
   }
+ /* === INSERTION PREVIEW (STRONGER + VISIBLE) === */
+.slot.preview-left .tile{
+  margin-left:22px;
+}
+
+.slot.preview-right .tile{
+  margin-right:22px;
+}
+
+/* blue insertion bar */
+.slot.preview-left::before,
+.slot.preview-right::after{
+  content:'';
+  position:absolute;
+  top:6px;
+  bottom:6px;
+  width:4px;
+  background:#2563eb;
+  border-radius:4px;
+}
+
+.slot.preview-left::before{
+  left:8px;
+}
+
+.slot.preview-right::after{
+  right:8px;
+}
+
  /* STEP 2 — PHONE SHRINK MODE */
  @media (max-width:700px){
    :root{
@@ -896,7 +925,24 @@ location.reload();
   const t = document.elementFromPoint(e.clientX, e.clientY);
   const slot = t?.closest?.('.slot');
   const kind = drag.el.dataset.kind;
+
+  /* 
+  if (slot) {
+    const rect = slot.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const edgeZone = 24; // px from left/right edge
   
+    slot.classList.remove('preview-left', 'preview-right');
+  
+    if (x < edgeZone) {
+      slot.classList.add('preview-left');
+    } else if (x > rect.width - edgeZone) {
+      slot.classList.add('preview-right');
+    }
+  }
+  */
+
+   
   if (slot && kind !== 'captool' && kind !== 'accenttool') {
     const tiles = [...slot.querySelectorAll('.tile')];
   
