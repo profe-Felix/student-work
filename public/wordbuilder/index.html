@@ -852,6 +852,8 @@ location.reload();
 
   let drag = null;
 
+
+
 /* ===== INSERTION SNAP STATE ===== */
 let activeInsert = null; // { slot, index }
 
@@ -995,38 +997,9 @@ function applyPreview(slot, index, movingEl){
   }
 
 
-  function insertAtPointer(slot, el, clientX){
-    const kids = [...slot.querySelectorAll('.tile')].filter(k => k !== el);
-    if (kids.length === 0){
-      slot.appendChild(el);
-      return;
-    }
-    const before = kids.find(k => {
-      const r = k.getBoundingClientRect();
-      return (r.left + r.width/2) >= clientX;
-    });
-    if (before) slot.insertBefore(el, before);
-    else slot.appendChild(el);
-  }
 
-function cleanupHighlights(){
-  document.querySelectorAll('.slot').forEach(slot=>{
-    slot.classList.remove(
-      'highlight',
-      'preview-left',
-      'preview-right',
-      'preview-gap'
-    );
 
-    // IMPORTANT: force tiles back to normal spacing
-    slot.querySelectorAll('.tile').forEach(tile=>{
-      tile.style.marginLeft  = '';
-      tile.style.marginRight = '';
-    });
-  });
 
-  trashEl.classList.remove('highlight');
-}
 
 
 
@@ -1072,16 +1045,27 @@ function cleanupHighlights(){
       drag.el.remove();
       if(prev?.classList.contains('slot')) relayoutSlot(prev);
 
-    } else if(slot){
-      const prev = drag.el.parentElement;
-      if(prev?.classList?.contains('slot') && prev !== slot){
-        try { prev.removeChild(drag.el); } catch {}
-      }
-      insertAtPointer(slot, drag.el, e.clientX);
-      relayoutSlot(slot);
-      if(prev && prev !== slot && prev.classList.contains('slot')) relayoutSlot(prev);
+} else if (activeInsert && activeInsert.slot === slot) {
+  const { slot, index } = activeInsert;
+  const prev = drag.el.parentElement;
 
-    } else {
+  if (prev?.classList?.contains('slot')) {
+    try { prev.removeChild(drag.el); } catch {}
+  }
+
+  const tiles = [...slot.querySelectorAll('.tile')];
+  if (index >= tiles.length) {
+    slot.appendChild(drag.el);
+  } else {
+    slot.insertBefore(drag.el, tiles[index]);
+  }
+
+  relayoutSlot(slot);
+  if (prev && prev !== slot && prev.classList.contains('slot')) {
+    relayoutSlot(prev);
+  }
+}
+ else {
       if(drag.fromPalette){
         drag.el.remove();
       } else if (drag.originParent){
@@ -1105,6 +1089,7 @@ function cleanupHighlights(){
     cleanup();
   }
   function cleanup(){
+    clearPreview();
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
     document.removeEventListener('pointercancel', onCancel);
