@@ -1009,12 +1009,25 @@ function applyPreview(slot, index, movingEl){
     else slot.appendChild(el);
   }
 
-  function cleanupHighlights(){
-    document.querySelectorAll('.slot').forEach(s=>{
-      s.classList.remove('highlight','preview-left','preview-right','preview-gap');
+function cleanupHighlights(){
+  document.querySelectorAll('.slot').forEach(slot=>{
+    slot.classList.remove(
+      'highlight',
+      'preview-left',
+      'preview-right',
+      'preview-gap'
+    );
+
+    // IMPORTANT: force tiles back to normal spacing
+    slot.querySelectorAll('.tile').forEach(tile=>{
+      tile.style.marginLeft  = '';
+      tile.style.marginRight = '';
     });
-    trashEl.classList.remove('highlight');
-  }
+  });
+
+  trashEl.classList.remove('highlight');
+}
+
 
 
   function onUp(e){
