@@ -306,6 +306,30 @@ header .btn{
     max-height:32px;
   }
 }
+/* STEP F — PHONE: floating trash */
+@media (max-width:700px){
+  .trash-row{
+    position:fixed;
+    left:50%;
+    bottom:12px;
+    transform:translateX(-50%);
+    z-index:1000;
+    background:transparent;
+    pointer-events:none; /* default off */
+  }
+
+  .trash{
+    pointer-events:auto;
+    opacity:0;
+    transform:scale(.9);
+    transition:opacity .15s ease, transform .15s ease;
+  }
+
+  body.drag-active .trash{
+    opacity:1;
+    transform:scale(1);
+  }
+}
 
 </style>
 </head>
@@ -800,7 +824,7 @@ location.reload();
 
     el.addEventListener('pointerdown', (e)=>{
       if(e.button!==0) return;
-
+      document.body.classList.add('drag-active');
       const src = e.currentTarget;
       const parent = src.parentElement;
       const isPalette = [
@@ -960,6 +984,7 @@ location.reload();
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
     document.removeEventListener('pointercancel', onCancel);
+    document.body.classList.remove('drag-active');
     drag = null;
   }
 
