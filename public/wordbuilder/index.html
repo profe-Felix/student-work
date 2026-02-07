@@ -910,11 +910,12 @@ location.reload();
         return (r.left + r.width / 2) >= e.clientX;
       });
   
-      if (target) {
-        target.classList.add('preview-left');
-      } else {
-        tiles[tiles.length - 1].classList.add('preview-right');
-      }
+    if (target) {
+      slot.classList.add('preview-left');
+    } else {
+      slot.classList.add('preview-right');
+    }
+
     }
   }
 
