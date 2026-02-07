@@ -339,14 +339,48 @@ const canvas = document.getElementById("wordCanvas");
 const ctx = canvas.getContext("2d");
 
 let words = [], currentWordIndex = 0;
-let sliderX = 0, isDragging = false, sliderStart, sliderEnd;
+
+// Slider state (READ mode)
+let sliderX = 0, isDragging = false, sliderStart = 0, sliderEnd = 0;
 let freshWord = true;
+
+// Word parsing
 let fontPx = 64;
 let letters = [];
 let pollTimer = null; // for student polling
+
+// Rows (READ mode)
 let activeRow = 0;
 let rowCount = 1;
 let rowWidths = [];
+
+/* ==================== READ MODE: TYPESSET LAYOUT CACHE ====================
+   We will compute layout ONCE when the word loads (or on resize/orientation),
+   then draw from cached layout while sliding so the font/rows don't fight.
+============================================================================ */
+let READ_LAYOUT = null;
+/*
+READ_LAYOUT shape:
+{
+  fontPx,
+  padding,
+  wordGap,
+  pillH,
+  realTextY,
+  pillYOff,
+  maxRowWidth,
+  wordsBlocks,   // array of arrays of letter objects
+  blockRow,      // row index per word block
+  rowWidths,     // actual width per row
+  rowStartX,     // left X start per row
+  rowCount,
+  baseRowStep,
+  sliderGap,
+  layoutTopY,
+  // helper: rowY(r) = layoutTopY + r*baseRowStep
+}
+*/
+
 
 
 
@@ -380,9 +414,14 @@ function resizeCanvas() {
 
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 
-  if (words.length) drawCanvas();
-  else ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (words.length) {
+    typesetReadingLayout();
+    drawCanvas();
+  } else {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
 }
+
 
 
 window.addEventListener("resize", () => {
@@ -931,117 +970,84 @@ function setupWord(word) {
   resetSpellingState(true);
   if (gameMode === 'spell_tiles') buildTilesForCurrentWord();
 
-  drawCanvas();
-}
+   typesetReadingLayout();
+    drawCanvas();
+  }
 
-/* ==================== Reading draw (UNCHANGED visuals) ==================== */
-function drawReading() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "white";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+/* ==================== READ MODE: TYPESET ONCE ==================== */
+function typesetReadingLayout() {
+  if (!letters || !letters.length) return;
 
   const usableW = canvas.clientWidth;
   const usableH = canvas.clientHeight;
 
-  // scale from the smaller dimension (phone safe)
+  // ---------- FONT DECISION (ONCE) ----------
   const scale = Math.min(usableW / 768, usableH / 432);
-
   let baseFont = isDesktop ? 64 : 52;
-  let fontPx = Math.round(baseFont * scale * (isDesktop ? 1.5 : 1));
+  let fp = Math.round(baseFont * scale * (isDesktop ? 1.5 : 1));
 
-  // clamps
   const maxFont = isDesktop ? 130 : 72;
-  fontPx = Math.max(26, Math.min(maxFont, fontPx));
+  fp = Math.max(26, Math.min(maxFont, fp));
 
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
 
-  // auto-shrink on mobile if needed
-  while (!isDesktop && fontPx > 28) {
-    ctx.font = `bold ${fontPx}px Andika`;
-
-    const em = fontPx;
-    const minPill = Math.max(8, Math.round(em * 0.22));
-    const innerPad = Math.max(2, Math.round(em * 0.03));
+  // Desktop: allow ONE shrink pass if wrapping occurs
+  if (isDesktop) {
+    ctx.font = `bold ${fp}px Andika`;
+    const testMax = usableW * 0.9;
+    let testX = 0;
+    let rows = 1;
 
     letters.forEach(l => {
-      if (l.isPunctuation) { l.gw = 0; l.w = 0; return; }
-      if (l.isSpace) return;
-
-      let gw = ctx.measureText(l.text).width;
-      if (window.innerWidth < 700) gw *= 0.65;
-
-      l.gw = gw;
-      l.w = Math.max(gw + innerPad * 2, minPill);
+      if (l.isSpace) { testX += fp * 0.4; return; }
+      testX += l.w || 0;
+      if (testX > testMax) {
+        rows++;
+        testX = l.w || 0;
+      }
     });
 
-    const testRowStep = fontPx * 1.9;
-    const maxRowsGuess = Math.ceil(letters.length / 4);
-    const needed = maxRowsGuess * testRowStep;
-
-    if (needed < canvas.clientHeight * 0.8) break;
-    fontPx -= 2;
-  }
-
-  ctx.font = `bold ${fontPx}px Andika`;
-
-  // desktop: shrink sentences if they wrap
-// desktop: always recompute widths (and shrink if wrapping)
-if (isDesktop) {
-  const maxRowWidthTest = canvas.clientWidth * 0.9;
-  let xTest = 0;
-  let rows = 1;
-
-  letters.forEach(l => {
-    if (l.isSpace) { xTest += fontPx * 0.4; return; }
-    xTest += l.w || 0;
-    if (xTest > maxRowWidthTest) {
-      rows++;
-      xTest = l.w || 0;
+    if (rows > 1) {
+      fp = Math.round(fp * 0.55);
     }
-  });
-
-  // shrink only if wrapping
-  if (rows > 1) {
-    fontPx = Math.round(fontPx * 0.55);
-    ctx.font = `bold ${fontPx}px Andika`;
   }
 
-  // 🔴 ALWAYS recompute widths on desktop (this fixes centering)
+  // Final font lock
+  ctx.font = `bold ${fp}px Andika`;
+  fontPx = fp;
+
+  // ---------- RECOMPUTE LETTER WIDTHS (FINAL) ----------
   const em = fontPx;
   const minPill = Math.max(8, Math.round(em * 0.22));
   const innerPad = Math.max(2, Math.round(em * 0.03));
 
   letters.forEach(l => {
-    if (l.isPunctuation) { l.gw = 0; l.w = 0; return; }
+    if (l.isPunctuation) {
+      l.gw = 0;
+      l.w = 0;
+      return;
+    }
     if (l.isSpace) return;
 
-    const gw = ctx.measureText(l.text).width;
+    let gw = ctx.measureText(l.text).width;
+    if (window.innerWidth < 700) gw *= 0.65;
+
     l.gw = gw;
     l.w = Math.max(gw + innerPad * 2, minPill);
   });
-}
 
-
+  // ---------- ROW BREAKING ----------
   const padding = Math.max(2, Math.round(fontPx * 0.005));
   const wordGap = padding * 12;
   const pillH = Math.max(8, Math.round(fontPx * 0.10));
+  const maxRowWidth = usableW * 0.9;
 
-  const realTextY = Math.round(fontPx * 1.25);
-  const pillYOff = realTextY + Math.max(16, Math.round(fontPx * 0.5));
-
-  function pillRadius(w, h) {
-    return Math.max(2, Math.min(10, h / 2, w / 2 - 1));
-  }
-
-  const maxRowWidth = canvas.clientWidth * 0.9;
-
-  // Break into word blocks (your existing helper)
   const wordsBlocks = groupIntoWords(letters);
 
-  // ---------- PASS 1: decide which row each block goes on + rowWidths ----------
   const blockRow = [];
-  rowWidths = [];
+  const rowWidthsLocal = [];
+
   let row = 0;
   let x = 0;
 
@@ -1049,8 +1055,9 @@ if (isDesktop) {
     const block = wordsBlocks[bi];
 
     const blockWidth =
-      block.reduce((s, l) => s + (l.isPunctuation ? Math.max(10, ctx.measureText(l.text).width) : l.w), 0) +
-      padding * (block.length - 1);
+      block.reduce((s, l) =>
+        s + (l.isPunctuation ? Math.max(10, ctx.measureText(l.text).width) : l.w),
+      0) + padding * (block.length - 1);
 
     if (x > 0 && (x + blockWidth) > maxRowWidth) {
       row++;
@@ -1058,56 +1065,95 @@ if (isDesktop) {
     }
 
     blockRow[bi] = row;
-
     x += blockWidth;
-    rowWidths[row] = Math.max(rowWidths[row] || 0, x);
+    rowWidthsLocal[row] = Math.max(rowWidthsLocal[row] || 0, x);
 
     if (bi !== wordsBlocks.length - 1) {
       x += wordGap;
-      rowWidths[row] = Math.max(rowWidths[row] || 0, x);
+      rowWidthsLocal[row] = Math.max(rowWidthsLocal[row] || 0, x);
     }
   }
 
-  rowCount = row + 1;
-  activeRow = Math.min(activeRow, rowCount - 1);
+  const rowCountLocal = row + 1;
 
-  // center each row based on its actual width
-const leftMargin = 30;
-const rowStartX = new Array(rowCount).fill(leftMargin);
+  // ---------- ROW START POSITIONS ----------
+  const leftMargin = 30;
+  const rowStartX = new Array(rowCountLocal).fill(leftMargin);
 
-
-  // vertical placement (NOW that we know rowCount)
+  // ---------- VERTICAL PLACEMENT ----------
   const baseRowStep = fontPx * 1.6;
   const sliderGap = Math.round(fontPx * 0.9);
   const sliderClearance = pillH + fontPx * 0.9;
 
-  const blockHeight = rowCount * baseRowStep + sliderClearance;
+  const blockHeight = rowCountLocal * baseRowStep + sliderClearance;
   const isPortrait = window.innerHeight > window.innerWidth;
 
   const layoutTopY = isPortrait
     ? Math.round(fontPx * 0.4)
     : Math.max(Math.round(fontPx * 0.25), (canvas.clientHeight - blockHeight) / 3.5);
 
-  const rowY = (r) => layoutTopY + r * baseRowStep;
+  // ---------- CACHE EVERYTHING ----------
+  READ_LAYOUT = {
+    fontPx,
+    padding,
+    wordGap,
+    pillH,
+    realTextY: Math.round(fontPx * 1.25),
+    pillYOff: Math.round(fontPx * 1.25) + Math.max(16, Math.round(fontPx * 0.5)),
+    maxRowWidth,
+    wordsBlocks,
+    blockRow,
+    rowWidths: rowWidthsLocal,
+    rowStartX,
+    rowCount: rowCountLocal,
+    baseRowStep,
+    sliderGap,
+    layoutTopY
+  };
 
-  // ---------- PASS 2: draw ----------
-  for (let bi = 0; bi < wordsBlocks.length; bi++) {
-    const block = wordsBlocks[bi];
-    const r = blockRow[bi];
-    let drawX = rowStartX[r];
+  // Reset slider bounds for row 0
+  activeRow = 0;
+  rowCount = rowCountLocal;
+  rowWidths = rowWidthsLocal;
 
-    // advance drawX by summing earlier blocks in same row
-    // (cheap approach: walk back until row changes)
+  sliderStart = rowStartX[0];
+  sliderEnd = sliderStart + (rowWidthsLocal[0] || maxRowWidth);
+  sliderX = sliderStart;
+  freshWord = true;
+}
+
+/* ==================== Reading draw (UNCHANGED visuals) ==================== */
+function drawReading() {
+  if (!READ_LAYOUT) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const L = READ_LAYOUT;
+  ctx.font = `bold ${L.fontPx}px Andika`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+
+  const rowY = (r) => L.layoutTopY + r * L.baseRowStep;
+
+  // ---------- DRAW WORDS ----------
+  for (let bi = 0; bi < L.wordsBlocks.length; bi++) {
+    const block = L.wordsBlocks[bi];
+    const r = L.blockRow[bi];
+    let drawX = L.rowStartX[r];
+
+    // advance X by previous blocks in same row
     for (let bj = bi - 1; bj >= 0; bj--) {
-      if (blockRow[bj] !== r) break;
+      if (L.blockRow[bj] !== r) break;
 
-      const prev = wordsBlocks[bj];
+      const prev = L.wordsBlocks[bj];
       const prevW =
-        prev.reduce((s, l) => s + (l.isPunctuation ? Math.max(10, ctx.measureText(l.text).width) : l.w), 0) +
-        padding * (prev.length - 1);
+        prev.reduce((s, l) =>
+          s + (l.isPunctuation ? Math.max(10, ctx.measureText(l.text).width) : l.w),
+        0) + L.padding * (prev.length - 1);
 
-      drawX += prevW;
-      drawX += wordGap; // because if bj exists, there was a gap after it
+      drawX += prevW + L.wordGap;
     }
 
     for (let li = 0; li < block.length; li++) {
@@ -1115,18 +1161,18 @@ const rowStartX = new Array(rowCount).fill(leftMargin);
 
       // punctuation
       if (letter.isPunctuation) {
-        const yText = rowY(r) + realTextY;
+        const yText = rowY(r) + L.realTextY;
         const pw = Math.max(10, ctx.measureText(letter.text).width);
 
         ctx.fillStyle = (r === activeRow && sliderX >= drawX + 1) ? "black" : "lightgrey";
         ctx.fillText(letter.text, drawX + pw / 2, yText);
 
-        drawX += pw + padding;
+        drawX += pw + L.padding;
         continue;
       }
 
-      const yText = rowY(r) + realTextY;
-      const yPill = rowY(r) + pillYOff;
+      const yText = rowY(r) + L.realTextY;
+      const yPill = rowY(r) + L.pillYOff;
       const pillW = letter.w;
 
       ctx.fillStyle = (r === activeRow && sliderX >= drawX + 1) ? "black" : "lightgrey";
@@ -1141,24 +1187,24 @@ const rowStartX = new Array(rowCount).fill(leftMargin);
         ctx.lineWidth = 3;
         ctx.fillStyle = (sliderX >= drawX + 1) ? ctx.strokeStyle : "white";
 
-        const rr = pillRadius(pillW, pillH);
-        roundRect(drawX, yPill, pillW, pillH, rr, true, true);
+        const rr = Math.max(2, Math.min(10, L.pillH / 2, pillW / 2 - 1));
+        roundRect(drawX, yPill, pillW, L.pillH, rr, true, true);
       }
 
-      drawX += pillW + padding;
+      drawX += pillW + L.padding;
     }
   }
 
-  // slider line for active row
-  const thisRowW = rowWidths[activeRow] || maxRowWidth;
-  sliderStart = rowStartX[activeRow];
+  // ---------- SLIDER ----------
+  const thisRowW = L.rowWidths[activeRow] || L.maxRowWidth;
+  sliderStart = L.rowStartX[activeRow];
   sliderEnd = sliderStart + thisRowW;
 
   const lineY =
     rowY(activeRow) +
-    pillYOff +
-    pillH +
-    sliderGap;
+    L.pillYOff +
+    L.pillH +
+    L.sliderGap;
 
   ctx.lineCap = "round";
   ctx.strokeStyle = "#ccc";
@@ -1186,6 +1232,7 @@ const rowStartX = new Array(rowCount).fill(leftMargin);
     sliderX = Math.min(Math.max(sliderX, sliderStart), sliderEnd);
   }
 }
+
 
 
 /* ==================== NEW: Spelling renderer (syllable boxes + underlines) ==================== */
