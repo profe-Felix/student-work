@@ -197,34 +197,39 @@
     padding:0 10px;
     font-size:18px;
   }
- /* === INSERTION PREVIEW (STRONGER + VISIBLE) === */
-.slot.preview-left .tile{
-  margin-left:22px;
-}
+ /* ===== INSERTION PREVIEW (SNAP + SPLIT) ===== */
+ 
+ /* Edge insert: blue bar at left/right edge */
+ .slot.preview-edge-left::before,
+ .slot.preview-edge-right::after{
+   content:'';
+   position:absolute;
+   top:6px;
+   bottom:6px;
+   width:4px;
+   background:#2563eb;
+   border-radius:4px;
+   opacity:.95;
+ }
+ .slot.preview-edge-left::before{ left:8px; }
+ .slot.preview-edge-right::after{ right:8px; }
+ 
+ /* Between-tiles insert: shift ONLY the tile after the insertion point */
+ .slot .tile.preview-after{
+   margin-left:28px;
+ }
+ 
+ /* Empty slot preview */
+ .slot.preview-empty{
+   outline:3px dashed #93c5fd;
+   outline-offset:4px;
+ }
+ 
+ /* Phone: slightly smaller split */
+ @media (max-width:700px){
+   .slot .tile.preview-after{ margin-left:22px; }
+ }
 
-.slot.preview-right .tile{
-  margin-right:22px;
-}
-
-/* blue insertion bar */
-.slot.preview-left::before,
-.slot.preview-right::after{
-  content:'';
-  position:absolute;
-  top:6px;
-  bottom:6px;
-  width:4px;
-  background:#2563eb;
-  border-radius:4px;
-}
-
-.slot.preview-left::before{
-  left:8px;
-}
-
-.slot.preview-right::after{
-  right:8px;
-}
 
  /* STEP 2 — PHONE SHRINK MODE */
  @media (max-width:700px){
@@ -358,19 +363,6 @@ header .btn{
     opacity:1;
     transform:scale(1);
   }
-}
-/* STEP G-1 — insertion preview visuals */
-.slot.preview-gap{
-  outline:3px dashed #93c5fd;
-  outline-offset:4px;
-}
-
-.slot.preview-left .tile{
-  margin-left:14px;
-}
-
-.slot.preview-right .tile{
-  margin-right:14px;
 }
 
 </style>
@@ -860,6 +852,69 @@ location.reload();
 
   let drag = null;
 
+/* ===== INSERTION SNAP STATE ===== */
+let activeInsert = null; // { slot, index }
+
+function clearPreview(){
+  document.querySelectorAll('.slot').forEach(s=>{
+    s.classList.remove(
+      'preview-edge-left',
+      'preview-edge-right',
+      'preview-empty'
+    );
+  });
+  document.querySelectorAll('.tile.preview-after').forEach(t=>{
+    t.classList.remove('preview-after');
+  });
+  activeInsert = null;
+}
+
+function getNearestIndex(slot, clientX, movingEl){
+  const tiles = [...slot.querySelectorAll('.tile')].filter(t => t !== movingEl);
+
+  if (tiles.length === 0) return 0;
+
+  const first = tiles[0].getBoundingClientRect();
+  const last  = tiles[tiles.length - 1].getBoundingClientRect();
+
+  if (clientX < first.left + first.width / 2) return 0;
+  if (clientX > last.left  + last.width  / 2) return tiles.length;
+
+  for (let i = 0; i < tiles.length - 1; i++){
+    const a = tiles[i].getBoundingClientRect();
+    const b = tiles[i + 1].getBoundingClientRect();
+    const mid = (a.right + b.left) / 2;
+    if (clientX < mid) return i + 1;
+  }
+
+  return tiles.length;
+}
+
+function applyPreview(slot, index, movingEl){
+  clearPreview();
+  activeInsert = { slot, index };
+
+  const tiles = [...slot.querySelectorAll('.tile')].filter(t => t !== movingEl);
+
+  if (tiles.length === 0){
+    slot.classList.add('preview-empty');
+    return;
+  }
+
+  if (index === 0){
+    slot.classList.add('preview-edge-left');
+    return;
+  }
+
+  if (index === tiles.length){
+    slot.classList.add('preview-edge-right');
+    return;
+  }
+
+  tiles[index].classList.add('preview-after');
+}
+
+
   function makeDraggable(el, opts){
     const cloneOnDrag = !!opts?.cloneOnDrag;
     el.style.touchAction = 'none';
@@ -914,63 +969,31 @@ location.reload();
   function moveTo(el,x,y){ el.style.left=(x-28)+'px'; el.style.top=(y-28)+'px'; }
 
   function onMove(e){
-    if(!drag || e.pointerId!==drag.pointerId) return;
+    if(!drag || e.pointerId !== drag.pointerId) return;
+  
     moveTo(drag.el, e.clientX, e.clientY);
-
-  // Clear previous previews
-  document.querySelectorAll('.slot').forEach(s=>{
-    s.classList.remove('preview-left','preview-right','preview-gap');
-  });
   
-  const t = document.elementFromPoint(e.clientX, e.clientY);
-  const slot = t?.closest?.('.slot');
-  const kind = drag.el.dataset.kind;
-
-  /* 
-  if (slot) {
-    const rect = slot.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const edgeZone = 24; // px from left/right edge
+    clearPreview();
   
-    slot.classList.remove('preview-left', 'preview-right');
+    const t = document.elementFromPoint(e.clientX, e.clientY);
+    const slot = t?.closest?.('.slot');
+    const kind = drag.el.dataset.kind;
   
-    if (x < edgeZone) {
-      slot.classList.add('preview-left');
-    } else if (x > rect.width - edgeZone) {
-      slot.classList.add('preview-right');
-    }
-  }
-  */
-
-   
-  if (slot && kind !== 'captool' && kind !== 'accenttool') {
-    const tiles = [...slot.querySelectorAll('.tile')];
-  
-    if (!tiles.length) {
-      // Empty slot → show full gap
-      slot.classList.add('preview-gap');
-    } else {
-      // Find insertion point
-      const target = tiles.find(tile => {
-        const r = tile.getBoundingClientRect();
-        return (r.left + r.width / 2) >= e.clientX;
-      });
-  
-    if (target) {
-      slot.classList.add('preview-left');
-    } else {
-      slot.classList.add('preview-right');
-    }
-
-    }
-  }
-
-
+    // Trash highlight (unchanged behavior)
     trashEl.classList.toggle(
       'highlight',
-      kind !== 'captool' && kind !== 'accenttool' && !!t?.closest?.('#trash')
+      kind !== 'captool' &&
+      kind !== 'accenttool' &&
+      !!t?.closest?.('#trash')
     );
+  
+    // Tools do NOT get insertion previews
+    if (!slot || kind === 'captool' || kind === 'accenttool') return;
+  
+    const index = getNearestIndex(slot, e.clientX, drag.el);
+    applyPreview(slot, index, drag.el);
   }
+
 
   function insertAtPointer(slot, el, clientX){
     const kids = [...slot.querySelectorAll('.tile')].filter(k => k !== el);
