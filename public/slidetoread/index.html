@@ -675,7 +675,8 @@ if (WORDS_OVERRIDE.length) {
 
 if (supaLists && Array.isArray(supaLists[listName])) {
 
-  words = supaLists[listName].slice();
+  words = supaLists[listName].map(w => w);
+
 
   // 👇 ADD THIS
   if (ORDER_MODE !== 'fixed') {
@@ -729,18 +730,19 @@ if (supaLists?.[listName]) {
 
   
   if (Array.isArray(resolvedEntry)) {
-    words = resolvedEntry.slice();
+    words = resolvedEntry.map(w => w);
   } else if (resolvedEntry.all) {
   
     const scopeSel = document.getElementById("scopeSelect");
     const scope = scopeSel ? scopeSel.value : "all";  // "all" | "new"
   
     words = (scope === "new")
-      ? (resolvedEntry.new || []).slice()
-      : resolvedEntry.all.slice();
+    ? (resolvedEntry.new || []).map(w => w)
+    : resolvedEntry.all.map(w => w);
+
   }
  else if (resolvedEntry.new) {
-    words = resolvedEntry.new.slice();
+    words = resolvedEntry.new.map(w => w);
   } else {
     words = [];
   }
