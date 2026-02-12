@@ -1707,29 +1707,36 @@ function firstSyllable(word) {
 
 function playWordAudio(word) {
 
-  // detect sentence objects vs normal words
-  const isObject = typeof word === "object";
+  // 👇 Detect sentence object vs normal word
+  const isObject = (typeof word === "object" && word !== null);
 
-  const rawText  = isObject ? word.text : word;
-  const audioId  = isObject ? word.id   : null;
+  const rawText = isObject ? (word.text || "") : (word || "");
+  const audioId = isObject ? (word.id || "") : "";
 
   const wordNorm = normalizeName(rawText);
   const syllNorm = normalizeName(firstSyllable(rawText));
 
-  // sentence objects try ID first
-  const candidates = isObject ? [
-    `audio/${audioId}.mp3`,
-    `audio/${audioId}.wav`,
-    `audio/${encodeURIComponent(rawText)}.mp3`,
-    `audio/${encodeURIComponent(rawText)}.wav`
-  ] : [
-    `audio/${encodeURIComponent(rawText)}.mp3`,
-    `audio/${encodeURIComponent(rawText)}.wav`,
-    `audio/${wordNorm}.mp3`,
-    `audio/${wordNorm}.wav`,
-    `audio/${syllNorm}.mp3`,
-    `audio/${syllNorm}.wav`,
-  ];
+  // ⭐ NEW LOGIC:
+  // If sentence object has ID → ONLY try ID audio first
+  // Do NOT attempt sentence text filenames anymore.
+  let candidates;
+
+  if (isObject && audioId) {
+    candidates = [
+      `audio/${audioId}.mp3`,
+      `audio/${audioId}.wav`
+    ];
+  } else {
+    // normal word fallback (unchanged behavior)
+    candidates = [
+      `audio/${encodeURIComponent(rawText)}.mp3`,
+      `audio/${encodeURIComponent(rawText)}.wav`,
+      `audio/${wordNorm}.mp3`,
+      `audio/${wordNorm}.wav`,
+      `audio/${syllNorm}.mp3`,
+      `audio/${syllNorm}.wav`,
+    ];
+  }
 
   const btn = playBtn;
   const label = btn.textContent;
@@ -1765,6 +1772,7 @@ function playWordAudio(word) {
 
   tryNext();
 }
+
 
 
 /* ==================== NEW: Spelling mechanics (keyboard + tiles) ==================== */
