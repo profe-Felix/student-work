@@ -1702,13 +1702,25 @@ function firstSyllable(word) {
 }
 
 function playWordAudio(word) {
-  const raw = (word || "").trim();   // ✅ keep original casing
-  const wordNorm = normalizeName(word);
-  const syllNorm = normalizeName(firstSyllable(word));
 
-  const candidates = [
-    `audio/${encodeURIComponent(raw)}.mp3`,
-    `audio/${encodeURIComponent(raw)}.wav`,
+  // detect sentence objects vs normal words
+  const isObject = typeof word === "object";
+
+  const rawText  = isObject ? word.text : word;
+  const audioId  = isObject ? word.id   : null;
+
+  const wordNorm = normalizeName(rawText);
+  const syllNorm = normalizeName(firstSyllable(rawText));
+
+  // sentence objects try ID first
+  const candidates = isObject ? [
+    `audio/${audioId}.mp3`,
+    `audio/${audioId}.wav`,
+    `audio/${encodeURIComponent(rawText)}.mp3`,
+    `audio/${encodeURIComponent(rawText)}.wav`
+  ] : [
+    `audio/${encodeURIComponent(rawText)}.mp3`,
+    `audio/${encodeURIComponent(rawText)}.wav`,
     `audio/${wordNorm}.mp3`,
     `audio/${wordNorm}.wav`,
     `audio/${syllNorm}.mp3`,
@@ -1721,23 +1733,35 @@ function playWordAudio(word) {
   btn.textContent = '🔊 Reproduciendo…';
 
   let i = 0;
+
   const tryNext = () => {
     if (i >= candidates.length) {
       btn.disabled = false;
       btn.textContent = label;
-      console.warn('No audio found for:', word, candidates);
+      console.warn('No audio found for:', rawText, candidates);
       return;
     }
+
     const src = candidates[i++];
     const a = new Audio(src);
     a.playsInline = true;
-    a.onended = () => { btn.disabled = false; btn.textContent = label; };
+
+    a.onended = () => {
+      btn.disabled = false;
+      btn.textContent = label;
+    };
+
     a.onerror = () => tryNext();
+
     const p = a.play();
-    if (p && typeof p.then === 'function') p.catch(() => tryNext());
+    if (p && typeof p.then === 'function') {
+      p.catch(() => tryNext());
+    }
   };
+
   tryNext();
 }
+
 
 /* ==================== NEW: Spelling mechanics (keyboard + tiles) ==================== */
 function tileDisplayFor(g){
