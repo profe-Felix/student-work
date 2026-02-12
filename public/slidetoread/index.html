@@ -771,18 +771,9 @@ if (Array.isArray(resolvedEntry)) {
   }
 
   else if (resolvedEntry.new) {
-  
-    // ⭐ KEEP sentence objects EXACTLY as they are
-    if (typeof resolvedEntry.new[0] === "object") {
-      words = resolvedEntry.new.slice();   // DO NOT TOUCH IDS
-    } else {
-      // normal word list fallback
-      words = resolvedEntry.new.map((w, i) => ({
-        text: w,
-        id: `${document.getElementById("moduleSelect").value}.S${i+1}`
-      }));
-    }
+    words = resolvedEntry.new.slice();   // ⭐ KEEP ORIGINAL FORMAT
   }
+
 
  else {
     words = [];
