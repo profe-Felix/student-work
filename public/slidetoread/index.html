@@ -76,6 +76,43 @@
       color:#666;
       margin-top:4px;
     }
+
+    /* ===== Unified Control Bar (Desktop + iPad + Phone) ===== */
+    .controlBar{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      flex-wrap:wrap;          /* wraps cleanly on phones */
+      margin-top:10px;
+    }
+    
+    .controlBar button,
+    .controlBar select{
+      font-size:16px;
+      padding:6px 10px;
+    }
+    
+    .modeLabel{
+      font-weight:600;
+    }
+    
+    /* Tablet / small laptop tightening */
+    @media (max-width:900px){
+      .controlBar{
+        gap:6px;
+      }
+    }
+    
+    /* Phone sizing */
+    @media (max-width:600px){
+      .controlBar button,
+      .controlBar select{
+        font-size:15px;
+        padding:6px 8px;
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -104,31 +141,32 @@
   </select>
 
 
-  <div id="controls">
-    <button id="playAudio" disabled>🔊 Play Audio</button>
-    <button id="prevWord">⟵ Prev</button>
-    <button id="nextWord">Next ⟶</button>
-  </div>
-
-  <!-- NEW: mode bar (does not affect sync / reading) -->
-  <div id="modeBar">
-    <label style="font-size:18px;">Modo:</label>
+  <div class="controlBar">
+  
+    <button id="backspaceSpell" disabled>⌫</button>
+    <button id="clearSpell" disabled>🧽 Clear</button>
+  
+    <span class="modeLabel">Modo:</span>
     <select id="gameModeSelect">
       <option value="read" selected>📖 Leer (Slider)</option>
       <option value="spell_kb">⌨️ Deletrear (Teclado)</option>
       <option value="spell_tiles">🧩 Deletrear (Fichas)</option>
     </select>
-
+  
     <select id="tileModeSelect" style="display:none;">
       <option value="exact" selected>Fichas: Exactas</option>
       <option value="vowels">Fichas: Consonantes + Vocales</option>
       <option value="distractors">Fichas: + Distractores</option>
     </select>
-
+  
+    <button id="playAudio" disabled>🔊 Play Audio</button>
+    <button id="prevWord">⟵ Prev</button>
+    <button id="nextWord">Next ⟶</button>
+  
     <button id="submitSpell" disabled>✅ Submit</button>
-    <button id="backspaceSpell" disabled>⌫</button>
-    <button id="clearSpell" disabled>🧽 Clear</button>
+  
   </div>
+
   <div id="hintLine"></div>
 
   <div id="tileRack"></div>
