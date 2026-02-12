@@ -730,8 +730,22 @@ if (supaLists?.[listName]) {
 
   
   if (Array.isArray(resolvedEntry)) {
-    words = resolvedEntry.map(w => w);
-  } else if (resolvedEntry.all) {
+  
+    const modVal = document.getElementById("moduleSelect")?.value || "M1";
+  
+    words = resolvedEntry.map((w, i) => {
+  
+      // ⭐ Already sentence object → keep
+      if (typeof w === "object") return w;
+  
+      // ⭐ Convert STRING → sentence object
+      return {
+        text: w,
+        id: `${modVal}.S${i+1}`
+      };
+    });
+  }
+ else if (resolvedEntry.all) {
   
     const scopeSel = document.getElementById("scopeSelect");
     const scope = scopeSel ? scopeSel.value : "all";  // "all" | "new"
