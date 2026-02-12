@@ -731,6 +731,12 @@ if (supaLists?.[listName]) {
 
 
   const entry = supaLists[listName];
+  // 🔥 FORCE sentence arrays to stay objects
+  Object.keys(entry || {}).forEach(k => {
+    if (entry[k]?.new) {
+      entry[k].new = ensureSentenceObjects(entry[k].new, k);
+    }
+  });
 
   // If Sílabas chosen, default to Module M1
   let resolvedEntry = entry;
