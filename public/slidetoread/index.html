@@ -605,7 +605,7 @@ function buildModuleAll(modules) {
 
     running = running.concat(fresh);
 
-    modules[k].all = Array.from(new Set(running));
+    modules[k].all = running.slice();   // KEEP OBJECTS — DO NOT USE Set()
   });
 
   return modules;
