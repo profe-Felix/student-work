@@ -956,7 +956,13 @@ function getSoundType(letter, nextLetter = "") {
 
 /* ==================== Word setup (keeps original reading behavior) ==================== */
 function setupWord(word) {
-    letters = parseWord(word);
+
+  // 🔥 NEW — support both strings AND sentence objects
+  const displayText = (typeof word === "string")
+    ? word
+    : word.text;
+
+  letters = parseWord(displayText);
 
   const padding = 6; // tighter between letters
 
@@ -965,11 +971,9 @@ function setupWord(word) {
   const em = Math.round((isDesktop ? 64 : 52) * scale);
   ctx.font = `bold ${em}px Andika`;
 
-  
   // much smaller minimum + much smaller side padding
   const minPill = Math.max(8, Math.round(em * 0.22));
   const innerPad = Math.max(2, Math.round(em * 0.03));
-
 
   letters.forEach(l => {
 
@@ -979,19 +983,18 @@ function setupWord(word) {
       l.w = 0;
       return;
     }
-  
+
     let gw = ctx.measureText(l.text).width;
-    
+
     // iPhone / small screens: compress glyph width
     if (window.innerWidth < 700) {
       gw *= 0.65;
     }
-    
+
     l.gw = gw;
     l.w = Math.max(gw + innerPad * 2, minPill);
 
   });
-
 
   const totalWidth = letters.reduce((s, l) => s + l.w, 0) + padding * (letters.length - 1);
 
@@ -1002,15 +1005,14 @@ function setupWord(word) {
   activeRow = 0;
   freshWord = true;
 
-
-
   // NEW: reset spelling state when word changes
   resetSpellingState(true);
   if (gameMode === 'spell_tiles') buildTilesForCurrentWord();
 
-   typesetReadingLayout();
-    drawCanvas();
-  }
+  typesetReadingLayout();
+  drawCanvas();
+}
+
 
 /* ==================== READ MODE: TYPESET ONCE ==================== */
 function typesetReadingLayout() {
