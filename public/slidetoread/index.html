@@ -1662,7 +1662,7 @@ function firstSyllable(word) {
 }
 
 function playWordAudio(word) {
-  const raw = (word || "").toLowerCase().trim();
+  const raw = (word || "").trim();   // ✅ keep original casing
   const wordNorm = normalizeName(word);
   const syllNorm = normalizeName(firstSyllable(word));
 
