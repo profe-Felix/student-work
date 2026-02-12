@@ -1753,7 +1753,7 @@ function firstSyllable(word) {
 function playWordAudio(word) {
 
   // 👇 Detect sentence object vs normal word
-  const isObject = (typeof word === "object" && word !== null);
+  const isObject = (word && typeof word === "object" && word.id);
 
   const rawText = isObject ? (word.text || "") : (word || "");
   const audioId = isObject ? (word.id || "") : "";
