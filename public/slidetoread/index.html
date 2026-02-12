@@ -745,16 +745,20 @@ if (supaLists?.[listName]) {
       };
     });
   }
- else if (resolvedEntry.all) {
+  else if (resolvedEntry.all) {
   
     const scopeSel = document.getElementById("scopeSelect");
-    const scope = scopeSel ? scopeSel.value : "all";  // "all" | "new"
+    const scope = scopeSel ? scopeSel.value : "all";
+  
+    // ⭐ CRITICAL FIX:
+    // DO NOT rebuild or map objects.
+    // Keep sentence objects intact so audioId survives.
   
     words = (scope === "new")
-    ? (resolvedEntry.new || []).map(w => w)
-    : resolvedEntry.all.map(w => w);
-
+      ? (resolvedEntry.new || []).slice()
+      : resolvedEntry.all.slice();
   }
+
   else if (resolvedEntry.new) {
   
     // ⭐ KEEP sentence objects EXACTLY as they are
