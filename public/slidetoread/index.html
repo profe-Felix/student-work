@@ -749,7 +749,10 @@ if (Array.isArray(resolvedEntry)) {
   const modVal = document.getElementById("moduleSelect")?.value || "M1";
 
   // 🔥 FORCE sentences to become objects if needed
-  words = ensureSentenceObjects(resolvedEntry, modVal).slice();
+  words = (listName === "Oraciones")
+  ? ensureSentenceObjects(resolvedEntry, modVal).slice()
+  : resolvedEntry.slice();
+
 }
 
 
