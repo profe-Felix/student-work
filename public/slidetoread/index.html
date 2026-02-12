@@ -741,9 +741,19 @@ if (supaLists?.[listName]) {
     : resolvedEntry.all.map(w => w);
 
   }
- else if (resolvedEntry.new) {
-    words = resolvedEntry.new.map(w => w);
-  } else {
+  else if (resolvedEntry.new) {
+    words = resolvedEntry.new.map((w, i) => {
+      // ⭐ If already an object, keep it
+      if (typeof w === "object") return w;
+  
+      // ⭐ If string, convert to sentence object
+      return {
+        text: w,
+        id: `${document.getElementById("moduleSelect").value}.S${i+1}`
+      };
+    });
+  }
+ else {
     words = [];
   }
   
