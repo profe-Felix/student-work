@@ -729,22 +729,20 @@ if (supaLists?.[listName]) {
 
 
   
-  if (Array.isArray(resolvedEntry)) {
-  
+if (Array.isArray(resolvedEntry)) {
+
+  // ⭐ DO NOT TOUCH sentence objects
+  if (typeof resolvedEntry[0] === "object") {
+    words = resolvedEntry.slice();   // keep {id,text}
+  } else {
     const modVal = document.getElementById("moduleSelect")?.value || "M1";
-  
-    words = resolvedEntry.map((w, i) => {
-  
-      // ⭐ Already sentence object → keep
-      if (typeof w === "object") return w;
-  
-      // ⭐ Convert STRING → sentence object
-      return {
-        text: w,
-        id: `${modVal}.S${i+1}`
-      };
-    });
+    words = resolvedEntry.map((w, i) => ({
+      text: w,
+      id: `${modVal}.S${i+1}`
+    }));
   }
+}
+
   else if (resolvedEntry.all) {
   
     const scopeSel = document.getElementById("scopeSelect");
