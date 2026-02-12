@@ -722,13 +722,6 @@ if (supaLists?.[listName]) {
 
   // If you later add modules, you can build "all" arrays here.
   // For now this line is harmless if buildModuleAll doesn't exist yet.
-  Object.keys(supaLists).forEach(k => {
-    if (supaLists[k] && !Array.isArray(supaLists[k])) {
-      buildModuleAll(supaLists[k]);
-    }
-  });
-
-
 
   const entry = supaLists[listName];
   // 🔥 FORCE sentence arrays to stay objects
