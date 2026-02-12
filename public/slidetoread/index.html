@@ -1815,7 +1815,12 @@ function resetSpellingState(hard){
 
   if (!words.length) return;
 
-  targetWordRaw = (words[currentWordIndex] || "").toLowerCase().trim();
+  const current = words[currentWordIndex];
+  targetWordRaw = (typeof current === "object"
+    ? (current.text || "")
+    : (current || "")
+  ).toLowerCase().trim();
+
   const g = parseWord(targetWordRaw).map(o=>o.text);
 
   targetGraphemes = g.slice();
