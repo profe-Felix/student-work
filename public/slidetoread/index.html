@@ -957,21 +957,19 @@ function getSoundType(letter, nextLetter = "") {
 /* ==================== Word setup (keeps original reading behavior) ==================== */
 function setupWord(word) {
 
-  // 🔥 NEW — support both strings AND sentence objects
-  const displayText = (typeof word === "string")
-    ? word
-    : word.text;
+  // 🔥 SUPPORT BOTH STRINGS AND SENTENCE OBJECTS
+  const rawText = (typeof word === "object") ? word.text : word;
 
-  letters = parseWord(displayText);
+  // ALWAYS parse using plain text
+  letters = parseWord(rawText);
 
-  const padding = 6; // tighter between letters
+  const padding = 6;
 
-  // local provisional font size (real one is calculated later in drawReading)
+  // local provisional font size (real one is calculated later)
   const scale = Math.min(canvas.clientWidth / 768, canvas.clientHeight / 432);
   const em = Math.round((isDesktop ? 64 : 52) * scale);
   ctx.font = `bold ${em}px Andika`;
 
-  // much smaller minimum + much smaller side padding
   const minPill = Math.max(8, Math.round(em * 0.22));
   const innerPad = Math.max(2, Math.round(em * 0.03));
 
@@ -986,17 +984,18 @@ function setupWord(word) {
 
     let gw = ctx.measureText(l.text).width;
 
-    // iPhone / small screens: compress glyph width
+    // iPhone / small screens compression
     if (window.innerWidth < 700) {
       gw *= 0.65;
     }
 
     l.gw = gw;
     l.w = Math.max(gw + innerPad * 2, minPill);
-
   });
 
-  const totalWidth = letters.reduce((s, l) => s + l.w, 0) + padding * (letters.length - 1);
+  const totalWidth =
+    letters.reduce((s, l) => s + l.w, 0) +
+    padding * (letters.length - 1);
 
   sliderStart = (canvas.clientWidth - totalWidth) / 2;
   sliderEnd   = sliderStart + totalWidth;
@@ -1005,13 +1004,16 @@ function setupWord(word) {
   activeRow = 0;
   freshWord = true;
 
-  // NEW: reset spelling state when word changes
+  // 🔥 IMPORTANT — make spelling system read TEXT not object
+  targetWordRaw = rawText.toLowerCase().trim();
+
   resetSpellingState(true);
   if (gameMode === 'spell_tiles') buildTilesForCurrentWord();
 
   typesetReadingLayout();
   drawCanvas();
 }
+
 
 
 /* ==================== READ MODE: TYPESET ONCE ==================== */
