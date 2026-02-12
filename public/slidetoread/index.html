@@ -575,6 +575,21 @@ function updateModuleUIVisibility(listName, entry){
   if (modSel) modSel.style.display = isModuleList ? "inline-block" : "none";
   if (scopeSel) scopeSel.style.display = isModuleList ? "inline-block" : "none";
 }
+function ensureSentenceObjects(arr, modTag) {
+  if (!Array.isArray(arr) || arr.length === 0) return arr;
+  if (typeof arr[0] === "object") return arr;
+  if (typeof arr[0] !== "string") return arr;
+
+  // If it looks like a sentence (contains spaces), convert to {id,text}
+  if (arr[0].includes(" ")) {
+    return arr.map((t, i) => ({
+      id: `${modTag}.S${i + 1}`,
+      text: (t || "").trim()
+    }));
+  }
+
+  return arr;
+}
 
 function buildModuleAll(modules) {
   const ordered = Object.keys(modules).sort(); // M1,M2,M3...
@@ -732,17 +747,12 @@ if (supaLists?.[listName]) {
   
 if (Array.isArray(resolvedEntry)) {
 
-  // ⭐ DO NOT TOUCH sentence objects
-  if (typeof resolvedEntry[0] === "object") {
-    words = resolvedEntry.slice();   // keep {id,text}
-  } else {
-    const modVal = document.getElementById("moduleSelect")?.value || "M1";
-    words = resolvedEntry.map((w, i) => ({
-      text: w,
-      id: `${modVal}.S${i+1}`
-    }));
-  }
+  const modVal = document.getElementById("moduleSelect")?.value || "M1";
+
+  // 🔥 FORCE sentences to become objects if needed
+  words = ensureSentenceObjects(resolvedEntry, modVal).slice();
 }
+
 
   else if (resolvedEntry.all) {
   
