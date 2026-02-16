@@ -1594,7 +1594,8 @@ function syllabifyEn(wordRaw){
       const columns = (sylls && sylls.length)
         ? buildColumnsForSyllables(sylls)
         : buildColumnsForLetters(activeLetters);
-
+    
+      // Tiles-only mode: word tiles only (no images)
       if (TILES_ONLY) {
         const cards = wordsList.map(wRaw => ({
           id: crypto.randomUUID(),
@@ -1604,26 +1605,55 @@ function syllabifyEn(wordRaw){
         }));
         return { columns, cards };
       }
-
+    
+      // Build lookup from normalized rawCore -> file
       const indexNorm = new Map();
-      for(const f of imageFiles){
+      for (const f of imageFiles){
         const k = normalizeMarkers(f.rawCore);
-        if(!indexNorm.has(k)) indexNorm.set(k, f);
+        if (!indexNorm.has(k)) indexNorm.set(k, f);
       }
-
+    
       const cards = [];
-      for(const wRaw of wordsList){
+      for (const wRaw of wordsList){
         const k = normalizeMarkers(wRaw);
         const f = indexNorm.get(k);
-        if(!f) continue;
-        cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
+    
+        // If we can't find an image for this word, skip (keeps old behavior)
+        if (!f) continue;
+    
+        if (SPLIT_CARDS) {
+          // WORD TILE
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: '',
+            word: markersToPretty(f.rawCore) || wRaw,
+            coreRaw: f.rawCore
+          });
+    
+          // IMAGE TILE
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: f.url,
+            word: '',
+            coreRaw: f.rawCore
+          });
+        } else {
+          // normal combined card
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: f.url,
+            word: f.stem,
+            coreRaw: f.rawCore
+          });
+        }
       }
+    
       return { columns, cards };
     }
-
+    
     function buildRoundFromWordListWithCounts(counts, wordsList){
       const columns = buildColumnsForSyllCount(counts);
-
+    
       if (TILES_ONLY) {
         const cards = wordsList.map(wRaw => ({
           id: crypto.randomUUID(),
@@ -1633,26 +1663,48 @@ function syllabifyEn(wordRaw){
         }));
         return { columns, cards };
       }
-
+    
       const indexNorm = new Map();
-      for(const f of imageFiles){
+      for (const f of imageFiles){
         const k = normalizeMarkers(f.rawCore);
-        if(!indexNorm.has(k)) indexNorm.set(k, f);
+        if (!indexNorm.has(k)) indexNorm.set(k, f);
       }
-
+    
       const cards = [];
-      for(const wRaw of wordsList){
+      for (const wRaw of wordsList){
         const k = normalizeMarkers(wRaw);
         const f = indexNorm.get(k);
-        if(!f) continue;
-        cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
+        if (!f) continue;
+    
+        if (SPLIT_CARDS) {
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: '',
+            word: markersToPretty(f.rawCore) || wRaw,
+            coreRaw: f.rawCore
+          });
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: f.url,
+            word: '',
+            coreRaw: f.rawCore
+          });
+        } else {
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: f.url,
+            word: f.stem,
+            coreRaw: f.rawCore
+          });
+        }
       }
+    
       return { columns, cards };
     }
-
+    
     function buildRoundFromWordListWithStress(positions, wordsList){
       const columns = buildColumnsForStress(positions);
-
+    
       if (TILES_ONLY) {
         const cards = wordsList.map(wRaw => ({
           id: crypto.randomUUID(),
@@ -1662,22 +1714,45 @@ function syllabifyEn(wordRaw){
         }));
         return { columns, cards };
       }
-
+    
       const indexNorm = new Map();
-      for(const f of imageFiles){
+      for (const f of imageFiles){
         const k = normalizeMarkers(f.rawCore);
-        if(!indexNorm.has(k)) indexNorm.set(k, f);
+        if (!indexNorm.has(k)) indexNorm.set(k, f);
       }
-
+    
       const cards = [];
-      for(const wRaw of wordsList){
+      for (const wRaw of wordsList){
         const k = normalizeMarkers(wRaw);
         const f = indexNorm.get(k);
-        if(!f) continue;
-        cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
+        if (!f) continue;
+    
+        if (SPLIT_CARDS) {
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: '',
+            word: markersToPretty(f.rawCore) || wRaw,
+            coreRaw: f.rawCore
+          });
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: f.url,
+            word: '',
+            coreRaw: f.rawCore
+          });
+        } else {
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: f.url,
+            word: f.stem,
+            coreRaw: f.rawCore
+          });
+        }
       }
+    
       return { columns, cards };
     }
+    
     function buildRoundFromWordListWithPhonemes(counts, wordsList){
       const columns = buildColumnsForPhonemeCount(counts);
     
@@ -1692,25 +1767,43 @@ function syllabifyEn(wordRaw){
       }
     
       const indexNorm = new Map();
-      for(const f of imageFiles){
+      for (const f of imageFiles){
         const k = normalizeMarkers(f.rawCore);
-        if(!indexNorm.has(k)) indexNorm.set(k, f);
+        if (!indexNorm.has(k)) indexNorm.set(k, f);
       }
     
       const cards = [];
-      for(const wRaw of wordsList){
+      for (const wRaw of wordsList){
         const k = normalizeMarkers(wRaw);
         const f = indexNorm.get(k);
-        if(!f) continue;
-        cards.push({
-          id: crypto.randomUUID(),
-          imgUrl: f.url,
-          word: f.stem,
-          coreRaw: f.rawCore
-        });
+        if (!f) continue;
+    
+        if (SPLIT_CARDS) {
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: '',
+            word: markersToPretty(f.rawCore) || wRaw,
+            coreRaw: f.rawCore
+          });
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: f.url,
+            word: '',
+            coreRaw: f.rawCore
+          });
+        } else {
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: f.url,
+            word: f.stem,
+            coreRaw: f.rawCore
+          });
+        }
       }
+    
       return { columns, cards };
     }
+
 
     function setOneRowGrid(colsCount){
       columnsEl.style.gridTemplateColumns = `repeat(${colsCount}, minmax(140px, 1fr))`;
