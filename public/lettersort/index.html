@@ -759,7 +759,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
       !SYNC ||
       MODE === 'randinit' ||  /* ✅ NEW */
       MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
-      (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0) || (SOLO_STRESSPOS.length > 0);
+      (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0) || (SOLO_PHONEMES.length > 0) || (SOLO_STRESSPOS.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
