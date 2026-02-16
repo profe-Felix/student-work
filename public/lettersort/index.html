@@ -731,7 +731,9 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
     const SOLO_SYLLCOUNT = parseCountsParam(qs.get('counts') || qs.get('syllcount'));
     // stressed-syllable positions via ?stress=1,2,3
     const SOLO_STRESSPOS = parseCountsParam(qs.get('stress') || qs.get('stresspos'));
-    
+    // phoneme-count columns via ?phonemes=3-5 or ?phoneme=2,3,4
+    const SOLO_PHONEMES = parseCountsParam(qs.get('phonemes') || qs.get('phoneme'));
+
     // Optional custom column titles: ?titles=sí,no,maybe
     const COL_TITLES = (qs.get('titles') || '')
       .split(',')
@@ -837,6 +839,62 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
       if(s.startsWith('ll')) return 'll';
       if(s.startsWith('rr')) return 'rr';
       return s[0] || '';
+    }
+    // =====================================================
+    // SMART PHONEME COUNTER  (Spanish-focused)
+    // =====================================================
+    // Rules implemented:
+    //
+    // ha he hi ho hu  -> 1 phoneme each
+    // ll, rr, ch      -> 1 phoneme
+    // gue/gui         -> g + e/i  (u silent)
+    // que/qui         -> k + e/i  (u silent)
+    // h               -> silent unless in "ch"
+    // b/v             -> same phoneme
+    //
+    // Goal: phonemic awareness counts — NOT spelling counts
+    // =====================================================
+    function phonemeCount(coreWordRaw){
+    
+      // convert markers to readable form
+      let w = markersToPretty((coreWordRaw||'').toLowerCase());
+    
+      // normalize accents & markers
+      w = normalizeMarkers(w);
+    
+      // ---------------------------------
+      // Remove silent H (except in CH)
+      // ---------------------------------
+      w = w.replace(/(^|[^c])h/g, '$1'); // removes h unless preceded by c
+    
+      // ---------------------------------
+      // Handle QU + GU rules
+      // ---------------------------------
+      // que, qui -> qe, qi
+      w = w.replace(/qu([ei])/g, 'q$1');
+    
+      // gue, gui -> ge, gi   (u silent)
+      w = w.replace(/gu([ei])/g, 'g$1');
+    
+      // ---------------------------------
+      // Collapse digraph phonemes
+      // ---------------------------------
+      w = w
+        .replace(/ch/g,'Ç')
+        .replace(/ll/g,'Ŀ')
+        .replace(/rr/g,'Ŕ');
+    
+      // ---------------------------------
+      // b and v same phoneme
+      // ---------------------------------
+      w = w.replace(/v/g,'b');
+    
+      // ---------------------------------
+      // keep only letters we care about
+      // ---------------------------------
+      w = w.replace(/[^a-zñüÇĿŔ]/g,'');
+    
+      return w.length || 0;
     }
 
     // -----------------------------
@@ -1249,6 +1307,14 @@ function syllabifyEn(wordRaw){
       }));
       return applyTitleOverrides(cols);
     }
+    function buildColumnsForPhonemeCount(counts){
+      const cols = counts.map(n => ({
+        label: `${n} fonema${n===1?'':'s'}`,
+        key: `phon:${n}`,
+        display: `${n}`
+      }));
+      return applyTitleOverrides(cols);
+    }
 
     function buildColumnsForStress(positions){
       const cols = positions.map(p => {
@@ -1403,6 +1469,33 @@ function syllabifyEn(wordRaw){
       }
       return { columns, cards };
     }
+    function buildRoundFromPhonemeCount(counts, perCol){
+      const columns = buildColumnsForPhonemeCount(counts);
+      const cards = [];
+    
+      for(const col of columns){
+        const need = parseInt(col.key.slice(5),10);
+    
+        const list = imageFiles.filter(f =>
+          phonemeCount(f.rawCore) === need
+        );
+    
+        const picks = pickNoRepeat(list, perCol);
+    
+        for(const f of picks){
+          usedSet.add(`${f.path}`);
+          cards.push({
+            id: crypto.randomUUID(),
+            imgUrl: f.url,
+            word: f.stem,
+            coreRaw: f.rawCore
+          });
+        }
+      }
+    
+      return { columns, cards };
+    }
+
 
     function buildRoundFromStress(positions, perCol){
       const columns = buildColumnsForStress(positions);
@@ -2136,9 +2229,11 @@ function everythingCorrect(){
         if (key.startsWith('not-'))    return {type:'not', letter:key.slice(4)};
         if (key.startsWith('syll:'))   return {type:'syll', syll:key.slice(5)};
         if (key.startsWith('count:'))  return {type:'count', n: parseInt(key.slice(6),10)};
+        if (key.startsWith('phon:'))   return {type:'phon',  n: parseInt(key.slice(5),10)};
         if (key.startsWith('stress:')) return {type:'stress', pos: parseInt(key.slice(7),10)};
         return {type:'is', letter:key};
       };
+
 
       document.querySelectorAll('.drop').forEach((drop, idx)=>{
         const target = getTarget(currentCols[idx].key);
@@ -2155,6 +2250,8 @@ function everythingCorrect(){
               : cmpSyll(syls[0], target.syll);
           } else if (target.type === 'count') {
             ok = syllableCount(coreRaw) === target.n;
+          } else if (target.type === 'phon') {
+            ok = phonemeCount(coreRaw) === target.n;
           } else if (target.type === 'stress') {
             ok = stressedSyllIndex(coreRaw) === target.pos;
           } else {
@@ -2309,6 +2406,7 @@ function everythingCorrect(){
       }
       const hasSyll   = SOLO_SYLLABLES.length > 0;
       const hasCount  = SOLO_SYLLCOUNT.length > 0;
+      const hasPhon   = SOLO_PHONEMES.length > 0;
       const hasStress = SOLO_STRESSPOS.length > 0;
       const activeLetters = (hasSyll || hasCount || hasStress) ? [] : [...letterPicker.querySelectorAll('.active')].map(b=>b.textContent);
       if(!hasSyll && !hasCount && !hasStress && activeLetters.length===0){ alert(T.alertPickLetters); return; }
@@ -2397,6 +2495,7 @@ function everythingCorrect(){
 
       const hasSyll   = SOLO_SYLLABLES.length > 0;
       const hasCount  = SOLO_SYLLCOUNT.length > 0;
+      const hasPhon   = SOLO_PHONEMES.length > 0;
       const hasStress = SOLO_STRESSPOS.length > 0;
       const per = SOLO_PER || 4;
       document.body.classList.toggle('one-per', per === 1);
@@ -2421,6 +2520,8 @@ function everythingCorrect(){
           : (hasStress
               ? buildRoundFromWordListWithStress(SOLO_STRESSPOS, SOLO_WORDS)
               : buildRoundFromWordList(hasSyll ? [] : SOLO_LETTERS, SOLO_SYLLABLES, SOLO_WORDS));
+      } else if (hasPhon) {
+        payload = buildRoundFromPhonemeCount(SOLO_PHONEMES, per);
       } else if (hasCount) {
         payload = buildRoundFromSyllCount(SOLO_SYLLCOUNT, per);
       } else if (hasStress) {
@@ -2430,6 +2531,7 @@ function everythingCorrect(){
       } else {
         payload = buildRoundFromLetters(SOLO_LETTERS, per);
       }
+
 
       currentMode = (MODE === 'stressreveal') ? 'stressreveal' : 'classic';
       rowModeEl.classList.add('hidden');
