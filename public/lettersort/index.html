@@ -1600,6 +1600,39 @@ function syllabifyEn(wordRaw){
       }
       return { columns, cards };
     }
+    function buildRoundFromWordListWithPhonemes(counts, wordsList){
+      const columns = buildColumnsForPhonemeCount(counts);
+    
+      if (TILES_ONLY) {
+        const cards = wordsList.map(wRaw => ({
+          id: crypto.randomUUID(),
+          imgUrl: '',
+          word: wRaw,
+          coreRaw: wRaw
+        }));
+        return { columns, cards };
+      }
+    
+      const indexNorm = new Map();
+      for(const f of imageFiles){
+        const k = normalizeMarkers(f.rawCore);
+        if(!indexNorm.has(k)) indexNorm.set(k, f);
+      }
+    
+      const cards = [];
+      for(const wRaw of wordsList){
+        const k = normalizeMarkers(wRaw);
+        const f = indexNorm.get(k);
+        if(!f) continue;
+        cards.push({
+          id: crypto.randomUUID(),
+          imgUrl: f.url,
+          word: f.stem,
+          coreRaw: f.rawCore
+        });
+      }
+      return { columns, cards };
+    }
 
     function setOneRowGrid(colsCount){
       columnsEl.style.gridTemplateColumns = `repeat(${colsCount}, minmax(140px, 1fr))`;
@@ -2520,11 +2553,13 @@ function everythingCorrect(){
         if (!positions.length) positions = [1,2];
         payload = buildRoundFromWordListWithStress(positions, SOLO_WORDS);
       } else if (SOLO_WORDS.length > 0) {
-        payload = hasCount
-          ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
-          : (hasStress
-              ? buildRoundFromWordListWithStress(SOLO_STRESSPOS, SOLO_WORDS)
-              : buildRoundFromWordList(hasSyll ? [] : SOLO_LETTERS, SOLO_SYLLABLES, SOLO_WORDS));
+        payload = hasPhon
+          ? buildRoundFromWordListWithPhonemes(SOLO_PHONEMES, SOLO_WORDS)
+          : (hasCount
+              ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
+              : (hasStress
+                  ? buildRoundFromWordListWithStress(SOLO_STRESSPOS, SOLO_WORDS)
+                  : buildRoundFromWordList(hasSyll ? [] : SOLO_LETTERS, SOLO_SYLLABLES, SOLO_WORDS)));
       } else if (hasPhon) {
         payload = buildRoundFromPhonemeCount(SOLO_PHONEMES, per);
       } else if (hasCount) {
