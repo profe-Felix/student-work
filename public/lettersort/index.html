@@ -1152,11 +1152,11 @@ function syllabifyEn(wordRaw){
         .replace(/ú/g,"u..")
         .replace(/ü/g,"u,,");
     }
-
+    
     async function resolveImageForWord(word){
     
       // 🔴 convert display word → storage marker version
-      const storageWord = toStorageMarkers(word);
+      const storageWord = displayToMarker(word);
     
       for(const p of jpgCandidatesForWord(storageWord)){
         const url = await publicUrlIfExists(IB, p);
@@ -1171,13 +1171,8 @@ function syllabifyEn(wordRaw){
             path: p,
             url,
             stem,
-    
-            // keep rawCore exactly as storage version
             rawCore,
-    
-            // normalized version still allowed internally
             core: normalizeMarkers(rawCore),
-    
             initial: initialFromStem(stem)
           };
         }
@@ -1185,6 +1180,7 @@ function syllabifyEn(wordRaw){
     
       return null;
     }
+
 
 
     async function listAll(bucket, prefix) {
