@@ -1800,15 +1800,28 @@ function syllabifyEn(wordRaw){
 
       const labelText = markersToPretty(card.coreRaw || card.word || card.stem || '');
 
-      if (TILES_ONLY) {
-        el.classList.add('wordTile');
-        el.innerHTML = `<div class="cap">${labelText || '&nbsp;'}</div>`;
-      } else {
-        el.innerHTML = `
-          <img alt="" src="${card.imgUrl}"/>
-          <div class="cap" ${ROW_TITLE ? '' : 'style="display:none"'}>${ROW_TITLE ? (markersToPretty(card.coreRaw) || '') : '&nbsp;'}</div>
-        `;
-      }
+    // WORD TILE (tiles-only OR splitcards word half)
+    if (TILES_ONLY || (SPLIT_CARDS && !card.imgUrl)) {
+    
+      el.classList.add('wordTile');
+    
+      el.innerHTML = `
+        <div class="cap">
+          ${labelText || '&nbsp;'}
+        </div>
+      `;
+    
+    // IMAGE TILE
+    } else {
+    
+      el.innerHTML = `
+        <img alt="" src="${card.imgUrl || ''}"/>
+        <div class="cap" ${ROW_TITLE ? '' : 'style="display:none"'}>${
+          ROW_TITLE ? (markersToPretty(card.coreRaw) || '') : '&nbsp;'
+        }</div>
+      `;
+    }
+
 
       el.addEventListener('click', async (ev) => {
         if (ev.target && ev.target.classList && ev.target.classList.contains('wordCover')) return;
