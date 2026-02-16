@@ -1868,12 +1868,22 @@ function syllabifyEn(wordRaw){
     }
 
     function setCards(cards){
-      currentCards = [...cards];
-      rackEl.innerHTML='';
-      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
-      ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
-      preloadAudioForCores(ordered.map(c=>c.coreRaw));
-    }
+    // store cards
+    currentCards = [...cards];
+  
+    // clear rack
+    rackEl.innerHTML='';
+  
+    // ✅ ALWAYS randomize order so word + image tiles mix
+    const ordered = [...currentCards].sort(()=>Math.random()-0.5);
+  
+    // render cards
+    ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
+  
+    // preload audio
+    preloadAudioForCores(ordered.map(c=>c.coreRaw));
+  }
+
 
     function attachWordCover(tileEl){
       const cover = document.createElement('button');
