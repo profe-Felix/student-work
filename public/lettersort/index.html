@@ -440,16 +440,34 @@
       const preset = allPresets[presetId];
       let changed = false;
 
-      Object.entries(preset).forEach(([key, value]) => {
-        // URL params always win
-        if (qsLocal.has(key)) return;
+  Object.entries(preset).forEach(([key, value]) => {
+    // URL params always win
+    if (qsLocal.has(key)) return;
+  
+    const serialize = (k, v) => {
+  
+      // 👇 THIS is the missing piece for rowsyll presets
+      if (k === 'rows' && Array.isArray(v)) {
+        return v
+          .map(r => {
+            const prompt = (r?.pattern ?? r?.prompt ?? '').toString().trim();
+            const howRaw = (r?.pos ?? r?.how ?? 'init').toString().trim().toLowerCase();
+            const how = (howRaw === 'final') ? 'final' : 'init';
+            return prompt ? `${prompt}:${how}` : '';
+          })
+          .filter(Boolean)
+          .join(';');
+      }
+  
+      if (Array.isArray(v)) return v.join(',');
+  
+      return String(v);
+    };
+  
+    qsLocal.set(key, serialize(key, value));
+    changed = true;
+  });
 
-        qsLocal.set(
-          key,
-          Array.isArray(value) ? value.join(',') : String(value)
-        );
-        changed = true;
-      });
 
       if (changed) {
         sessionStorage.setItem('__presetExpanded', '1');
@@ -704,6 +722,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
     const LABEL_STYLE    = (qs.get('labelstyle') || 'classic').toLowerCase(); // classic | emoji
     // tiles-only (words instead of images) + hide-words
     const TILES_ONLY = (qs.get('tilesonly') || qs.get('wordtiles') || '').toLowerCase() === 'true';
+    const SPLIT_CARDS = (qs.get('splitcards') || '').toLowerCase() === 'true';
     const HIDE_WORDS = (qs.get('hidewords') || '').toLowerCase() === 'true';
 
     // ✅ NEW: random-initial pool for ?mode=randinit&pool=b,m,s,ch,ll,rr
@@ -1421,7 +1440,34 @@ function syllabifyEn(wordRaw){
         }
         for(const f of picks){ usedSet.add(`${f.path}`); }
         for(const f of picks){
-          cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
+          if (SPLIT_CARDS) {
+            // WORD TILE
+            cards.push({
+              id: crypto.randomUUID(),
+              imgUrl: '',
+              word: f.stem,
+              coreRaw: f.rawCore
+            });
+          
+            // IMAGE TILE
+            cards.push({
+              id: crypto.randomUUID(),
+              imgUrl: f.url,
+              word: '',
+              coreRaw: f.rawCore
+            });
+          
+          } else {
+          
+            cards.push({
+              id: crypto.randomUUID(),
+              imgUrl: f.url,
+              word: f.stem,
+              coreRaw: f.rawCore
+            });
+          
+          }
+
         }
       }
       return { columns, cards };
