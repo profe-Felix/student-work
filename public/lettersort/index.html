@@ -2449,7 +2449,7 @@ function everythingCorrect(){
       const payload =
         useWords
           ? (hasPhon
-              ? buildRoundFromWordListWithCounts(SOLO_PHONEMES, SOLO_WORDS)
+              ? buildRoundFromWordListWithPhonemes(SOLO_PHONEMES, SOLO_WORDS)
               : (hasCount
                   ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
                   : (hasStress
