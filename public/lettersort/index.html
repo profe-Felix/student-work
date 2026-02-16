@@ -1494,12 +1494,44 @@ function syllabifyEn(wordRaw){
         });
         const picks = pickNoRepeat(list, perCol);
         for(const f of picks){ usedSet.add(`${f.path}`); }
+    
+        // 👇 ONLY THIS PART CHANGED
         for(const f of picks){
-          cards.push({ id: crypto.randomUUID(), imgUrl: f.url, word: f.stem, coreRaw: f.rawCore });
+    
+          if (SPLIT_CARDS) {
+    
+            // WORD TILE
+            cards.push({
+              id: crypto.randomUUID(),
+              imgUrl: '',
+              word: f.stem,
+              coreRaw: f.rawCore
+            });
+    
+            // IMAGE TILE
+            cards.push({
+              id: crypto.randomUUID(),
+              imgUrl: f.url,
+              word: '',
+              coreRaw: f.rawCore
+            });
+    
+          } else {
+    
+            cards.push({
+              id: crypto.randomUUID(),
+              imgUrl: f.url,
+              word: f.stem,
+              coreRaw: f.rawCore
+            });
+    
+          }
+    
         }
       }
       return { columns, cards };
     }
+
 
     function buildRoundFromSyllCount(counts, perCol){
       const columns = buildColumnsForSyllCount(counts);
