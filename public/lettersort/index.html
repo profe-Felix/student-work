@@ -1962,7 +1962,9 @@ function syllabifyEn(wordRaw){
     function clearAllPlacements(){
       document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
       rackEl.innerHTML='';
-      const ordered = (new URLSearchParams(location.search).get('words')||'').length ? [...currentCards] : currentCards.sort(()=>Math.random()-0.5);
+    
+      // ALWAYS shuffle (fix for splitcards)
+      const ordered = [...currentCards].sort(()=>Math.random()-0.5);
       ordered.forEach(card=> rackEl.appendChild(renderCard(card)) );
     }
 
