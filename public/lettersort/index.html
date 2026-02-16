@@ -1139,22 +1139,53 @@ function syllabifyEn(wordRaw){
       ];
       return names.map(n => `${prefix}${n}`);
     }
+    function displayToMarker(word){
+      if(!word) return "";
+    
+      return word
+        .toLowerCase()
+        .replace(/ñ/g,"n..")
+        .replace(/á/g,"a..")
+        .replace(/é/g,"e..")
+        .replace(/í/g,"i..")
+        .replace(/ó/g,"o..")
+        .replace(/ú/g,"u..")
+        .replace(/ü/g,"u,,");
+    }
+
     async function resolveImageForWord(word){
-      for(const p of jpgCandidatesForWord(word)){
+    
+      // 🔴 convert display word → storage marker version
+      const storageWord = toStorageMarkers(word);
+    
+      for(const p of jpgCandidatesForWord(storageWord)){
         const url = await publicUrlIfExists(IB, p);
+    
         if (url) {
           const name = p.split('/').pop();
           const stem = stemOf(name);
           const rawCore = stripImageSuffix(stem);
+    
           return {
-            name, path:p, url, stem,
-            rawCore, core: normalizeMarkers(rawCore),
+            name,
+            path: p,
+            url,
+            stem,
+    
+            // keep rawCore exactly as storage version
+            rawCore,
+    
+            // normalized version still allowed internally
+            core: normalizeMarkers(rawCore),
+    
             initial: initialFromStem(stem)
           };
         }
       }
+    
       return null;
     }
+
 
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
