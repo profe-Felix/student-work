@@ -1309,7 +1309,7 @@ function syllabifyEn(wordRaw){
     }
     function buildColumnsForPhonemeCount(counts){
       const cols = counts.map(n => ({
-        label: `${n} fonema${n===1?'':'s'}`,
+        label: `${n} sonido${n===1?'':'s'}`,
         key: `phon:${n}`,
         display: `${n}`
       }));
@@ -2415,18 +2415,23 @@ function everythingCorrect(){
 
       const payload =
         useWords
-          ? (hasCount
-              ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
-              : (hasStress
-                  ? buildRoundFromWordListWithStress(SOLO_STRESSPOS, SOLO_WORDS)
-                  : buildRoundFromWordList(activeLetters, SOLO_SYLLABLES, SOLO_WORDS)))
-          : (hasCount
-              ? buildRoundFromSyllCount(SOLO_SYLLCOUNT, perCol)
-              : (hasStress
-                  ? buildRoundFromStress(SOLO_STRESSPOS, perCol)
-                  : (hasSyll
-                      ? buildRoundFromSyllables(SOLO_SYLLABLES, perCol)
-                      : buildRoundFromLetters(activeLetters, perCol))));
+          ? (hasPhon
+              ? buildRoundFromWordListWithCounts(SOLO_PHONEMES, SOLO_WORDS)
+              : (hasCount
+                  ? buildRoundFromWordListWithCounts(SOLO_SYLLCOUNT, SOLO_WORDS)
+                  : (hasStress
+                      ? buildRoundFromWordListWithStress(SOLO_STRESSPOS, SOLO_WORDS)
+                      : buildRoundFromWordList(activeLetters, SOLO_SYLLABLES, SOLO_WORDS))))
+          : (hasPhon
+              ? buildRoundFromPhonemeCount(SOLO_PHONEMES, perCol)
+              : (hasCount
+                  ? buildRoundFromSyllCount(SOLO_SYLLCOUNT, perCol)
+                  : (hasStress
+                      ? buildRoundFromStress(SOLO_STRESSPOS, perCol)
+                      : (hasSyll
+                          ? buildRoundFromSyllables(SOLO_SYLLABLES, perCol)
+                          : buildRoundFromLetters(activeLetters, perCol)))));
+
 
       await channel.send({ type:'broadcast', event:'ROUND', payload });
     });
