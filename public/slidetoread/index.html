@@ -695,9 +695,39 @@ if (supaLists && Array.isArray(supaLists[listName])) {
 
 
   // 👇 ADD THIS
+// ===== SYNCED ORDER =====
+if (GROUP_CODE && (isTeacher || isStudent)) {
+
+  const { data: row } = await sbClient
+    .from('reading_groups')
+    .select('session_id')
+    .eq('group_code', GROUP_CODE)
+    .maybeSingle();
+
+  let sessionId = row?.session_id;
+
+  // Teacher creates session
+  if (isTeacher && !sessionId) {
+    sessionId = makeSessionId();
+
+    await sbClient
+      .from('reading_groups')
+      .update({ session_id: sessionId })
+      .eq('group_code', GROUP_CODE);
+  }
+
+  if (sessionId) {
+    const seedStr = `${GROUP_CODE}::${sessionId}`;
+    words = shuffleWithSeed(words, seedStr);
+  }
+
+} else {
+  // local mode only
   if (ORDER_MODE !== 'fixed') {
     words = words.sort(() => Math.random() - 0.5);
   }
+}
+
 
   currentWordIndex = 0;
 
