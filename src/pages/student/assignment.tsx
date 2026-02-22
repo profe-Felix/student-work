@@ -336,7 +336,7 @@ useEffect(() => {
   if (p != null) {
     const n = Number(p)
     if (Number.isFinite(n) && n >= 0) {
-      const idx = Math.floor(n)
+      const idx = Math.floor(n) - 1
       initialPageFromUrlRef.current = idx
 
       // ⭐ Apply deep-link page AFTER mount
