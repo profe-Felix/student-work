@@ -329,16 +329,24 @@ export default function StudentAssignment(){
     // optional ?page= from URL (student deep-link)
   const initialPageFromUrlRef = useRef<number | null>(null)
 
-  useEffect(() => {
-    const qs = new URLSearchParams(location.search)
-    const p = qs.get('page')
-    if (p != null) {
-      const n = Number(p)
-      if (Number.isFinite(n) && n >= 0) {
-        initialPageFromUrlRef.current = Math.floor(n)
-      }
+useEffect(() => {
+  const qs = new URLSearchParams(location.search)
+  const p = qs.get('page')
+
+  if (p != null) {
+    const n = Number(p)
+    if (Number.isFinite(n) && n >= 0) {
+      const idx = Math.floor(n)
+      initialPageFromUrlRef.current = idx
+
+      // ⭐ Apply deep-link page AFTER mount
+      setPageIndex(prev => {
+        // avoid unnecessary rerender
+        return prev !== idx ? idx : prev
+      })
     }
-  }, [location.search])
+  }
+}, [location.search])
 
 
   // pdf path resolved from DB page row
