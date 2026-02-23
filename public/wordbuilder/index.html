@@ -225,8 +225,9 @@
   /* ===== WRITE TILE (student typing tile) ===== */
  /* ===== WRITE TILE (behaves like punctuation tile) ===== */
  .tile.write{
-   min-width:auto;     /* ⭐ critical */
-   padding:0 6px;
+   display:block;        /* ⭐ VERY IMPORTANT */
+   min-width:0;
+   padding:0;
    font-size:24px;
    height:var(--tile-h);
  }
@@ -240,8 +241,8 @@
    padding:0 6px;
    text-align:left;
  
-   white-space:normal;
-   overflow-wrap:anywhere;
+   white-space:nowrap;   /* ⭐ critical */
+   overflow:hidden;
  }
  
  /* inside slots */
@@ -1027,7 +1028,8 @@ location.reload();
   
     tiles.forEach(t=>{
       t.classList.add('in-slot');
-  
+      const inp = t.querySelector?.('.write-input');
+      if (inp) inp.style.width = '';   // ⭐ release fixed width
       // ⭐ SHRINK-TO-FIT TEXT ONLY
       if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
         fitTextToSlot(t, slot);
