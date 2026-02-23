@@ -241,8 +241,9 @@
    padding:0 6px;
    text-align:left;
  
-   white-space:nowrap;   /* ⭐ critical */
-   overflow:hidden;
+   white-space:normal;
+   overflow-wrap:anywhere;
+   word-break:break-word;
  }
  
  /* inside slots */
@@ -1116,9 +1117,8 @@ location.reload();
       if (target.scrollWidth > maxWidth){
 
         // ⭐ FORCE WORD BREAKING
-        t.style.wordBreak = 'break-word';
-        t.style.overflowWrap = 'anywhere';
-      
+        target.style.wordBreak = 'break-word';
+        target.style.overflowWrap = 'anywhere';
         t.classList.add('wrap-mode');
       }
       else{
