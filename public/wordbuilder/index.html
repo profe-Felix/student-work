@@ -817,7 +817,18 @@ location.reload();
  
    // keep tile text synced for validation
    input.addEventListener('input', ()=>{
-     div.dataset.text = input.value;
+     const val = input.value || '';
+   
+     // keep tile text synced (validation uses this)
+     div.dataset.text = val;
+   
+     // ===== AUTO EXPAND WIDTH =====
+     // size attribute grows input naturally
+     const len = Math.max(1, val.length);
+     input.size = len;
+   
+     // optional max guard so it never gets insane wide
+     if (len > 18) input.size = 18;
    });
  
    // IMPORTANT: typing should NOT start dragging
