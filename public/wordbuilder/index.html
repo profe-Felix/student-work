@@ -199,6 +199,27 @@
     padding:0 10px;
     font-size:18px;
   }
+
+  /* ===== WRITE TILE (student typing tile) ===== */
+ .tile.write{
+   padding:0 6px;
+ }
+ 
+ .write-input{
+   border:none;
+   outline:none;
+   background:transparent;
+   font-family:inherit;
+   font-size:inherit;
+   width:70px;
+   text-align:center;
+ }
+ 
+ /* inside slots */
+ .slot .tile.write.in-slot .write-input{
+   width:60px;
+   font-size:inherit;
+ }
  /* ===== INSERTION PREVIEW (SNAP + SPLIT) ===== */
  
  /* Edge insert: blue bar at left/right edge */
@@ -619,6 +640,7 @@ location.reload();
   const PUNC_ON    = getToggle(['punc','punct','punctuation'], true);
 
   const IMAGES_ON = getToggle(['images','imgs','pics','pictures'], true);
+  const WRITE_ON = getToggle(['write','type','input','studentwrite'], false);
 
   const spaceW = parseFloat(qs.get('spacew'));
   if (!isNaN(spaceW) && spaceW > 0 && spaceW < 5) {
@@ -780,6 +802,33 @@ location.reload();
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
+ 
+  function makeWriteTile(isClone=false){
+   const div = document.createElement('div');
+   div.className = 'tile write' + (isClone ? ' clone' : '');
+   div.dataset.kind = 'write';
+   div.dataset.text = '';
+ 
+   const input = document.createElement('input');
+   input.type = 'text';
+   input.placeholder = '…';
+   input.className = 'write-input';
+ 
+   // keep tile text synced for validation
+   input.addEventListener('input', ()=>{
+     div.dataset.text = input.value;
+   });
+ 
+   // IMPORTANT: typing should NOT start dragging
+   input.addEventListener('pointerdown', (e)=>{
+     e.stopPropagation();
+   });
+ 
+   div.appendChild(input);
+ 
+   makeDraggable(div, { cloneOnDrag: !isClone });
+   return div;
+ }
 
   function makeCapTool(mode){
     const div = document.createElement('div');
@@ -825,7 +874,12 @@ location.reload();
 
   function fillPalettes(){
     lettersTray.innerHTML = '';
-    lettersCard.style.display = LETTERS.length ? '' : 'none';
+    lettersCard.style.display = LETTERS.length || WRITE_ON ? '' : 'none';
+    
+    if (WRITE_ON){
+      lettersTray.appendChild(makeWriteTile(false));
+    }
+    
     LETTERS.forEach(t => lettersTray.appendChild(makeTextTile(t, false)));
 
     syllTray.innerHTML = '';
@@ -1268,6 +1322,9 @@ validateBtn.addEventListener('click', ()=>{
 
       if (k === 'text') {
         built += t.dataset.text ?? t.textContent ?? '';
+      }
+      else if (k === 'write') {
+        built += t.dataset.text || '';
       }
       else if (k === 'space') {
         built += ' ';
