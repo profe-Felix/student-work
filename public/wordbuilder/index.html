@@ -567,6 +567,7 @@ if (!presetId) return;
       inject('accent', c.toggles.accent === false ? 'off' : undefined);
       inject('punc',   c.toggles.punc   === false ? 'off' : undefined);
       inject('images', c.toggles.images === false ? 'off' : undefined);
+      inject('write', c.toggles.write === true ? 'on' : undefined);
     }
 
     qs.set('__applied', '1');
