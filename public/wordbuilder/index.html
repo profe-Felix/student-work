@@ -202,12 +202,15 @@
 
   /* ===== WRITE TILE (student typing tile) ===== */
  .tile.write{
-   padding:0 6px;
-   min-width:auto;     /* ← stops giant starting width */
-   width:auto;         /* ← allow shrink-to-content */
+   padding:0 4px;
+ 
+   min-width:0 !important;   /* ⭐ THIS is the missing piece */
+   width:auto;
+   flex:0 0 auto;
+ 
    display:inline-flex;
  }
- 
+  
  .write-input{
    border:none;
    outline:none;
