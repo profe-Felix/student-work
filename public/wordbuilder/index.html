@@ -850,7 +850,22 @@ location.reload();
    });
  
    div.appendChild(input);
- 
+   // ⭐ START SMALL (same logic as typing)
+  requestAnimationFrame(()=>{
+    const ghost = document.createElement('span');
+    ghost.style.position = 'absolute';
+    ghost.style.visibility = 'hidden';
+    ghost.style.whiteSpace = 'pre';
+    ghost.style.font = getComputedStyle(input).font;
+    ghost.textContent = ' ';
+    document.body.appendChild(ghost);
+  
+    const w = ghost.offsetWidth + 12;
+    ghost.remove();
+  
+    input.style.width = w + 'px';
+  });
+   
    makeDraggable(div, { cloneOnDrag: !isClone });
    return div;
  }
