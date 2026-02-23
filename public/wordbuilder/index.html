@@ -215,9 +215,11 @@
    background:transparent;
    font-family:inherit;
    font-size:inherit;
-   width:1ch;          /* ⭐ small starter size */
    padding:0;
    text-align:center;
+ 
+   width:auto;        /* ⭐ let JS control width */
+   min-width:8px;     /* tiny starter */
  }
  
  /* inside slots */
@@ -823,19 +825,24 @@ location.reload();
  
    // keep tile text synced for validation
    input.addEventListener('input', ()=>{
-     const val = input.value || '';
-   
-     // keep tile text synced (validation uses this)
-     div.dataset.text = val;
-   
-     // ===== AUTO EXPAND WIDTH =====
-     // size attribute grows input naturally
-     const len = Math.max(1, val.length);
-     input.size = len;
-   
-     // optional max guard so it never gets insane wide
-     if (len > 18) input.size = 18;
-   });
+    const val = input.value || '';
+  
+    div.dataset.text = val;
+  
+    // ===== REAL AUTO WIDTH =====
+    const ghost = document.createElement('span');
+    ghost.style.position = 'absolute';
+    ghost.style.visibility = 'hidden';
+    ghost.style.whiteSpace = 'pre';
+    ghost.style.font = getComputedStyle(input).font;
+    ghost.textContent = val || ' ';
+    document.body.appendChild(ghost);
+  
+    const w = ghost.offsetWidth + 12; // padding buffer
+    ghost.remove();
+  
+    input.style.width = w + 'px';
+  });
  
    // IMPORTANT: typing should NOT start dragging
    input.addEventListener('pointerdown', (e)=>{
