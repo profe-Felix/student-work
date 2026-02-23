@@ -857,6 +857,18 @@ location.reload();
    input.addEventListener('pointerdown', (e)=>{
      e.stopPropagation();
    });
+
+   // ⭐ DOUBLE TAP TO CLEAR
+   let lastTap = 0;
+   input.addEventListener('pointerup', ()=>{
+     const now = Date.now();
+     if (now - lastTap < 300){
+       input.value = '';
+       div.dataset.text = '';
+       input.style.width = '12px';
+     }
+     lastTap = now;
+   });
  
    div.appendChild(input);
    // ⭐ START SMALL (same logic as typing)
