@@ -201,21 +201,12 @@
   }
 
   /* ===== WRITE TILE (student typing tile) ===== */
+ /* ===== WRITE TILE (behaves like punctuation tile) ===== */
  .tile.write{
-   display:inline-flex;
-   align-items:center;
-   justify-content:center;
- 
-   /* ⭐ STOP inheriting giant base tile sizing */
-   height:auto;
-   padding:2px 6px;
- 
-   min-width:0 !important;
-   width:auto;
-   flex:0 0 auto;
- 
-   font-size:18px;       /* ← smaller starter size */
-   border-radius:10px;
+   min-width:auto;     /* ⭐ critical */
+   padding:0 6px;
+   font-size:24px;
+   height:var(--tile-h);
  }
   
  .write-input{
@@ -224,11 +215,7 @@
    background:transparent;
    font-family:inherit;
    font-size:inherit;
- 
-   width:auto;        
-   max-width:none;
-   flex:none;        /* ⭐ stop flex/grid stretch */
- 
+   width:1ch;          /* ⭐ small starter size */
    padding:0;
    text-align:center;
  }
