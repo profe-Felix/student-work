@@ -150,6 +150,13 @@
     font-size:var(--tile-fs); line-height:1; cursor:grab; position:relative;
     transition:transform .05s ease;
   }
+
+  /* HYBRID FIT MODE */
+  .tile.wrap-mode{
+    white-space:normal !important;
+    line-height:1.2;
+    text-align:center;
+  }
   .tile:active{cursor:grabbing; transform:scale(.98)}
   .dragging{opacity:.9; box-shadow:0 8px 24px rgba(0,0,0,.15)}
   .highlight{outline:3px solid #a5b4fc; outline-offset:2px}
@@ -1032,7 +1039,7 @@ location.reload();
   }
 
   function fitTextToSlot(tile, slot){
-
+  
     const maxWidth = slot.clientWidth - 16;
     if (!maxWidth) return;
   
@@ -1042,8 +1049,9 @@ location.reload();
     if (!tiles.length) return;
   
     let sharedSize = 56;
+    const MIN_FONT = 22;   // ⭐ you can tweak later
   
-    // find smallest size needed across ALL tiles
+    // --- PASS 1: SHRINK ---
     tiles.forEach(t=>{
       let target = t;
       if (t.dataset.kind === 'write'){
@@ -1051,10 +1059,12 @@ location.reload();
         if (!target) return;
       }
   
+      t.classList.remove('wrap-mode');
+  
       let size = 56;
       target.style.fontSize = size + 'px';
   
-      while (target.scrollWidth > maxWidth && size > 18){
+      while (target.scrollWidth > maxWidth && size > MIN_FONT){
         size -= 1;
         target.style.fontSize = size + 'px';
       }
@@ -1062,7 +1072,7 @@ location.reload();
       sharedSize = Math.min(sharedSize, size);
     });
   
-    // apply same size to everyone
+    // --- APPLY SHARED SIZE ---
     tiles.forEach(t=>{
       let target = t;
       if (t.dataset.kind === 'write'){
@@ -1070,6 +1080,19 @@ location.reload();
         if (!target) return;
       }
       target.style.fontSize = sharedSize + 'px';
+    });
+  
+    // --- PASS 2: WRAP IF STILL TOO WIDE ---
+    tiles.forEach(t=>{
+      let target = t;
+      if (t.dataset.kind === 'write'){
+        target = t.querySelector('.write-input');
+        if (!target) return;
+      }
+  
+      if (target.scrollWidth > maxWidth){
+        t.classList.add('wrap-mode');
+      }
     });
   }
 
