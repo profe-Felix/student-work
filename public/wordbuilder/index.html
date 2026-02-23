@@ -1033,7 +1033,7 @@ location.reload();
   
     const inp = t.querySelector?.('.write-input');
     if (inp){
-      inp.style.width = '100%';          // ⭐ stop stretching
+      inp.style.width = 'auto';          // ⭐ stop stretching
       inp.style.whiteSpace = 'normal';   // ⭐ allow wrapping
     }
   
@@ -1072,7 +1072,8 @@ location.reload();
         const ghost = document.createElement('span');
         ghost.style.position = 'absolute';
         ghost.style.visibility = 'hidden';
-        ghost.style.whiteSpace = 'nowrap';
+        ghost.style.whiteSpace = 'normal';
+        ghost.style.width = maxWidth + 'px';
         ghost.style.font = getComputedStyle(applyEl).font;
         ghost.textContent = applyEl.value || ' ';
         document.body.appendChild(ghost);
