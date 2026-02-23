@@ -1055,21 +1055,42 @@ location.reload();
   
     // --- PASS 1: SHRINK ---
     tiles.forEach(t=>{
-      let target = t;
+      let measureEl;
+      let applyEl;
+      
       if (t.dataset.kind === 'write'){
-        target = t.querySelector('.write-input');
-        if (!target) return;
+        applyEl = t.querySelector('.write-input');
+        if (!applyEl) return;
+      
+        // ⭐ create ghost span for accurate width measuring
+        const ghost = document.createElement('span');
+        ghost.style.position = 'absolute';
+        ghost.style.visibility = 'hidden';
+        ghost.style.whiteSpace = 'nowrap';
+        ghost.style.font = getComputedStyle(applyEl).font;
+        ghost.textContent = applyEl.value || ' ';
+        document.body.appendChild(ghost);
+      
+        measureEl = ghost;
+      
+      }else{
+        applyEl = t;
+        measureEl = t;
       }
   
       t.classList.remove('wrap-mode');
   
       let size = 56;
-      target.style.fontSize = size + 'px';
+      applyEl.style.fontSize = size + 'px';
+      measureEl.style.fontSize = size + 'px';
   
-      while (target.scrollWidth > maxWidth && size > MIN_FONT){
+      while (measureEl.scrollWidth > maxWidth && size > MIN_FONT){
         size -= 1;
-        target.style.fontSize = size + 'px';
+        applyEl.style.fontSize = size + 'px';
+        measureEl.style.fontSize = size + 'px';
       }
+
+     if (measureEl !== applyEl) measureEl.remove();
   
       sharedSize = Math.min(sharedSize, size);
     });
