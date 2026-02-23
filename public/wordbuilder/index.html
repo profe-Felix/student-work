@@ -868,7 +868,7 @@ location.reload();
      const w = ghost.offsetWidth + 12;
      ghost.remove();
    
-     input.style.width = w + 'px';
+     input.style.width = Math.min(w, 240) + 'px';
    }
   });
  
