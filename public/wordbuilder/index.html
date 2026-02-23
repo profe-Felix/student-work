@@ -202,13 +202,20 @@
 
   /* ===== WRITE TILE (student typing tile) ===== */
  .tile.write{
-   padding:0 4px;
+   display:inline-flex;
+   align-items:center;
+   justify-content:center;
  
-   min-width:0 !important;   /* ⭐ THIS is the missing piece */
+   /* ⭐ STOP inheriting giant base tile sizing */
+   height:auto;
+   padding:2px 6px;
+ 
+   min-width:0 !important;
    width:auto;
    flex:0 0 auto;
  
-   display:inline-flex;
+   font-size:18px;       /* ← smaller starter size */
+   border-radius:10px;
  }
   
  .write-input{
@@ -219,7 +226,8 @@
    font-size:inherit;
    width:auto;
    min-width:1ch;
-   flex:0 0 auto;   /* ← prevents flex stretching */
+   flex:0 0 auto;
+   padding:0;
    text-align:center;
  }
  
