@@ -49,7 +49,7 @@
   input[type=number]{font:inherit;border:1px solid #d1d5db;border-radius:10px;padding:6px 10px;min-width:70px}
   small.note{color:var(--muted)}
 
-  main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
+  main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px}
   /* MOBILE ONLY */
  @media (max-width:700px){main{grid-template-columns:1fr}
  }
@@ -60,6 +60,8 @@
     border:2px solid var(--drop-border);
     border-radius:12px;
     padding:12px;
+  
+    min-width:0;   /* ⭐ REQUIRED for grid shrink */
   }
 
   .slots{
@@ -74,7 +76,9 @@
     gap:var(--gap);
     align-items:flex-start;
     justify-content:flex-start;
-    flex-wrap:nowrap;
+  
+    /* ⭐ CRITICAL FIX */
+    min-width:0;      /* allow shrinking */
     width:100%;
   }
 
