@@ -1028,14 +1028,18 @@ location.reload();
     const tiles = [...slot.querySelectorAll('.tile')];
   
     tiles.forEach(t=>{
-      t.classList.add('in-slot');
-      const inp = t.querySelector?.('.write-input');
-      if (inp) inp.style.width = '';   // ⭐ release fixed width
-      // ⭐ SHRINK-TO-FIT TEXT ONLY
-      if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
-        fitTextToSlot(t, slot);
-      }
-    });
+    t.classList.add('in-slot');
+  
+    const inp = t.querySelector?.('.write-input');
+    if (inp){
+      inp.style.width = '100%';          // ⭐ stop stretching
+      inp.style.whiteSpace = 'normal';   // ⭐ allow wrapping
+    }
+  
+    if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
+      fitTextToSlot(t, slot);
+    }
+  });
   }
   function relayoutAllSlots(){
     document.querySelectorAll('.slot').forEach(relayoutSlot);
