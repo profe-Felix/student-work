@@ -88,8 +88,10 @@
     align-items:center;
     justify-content:flex-start;
     flex-wrap:nowrap;
-    min-width:max(6ch, 80px);
-    width:auto;
+    width:100%;
+    min-width:0;
+    max-width:100%;
+    overflow:hidden;
     position:relative;
     vertical-align:top;
   }
@@ -842,18 +844,22 @@ location.reload();
     div.dataset.text = val;
   
     // ===== REAL AUTO WIDTH =====
-    const ghost = document.createElement('span');
-    ghost.style.position = 'absolute';
-    ghost.style.visibility = 'hidden';
-    ghost.style.whiteSpace = 'pre';
-    ghost.style.font = getComputedStyle(input).font;
-    ghost.textContent = val || ' ';
-    document.body.appendChild(ghost);
-  
-    const w = ghost.offsetWidth + 12; // padding buffer
-    ghost.remove();
-  
-    input.style.width = w + 'px';
+    // ⭐ ONLY auto-grow when NOT inside slot
+   if (!div.classList.contains('in-slot')){
+   
+     const ghost = document.createElement('span');
+     ghost.style.position = 'absolute';
+     ghost.style.visibility = 'hidden';
+     ghost.style.whiteSpace = 'pre';
+     ghost.style.font = getComputedStyle(input).font;
+     ghost.textContent = val || ' ';
+     document.body.appendChild(ghost);
+   
+     const w = ghost.offsetWidth + 12;
+     ghost.remove();
+   
+     input.style.width = w + 'px';
+   }
   });
  
    // IMPORTANT: typing should NOT start dragging
@@ -1026,16 +1032,23 @@ location.reload();
 
   function fitTextToSlot(tile, slot){
   
-    const maxWidth = slot.clientWidth - 16; // padding safety
+    const maxWidth = slot.clientWidth - 16;
     if (!maxWidth) return;
   
-    let size = 56; // your max slot font (matches CSS clamp upper bound)
-    tile.style.fontSize = size + 'px';
+    // ⭐ determine real element to resize
+    let target = tile;
+    if (tile.dataset.kind === 'write'){
+      target = tile.querySelector('.write-input');
+      if (!target) return;
+    }
   
-    // measure and shrink until it fits
-    while (tile.scrollWidth > maxWidth && size > 18){
+    let size = 56;
+    target.style.fontSize = size + 'px';
+  
+    // shrink until it fits
+    while (target.scrollWidth > maxWidth && size > 18){
       size -= 1;
-      tile.style.fontSize = size + 'px';
+      target.style.fontSize = size + 'px';
     }
   }
 
