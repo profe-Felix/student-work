@@ -203,6 +203,9 @@
   /* ===== WRITE TILE (student typing tile) ===== */
  .tile.write{
    padding:0 6px;
+   min-width:auto;     /* ← stops giant starting width */
+   width:auto;         /* ← allow shrink-to-content */
+   display:inline-flex;
  }
  
  .write-input{
@@ -211,8 +214,9 @@
    background:transparent;
    font-family:inherit;
    font-size:inherit;
-   width:auto;          /* ← IMPORTANT */
-   min-width:1ch;       /* keeps cursor visible */
+   width:auto;
+   min-width:1ch;
+   flex:0 0 auto;   /* ← prevents flex stretching */
    text-align:center;
  }
  
