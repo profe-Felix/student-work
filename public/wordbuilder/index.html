@@ -224,9 +224,11 @@
    background:transparent;
    font-family:inherit;
    font-size:inherit;
-   width:auto;
-   min-width:1ch;
-   flex:0 0 auto;
+ 
+   width:1ch;        /* ⭐ force tiny start width */
+   max-width:none;
+   flex:none;        /* ⭐ stop flex/grid stretch */
+ 
    padding:0;
    text-align:center;
  }
