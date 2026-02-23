@@ -1007,10 +1007,33 @@ location.reload();
 
   function relayoutSlot(slot){
     const tiles = [...slot.querySelectorAll('.tile')];
-    tiles.forEach(t => t.classList.add('in-slot'));
+  
+    tiles.forEach(t=>{
+      t.classList.add('in-slot');
+  
+      // ⭐ SHRINK-TO-FIT TEXT ONLY
+      if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
+        fitTextToSlot(t, slot);
+      }
+    });
   }
   function relayoutAllSlots(){
     document.querySelectorAll('.slot').forEach(relayoutSlot);
+  }
+
+  function fitTextToSlot(tile, slot){
+  
+    const maxWidth = slot.clientWidth - 16; // padding safety
+    if (!maxWidth) return;
+  
+    let size = 56; // your max slot font (matches CSS clamp upper bound)
+    tile.style.fontSize = size + 'px';
+  
+    // measure and shrink until it fits
+    while (tile.scrollWidth > maxWidth && size > 18){
+      size -= 1;
+      tile.style.fontSize = size + 'px';
+    }
   }
 
   // ===== Prefill helpers (per-box) =====
