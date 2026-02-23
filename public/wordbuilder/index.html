@@ -229,9 +229,6 @@
    padding:0 6px;
    text-align:left;
  
-   width:260px;        /* ⭐ fixed safe width */
-   max-width:260px;    /* prevents layout stretch */
- 
    white-space:normal;
    overflow-wrap:anywhere;
  }
@@ -1031,25 +1028,45 @@ location.reload();
   }
 
   function fitTextToSlot(tile, slot){
-  
+
     const maxWidth = slot.clientWidth - 16;
     if (!maxWidth) return;
   
-    // ⭐ determine real element to resize
-    let target = tile;
-    if (tile.dataset.kind === 'write'){
-      target = tile.querySelector('.write-input');
-      if (!target) return;
-    }
+    const tiles = [...slot.querySelectorAll('.tile')]
+      .filter(t => t.dataset.kind === 'text' || t.dataset.kind === 'write');
   
-    let size = 56;
-    target.style.fontSize = size + 'px';
+    if (!tiles.length) return;
   
-    // shrink until it fits
-    while (target.scrollWidth > maxWidth && size > 18){
-      size -= 1;
+    let sharedSize = 56;
+  
+    // find smallest size needed across ALL tiles
+    tiles.forEach(t=>{
+      let target = t;
+      if (t.dataset.kind === 'write'){
+        target = t.querySelector('.write-input');
+        if (!target) return;
+      }
+  
+      let size = 56;
       target.style.fontSize = size + 'px';
-    }
+  
+      while (target.scrollWidth > maxWidth && size > 18){
+        size -= 1;
+        target.style.fontSize = size + 'px';
+      }
+  
+      sharedSize = Math.min(sharedSize, size);
+    });
+  
+    // apply same size to everyone
+    tiles.forEach(t=>{
+      let target = t;
+      if (t.dataset.kind === 'write'){
+        target = t.querySelector('.write-input');
+        if (!target) return;
+      }
+      target.style.fontSize = sharedSize + 'px';
+    });
   }
 
   // ===== Prefill helpers (per-box) =====
