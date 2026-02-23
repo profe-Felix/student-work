@@ -1093,7 +1093,16 @@ location.reload();
       }
   
       if (target.scrollWidth > maxWidth){
+
+        // ⭐ FORCE WORD BREAKING
+        t.style.wordBreak = 'break-word';
+        t.style.overflowWrap = 'anywhere';
+      
         t.classList.add('wrap-mode');
+      }
+      else{
+        t.style.wordBreak = '';
+        t.style.overflowWrap = '';
       }
     });
   }
