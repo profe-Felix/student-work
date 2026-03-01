@@ -459,7 +459,10 @@
           .map(r => {
             const prompt = (r?.pattern ?? r?.prompt ?? '').toString().trim();
             const howRaw = (r?.pos ?? r?.how ?? 'init').toString().trim().toLowerCase();
-            const how = (howRaw === 'final') ? 'final' : 'init';
+            const how =
+              (howRaw === 'final')  ? 'final'  :
+              (howRaw === 'second') ? 'second' :
+              'init';
             return prompt ? `${prompt}:${how}` : '';
           })
           .filter(Boolean)
