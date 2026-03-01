@@ -2340,9 +2340,16 @@ function syllabifyEn(wordRaw){
         rowModeEl.appendChild(line);
 
         const promptSyls = syllablesNormalized(pImg.rawCore);
-        const targetSyl = r.how === 'init'
-          ? (promptSyls[0] || '')
-          : (promptSyls[promptSyls.length - 1] || '');
+        
+        let targetSyl = '';
+        
+        if (r.how === 'init') {
+          targetSyl = promptSyls[0] || '';
+        } else if (r.how === 'final') {
+          targetSyl = promptSyls[promptSyls.length - 1] || '';
+        } else if (r.how === 'second') {
+          targetSyl = promptSyls[1] || '';
+        }
         const targetInitial = initialFromStem(targetSyl);
 
         rowData.push({
