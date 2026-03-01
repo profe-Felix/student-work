@@ -2077,7 +2077,11 @@ function syllabifyEn(wordRaw){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const [left] = seg.split('~');
         const [prompt, howRaw] = (left||'').split(':').map(s=>s.trim());
-        const how = (howRaw||'init').toLowerCase()==='final' ? 'final' : 'init';
+        const howLower = (howRaw || 'init').toString().trim().toLowerCase();
+        const how =
+          (howLower === 'final')  ? 'final'  :
+          (howLower === 'second') ? 'second' :
+          'init';
         return { prompt, how };
       }).filter(r=>r.prompt);
     }
@@ -2459,7 +2463,15 @@ function everythingCorrect(){
             let ok = false;
 
             if (syls.length){
-              const chosen = (how==='init') ? syls[0] : syls[syls.length-1];
+              let chosen = '';
+              
+              if (how === 'init') {
+                chosen = syls[0];
+              } else if (how === 'final') {
+                chosen = syls[syls.length - 1];
+              } else if (how === 'second') {
+                chosen = syls[1];
+              }
               const VOWEL = /^[aeiou]/;
               const digraphs = ['ch','ll','rr'];
               const syllableMatchesCV = (syllNorm, targetInitial)=>{
