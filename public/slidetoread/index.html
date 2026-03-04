@@ -650,7 +650,10 @@ async function applySyncedOrder(listName, arr) {
   const seedStr = `${GROUP_CODE}::${listName}::${sessionId}`;
   return shuffleWithSeed(arr, seedStr);
 }
-
+function maybeShuffle(arr) {
+  if (ORDER_MODE === 'fixed') return arr.slice();
+  return arr.slice().sort(() => Math.random() - 0.5);
+}
 async function loadWordList() {
   // --- Step 1: inline words override ---
 if (WORDS_OVERRIDE.length) {
@@ -727,7 +730,7 @@ if (WORDS_OVERRIDE.length) {
 
 if (supaLists && Array.isArray(supaLists[listName])) {
 
-  words = await applySyncedOrder(listName, supaLists[listName]);
+  words = maybeShuffle(supaLists[listName]);
 
 
 
@@ -783,9 +786,17 @@ if (Array.isArray(resolvedEntry)) {
   const modVal = document.getElementById("moduleSelect")?.value || "M1";
 
   // 🔥 FORCE sentences to become objects if needed
-  words = (listName === "Oraciones")
-  ? ensureSentenceObjects(resolvedEntry, modVal).slice()
-  : resolvedEntry.slice();
+  const base = (listName === "Oraciones")
+    ? ensureSentenceObjects(resolvedEntry, modVal)
+    : resolvedEntry;
+
+  if (GROUP_CODE && (isTeacher || isStudent)) {
+    // synchronized shuffle
+    words = await applySyncedOrder(listName, base);
+  } else {
+    // local random
+    words = maybeShuffle(base);
+  }
 
 }
 
@@ -799,13 +810,15 @@ if (Array.isArray(resolvedEntry)) {
     // DO NOT rebuild or map objects.
     // Keep sentence objects intact so audioId survives.
   
-    words = (scope === "new")
-      ? (resolvedEntry.new || []).slice()
-      : resolvedEntry.all.slice();
+    const base = (scope === "new")
+      ? (resolvedEntry.new || [])
+      : resolvedEntry.all;
+    
+    words = maybeShuffle(base);
   }
 
   else if (resolvedEntry.new) {
-    words = resolvedEntry.new.slice();   // ⭐ KEEP ORIGINAL FORMAT
+    words = maybeShuffle(resolvedEntry.new);   // ⭐ KEEP ORIGINAL FORMAT
   }
 
 
