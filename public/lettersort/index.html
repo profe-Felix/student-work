@@ -2387,6 +2387,61 @@ function syllabifyEn(wordRaw){
       }
     }
 
+function buildGenerateMode(){
+
+  currentMode = 'generate';
+
+  document.body.classList.remove('row-compact');
+
+  columnsEl.classList.remove('hidden');
+  rackSectionEl.classList.add('hidden');
+  rowModeEl.classList.add('hidden');
+
+  columnsEl.innerHTML = '';
+
+  const cols = GENERATE_COLUMNS.length ? GENERATE_COLUMNS : ['A','B'];
+
+  setOneRowGrid(cols.length);
+
+  cols.forEach((title, colIndex)=>{
+
+    const rows = getGenerateRowCountForCol(colIndex);
+
+    const col = document.createElement('div');
+    col.className = 'col';
+
+    const header = document.createElement('header');
+    header.innerHTML = `<h2>${title}</h2>`;
+
+    const drop = document.createElement('div');
+    drop.className = 'drop';
+
+    drop.style.display = 'grid';
+    drop.style.gridTemplateRows = `repeat(${rows}, 50px)`;
+    drop.style.gap = '8px';
+
+    for(let i=0;i<rows;i++){
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = '';
+
+      input.style.fontSize = '24px';
+      input.style.textAlign = 'center';
+
+      drop.appendChild(input);
+
+    }
+
+    col.appendChild(header);
+    col.appendChild(drop);
+
+    columnsEl.appendChild(col);
+
+  });
+
+}
+    
 function everythingCorrect(){
   // ---------- ROWSYLL (chips in rowDrop) ----------
   if (currentMode === 'rowsyll') {
@@ -2801,7 +2856,8 @@ function everythingCorrect(){
     function startSoloRound(){
       usedSet = new Set();
       rackEl.classList.remove('chips');
-
+      
+      if (MODE==='generate'){ buildGenerateMode(); return; }
       if (MODE==='row'){ buildRowMode(); return; }
       if (MODE==='rowalli' || MODE==='allisort'){ buildRowAlliMode(); return; }
       if (MODE==='allisyll'){ buildRowAlliSyllMode(); return; }
