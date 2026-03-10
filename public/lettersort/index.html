@@ -45,8 +45,8 @@
       display:grid;
       gap:16px;
       margin-top:16px;
-      overflow-x:auto;
-      scroll-snap-type:x proximity;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      align-items:start;
     }
     .col{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.05);padding:10px;scroll-snap-align:start}
     .col header{display:flex;align-items:center;justify-content:center;margin-bottom:10px}
@@ -2417,7 +2417,7 @@ function buildGenerateMode(){
     drop.className = 'drop';
 
     drop.style.display = 'grid';
-    drop.style.gridTemplateRows = `repeat(${rows}, 50px)`;
+    drop.style.gridTemplateRows = `repeat(${rows}, 64px)`;
     drop.style.gap = '8px';
 
     for(let i=0;i<rows;i++){
@@ -2426,7 +2426,7 @@ function buildGenerateMode(){
       input.type = 'text';
       input.placeholder = '';
 
-      input.style.fontSize = '24px';
+      input.style.fontSize = '28px';
       input.style.textAlign = 'center';
 
       drop.appendChild(input);
