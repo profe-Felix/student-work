@@ -543,6 +543,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         alertPickLetters: 'Seleccione 1–5 letras.',
         soloPrefix: 'Modo individual:',
         soloMode: {
+          generate: 'generar palabras',
           randinit: 'sonido inicial aleatorio',   /* ✅ NEW */
           row: 'modo filas',
           rowalli: 'aliteración por filas',
@@ -595,6 +596,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         alertPickLetters: 'Select 1–5 letters.',
         soloPrefix: 'Solo mode:',
         soloMode: {
+          generate: 'generate words',
           randinit: 'random initial sound',       /* ✅ NEW */
           row: 'row mode',
           rowalli: 'row alliteration',
@@ -769,10 +771,32 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
       .map(s => s.trim())
       .filter(Boolean);
 
-    // Row modes params
-    const ROWS_RAW   = qs.get('rows') || '';
-    const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
-
+        // Row modes params
+        const ROWS_RAW   = qs.get('rows') || '';
+        const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
+    
+        // Generate mode params
+        const GENERATE_COLUMNS = (qs.get('columns') || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+    
+        function parseGenerateRows(raw){
+          const txt = (raw || '').trim();
+          if (!txt) return [];
+          return txt
+            .split(',')
+            .map(n => parseInt(n.trim(), 10))
+            .filter(n => Number.isFinite(n) && n > 0);
+        }
+    
+        const GENERATE_ROWS = parseGenerateRows(qs.get('rows') || '');
+    
+        function getGenerateRowCountForCol(index){
+          if (!GENERATE_ROWS.length) return 4;
+          if (GENERATE_ROWS.length === 1) return GENERATE_ROWS[0];
+          return GENERATE_ROWS[index] || GENERATE_ROWS[GENERATE_ROWS.length - 1] || 4;
+        }
     // Force SOLO by default unless ?sync=true
     const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
     if (!SYNC) {
@@ -786,7 +810,8 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
     // SOLO conditions
     const SOLO_MODE =
       !SYNC ||
-      MODE === 'randinit' ||  /* ✅ NEW */
+      MODE === 'generate' ||
+      MODE === 'randinit' ||
       MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
       (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0) || (SOLO_PHONEMES.length > 0) || (SOLO_STRESSPOS.length > 0);
 
@@ -2751,6 +2776,7 @@ function everythingCorrect(){
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
       const modeTxt =
+        (MODE==='generate')  ? T.soloMode.generate :
         (MODE==='randinit')  ? T.soloMode.randinit :  /* ✅ NEW */
         (MODE==='row')       ? T.soloMode.row :
         (MODE==='rowalli' || MODE==='allisort') ? T.soloMode.rowalli :
