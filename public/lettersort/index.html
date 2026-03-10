@@ -791,6 +791,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         }
     
         const GENERATE_ROWS = parseGenerateRows(qs.get('rows') || '');
+        const GENERATE_SLOTS = Math.max(1, parseInt(qs.get('slots') || '1', 10));
     
         function getGenerateRowCountForCol(index){
           if (!GENERATE_ROWS.length) return 4;
@@ -2417,20 +2418,31 @@ function buildGenerateMode(){
     drop.className = 'drop';
 
     drop.style.display = 'grid';
-    drop.style.gridTemplateRows = `repeat(${rows}, 64px)`;
+    drop.style.gridTemplateRows = `repeat(${rows}, auto)`;
     drop.style.gap = '8px';
 
-    for(let i=0;i<rows;i++){
+    for (let i = 0; i < rows; i++) {
 
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.placeholder = '';
-
-      input.style.fontSize = '28px';
-      input.style.textAlign = 'center';
-
-      drop.appendChild(input);
-
+      const row = document.createElement('div');
+      row.style.display = 'grid';
+      row.style.gridTemplateColumns = `repeat(${GENERATE_SLOTS}, 1fr)`;
+      row.style.gap = '8px';
+    
+      for (let s = 0; s < GENERATE_SLOTS; s++) {
+    
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = '';
+    
+        input.style.fontSize = '28px';
+        input.style.textAlign = 'center';
+    
+        row.appendChild(input);
+    
+      }
+    
+      drop.appendChild(row);
+    
     }
 
     col.appendChild(header);
