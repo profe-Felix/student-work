@@ -1110,8 +1110,12 @@ location.reload();
       else{
         const tile = makeTextTile(t, false);
     
-        if(centerRow){
-          tile.style.gridColumn = "5 / span 2"; 
+        if (centerRow){
+          const cols = parseInt(getComputedStyle(document.documentElement)
+                       .getPropertyValue('--tray-cols')) || 10;
+        
+          const center = Math.ceil(cols / 2);
+          tile.style.gridColumn = center;
         }
     
         syllTray.appendChild(tile);
