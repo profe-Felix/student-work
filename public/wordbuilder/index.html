@@ -1019,9 +1019,15 @@ location.reload();
     wordsTray.innerHTML = '';
     wordsCard.style.display = WORDS.length ? '' : 'none';
     WORDS.forEach(w=>{
-      if(w === '_'){
+      if(w === '|'){                       // row break
+        const br = document.createElement('div');
+        br.style.gridColumn = '1 / -1';
+        wordsTray.appendChild(br);
+      }
+      else if(w === '_'){                  // invisible spacer
         wordsTray.appendChild(makeTraySpacer());
-      }else{
+      }
+      else{
         wordsTray.appendChild(makeTextTile(w, false));
       }
     });
