@@ -1383,21 +1383,30 @@ function clearPreview(){
 }
 
 function getNearestIndex(slot, clientX, movingEl){
-  const tiles = [...slot.querySelectorAll('.tile')].filter(t => t !== movingEl);
+
+  const tiles = [...slot.querySelectorAll('.tile')]
+    .filter(t => t !== movingEl);
 
   if (tiles.length === 0) return 0;
 
   const first = tiles[0].getBoundingClientRect();
   const last  = tiles[tiles.length - 1].getBoundingClientRect();
 
+  // before first tile
   if (clientX < first.left + first.width / 2) return 0;
+
+  // after last tile
   if (clientX > last.left + last.width / 2) return tiles.length;
 
+  // between tiles
   for (let i = 0; i < tiles.length - 1; i++){
+
     const a = tiles[i].getBoundingClientRect();
     const b = tiles[i + 1].getBoundingClientRect();
-    const mid = (a.right + b.left) / 2;
-    if (clientX < mid) return i + 1;
+
+    const gapMid = (a.right + b.left) / 2;
+
+    if (clientX < gapMid) return i + 1;
   }
 
   return tiles.length;
