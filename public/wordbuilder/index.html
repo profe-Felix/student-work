@@ -1070,7 +1070,7 @@ location.reload();
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
     SYLL.forEach(t=>{
-      if(t === '_'){
+      if(t === '_' || t === '|'){
         syllTray.appendChild(makeTraySpacer());
       }else{
         syllTray.appendChild(makeTextTile(t, false));
