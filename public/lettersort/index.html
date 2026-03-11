@@ -830,7 +830,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
       !SYNC ||
       MODE === 'generate' ||
       MODE === 'randinit' ||
-      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
+      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'rowsyllcols' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
       (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0) || (SOLO_PHONEMES.length > 0) || (SOLO_STRESSPOS.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1321,7 +1321,7 @@ function syllabifyEn(wordRaw){
 
         if (MODE==='row' || MODE==='rowalli' || MODE==='allisort' || MODE==='allisyll' || MODE==='rowsyll' || MODE==='syllcount'){
           imageFiles = await listAllImagesJpg();
-        } else if (SOLO_WORDS.length){
+        } else if (SOLO_WORDS.length && MODE!=='rowsyllcols'){
           const found = [];
           for (const w of SOLO_WORDS){
             const f = await resolveImageForWord(w);
@@ -2050,9 +2050,9 @@ function syllabifyEn(wordRaw){
 
     function resetRoundPlacements(){
       document.querySelectorAll('.card, .chip').forEach(c=> c.classList.remove('ok','bad','locked') );
-      if (currentMode==='row' || currentMode==='rowalli' || currentMode==='allisyll' || currentMode==='rowsyll'){
+      if (currentMode==='row' || currentMode==='rowalli' || currentMode==='allisyll' || currentMode==='rowsyll' || currentMode==='rowsyllcols'){
         rowData.forEach((r)=>{ r.dropEl.innerHTML=''; });
-        if (currentMode==='rowsyll'){
+        if (currentMode==='rowsyll' || currentMode==='rowsyllcols'){
           rackEl.innerHTML = '';
           rackEl.classList.add('chips');
           SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
@@ -2446,7 +2446,10 @@ async function buildRowSyllColsMode(){
     promptWrap.className='rowPrompt';
 
     const img=document.createElement('img');
-    img.src=HEADER_IMAGES[i]||'';
+    const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
+    const path = `${prefix}${HEADER_IMAGES[i] || ''}`;
+    const { data } = client.storage.from(IB).getPublicUrl(path);
+    img.src = data?.publicUrl || '';
     img.className='headerImg';
 
     promptWrap.appendChild(img);
@@ -2535,8 +2538,8 @@ function buildGenerateMode(){
 }
     
 function everythingCorrect(){
-  // ---------- ROWSYLL (chips in rowDrop) ----------
-  if (currentMode === 'rowsyll') {
+  // ---------- ROWSYLL / ROWSYLLCOLS (chips in rowDrop) ----------
+  if (currentMode === 'rowsyll' || currentMode === 'rowsyllcols') {
     const rackChips = rackEl.querySelectorAll('.chip');
     if (rackChips.length > 0) return false; // anything left in the bank
 
@@ -3097,7 +3100,7 @@ function everythingCorrect(){
         if(!TILES_ONLY &&
            imageFiles.length===0 &&
            MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' &&
-           MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='syllcount') return;
+           MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='rowsyllcols' && MODE!=='syllcount') return;
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
