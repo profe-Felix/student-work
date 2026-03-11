@@ -61,17 +61,14 @@
   /* iPad / tablet layout */
   @media (max-width:1200px){
     main{
-      grid-template-columns:320px minmax(0,1fr);
+      grid-template-columns:auto minmax(0,1fr);
       gap:12px;
     }
   
     .board{
-      width:320px;
-      max-width:320px;
-      min-width:320px;
+      max-width:640px;
       justify-self:start;
       padding:8px;
-      overflow:hidden;
     }
   
     .line{
@@ -111,7 +108,15 @@
   
     min-width:0;   /* ⭐ REQUIRED for grid shrink */
   }
-
+  /* Word building (compact board) */
+  .word-mode .board{
+    max-width:340px;
+  }
+  
+  /* Sentence building (allow wider board) */
+  .sentence-mode .board{
+    max-width:720px;
+  }
   .slots{
     display:flex;
     flex-direction:column;
@@ -125,7 +130,7 @@
     align-items:flex-start;
     justify-content:flex-start;
   
-    flex-wrap:nowrap;
+    flex-wrap:wrap;
     min-width:0;
   }
 
@@ -142,7 +147,7 @@
     flex-wrap:wrap;
     align-content:flex-start;
   
-    flex:1 1 0;
+    flex:0 1 auto;
     min-width:0;
     max-width:100%;
   
@@ -748,7 +753,12 @@ location.reload();
   const WORDS    = getList(['words','word'], DEFAULT_WORDS);
   const PUNC     = getList(['punc','punct','punctuation'], DEFAULT_PUNC);
   const IMG_URLS = getList(['imgs','images','pics','pictures'], []);
-
+  // ===== Detect sentence-building mode =====
+  const SENTENCE_MODE =
+    WORDS.length ||
+    SPACE_ON ||
+    PUNC_ON ||
+    WRITE_ON;
   const slotsEl       = document.getElementById('slots');
   const trashEl       = document.getElementById('trash');
   const trashSpaceEl  = document.getElementById('trashSpace');
@@ -1709,7 +1719,11 @@ document.getElementById('qrCard').addEventListener('click', (e) => {
     buildRows(boxesPer, rows, null);
     relayoutAllSlots();
   });
-
+  if (SENTENCE_MODE){
+    document.body.classList.add('sentence-mode');
+  }else{
+    document.body.classList.add('word-mode');
+  }
   buildRows(BOXES_PER_ROW, NUM_ROWS, BOX_COUNT);
   fillPalettes();
   applyPrefillRows();
