@@ -341,20 +341,22 @@
  .slot.preview-edge-right::after{ right:8px; }
  
  /* Between-tiles insert: shift ONLY the tile after the insertion point */
- .slot .tile.preview-after{
-   position:relative;
- }
- 
- .slot .tile.preview-after::before{
-   content:'';
-   position:absolute;
-   left:-14px;
-   top:6px;
-   bottom:6px;
-   width:4px;
-   background:#2563eb;
-   border-radius:4px;
- }
+ /* Between-tiles insert: open a real visible gap */
+.slot .tile.preview-after{
+  position:relative;
+  margin-left:30px;
+}
+
+.slot .tile.preview-after::before{
+  content:'';
+  position:absolute;
+  left:-18px;
+  top:4px;
+  bottom:4px;
+  width:4px;
+  background:#2563eb;
+  border-radius:4px;
+}
  
  /* Empty slot preview */
  .slot.preview-empty{
@@ -1206,7 +1208,11 @@ location.reload();
     }
   
     if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
-     requestAnimationFrame(()=>fitTextToSlot(t, slot));
+     requestAnimationFrame(()=>{
+       requestAnimationFrame(()=>{
+         fitTextToSlot(t, slot);
+       });
+     });
    }
   });
   }
@@ -1216,8 +1222,8 @@ location.reload();
 
   function fitTextToSlot(tile, slot){
   
-    const maxWidth = slot.clientWidth - 16;
-    if (!maxWidth) return;
+    const maxWidth = Math.max(20, slot.getBoundingClientRect().width - 16);
+    if (maxWidth <= 20) return;
   
     const tiles = [...slot.querySelectorAll('.tile')]
       .filter(t => t.dataset.kind === 'text' || t.dataset.kind === 'write');
@@ -1385,13 +1391,13 @@ function getNearestIndex(slot, clientX, movingEl){
   const last  = tiles[tiles.length - 1].getBoundingClientRect();
 
   if (clientX < first.left + first.width / 2) return 0;
-  if (clientX > last.left  + last.width  / 2) return tiles.length;
+  if (clientX > last.left + last.width / 2) return tiles.length;
 
   for (let i = 0; i < tiles.length - 1; i++){
     const a = tiles[i].getBoundingClientRect();
     const b = tiles[i + 1].getBoundingClientRect();
-    const center = a.left + a.width / 2;
-    if (clientX < center) return i;
+    const mid = (a.right + b.left) / 2;
+    if (clientX < mid) return i + 1;
   }
 
   return tiles.length;
