@@ -330,6 +330,18 @@
       pointer-events:none;
       transform:translate3d(0,-40px,0);
     }
+    .headerImgWrap{
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      padding:6px 0;
+    }
+    
+    .headerImg{
+      height:90px;
+      max-width:120px;
+      object-fit:contain;
+    }
   </style>
 </head>
 <body>
@@ -767,6 +779,10 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
 
     // Optional custom column titles: ?titles=sí,no,maybe
     const COL_TITLES = (qs.get('titles') || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    const HEADER_IMAGES = (qs.get('headerimages') || '')
       .split(',')
       .map(s => s.trim())
       .filter(Boolean);
@@ -1904,6 +1920,13 @@ function syllabifyEn(wordRaw){
         return `<div class="stressCounters" aria-hidden="true">${dots}</div>`;
       }
 
+      const idx = currentCols.indexOf(col);
+      const img = HEADER_IMAGES[idx];
+      
+      if (img){
+        return `<div class="headerImgWrap"><img src="${img}" class="headerImg"></div>`;
+      }
+      
       return `<h2>${col.label}</h2>`;
     }
 
