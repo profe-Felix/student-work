@@ -789,10 +789,39 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
       .split(',')
       .map(s => s.trim())
       .filter(Boolean);
-    const HEADER_IMAGES = (qs.get('headerimages') || '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
+    const HEADER_IMAGES = (() => {
+
+      const raw = qs.get('headerimages') || '';
+      if (!raw) return [];
+    
+      const out = [];
+      let cur = '';
+    
+      for (let i = 0; i < raw.length; i++) {
+        const ch = raw[i];
+    
+        if (ch === ',') {
+          const prev = raw[i - 1];
+          const next = raw[i + 1];
+    
+          // treat ",," inside filename as literal
+          if (prev === ',' || next === ',') {
+            cur += ch;
+            continue;
+          }
+    
+          if (cur.trim()) out.push(cur.trim());
+          cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+    
+      if (cur.trim()) out.push(cur.trim());
+    
+      return out;
+    
+    })();
 
         // Row modes params
         const ROWS_RAW   = qs.get('rows') || '';
