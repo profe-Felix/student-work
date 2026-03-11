@@ -789,6 +789,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
 
         // Row modes params
         const ROWS_RAW   = qs.get('rows') || '';
+        const ROWSYLL_COLS = qs.get('rowsyll') || '';
         const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
     
         // Generate mode params
@@ -2137,6 +2138,13 @@ function syllabifyEn(wordRaw){
         return { prompt, how };
       }).filter(r=>r.prompt);
     }
+
+    function parseRowsyllCols(str){
+      return str.split('|')
+        .map(col => col.split(',').map(s => s.trim()).filter(Boolean))
+        .filter(col => col.length);
+    }
+    
     function parseAlliGroups(str){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
         const items = seg.split(',').map(s=>s.trim()).filter(Boolean);
@@ -2410,7 +2418,56 @@ function syllabifyEn(wordRaw){
         });
       }
     }
+async function buildRowSyllColsMode(){
 
+  currentMode = 'rowsyllcols';
+
+  document.body.classList.remove('row-compact');
+  columnsEl.classList.add('hidden');
+  rowModeEl.classList.remove('hidden');
+  rackSectionEl.classList.remove('hidden');
+
+  rackEl.innerHTML='';
+  rackEl.classList.add('chips');
+
+  SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
+
+  const cols = parseRowsyllCols(ROWSYLL_COLS);
+
+  rowData=[];
+  rowModeEl.innerHTML='';
+
+  for(let i=0;i<cols.length;i++){
+
+    const line=document.createElement('div');
+    line.className='rowLine twoCols';
+
+    const promptWrap=document.createElement('div');
+    promptWrap.className='rowPrompt';
+
+    const img=document.createElement('img');
+    img.src=HEADER_IMAGES[i]||'';
+    img.className='headerImg';
+
+    promptWrap.appendChild(img);
+
+    const drop=document.createElement('div');
+    drop.className='rowDrop';
+    drop.dataset.row=String(i);
+
+    line.appendChild(promptWrap);
+    line.appendChild(drop);
+
+    rowModeEl.appendChild(line);
+
+    rowData.push({
+      type:'rowsyllcols',
+      dropEl:drop,
+      syllables:cols[i]
+    });
+
+  }
+}
 function buildGenerateMode(){
 
   currentMode = 'generate';
@@ -2619,7 +2676,31 @@ function everythingCorrect(){
         if (everythingCorrect()) celebrate();
         return;
       }
+      if(currentMode==='rowsyllcols'){
 
+        rowData.forEach(r=>{
+      
+          [...r.dropEl.children].forEach(chip=>{
+      
+            const text=(chip.textContent||'').toLowerCase();
+            const syls=syllablesNormalized(text);
+      
+            const ok=syls.some(s=>r.syllables.includes(s));
+      
+            if(ok){
+              chip.classList.add('ok','locked');
+            }else{
+              chip.classList.add('bad');
+              setTimeout(()=>rackEl.appendChild(chip),300);
+            }
+      
+          });
+      
+        });
+      
+        if(everythingCorrect()) celebrate();
+        return;
+      }
       if (currentMode==='rowsyll'){
         rowData.forEach((r)=>{
           const tgt = r.targetInitial;
@@ -2939,6 +3020,7 @@ function everythingCorrect(){
       if (MODE==='row'){ buildRowMode(); return; }
       if (MODE==='rowalli' || MODE==='allisort'){ buildRowAlliMode(); return; }
       if (MODE==='allisyll'){ buildRowAlliSyllMode(); return; }
+      if (MODE==='rowsyllcols'){ buildRowSyllColsMode(); return; }
       if (MODE==='rowsyll'){ buildRowSyllMode(); return; }
 
       document.body.classList.remove('row-compact');
