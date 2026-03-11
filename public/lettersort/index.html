@@ -2697,11 +2697,16 @@ function everythingCorrect(){
       
             const ok=syls.some(s=>r.syllables.includes(s));
       
+            chip.classList.remove('ok','bad');
+
             if(ok){
               chip.classList.add('ok','locked');
             }else{
               chip.classList.add('bad');
-              setTimeout(()=>rackEl.appendChild(chip),300);
+              setTimeout(()=>{
+                chip.classList.remove('bad');
+                rackEl.appendChild(chip);
+              },300);
             }
       
           });
@@ -2746,11 +2751,16 @@ function everythingCorrect(){
               ok = syllableMatchesCV(chosen, tgt);
             }
 
+            chipEl.classList.remove('ok','bad');
+
             if (ok){
               chipEl.classList.add('ok','locked');
             } else {
               chipEl.classList.add('bad');
-              setTimeout(()=> { chipEl.classList.remove('bad'); rackEl.appendChild(chipEl); }, 300);
+              setTimeout(()=>{
+                chipEl.classList.remove('bad');
+                rackEl.appendChild(chipEl);
+              },300);
             }
           });
         });
@@ -2793,8 +2803,18 @@ function everythingCorrect(){
             ok = (target.type==='is') ? (initial===target.letter) : (initial!==target.letter);
           }
 
-          if(ok){ cardEl.classList.add('ok','locked'); lockCard(cardEl, card); }
-          else { cardEl.classList.add('bad'); setTimeout(()=> ejectToRack(cardEl), 350); }
+          cardEl.classList.remove('ok','bad');   // ⭐ reset previous state
+          
+          if(ok){
+            cardEl.classList.add('ok','locked');
+            lockCard(cardEl, card);
+          }else{
+            cardEl.classList.add('bad');
+            setTimeout(()=>{
+              cardEl.classList.remove('bad');
+              ejectToRack(cardEl);
+            },350);
+          }
         });
       });
 
