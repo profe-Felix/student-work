@@ -1111,12 +1111,24 @@ location.reload();
         const tile = makeTextTile(t, false);
     
         if (centerRow){
-          const cols = parseInt(getComputedStyle(document.documentElement)
-                       .getPropertyValue('--tray-cols')) || 10;
-        
-          const center = Math.ceil(cols / 2);
-          tile.style.gridColumn = center;
-        }
+
+         const cols = parseInt(
+           getComputedStyle(document.documentElement)
+             .getPropertyValue('--tray-cols')
+         ) || 10;
+       
+         if (cols % 2 === 0){
+           // even number of columns → span the middle two
+           const left = cols / 2;
+           tile.style.gridColumn = `${left} / span 2`;
+           tile.style.justifySelf = "center";
+         } else {
+           // odd → exact middle column
+           const center = Math.ceil(cols / 2);
+           tile.style.gridColumn = center;
+         }
+       
+       }
     
         syllTray.appendChild(tile);
       }
