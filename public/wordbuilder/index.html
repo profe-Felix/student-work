@@ -60,20 +60,24 @@
    
    /* iPad / tablet layout */
    @media (max-width:1024px){
-   
-     main{
-       grid-template-columns:minmax(0,.25fr) minmax(0,1.75fr);
-     }
-   
-     .slot{
-       padding:4px 6px;
-     }
-   
-     .slot:empty::before{
-       width:5ch;
-     }
-   
-   }
+  
+    main{
+      grid-template-columns:360px minmax(0,1fr);
+    }
+  
+    .board{
+      max-width:360px;
+    }
+  
+    .slot{
+      padding:4px 6px;
+    }
+  
+    .slot:empty::before{
+      width:5ch;
+    }
+  
+  }
   /* MOBILE ONLY */
  @media (max-width:700px){main{grid-template-columns:1fr}
  }
