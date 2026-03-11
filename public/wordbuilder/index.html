@@ -50,6 +50,19 @@
   small.note{color:var(--muted)}
 
   main{max-width:1200px;margin:16px auto;padding:0 12px;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px}
+ @media (max-width:1024px){
+  main{
+    grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);
+  }
+
+  .slot{
+    padding:4px 6px;
+  }
+
+  .slot:empty::before{
+    width:6ch;
+  }
+}
   /* MOBILE ONLY */
  @media (max-width:700px){main{grid-template-columns:1fr}
  }
