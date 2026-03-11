@@ -342,7 +342,18 @@
  
  /* Between-tiles insert: shift ONLY the tile after the insertion point */
  .slot .tile.preview-after{
-   margin-left:28px;
+   position:relative;
+ }
+ 
+ .slot .tile.preview-after::before{
+   content:'';
+   position:absolute;
+   left:-14px;
+   top:6px;
+   bottom:6px;
+   width:4px;
+   background:#2563eb;
+   border-radius:4px;
  }
  
  /* Empty slot preview */
@@ -1195,8 +1206,8 @@ location.reload();
     }
   
     if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
-      fitTextToSlot(t, slot);
-    }
+     requestAnimationFrame(()=>fitTextToSlot(t, slot));
+   }
   });
   }
   function relayoutAllSlots(){
@@ -1379,8 +1390,8 @@ function getNearestIndex(slot, clientX, movingEl){
   for (let i = 0; i < tiles.length - 1; i++){
     const a = tiles[i].getBoundingClientRect();
     const b = tiles[i + 1].getBoundingClientRect();
-    const mid = (a.right + b.left) / 2;
-    if (clientX < mid) return i + 1;
+    const center = a.left + a.width / 2;
+    if (clientX < center) return i;
   }
 
   return tiles.length;
