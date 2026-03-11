@@ -130,6 +130,12 @@
     grid-template-columns:repeat(var(--tray-cols), max-content);
     gap:8px;
   }
+  .tray-spacer{
+   width:var(--tile-min-w);
+   height:var(--tile-h);
+   pointer-events:none;
+   visibility:hidden;
+ }
 
   .card-header{
     display:flex;
@@ -836,6 +842,12 @@ location.reload();
     makeDraggable(div, { cloneOnDrag: !isClone });
     return div;
   }
+
+  function makeTraySpacer(){
+    const div = document.createElement('div');
+    div.className = 'tray-spacer';
+    return div;
+  }
  
   function makeWriteTile(isClone=false){
    const div = document.createElement('div');
@@ -984,15 +996,35 @@ location.reload();
       lettersTray.appendChild(makeWriteGenerator());
     }
     
-    LETTERS.forEach(t => lettersTray.appendChild(makeTextTile(t, false)));
+    LETTERS.forEach(t=>{
+      if(t === '|'){                // row break marker
+        const br = document.createElement('div');
+        br.style.gridColumn = '1 / -1';
+        lettersTray.appendChild(br);
+      }else{
+        lettersTray.appendChild(makeTextTile(t, false));
+      }
+    });
 
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
-    SYLL.forEach(t => syllTray.appendChild(makeTextTile(t, false)));
+    SYLL.forEach(t=>{
+      if(t === '_'){
+        syllTray.appendChild(makeTraySpacer());
+      }else{
+        syllTray.appendChild(makeTextTile(t, false));
+      }
+    });
 
     wordsTray.innerHTML = '';
     wordsCard.style.display = WORDS.length ? '' : 'none';
-    WORDS.forEach(w => wordsTray.appendChild(makeTextTile(w, false)));
+    WORDS.forEach(w=>{
+      if(w === '_'){
+        wordsTray.appendChild(makeTraySpacer());
+      }else{
+        wordsTray.appendChild(makeTextTile(w, false));
+      }
+    });
 
     puncTray.innerHTML = '';
     puncCard.style.display = (PUNC_ON && PUNC.length) ? '' : 'none';
