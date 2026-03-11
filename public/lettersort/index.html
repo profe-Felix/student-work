@@ -933,11 +933,16 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
     function stripImageSuffix(t){ return t.replace(/_(pic|img|image|foto)$/i,''); }
     function normalizeMarkers(s){
-      let t = (s || '').toLowerCase().trim();
-      t = t.replace(/a\.\./g,'a').replace(/e\.\./g,'e').replace(/i\.\./g,'i').replace(/o\.\./g,'o').replace(/u\.\./g,'u');
-      t = t.replace(/u,,/g,'u').replace(/n\.\./g,'n');
-      t = stripDiacritics(t);
-      return t;
+      return (s || '')
+        .toLowerCase()
+        .trim()
+        .replace(/a\.\./g,'á')
+        .replace(/e\.\./g,'é')
+        .replace(/i\.\./g,'í')
+        .replace(/o\.\./g,'ó')
+        .replace(/u\.\./g,'ú')
+        .replace(/u,,/g,'ü')
+        .replace(/n\.\./g,'ñ');
     }
     function initialFromStem(stemRaw){
       const raw = (stemRaw || '').toLowerCase();
