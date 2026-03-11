@@ -78,6 +78,11 @@
     }
   
   }
+  @media (max-width:1024px){
+   .line{
+     max-width:340px;
+   }
+ }
   /* MOBILE ONLY */
  @media (max-width:700px){main{grid-template-columns:1fr}
  }
@@ -133,7 +138,8 @@
   .slot:empty::before{
     content:"";
     display:block;
-    width:8ch;
+    width:100%;
+    min-width:4ch;
     height:clamp(40px, 6vh, 64px);
   }
 
