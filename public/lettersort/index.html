@@ -2485,15 +2485,58 @@ function everythingCorrect(){
   }
 
   // ---------- CLASSIC (cards in .drop) ----------
-  const rackCards = rackEl.querySelectorAll('.card');
-  if (rackCards.length > 0) return false;
 
+  // no incorrect cards allowed
   if (document.querySelector('.drop .card.bad')) return false;
-
+  
   const placed = document.querySelectorAll('.drop .card').length;
   const locked = document.querySelectorAll('.drop .card.locked').length;
-
-  return placed > 0 && placed === locked;
+  
+  // count how many cards actually belong in columns
+  let expected = 0;
+  
+  currentCards.forEach(card => {
+  
+    const coreRaw = card.coreRaw;
+  
+    const match = currentCols.some(col => {
+  
+      const key = col.key;
+  
+      if (key.startsWith('not-')) {
+        const L = key.slice(4);
+        return initialFromStem(coreRaw) !== L;
+      }
+  
+      if (key.startsWith('syll:')) {
+        const target = key.slice(5);
+        const syls = syllablesNormalized(coreRaw);
+        return SYLL_MATCH === 'any'
+          ? syls.some(s => cmpSyll(s, target))
+          : cmpSyll(syls[0], target);
+      }
+  
+      if (key.startsWith('count:')) {
+        return syllableCount(coreRaw) === parseInt(key.slice(6),10);
+      }
+  
+      if (key.startsWith('phon:')) {
+        return phonemeCount(coreRaw) === parseInt(key.slice(5),10);
+      }
+  
+      if (key.startsWith('stress:')) {
+        return stressedSyllIndex(coreRaw) === parseInt(key.slice(7),10);
+      }
+  
+      return initialFromStem(coreRaw) === key;
+  
+    });
+  
+    if (match) expected++;
+  
+  });
+  
+  return placed === expected && locked === expected;
 }
 
     function verifyNow(fromBroadcast){
