@@ -1070,9 +1070,15 @@ location.reload();
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
     SYLL.forEach(t=>{
-      if(t === '_' || t === '|'){
+      if(t === '|'){                // real row break
+        const br = document.createElement('div');
+        br.style.gridColumn = '1 / -1';
+        syllTray.appendChild(br);
+      }
+      else if(t === '_'){           // invisible spacer
         syllTray.appendChild(makeTraySpacer());
-      }else{
+      }
+      else{
         syllTray.appendChild(makeTextTile(t, false));
       }
     });
