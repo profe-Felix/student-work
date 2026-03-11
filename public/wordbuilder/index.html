@@ -193,6 +193,14 @@
    visibility:hidden;
  }
 
+ .tray-half{
+   width:calc(var(--tile-min-w) / 2);
+   height:var(--tile-h);
+   pointer-events:none;
+   visibility:hidden;
+ }
+ 
+
   .card-header{
     display:flex;
     align-items:center;
@@ -909,6 +917,12 @@ location.reload();
     div.className = 'tray-spacer';
     return div;
   }
+
+  function makeTrayHalf(){
+    const div = document.createElement('div');
+    div.className = 'tray-half';
+    return div;
+  }
  
   function makeWriteTile(isClone=false){
    const div = document.createElement('div');
@@ -1070,13 +1084,16 @@ location.reload();
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
     SYLL.forEach(t=>{
-      if(t === '|'){                // real row break
+      if(t === '|'){
         const br = document.createElement('div');
         br.style.gridColumn = '1 / -1';
         syllTray.appendChild(br);
       }
-      else if(t === '_'){           // invisible spacer
+      else if(t === '_'){
         syllTray.appendChild(makeTraySpacer());
+      }
+      else if(t === '~'){                 // ⭐ half spacer
+        syllTray.appendChild(makeTrayHalf());
       }
       else{
         syllTray.appendChild(makeTextTile(t, false));
