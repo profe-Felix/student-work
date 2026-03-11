@@ -1083,21 +1083,40 @@ location.reload();
 
     syllTray.innerHTML = '';
     syllCard.style.display = SYLL.length ? '' : 'none';
+   
+    let centerRow = false;
+
     SYLL.forEach(t=>{
+    
       if(t === '|'){
         const br = document.createElement('div');
         br.style.gridColumn = '1 / -1';
         syllTray.appendChild(br);
+        centerRow = false;
       }
+    
+      else if(t === '^'){
+        centerRow = true;
+      }
+    
       else if(t === '_'){
         syllTray.appendChild(makeTraySpacer());
       }
-      else if(t === '~'){                 // ⭐ half spacer
+    
+      else if(t === '~'){
         syllTray.appendChild(makeTrayHalf());
       }
+    
       else{
-        syllTray.appendChild(makeTextTile(t, false));
+        const tile = makeTextTile(t, false);
+    
+        if(centerRow){
+          tile.style.gridColumn = "5 / span 2"; 
+        }
+    
+        syllTray.appendChild(tile);
       }
+    
     });
 
     wordsTray.innerHTML = '';
