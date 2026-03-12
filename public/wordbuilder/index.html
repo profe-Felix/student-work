@@ -1558,8 +1558,28 @@ function applyPreview(slot, index, movingEl){
     const tileCenterX = rect.left + rect.width / 2;
     
     const index = getNearestIndex(slot, tileCenterX, drag.el);
-
+    
     applyPreview(slot, index, drag.el);
+    
+    // --- VISUAL SNAP TO GAP ---
+    const tiles = [...slot.querySelectorAll('.tile')].filter(t => t !== drag.el);
+    
+    if (tiles.length){
+      if (index === 0){
+        const r = tiles[0].getBoundingClientRect();
+        drag.el.style.left = (r.left - rect.width - 6) + 'px';
+      }
+      else if (index >= tiles.length){
+        const r = tiles[tiles.length-1].getBoundingClientRect();
+        drag.el.style.left = (r.right + 6) + 'px';
+      }
+      else{
+        const a = tiles[index-1].getBoundingClientRect();
+        const b = tiles[index].getBoundingClientRect();
+        const mid = (a.right + b.left)/2;
+        drag.el.style.left = (mid - rect.width/2) + 'px';
+      }
+    }
   }
 
 
