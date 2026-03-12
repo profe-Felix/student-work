@@ -344,7 +344,6 @@
  /* Between-tiles insert: open a real visible gap */
 .slot .tile.preview-after{
   position:relative;
-  margin-left:30px;
 }
 
 .slot .tile.preview-after::before{
@@ -1378,6 +1377,7 @@ function clearPreview(){
   });
   document.querySelectorAll('.tile.preview-after').forEach(t=>{
     t.classList.remove('preview-after');
+    t.style.marginLeft = '';
   });
   activeInsert = null;
 }
@@ -1413,10 +1413,15 @@ function getNearestIndex(slot, clientX, movingEl){
 }
 
 function applyPreview(slot, index, movingEl){
-  clearPreview();
-  activeInsert = { slot, index };
 
-  const tiles = [...slot.querySelectorAll('.tile')].filter(t => t !== movingEl);
+  clearPreview();
+
+  const tiles = [...slot.querySelectorAll('.tile')]
+    .filter(t => t !== movingEl);
+
+  const gapWidth = movingEl.getBoundingClientRect().width;
+
+  activeInsert = { slot, index };
 
   if (tiles.length === 0){
     slot.classList.add('preview-empty');
@@ -1433,7 +1438,11 @@ function applyPreview(slot, index, movingEl){
     return;
   }
 
-  tiles[index].classList.add('preview-after');
+  const target = tiles[index];
+
+  target.classList.add('preview-after');
+
+  target.style.marginLeft = gapWidth + 'px';
 }
 
 
