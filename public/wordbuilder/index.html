@@ -1472,20 +1472,7 @@ function applyPreview(slot, index, movingEl){
   }
 
   if (index === tiles.length){
-
-   const last = tiles[tiles.length - 1];
-   const lastRect = last.getBoundingClientRect();
- 
-   const pointerX = drag.el.getBoundingClientRect().left;
- 
-   // Only show edge preview if pointer is REALLY near slot edge
-   if (pointerX > lastRect.right + 20){
-     slot.classList.add('preview-edge-right');
-   } else {
-     last.classList.add('preview-after');
-     last.style.marginRight = drag.el.getBoundingClientRect().width + 'px';
-   }
- 
+   slot.classList.add('preview-edge-right');
    return;
  }
 
