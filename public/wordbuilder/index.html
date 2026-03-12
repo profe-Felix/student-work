@@ -1481,7 +1481,30 @@ function applyPreview(slot, index, movingEl){
     el.addEventListener('pointerdown', (e)=>{
       if(e.button!==0) return;
       document.body.classList.add('drag-active');
-      const src = e.currentTarget;
+      const pointerY = e.clientY;
+      const pointerX = e.clientX;
+      
+      const candidates = [...document.querySelectorAll('.tile')];
+      
+      let src = e.currentTarget;
+      let best = null;
+      let bestDist = Infinity;
+      
+      candidates.forEach(t=>{
+        const r = t.getBoundingClientRect();
+      
+        if(pointerX >= r.left && pointerX <= r.right){
+          const midY = r.top + r.height/2;
+          const d = Math.abs(pointerY - midY);
+      
+          if(d < bestDist){
+            bestDist = d;
+            best = t;
+          }
+        }
+      });
+      
+      if(best) src = best;
       const parent = src.parentElement;
       const isPalette = [
         lettersTray, syllTray, wordsTray, puncTray, picsTray,
