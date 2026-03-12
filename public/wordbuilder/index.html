@@ -1391,14 +1391,14 @@ function getNearestIndex(slot, clientX, movingEl){
   if (!tiles.length) return 0;
 
   // --- find the row closest to pointer ---
-  const pointerY = drag.el.getBoundingClientRect().top + drag.el.offsetHeight/2;
+  const pointerY = drag.el.getBoundingClientRect().top + drag.el.offsetHeight / 2;
 
   let closestRowY = null;
   let minDist = Infinity;
 
   tiles.forEach(t=>{
     const r = t.getBoundingClientRect();
-    const midY = r.top + r.height/2;
+    const midY = r.top + r.height / 2;
     const d = Math.abs(pointerY - midY);
 
     if (d < minDist){
@@ -1410,7 +1410,7 @@ function getNearestIndex(slot, clientX, movingEl){
   // --- collect tiles in that visual row ---
   const rowTiles = tiles.filter(t=>{
     const r = t.getBoundingClientRect();
-    const midY = r.top + r.height/2;
+    const midY = r.top + r.height / 2;
     return Math.abs(midY - closestRowY) < r.height;
   });
 
@@ -1419,22 +1419,24 @@ function getNearestIndex(slot, clientX, movingEl){
   );
 
   const first = rowTiles[0].getBoundingClientRect();
-  const last  = rowTiles[rowTiles.length-1].getBoundingClientRect();
+  const last  = rowTiles[rowTiles.length - 1].getBoundingClientRect();
 
-  if (clientX < first.left + first.width/2)
+  if (clientX < first.left + first.width / 2)
     return tiles.indexOf(rowTiles[0]);
 
-  if (clientX > last.left + last.width/2)
-    return tiles.indexOf(rowTiles[rowTiles.length-1]) + 1;
+  if (clientX > last.left + last.width / 2)
+    return tiles.indexOf(rowTiles[rowTiles.length - 1]) + 1;
 
-  for (let i=0;i<rowTiles.length-1;i++){
-    const b = rowTiles[i+1].getBoundingClientRect();
-  
-    if (clientX < b.left)
+  for (let i = 0; i < rowTiles.length - 1; i++){
+    const a = rowTiles[i].getBoundingClientRect();
+    const b = rowTiles[i + 1].getBoundingClientRect();
+    const mid = (a.right + b.left) / 2;
+
+    if (clientX < mid)
       return tiles.indexOf(rowTiles[i]) + 1;
   }
 
-  return tiles.length;
+  return tiles.indexOf(rowTiles[rowTiles.length - 1]) + 1;
 }
 
 function applyPreview(slot, index, movingEl){
