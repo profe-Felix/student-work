@@ -1420,14 +1420,17 @@ function getNearestIndex(slot, clientX, movingEl){
     a.getBoundingClientRect().left - b.getBoundingClientRect().left
   );
 
-  const first = rowTiles[0].getBoundingClientRect();
-  const last  = rowTiles[rowTiles.length - 1].getBoundingClientRect();
-
+  const firstTile = rowTiles[0];
+  const lastTile  = rowTiles[rowTiles.length - 1];
+  
+  const first = firstTile.getBoundingClientRect();
+  const last  = lastTile.getBoundingClientRect();
+  
   if (clientX < first.left)
-    return tiles.indexOf(rowTiles[0]);
+    return tiles.indexOf(firstTile);
   
   if (clientX > last.right)
-    return tiles.indexOf(rowTiles[rowTiles.length - 1]) + 1;
+    return tiles.indexOf(lastTile) + 1;
 
   for (let i = 0; i < rowTiles.length - 1; i++){
     const a = rowTiles[i].getBoundingClientRect();
