@@ -1465,11 +1465,11 @@ function applyPreview(slot, index, movingEl){
     return;
   }
 
- const target = tiles[index];
+ const target = tiles[index - 1];
 
   target.classList.add('preview-after');
   
-  target.style.marginLeft = gapWidth + 'px';
+  target.style.marginRight = gapWidth + 'px';
   target.style.setProperty('--preview-gap', gapWidth + 'px');
 }
 
