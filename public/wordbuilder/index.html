@@ -330,12 +330,14 @@
  .slot.preview-edge-right::after{
    content:'';
    position:absolute;
-   top:6px;
-   bottom:6px;
    width:4px;
+   height:clamp(40px, 6vh, 64px);
    background:#2563eb;
    border-radius:4px;
    opacity:.95;
+ 
+   top:var(--preview-row-y);
+   transform:translateY(-50%);
  }
  .slot.preview-edge-left::before{ left:8px; }
  .slot.preview-edge-right::after{ right:8px; }
@@ -1406,7 +1408,7 @@ function getNearestIndex(slot, clientX, movingEl){
       closestRowY = midY;
     }
   });
-
+  slot.dataset.previewRowY = closestRowY;
   // --- collect tiles in that visual row ---
   const rowTiles = tiles.filter(t=>{
     const r = t.getBoundingClientRect();
@@ -1442,7 +1444,10 @@ function getNearestIndex(slot, clientX, movingEl){
 function applyPreview(slot, index, movingEl){
 
   clearPreview();
-
+  const rowY = parseFloat(slot.dataset.previewRowY || 0);
+  const slotRect = slot.getBoundingClientRect();
+  const offsetY = rowY - slotRect.top;
+  slot.style.setProperty('--preview-row-y', offsetY + 'px');
   const tiles = [...slot.querySelectorAll('.tile')]
     .filter(t => t !== movingEl);
 
