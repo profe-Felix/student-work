@@ -349,7 +349,7 @@
 .slot .tile.preview-after::before{
   content:'';
   position:absolute;
-  left:-18px;
+  left:calc(var(--preview-gap) / -2);
   top:4px;
   bottom:4px;
   width:4px;
@@ -1469,6 +1469,7 @@ function applyPreview(slot, index, movingEl){
   target.classList.add('preview-after');
 
   target.style.marginLeft = gapWidth + 'px';
+  target.style.setProperty('--preview-gap', gapWidth + 'px');
 }
 
 
