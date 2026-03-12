@@ -1387,26 +1387,52 @@ function getNearestIndex(slot, clientX, movingEl){
   const tiles = [...slot.querySelectorAll('.tile')]
     .filter(t => t !== movingEl);
 
-  if (tiles.length === 0) return 0;
+  if (!tiles.length) return 0;
 
-  const first = tiles[0].getBoundingClientRect();
-  const last  = tiles[tiles.length - 1].getBoundingClientRect();
+  // --- find the row closest to pointer ---
+  const pointerY = drag.el.getBoundingClientRect().top + drag.el.offsetHeight/2;
 
-  // before first tile
-  if (clientX < first.left + first.width / 2) return 0;
+  let closestRowY = null;
+  let minDist = Infinity;
 
-  // after last tile
-  if (clientX > last.left + last.width / 2) return tiles.length;
+  tiles.forEach(t=>{
+    const r = t.getBoundingClientRect();
+    const midY = r.top + r.height/2;
+    const d = Math.abs(pointerY - midY);
 
-  // between tiles
-  for (let i = 0; i < tiles.length - 1; i++){
+    if (d < minDist){
+      minDist = d;
+      closestRowY = midY;
+    }
+  });
 
-    const a = tiles[i].getBoundingClientRect();
-    const b = tiles[i + 1].getBoundingClientRect();
+  // --- collect tiles in that visual row ---
+  const rowTiles = tiles.filter(t=>{
+    const r = t.getBoundingClientRect();
+    const midY = r.top + r.height/2;
+    return Math.abs(midY - closestRowY) < r.height;
+  });
 
-    const gapMid = (a.right + b.left) / 2;
+  rowTiles.sort((a,b)=>
+    a.getBoundingClientRect().left - b.getBoundingClientRect().left
+  );
 
-    if (clientX < gapMid) return i + 1;
+  const first = rowTiles[0].getBoundingClientRect();
+  const last  = rowTiles[rowTiles.length-1].getBoundingClientRect();
+
+  if (clientX < first.left + first.width/2)
+    return tiles.indexOf(rowTiles[0]);
+
+  if (clientX > last.left + last.width/2)
+    return tiles.indexOf(rowTiles[rowTiles.length-1]) + 1;
+
+  for (let i=0;i<rowTiles.length-1;i++){
+    const a = rowTiles[i].getBoundingClientRect();
+    const b = rowTiles[i+1].getBoundingClientRect();
+    const mid = (a.right + b.left)/2;
+
+    if (clientX < mid)
+      return tiles.indexOf(rowTiles[i]) + 1;
   }
 
   return tiles.length;
