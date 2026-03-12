@@ -346,10 +346,10 @@
   position:relative;
 }
 
-.slot .tile.preview-after::before{
+.slot .tile.preview-after::after{
   content:'';
   position:absolute;
-  left:calc(var(--preview-gap) / -2);
+  right:calc(var(--preview-gap) / -2);
   top:4px;
   bottom:4px;
   width:4px;
@@ -1464,11 +1464,11 @@ function applyPreview(slot, index, movingEl){
     return;
   }
 
-  const target = tiles[index];
+  const target = tiles[index - 1];
 
   target.classList.add('preview-after');
-
-  target.style.marginLeft = gapWidth + 'px';
+  
+  target.style.marginRight = gapWidth + 'px';
   target.style.setProperty('--preview-gap', gapWidth + 'px');
 }
 
