@@ -349,7 +349,7 @@
 .slot .tile.preview-after::after{
   content:'';
   position:absolute;
-  left:calc(var(--preview-gap) / -2);
+  right:calc(var(--preview-gap) / -2);
   top:4px;
   bottom:4px;
   width:4px;
@@ -1378,6 +1378,7 @@ function clearPreview(){
   document.querySelectorAll('.tile.preview-after').forEach(t=>{
     t.classList.remove('preview-after');
     t.style.marginLeft = '';
+    t.style.marginRight = '';
   });
   activeInsert = null;
 }
