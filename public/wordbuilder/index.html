@@ -1556,10 +1556,7 @@ function applyPreview(slot, index, movingEl){
     // Tools do NOT get insertion previews
     if (!slot || kind === 'captool' || kind === 'accenttool') return;
   
-    const rect = drag.el.getBoundingClientRect();
-    const tileCenterX = rect.left + rect.width / 2;
-    
-    const index = getNearestIndex(slot, tileCenterX, drag.el);
+    const index = getNearestIndex(slot, e.clientX, drag.el);
     
     applyPreview(slot, index, drag.el);
   }
