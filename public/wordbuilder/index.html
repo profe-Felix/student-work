@@ -1527,7 +1527,7 @@ function applyPreview(slot, index, movingEl){
 
   function moveTo(el, x, y){
     const r = el.getBoundingClientRect();
-    el.style.left = (x - r.width / 2) + 'px';
+    el.style.left = x + 'px';
     el.style.top  = (y - r.height / 2 - DRAG_Y_OFFSET) + 'px';
   }
 
