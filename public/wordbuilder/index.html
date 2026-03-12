@@ -1222,91 +1222,95 @@ location.reload();
   }
 
   function fitTextToSlot(tile, slot){
-  
-    const maxWidth = Math.max(20, slot.getBoundingClientRect().width - 16);
-    if (maxWidth <= 20) return;
+
+    const maxWidth = Math.max(40, slot.clientWidth - 16);
+    if (maxWidth <= 40) return;
   
     const tiles = [...slot.querySelectorAll('.tile')]
       .filter(t => t.dataset.kind === 'text' || t.dataset.kind === 'write');
   
     if (!tiles.length) return;
   
-    let sharedSize = 56;
-    const MIN_FONT = 22;   // ⭐ you can tweak later
+    const START_FONT = 56;
+    const MIN_FONT = 30;
   
-    // --- PASS 1: SHRINK ---
-    tiles.forEach(t=>{
-      let measureEl;
-      let applyEl;
-      
-      if (t.dataset.kind === 'write'){
-        applyEl = t.querySelector('.write-input');
-        if (!applyEl) return;
-      
-        // ⭐ create ghost span for accurate width measuring
-        const ghost = document.createElement('span');
-        ghost.style.position = 'absolute';
-        ghost.style.visibility = 'hidden';
-        ghost.style.whiteSpace = 'normal';
-        ghost.style.width = maxWidth + 'px';
-        ghost.style.font = getComputedStyle(applyEl).font;
-        ghost.textContent = applyEl.value || ' ';
-        document.body.appendChild(ghost);
-      
-        measureEl = ghost;
-      
-      }else{
-        applyEl = t;
-        measureEl = t;
-      }
+    let sharedSize = START_FONT;
   
-      t.classList.remove('wrap-mode');
+    // force single line during measurement
+    tiles.forEach(t => t.classList.remove('wrap-mode'));
   
-      let size = 56;
-      applyEl.style.fontSize = size + 'px';
-      measureEl.style.fontSize = size + 'px';
+    // measure total width
+    function getTotalWidth(size){
+      let total = 0;
   
-      while (measureEl.scrollWidth > maxWidth && size > MIN_FONT){
-        size -= 1;
-        applyEl.style.fontSize = size + 'px';
-        measureEl.style.fontSize = size + 'px';
-      }
-
-     if (measureEl !== applyEl) measureEl.remove();
+      tiles.forEach(t=>{
+        let el = t;
   
-      sharedSize = Math.min(sharedSize, size);
-    });
+        if (t.dataset.kind === 'write'){
+          el = t.querySelector('.write-input');
+          if (!el) return;
+        }
   
-    // --- APPLY SHARED SIZE ---
+        el.style.fontSize = size + 'px';
+  
+        total += el.scrollWidth;
+      });
+  
+      return total;
+    }
+  
+    let size = START_FONT;
+  
+    while (getTotalWidth(size) > maxWidth && size > MIN_FONT){
+      size -= 1;
+    }
+  
+    sharedSize = size;
+  
+    // apply shared size
     tiles.forEach(t=>{
       let target = t;
+  
       if (t.dataset.kind === 'write'){
         target = t.querySelector('.write-input');
         if (!target) return;
       }
+  
       target.style.fontSize = sharedSize + 'px';
     });
   
-    // --- PASS 2: WRAP IF STILL TOO WIDE ---
-    tiles.forEach(t=>{
-      let target = t;
-      if (t.dataset.kind === 'write'){
-        target = t.querySelector('.write-input');
-        if (!target) return;
-      }
+    // if still too wide → wrap
+    if (getTotalWidth(sharedSize) > maxWidth){
   
-      if (target.scrollWidth > maxWidth){
-
-        // ⭐ FORCE WORD BREAKING
+      tiles.forEach(t=>{
+        let target = t;
+  
+        if (t.dataset.kind === 'write'){
+          target = t.querySelector('.write-input');
+          if (!target) return;
+        }
+  
         target.style.wordBreak = 'break-word';
         target.style.overflowWrap = 'anywhere';
+  
         t.classList.add('wrap-mode');
-      }
-      else{
-        t.style.wordBreak = '';
-        t.style.overflowWrap = '';
-      }
-    });
+      });
+  
+    } else {
+  
+      tiles.forEach(t=>{
+        let target = t;
+  
+        if (t.dataset.kind === 'write'){
+          target = t.querySelector('.write-input');
+          if (!target) return;
+        }
+  
+        target.style.wordBreak = '';
+        target.style.overflowWrap = '';
+      });
+  
+    }
   }
 
   // ===== Prefill helpers (per-box) =====
