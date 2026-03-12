@@ -1430,8 +1430,9 @@ function getNearestIndex(slot, clientX, movingEl){
     return tiles.indexOf(firstTile);
   
   if (clientX > last.right){
-    // stay within the detected row instead of jumping to slot end
-    return tiles.indexOf(lastTile) + 1;
+    // treat as insert after last tile of THIS ROW
+    const globalIndex = tiles.indexOf(lastTile);
+    return globalIndex + 1;
   }
 
   for (let i = 0; i < rowTiles.length - 1; i++){
@@ -1443,7 +1444,7 @@ function getNearestIndex(slot, clientX, movingEl){
       return tiles.indexOf(rowTiles[i]) + 1;
   }
 
-  return tiles.indexOf(lastTile) + 1;
+  return tiles.indexOf(rowTiles[rowTiles.length - 1]) + 1;
 }
 
 function applyPreview(slot, index, movingEl){
