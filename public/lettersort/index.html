@@ -2588,6 +2588,8 @@ function buildSyllGroupsMode(){
   const tokens = parseSyllGroups(SYLLGROUPS_RAW);
   const columns = buildSyllGroupColumns(tokens);
 
+  currentCols = columns;   // ⭐ THIS WAS MISSING
+
   rowData = [];
   columnsEl.innerHTML = '';
 
