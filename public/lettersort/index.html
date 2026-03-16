@@ -2698,7 +2698,7 @@ function buildGenerateMode(){
     
 function everythingCorrect(){
   // ---------- ROWSYLL / ROWSYLLCOLS (chips in rowDrop) ----------
-  if (currentMode === 'rowsyll' || currentMode === 'rowsyllcols') {
+  if (currentMode === 'rowsyll' || currentMode === 'rowsyllcols' || currentMode === 'syllgroups') {
     const rackChips = rackEl.querySelectorAll('.chip');
     if (rackChips.length > 0) return false; // anything left in the bank
 
@@ -3279,8 +3279,10 @@ function everythingCorrect(){
         await ensureStorageLoaded();
         if(!TILES_ONLY &&
            imageFiles.length===0 &&
+           WORD_IMAGES_ENABLED &&
            MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' &&
-           MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='rowsyllcols' && MODE!=='syllcount') return;
+           MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='rowsyllcols' &&
+           MODE!=='syllcount' && MODE!=='syllgroups') return;
         soloNewRoundBtn.addEventListener('click', ()=> startSoloRound());
         startSoloRound();
         return;
