@@ -2569,12 +2569,12 @@ async function buildRowSyllColsMode(){
 
   }
 }
-
 function buildSyllGroupsMode(){
 
   currentMode = 'syllgroups';
 
   document.body.classList.remove('row-compact');
+
   rowModeEl.classList.add('hidden');
   columnsEl.classList.remove('hidden');
   rackSectionEl.classList.remove('hidden');
@@ -2591,23 +2591,21 @@ function buildSyllGroupsMode(){
   rowData = [];
   columnsEl.innerHTML = '';
 
+  setOneRowGrid(columns.length);
+
   columns.forEach((col, i) => {
 
     const column = document.createElement('div');
     column.className = 'col';
 
-    const header = document.createElement('div');
-    header.className = 'syllTile';
-    header.textContent = col.display;
-
-    const drop = document.createElement('div');
-    drop.className = 'drop';
-    drop.dataset.col = String(i);
-
-    column.appendChild(header);
-    column.appendChild(drop);
+    column.innerHTML = `
+      <header>${renderHeaderHTML(col)}</header>
+      <div class="drop" data-col="${i}"></div>
+    `;
 
     columnsEl.appendChild(column);
+
+    const drop = column.querySelector('.drop');
 
     rowData.push({
       type: 'rowsyllcols',
@@ -2618,7 +2616,6 @@ function buildSyllGroupsMode(){
   });
 
 }
-
 function buildGenerateMode(){
 
   currentMode = 'generate';
