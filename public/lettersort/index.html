@@ -2706,7 +2706,7 @@ function everythingCorrect(){
     const placed = document.querySelectorAll('.rowDrop .chip').length;
     const locked = document.querySelectorAll('.rowDrop .chip.locked').length;
   
-    const totalWords = SOLO_WORDS.length;
+    const totalWords = document.querySelectorAll('.rowDrop .chip').length + rackChips;
   
     // if there are no distractors, rack must be empty
     if (totalWords === placed && rackChips > 0) return false;
