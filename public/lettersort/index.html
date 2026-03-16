@@ -2845,9 +2845,14 @@ function everythingCorrect(){
           [...r.dropEl.children].forEach(chip=>{
       
             const text=(chip.textContent||'').toLowerCase();
-            const syls=syllablesNormalized(text);
-      
-            const ok=syls.some(s=>r.syllables.includes(s));
+            const syls = syllablesNormalized(text);
+            
+            const ok = syls.some(syl => {
+              return r.syllables.some(target => {
+                const t = normalizeMarkers(target);
+                return syl.startsWith(t);
+              });
+            });
       
             chip.classList.remove('ok','bad');
 
