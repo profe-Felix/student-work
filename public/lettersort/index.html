@@ -1968,11 +1968,10 @@ function syllabifyEn(wordRaw){
       
       if (img){
       
-        let url = img;
-      
-        if (!/^https?:\/\//i.test(img)){
-          url = IB + IP + '/' + img;
-        }
+        const url =
+          img.startsWith('http')
+            ? img
+            : 'https://dmlsiyyqpcupbizpxwhp.supabase.co/storage/v1/object/public/lettersort-images/' + img;
       
         return `<div class="headerImgWrap"><img src="${url}" class="headerImg"></div>`;
       }
