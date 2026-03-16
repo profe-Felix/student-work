@@ -826,6 +826,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         // Row modes params
         const ROWS_RAW   = qs.get('rows') || '';
         const ROWSYLL_COLS = qs.get('rowsyll') || '';
+        const SYLLGROUPS_RAW = qs.get('groups') || qs.get('syllgroups') || '';
         const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
     
         // Generate mode params
@@ -866,7 +867,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
       !SYNC ||
       MODE === 'generate' ||
       MODE === 'randinit' ||
-      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'rowsyllcols' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
+      MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'rowsyllcols' || MODE === 'syllgroups' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
       (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0) || (SOLO_PHONEMES.length > 0) || (SOLO_STRESSPOS.length > 0);
 
     const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -2185,6 +2186,62 @@ function syllabifyEn(wordRaw){
         .map(col => col.split(',').map(s => s.trim()).filter(Boolean))
         .filter(col => col.length);
     }
+
+    function parseSyllGroups(str){
+      const raw = (str || '').trim();
+      if (!raw) return [];
+    
+      // If teacher used pipes, pipes = columns.
+      // If no pipes, commas = columns.
+      const cols = raw.includes('|')
+        ? raw.split('|')
+        : raw.split(',');
+    
+      return cols
+        .map(col => col.trim())
+        .filter(Boolean);
+    }
+    
+    function expandSyllGroupToken(token){
+      const t = normalizeMarkers(token || '');
+    
+      // Explicit list inside one column: que,qui
+      if (t.includes(',')) {
+        return t.split(',').map(s => normalizeMarkers(s)).filter(Boolean);
+      }
+    
+      // Single consonant -> generate CV set
+      // n -> na, ne, ni, no, nu
+      // r -> ra, re, ri, ro, ru
+      // s -> sa, se, si, so, su
+      if (/^[bcdfghjklmnñpqrstvwxyz]$/.test(t)) {
+        return ['a','e','i','o','u'].map(v => `${t}${v}`);
+      }
+    
+      // Digraphs / blends like ch, ll, rr, br, pl, tr
+      // -> cha/che/chi/cho/chu etc.
+      if (/^[a-zñ]{2,3}$/.test(t) && !/[aeiouáéíóúü]/.test(t)) {
+        return ['a','e','i','o','u'].map(v => `${t}${v}`);
+      }
+    
+      // Already an exact syllable like "gue" or "qui"
+      return [t];
+    }
+    
+    function buildSyllGroupColumns(groupTokens){
+      const cols = groupTokens.map((token, idx) => {
+        const expanded = expandSyllGroupToken(token);
+    
+        return {
+          label: COL_TITLES[idx] || token,
+          key: `syllgroup:${idx}`,
+          display: token,
+          syllables: expanded
+        };
+      });
+    
+      return cols;
+    }
     
     function parseAlliGroups(str){
       return str.split(';').map(seg=>seg.trim()).filter(Boolean).map(seg=>{
@@ -2512,6 +2569,24 @@ async function buildRowSyllColsMode(){
 
   }
 }
+
+function buildSyllGroupsMode(){
+
+  const tokens = parseSyllGroups(SYLLGROUPS_RAW);
+  const columns = buildSyllGroupColumns(tokens);
+
+  const words = (qs.get('words') || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  buildRowSyllMode({
+    columns: columns,
+    words: words
+  });
+
+}
+
 function buildGenerateMode(){
 
   currentMode = 'generate';
@@ -3086,6 +3161,7 @@ function everythingCorrect(){
       if (MODE==='allisyll'){ buildRowAlliSyllMode(); return; }
       if (MODE==='rowsyllcols'){ buildRowSyllColsMode(); return; }
       if (MODE==='rowsyll'){ buildRowSyllMode(); return; }
+      if (MODE==='syllgroups'){ buildSyllGroupsMode(); return; }
 
       document.body.classList.remove('row-compact');
 
