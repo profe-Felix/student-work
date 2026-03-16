@@ -1970,9 +1970,8 @@ function syllabifyEn(wordRaw){
       
         let url = img;
       
-        // if not a full URL, resolve from Supabase bucket
         if (!/^https?:\/\//i.test(img)){
-          url = IB + IP + img;
+          url = IB + IP + '/' + img;
         }
       
         return `<div class="headerImgWrap"><img src="${url}" class="headerImg"></div>`;
