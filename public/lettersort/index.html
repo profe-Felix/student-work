@@ -1967,7 +1967,15 @@ function syllabifyEn(wordRaw){
       const img = HEADER_IMAGES[idx];
       
       if (img){
-        return `<div class="headerImgWrap"><img src="${img}" class="headerImg"></div>`;
+      
+        let url = img;
+      
+        // if not a full URL, resolve from Supabase bucket
+        if (!/^https?:\/\//i.test(img)){
+          url = IB + IP + img;
+        }
+      
+        return `<div class="headerImgWrap"><img src="${url}" class="headerImg"></div>`;
       }
       
       return `<h2>${col.label}</h2>`;
