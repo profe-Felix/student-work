@@ -2575,8 +2575,8 @@ function buildSyllGroupsMode(){
   currentMode = 'rowsyllcols';
 
   document.body.classList.remove('row-compact');
-  columnsEl.classList.add('hidden');
-  rowModeEl.classList.remove('hidden');
+  rowModeEl.classList.add('hidden');
+  columnsEl.classList.remove('hidden');
   rackSectionEl.classList.remove('hidden');
 
   rackEl.innerHTML = '';
@@ -2589,30 +2589,25 @@ function buildSyllGroupsMode(){
   const columns = buildSyllGroupColumns(tokens);
 
   rowData = [];
-  rowModeEl.innerHTML = '';
+  columnsEl.innerHTML = '';
 
   columns.forEach((col, i) => {
 
-    const line = document.createElement('div');
-    line.className = 'rowLine twoCols';
+    const column = document.createElement('div');
+    column.className = 'column';
 
-    const promptWrap = document.createElement('div');
-    promptWrap.className = 'rowPrompt';
-
-    const tile = document.createElement('div');
-    tile.className = 'syllTile';
-    tile.textContent = col.display;
-
-    promptWrap.appendChild(tile);
+    const header = document.createElement('div');
+    header.className = 'syllTile';
+    header.textContent = col.display;
 
     const drop = document.createElement('div');
-    drop.className = 'rowDrop';
-    drop.dataset.row = String(i);
+    drop.className = 'dropZone';
+    drop.dataset.col = String(i);
 
-    line.appendChild(promptWrap);
-    line.appendChild(drop);
+    column.appendChild(header);
+    column.appendChild(drop);
 
-    rowModeEl.appendChild(line);
+    columnsEl.appendChild(column);
 
     rowData.push({
       type: 'rowsyllcols',
