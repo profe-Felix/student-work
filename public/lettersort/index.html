@@ -513,7 +513,7 @@
 
     // URL params
     const qs = new URLSearchParams(location.search);
-
+    const WORD_IMAGES_ENABLED = qs.get('wordimages') !== '0';
     // Hide expanded preset params after load
 if (sessionStorage.getItem('__presetExpanded') === '1') {
   const presetOnly = qs.get('preset');
@@ -1351,6 +1351,12 @@ function syllabifyEn(wordRaw){
     }
 
     async function ensureStorageLoaded(){
+
+      if (!WORD_IMAGES_ENABLED) {
+        imageFiles = [];
+        return;
+      }
+    
       try{
         imageFiles = [];
 
