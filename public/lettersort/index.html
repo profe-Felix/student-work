@@ -2594,14 +2594,14 @@ function buildSyllGroupsMode(){
   columns.forEach((col, i) => {
 
     const column = document.createElement('div');
-    column.className = 'column';
+    column.className = 'col';
 
     const header = document.createElement('div');
     header.className = 'syllTile';
     header.textContent = col.display;
 
     const drop = document.createElement('div');
-    drop.className = 'dropZone';
+    drop.className = 'drop';
     drop.dataset.col = String(i);
 
     column.appendChild(header);
