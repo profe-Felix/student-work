@@ -2848,9 +2848,10 @@ function everythingCorrect(){
             const syls = syllablesNormalized(text);
             
             const ok = syls.some(syl => {
+              const s = stripDiacritics(syl);
               return r.syllables.some(target => {
-                const t = normalizeMarkers(target);
-                return syl.startsWith(t);
+                const t = stripDiacritics(normalizeMarkers(target));
+                return s.startsWith(t);
               });
             });
       
