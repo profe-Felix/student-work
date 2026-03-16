@@ -2572,17 +2572,54 @@ async function buildRowSyllColsMode(){
 
 function buildSyllGroupsMode(){
 
+  currentMode = 'rowsyllcols';
+
+  document.body.classList.remove('row-compact');
+  columnsEl.classList.add('hidden');
+  rowModeEl.classList.remove('hidden');
+  rackSectionEl.classList.remove('hidden');
+
+  rackEl.innerHTML = '';
+  rackEl.classList.add('chips');
+
+  const words = parseWordsParam(qs.get('words') || '');
+  words.forEach(w => rackEl.appendChild(renderChip(w)));
+
   const tokens = parseSyllGroups(SYLLGROUPS_RAW);
   const columns = buildSyllGroupColumns(tokens);
 
-  const words = (qs.get('words') || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+  rowData = [];
+  rowModeEl.innerHTML = '';
 
-  buildRowSyllMode({
-    columns: columns,
-    words: words
+  columns.forEach((col, i) => {
+
+    const line = document.createElement('div');
+    line.className = 'rowLine twoCols';
+
+    const promptWrap = document.createElement('div');
+    promptWrap.className = 'rowPrompt';
+
+    const tile = document.createElement('div');
+    tile.className = 'syllTile';
+    tile.textContent = col.display;
+
+    promptWrap.appendChild(tile);
+
+    const drop = document.createElement('div');
+    drop.className = 'rowDrop';
+    drop.dataset.row = String(i);
+
+    line.appendChild(promptWrap);
+    line.appendChild(drop);
+
+    rowModeEl.appendChild(line);
+
+    rowData.push({
+      type: 'rowsyllcols',
+      dropEl: drop,
+      syllables: col.syllables
+    });
+
   });
 
 }
