@@ -139,7 +139,7 @@
     background:#fff;
     border:2px solid var(--drop-border);
     border-radius:12px;
-    padding:6px 8px;
+    padding:6px 18px;   /* 👈 more breathing room */
   
     display:inline-flex;
     gap:0;
@@ -1673,26 +1673,35 @@ function applyPreview(slot, index, movingEl){
       drag.el.remove();
       if(prev?.classList.contains('slot')) relayoutSlot(prev);
 
-} else if (activeInsert && activeInsert.slot === slot) {
-  const { slot, index } = activeInsert;
-  const prev = drag.el.parentElement;
-
-  if (prev?.classList?.contains('slot')) {
-    try { prev.removeChild(drag.el); } catch {}
-  }
-
-  const tiles = [...slot.querySelectorAll('.tile')];
-  if (index >= tiles.length) {
-    slot.appendChild(drag.el);
-  } else {
-    slot.insertBefore(drag.el, tiles[index]);
-  }
-
-  relayoutSlot(slot);
-  if (prev && prev !== slot && prev.classList.contains('slot')) {
-    relayoutSlot(prev);
-  }
-}
+ } else if (activeInsert && activeInsert.slot === slot) {
+   const { slot, index } = activeInsert;
+   const prev = drag.el.parentElement;
+ 
+   if (prev?.classList?.contains('slot')) {
+     try { prev.removeChild(drag.el); } catch {}
+   }
+ 
+   const tiles = [...slot.querySelectorAll('.tile')];
+   if (index >= tiles.length) {
+     slot.appendChild(drag.el);
+   } else {
+     slot.insertBefore(drag.el, tiles[index]);
+   }
+ 
+   // 🔥 PRE-SHRINK BEFORE USER SEES IT
+   slot.style.visibility = 'hidden';
+ 
+   relayoutSlot(slot);
+ 
+   // force shrink immediately
+   fitTextToSlot(null, slot);
+ 
+   slot.style.visibility = '';
+ 
+   if (prev && prev !== slot && prev.classList.contains('slot')) {
+     relayoutSlot(prev);
+   }
+ }
  else {
       if(drag.fromPalette){
         drag.el.remove();
