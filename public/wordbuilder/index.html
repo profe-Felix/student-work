@@ -1222,7 +1222,7 @@ location.reload();
   }
 
   function fitTextToSlot(tile, slot){
-
+  
     const maxWidth = Math.max(40, slot.clientWidth - 16);
     if (maxWidth <= 40) return;
   
@@ -1234,13 +1234,12 @@ location.reload();
     const START_FONT = 56;
     const MIN_FONT = 20;
   
-    let sharedSize = START_FONT;
+    let size = START_FONT;
   
-    // force single line during measurement
+    // FORCE single line for measuring
     tiles.forEach(t => t.classList.remove('wrap-mode'));
   
-    // measure total width
-    function getTotalWidth(size){
+    function getTotalWidth(fontSize){
       let total = 0;
   
       tiles.forEach(t=>{
@@ -1251,47 +1250,43 @@ location.reload();
           if (!el) return;
         }
   
-        el.style.fontSize = size + 'px';
-  
+        el.style.fontSize = fontSize + 'px';
         total += el.scrollWidth;
       });
   
       return total;
     }
   
-    let size = START_FONT;
-  
+    // SHRINK until it fits OR hits MIN
     while (getTotalWidth(size) > maxWidth && size > MIN_FONT){
-      size -= 1;
+      size--;
     }
   
-    sharedSize = size;
-  
-    // apply shared size
+    // APPLY final size
     tiles.forEach(t=>{
-      let target = t;
+      let el = t;
   
       if (t.dataset.kind === 'write'){
-        target = t.querySelector('.write-input');
-        if (!target) return;
+        el = t.querySelector('.write-input');
+        if (!el) return;
       }
   
-      target.style.fontSize = sharedSize + 'px';
+      el.style.fontSize = size + 'px';
     });
   
-    // if still too wide → wrap
-    if (getTotalWidth(sharedSize) > maxWidth){
+    // 🚨 ONLY WRAP if STILL too big at MIN
+    if (getTotalWidth(size) > maxWidth){
   
       tiles.forEach(t=>{
-        let target = t;
+        let el = t;
   
         if (t.dataset.kind === 'write'){
-          target = t.querySelector('.write-input');
-          if (!target) return;
+          el = t.querySelector('.write-input');
+          if (!el) return;
         }
   
-        target.style.wordBreak = 'break-word';
-        target.style.overflowWrap = 'anywhere';
+        el.style.wordBreak = 'break-word';
+        el.style.overflowWrap = 'anywhere';
   
         t.classList.add('wrap-mode');
       });
@@ -1299,15 +1294,15 @@ location.reload();
     } else {
   
       tiles.forEach(t=>{
-        let target = t;
+        let el = t;
   
         if (t.dataset.kind === 'write'){
-          target = t.querySelector('.write-input');
-          if (!target) return;
+          el = t.querySelector('.write-input');
+          if (!el) return;
         }
   
-        target.style.wordBreak = '';
-        target.style.overflowWrap = '';
+        el.style.wordBreak = '';
+        el.style.overflowWrap = '';
       });
   
     }
