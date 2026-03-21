@@ -260,19 +260,18 @@
   }
   .tile.space::after{ content:"␣"; }
   .slot .tile.space.in-slot{
-    width:calc(var(--space-w) * 1.2);
-    min-width:calc(var(--space-w) * 1.2);
+    width:calc(var(--space-w) * 1.4);
+    min-width:calc(var(--space-w) * 1.4);
     padding:0;
   
-    height:clamp(12px, 0.5em, 18px);
-    min-height:12px;
-    align-self:center;
+    height:0.7em;              /* ⭐ matches text height better */
+    align-self:baseline;       /* ⭐ THIS fixes the floating look */
   
     background:#e5e7eb;
     border:1px dashed #9ca3af;
-    border-radius:999px;
+    border-radius:6px;         /* ⭐ not pill anymore */
   
-    margin:0 var(--inner-gap);
+    margin:0 calc(var(--inner-gap) * 0.6);
   }
 
   .tile.punc{
