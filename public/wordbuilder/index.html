@@ -1532,7 +1532,12 @@ function applyPreview(slot, index, movingEl){
     return;
   }
 
-  if (index >= tiles.length){
+    const last = tiles[tiles.length - 1];
+    const slotRect = slot.getBoundingClientRect();
+    const movingRect = movingEl.getBoundingClientRect();
+    
+    // 🔥 ONLY trigger end preview if truly past last tile
+    if (index >= tiles.length && movingRect.left > last.getBoundingClientRect().right - 4){
     const ghost = movingEl.cloneNode(true);
     ghost.classList.add('preview-ghost-in-slot');
 
