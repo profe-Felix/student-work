@@ -124,14 +124,13 @@
     align-items:stretch;
     justify-content:flex-start;
   }
- 
   .line{
     display:flex;
     gap:var(--gap);
     align-items:flex-start;
     justify-content:flex-start;
   
-    flex-wrap:nowrap;   /* 🔥 CRITICAL */
+    flex-wrap:wrap;
     min-width:0;
   }
 
@@ -139,33 +138,22 @@
     background:#fff;
     border:2px solid var(--drop-border);
     border-radius:12px;
-    padding:6px 18px;
+    padding:6px 8px;
   
     display:inline-flex;
     gap:0;
     align-items:center;
     justify-content:flex-start;
-    flex-wrap:nowrap;
+    flex-wrap:wrap;
     align-content:flex-start;
   
     flex:0 1 auto;
     min-width:0;
     max-width:100%;
   
-    overflow:hidden; /* ✅ keep content inside */
+    overflow:hidden;
     position:relative;
     vertical-align:top;
-  }
-  
-  /* ✅ adds cushion at the end */
-  .slot::after{
-    content:"";
-    display:block;
-    flex:0 0 18px;
-    width:18px;
-    min-width:18px;
-    height:1px;
-    pointer-events:none;
   }
   .slot:empty::before{
     content:"";
@@ -248,7 +236,7 @@
   .slot .tile.in-slot{
     flex:0 0 auto; min-width:0;
     height:clamp(40px, 6vh, 64px);
-    font-size:inherit;
+    font-size:clamp(26px, 3.4vw, 56px);
     padding:0;
     background:transparent; border:none; border-radius:0; box-shadow:none;
   }
@@ -280,17 +268,10 @@
 
   .tile.punc{
     min-width:auto;
-    padding:0 8px;          /* 👈 bigger click area */
-    font-size:inherit;
-  
-    white-space:nowrap;
-    flex-shrink:0;
-  
-    margin-left:-6px;       /* 👈 pulls it into the word */
+    padding:0 8px;
+    font-size:24px;
   }
-  .tile.punc + .tile{
-    margin-left:0;
-  }
+ 
   .tile.writegen{
     min-width:auto;
     padding:0 10px;
@@ -302,8 +283,6 @@
   .slot .tile.punc.in-slot{
     padding:0;
     margin:0;
-    white-space:nowrap;      /* ⭐ prevents breaking */
-    flex-shrink:0;           /* ⭐ keeps it attached */
   }
 
   .tile.captool,
@@ -359,10 +338,9 @@
  
    top:var(--preview-row-y);
    transform:translateY(-50%);
-   z-index:2;
  }
- .slot.preview-edge-left::before{ left:18px; }
- .slot.preview-edge-right::after{ right:18px; }
+ .slot.preview-edge-left::before{ left:8px; }
+ .slot.preview-edge-right::after{ right:8px; }
  
  /* Between-tiles insert: shift ONLY the tile after the insertion point */
  /* Between-tiles insert: open a real visible gap */
@@ -1222,24 +1200,22 @@ location.reload();
     const tiles = [...slot.querySelectorAll('.tile')];
   
     tiles.forEach(t=>{
-      t.classList.add('in-slot');
-    
-      const inp = t.querySelector?.('.write-input');
-      if (inp){
-        inp.style.width = 'auto';
-        inp.style.whiteSpace = 'normal';
-      }
-    });
-
-    if (!slot._fitQueued){
-      slot._fitQueued = true;
-      requestAnimationFrame(()=>{
-        requestAnimationFrame(()=>{
-          fitTextToSlot(null, slot);
-          slot._fitQueued = false;
-        });
-      });
+    t.classList.add('in-slot');
+  
+    const inp = t.querySelector?.('.write-input');
+    if (inp){
+      inp.style.width = 'auto';          // ⭐ stop stretching
+      inp.style.whiteSpace = 'normal';   // ⭐ allow wrapping
     }
+  
+    if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
+     requestAnimationFrame(()=>{
+       requestAnimationFrame(()=>{
+         fitTextToSlot(t, slot);
+       });
+     });
+   }
+  });
   }
   function relayoutAllSlots(){
     document.querySelectorAll('.slot').forEach(relayoutSlot);
@@ -1247,48 +1223,65 @@ location.reload();
 
   function fitTextToSlot(tile, slot){
 
+    const maxWidth = Math.max(40, slot.clientWidth - 16);
+    if (maxWidth <= 40) return;
+  
     const tiles = [...slot.querySelectorAll('.tile')]
-      .filter(t =>
-        t.dataset.kind === 'text' ||
-        t.dataset.kind === 'write' ||
-        t.dataset.kind === 'punc'
-      );
+      .filter(t => t.dataset.kind === 'text' || t.dataset.kind === 'write');
   
     if (!tiles.length) return;
   
     const START_FONT = 56;
     const MIN_FONT = 20;
   
-    function setFontSize(size){
+    let sharedSize = START_FONT;
+  
+    // force single line during measurement
+    tiles.forEach(t => t.classList.remove('wrap-mode'));
+  
+    // measure total width
+    function getTotalWidth(size){
+      let total = 0;
+  
       tiles.forEach(t=>{
         let el = t;
-
+  
         if (t.dataset.kind === 'write'){
           el = t.querySelector('.write-input');
           if (!el) return;
         }
-
+  
         el.style.fontSize = size + 'px';
+  
+        total += el.scrollWidth;
       });
+  
+      return total;
     }
   
-    function clearWrapStyles(){
-      tiles.forEach(t=>{
-        let target = t;
+    let size = START_FONT;
   
-        if (t.dataset.kind === 'write'){
-          target = t.querySelector('.write-input');
-          if (!target) return;
-        }
-  
-        target.style.wordBreak = '';
-        target.style.overflowWrap = '';
-        target.style.whiteSpace = 'nowrap';
-        t.classList.remove('wrap-mode');
-      });
+    while (getTotalWidth(size) > maxWidth && size > MIN_FONT){
+      size -= 1;
     }
   
-    function enableWrapStyles(){
+    sharedSize = size;
+  
+    // apply shared size
+    tiles.forEach(t=>{
+      let target = t;
+  
+      if (t.dataset.kind === 'write'){
+        target = t.querySelector('.write-input');
+        if (!target) return;
+      }
+  
+      target.style.fontSize = sharedSize + 'px';
+    });
+  
+    // if still too wide → wrap
+    if (getTotalWidth(sharedSize) > maxWidth){
+  
       tiles.forEach(t=>{
         let target = t;
   
@@ -1299,59 +1292,24 @@ location.reload();
   
         target.style.wordBreak = 'break-word';
         target.style.overflowWrap = 'anywhere';
-        target.style.whiteSpace = 'normal';
+  
         t.classList.add('wrap-mode');
       });
-    }
   
-    function isSingleLineFit(){
-      const rect = slot.getBoundingClientRect();
-    
-      let maxRight = 0;
-    
+    } else {
+  
       tiles.forEach(t=>{
-        const r = t.getBoundingClientRect();
-        const right = r.right - rect.left;
-        if (right > maxRight) maxRight = right;
+        let target = t;
+  
+        if (t.dataset.kind === 'write'){
+          target = t.querySelector('.write-input');
+          if (!target) return;
+        }
+  
+        target.style.wordBreak = '';
+        target.style.overflowWrap = '';
       });
-    
-      return maxRight <= rect.width;
-    }
   
-    clearWrapStyles();
-  
-    const oldFlexWrap = slot.style.flexWrap;
-    slot.style.flexWrap = 'nowrap';
-  
-    let size = START_FONT;
-    
-    // 🔥 FORCE MULTIPLE CHECKS PER SIZE
-    while (size > MIN_FONT){
-    
-      setFontSize(size);
-    
-      // force layout update (CRITICAL)
-      slot.offsetHeight;
-    
-      if (isSingleLineFit()) break;
-    
-      size -= 1;
-    }
-  
-    if (!isSingleLineFit()){
-      slot.style.flexWrap = 'wrap';
-      enableWrapStyles();
-      setFontSize(size);
-    } else {
-      slot.style.flexWrap = 'nowrap';
-      clearWrapStyles();
-      setFontSize(size);
-    }
-  
-    if (oldFlexWrap){
-      slot.style.flexWrap = oldFlexWrap;
-    } else {
-      slot.style.removeProperty('flex-wrap');
     }
   }
 
@@ -1422,31 +1380,21 @@ function clearPreview(){
       'preview-edge-right',
       'preview-empty'
     );
-
-    const ghost = s.querySelector('.preview-ghost-in-slot');
-    if (ghost) ghost.remove();
-
-    relayoutSlot(s);
   });
-
   document.querySelectorAll('.tile.preview-after').forEach(t=>{
     t.classList.remove('preview-after');
     t.style.marginLeft = '';
     t.style.marginRight = '';
   });
-
   activeInsert = null;
 }
 
 function getNearestIndex(slot, clientX, movingEl){
 
   const tiles = [...slot.querySelectorAll('.tile')]
-    .filter(t => t !== movingEl && !t.classList.contains('preview-ghost-in-slot'));
+    .filter(t => t !== movingEl);
 
   if (!tiles.length) return 0;
-
-  const slotRect = slot.getBoundingClientRect();
-  const END_BUFFER = 48;
 
   // --- find the row closest to pointer ---
   const pointerY = drag.el.getBoundingClientRect().top + drag.el.offsetHeight / 2;
@@ -1464,9 +1412,7 @@ function getNearestIndex(slot, clientX, movingEl){
       closestRowY = midY;
     }
   });
-
   slot.dataset.previewRowY = closestRowY;
-
   // --- collect tiles in that visual row ---
   const rowTiles = tiles.filter(t=>{
     const r = t.getBoundingClientRect();
@@ -1478,110 +1424,68 @@ function getNearestIndex(slot, clientX, movingEl){
     a.getBoundingClientRect().left - b.getBoundingClientRect().left
   );
 
-  if (!rowTiles.length) return tiles.length;
-
   const firstTile = rowTiles[0];
   const lastTile  = rowTiles[rowTiles.length - 1];
-
+  
   const first = firstTile.getBoundingClientRect();
   const last  = lastTile.getBoundingClientRect();
-
-  // left edge of current row
-  if (clientX < first.left){
+  
+  if (clientX < first.left)
     return tiles.indexOf(firstTile);
+  
+  if (clientX > last.right){
+    // treat as insert after last tile of THIS ROW
+    const globalIndex = tiles.indexOf(lastTile);
+    return globalIndex + 1;
   }
 
-  // expanded end zone of current row
-  if (clientX > last.right - 4 || clientX > slotRect.right - END_BUFFER){
-    return tiles.indexOf(lastTile) + 1;
-  }
-
-  // between tiles in current row
   for (let i = 0; i < rowTiles.length - 1; i++){
     const a = rowTiles[i].getBoundingClientRect();
     const b = rowTiles[i + 1].getBoundingClientRect();
     const mid = (a.right + b.left) / 2;
 
-    if (clientX < mid){
+    if (clientX < mid)
       return tiles.indexOf(rowTiles[i]) + 1;
-    }
   }
 
-  return tiles.indexOf(lastTile) + 1;
+  return tiles.indexOf(rowTiles[rowTiles.length - 1]) + 1;
 }
 
 function applyPreview(slot, index, movingEl){
+
   clearPreview();
-
-  if (!slot) return;
-
-  const tiles = [...slot.querySelectorAll('.tile')]
-    .filter(t => !t.classList.contains('preview-ghost-in-slot'));
-
-  const hasTiles = tiles.length > 0;
-
-  if (!hasTiles){
-    slot.classList.add('preview-empty');
-    activeInsert = { slot, index: 0 };
-    return;
-  }
-
-  if (index <= 0){
-    slot.classList.add('preview-edge-left');
-    activeInsert = { slot, index: 0 };
-    return;
-  }
-
-  const last = tiles[tiles.length - 1];
-  const lastRect = last.getBoundingClientRect();
-  const movingRect = movingEl.getBoundingClientRect();
-  
-  // 🔥 give a cushion so end preview is easy to trigger
-  const END_TRIGGER_ZONE = 24;
-  
-  if (index >= tiles.length && movingRect.left > lastRect.right - END_TRIGGER_ZONE){
-    const ghost = movingEl.cloneNode(true);
-    ghost.classList.add('preview-ghost-in-slot');
-  
-    ghost.style.maxWidth = 'calc(100% - 12px)';
-    ghost.style.boxSizing = 'border-box';
-  
-    ghost.style.position = '';
-    ghost.style.left = '';
-    ghost.style.top = '';
-    ghost.style.width = '';
-  
-    ghost.style.pointerEvents = 'none';
-    ghost.style.opacity = '0.5';
-  
-    slot.appendChild(ghost);
-  
-    relayoutSlot(slot);
-    fitTextToSlot(null, slot);
-  
-    activeInsert = { slot, index: tiles.length };
-    return;
-  }
-
-  const target = tiles[index - 1];
-  const movingWidth = movingEl.getBoundingClientRect().width;
+  const rowY = parseFloat(slot.dataset.previewRowY || 0);
   const slotRect = slot.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  
-  // 🔥 calculate remaining space inside slot
-  const remaining = slotRect.right - targetRect.right - 12;
-  
-  // 🔥 clamp gap so it never overflows visually
-  const gapWidth = Math.max(0, Math.min(movingWidth, remaining));
-  
-    target.classList.add('preview-after');
-    
-    target.style.marginRight = '0px';                 // ❌ kill external spacing
-    target.style.paddingRight = gapWidth + 'px';      // ✅ internal spacing instead
-    
-    target.style.setProperty('--preview-gap', gapWidth + 'px');
+  const offsetY = rowY - slotRect.top;
+  slot.style.setProperty('--preview-row-y', offsetY + 'px');
+  const tiles = [...slot.querySelectorAll('.tile')]
+    .filter(t => t !== movingEl);
+
+  const gapWidth = movingEl.getBoundingClientRect().width;
 
   activeInsert = { slot, index };
+
+  if (tiles.length === 0){
+    slot.classList.add('preview-empty');
+    return;
+  }
+
+  if (index === 0){
+    slot.classList.add('preview-edge-left');
+    return;
+  }
+
+  if (index === tiles.length){
+   slot.classList.add('preview-edge-right');
+   return;
+ }
+
+ const target = tiles[index - 1];
+
+  target.classList.add('preview-after');
+  
+  target.style.marginRight = gapWidth + 'px';
+  target.style.setProperty('--preview-gap', gapWidth + 'px');
 }
 
 
@@ -1739,35 +1643,26 @@ function applyPreview(slot, index, movingEl){
       drag.el.remove();
       if(prev?.classList.contains('slot')) relayoutSlot(prev);
 
- } else if (activeInsert && activeInsert.slot === slot) {
-   const { slot, index } = activeInsert;
-   const prev = drag.el.parentElement;
- 
-   if (prev?.classList?.contains('slot')) {
-     try { prev.removeChild(drag.el); } catch {}
-   }
- 
-   const tiles = [...slot.querySelectorAll('.tile')];
-   if (index >= tiles.length) {
-     slot.appendChild(drag.el);
-   } else {
-     slot.insertBefore(drag.el, tiles[index]);
-   }
- 
-   // 🔥 PRE-SHRINK BEFORE USER SEES IT
-   slot.style.visibility = 'hidden';
- 
-   relayoutSlot(slot);
- 
-   // force shrink immediately
-   fitTextToSlot(null, slot);
- 
-   slot.style.visibility = '';
- 
-   if (prev && prev !== slot && prev.classList.contains('slot')) {
-     relayoutSlot(prev);
-   }
- }
+} else if (activeInsert && activeInsert.slot === slot) {
+  const { slot, index } = activeInsert;
+  const prev = drag.el.parentElement;
+
+  if (prev?.classList?.contains('slot')) {
+    try { prev.removeChild(drag.el); } catch {}
+  }
+
+  const tiles = [...slot.querySelectorAll('.tile')];
+  if (index >= tiles.length) {
+    slot.appendChild(drag.el);
+  } else {
+    slot.insertBefore(drag.el, tiles[index]);
+  }
+
+  relayoutSlot(slot);
+  if (prev && prev !== slot && prev.classList.contains('slot')) {
+    relayoutSlot(prev);
+  }
+}
  else {
       if(drag.fromPalette){
         drag.el.remove();
