@@ -152,7 +152,7 @@
     min-width:0;
     max-width:100%;
   
-    overflow:hidden;
+    overflow:visible;
     position:relative;
     vertical-align:top;
   }
@@ -348,9 +348,10 @@
  
    top:var(--preview-row-y);
    transform:translateY(-50%);
+   z-index:2;
  }
- .slot.preview-edge-left::before{ left:8px; }
- .slot.preview-edge-right::after{ right:8px; }
+ .slot.preview-edge-left::before{ left:18px; }
+ .slot.preview-edge-right::after{ right:18px; }
  
  /* Between-tiles insert: shift ONLY the tile after the insertion point */
  /* Between-tiles insert: open a real visible gap */
