@@ -145,7 +145,7 @@
     gap:0;
     align-items:center;
     justify-content:flex-start;
-    flex-wrap:wrap;        /* 🔥 FORCE SINGLE LINE */
+    flex-wrap:nowrap;
     align-content:flex-start;
   
     flex:0 1 auto;
@@ -1235,7 +1235,7 @@ location.reload();
   }
 
   function fitTextToSlot(tile, slot){
-
+  
     const tiles = [...slot.querySelectorAll('.tile')]
       .filter(t =>
         t.dataset.kind === 'text' ||
@@ -1251,12 +1251,12 @@ location.reload();
     function setFontSize(size){
       tiles.forEach(t=>{
         let el = t;
-
+  
         if (t.dataset.kind === 'write'){
           el = t.querySelector('.write-input');
           if (!el) return;
         }
-
+  
         el.style.fontSize = size + 'px';
       });
     }
@@ -1295,37 +1295,34 @@ location.reload();
   
     function isSingleLineFit(){
       const rect = slot.getBoundingClientRect();
-    
+  
       let maxRight = 0;
-    
+  
       tiles.forEach(t=>{
         const r = t.getBoundingClientRect();
         const right = r.right - rect.left;
         if (right > maxRight) maxRight = right;
       });
-    
+  
       return maxRight <= rect.width;
     }
   
     clearWrapStyles();
-  
-    const oldFlexWrap = slot.style.flexWrap;
     slot.style.flexWrap = 'nowrap';
   
     let size = START_FONT;
-    
-    // 🔥 FORCE MULTIPLE CHECKS PER SIZE
+  
     while (size > MIN_FONT){
-    
       setFontSize(size);
-    
-      // force layout update (CRITICAL)
       slot.offsetHeight;
-    
+  
       if (isSingleLineFit()) break;
-    
+  
       size -= 1;
     }
+  
+    setFontSize(size);
+    slot.offsetHeight;
   
     if (!isSingleLineFit()){
       slot.style.flexWrap = 'wrap';
@@ -1335,12 +1332,6 @@ location.reload();
       slot.style.flexWrap = 'nowrap';
       clearWrapStyles();
       setFontSize(size);
-    }
-  
-    if (oldFlexWrap){
-      slot.style.flexWrap = oldFlexWrap;
-    } else {
-      slot.style.removeProperty('flex-wrap');
     }
   }
 
