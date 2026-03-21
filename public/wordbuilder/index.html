@@ -1254,7 +1254,11 @@ location.reload();
   function fitTextToSlot(tile, slot){
 
     const tiles = [...slot.querySelectorAll('.tile')]
-      .filter(t => t.dataset.kind === 'text' || t.dataset.kind === 'write');
+      .filter(t =>
+        t.dataset.kind === 'text' ||
+        t.dataset.kind === 'write' ||
+        t.dataset.kind === 'punc'   // ⭐ ADD THIS
+      );
   
     if (!tiles.length) return;
   
@@ -1264,12 +1268,14 @@ location.reload();
     function setFontSize(size){
       tiles.forEach(t=>{
         let el = t;
-  
+
         if (t.dataset.kind === 'write'){
           el = t.querySelector('.write-input');
           if (!el) return;
         }
-  
+        
+        // ⭐ IMPORTANT: punctuation uses the tile itself
+        // (this line stays the same for text + punc)
         el.style.fontSize = size + 'px';
       });
     }
