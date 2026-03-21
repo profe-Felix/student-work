@@ -1311,14 +1311,7 @@ location.reload();
     }
   
     function isSingleLineFit(){
-      const firstTop = tiles[0].offsetTop;
-      const slotRight = slot.clientWidth - 2;
-  
-      for (const t of tiles){
-        if (t.offsetTop !== firstTop) return false;
-        if (t.offsetLeft + t.offsetWidth > slotRight) return false;
-      }
-      return true;
+      return slot.scrollWidth <= slot.clientWidth;
     }
   
     clearWrapStyles();
