@@ -260,12 +260,12 @@
   }
   .tile.space::after{ content:"␣"; }
   .slot .tile.space.in-slot{
-    width:var(--space-w);
-    min-width:var(--space-w);
+    width:calc(var(--space-w) * 1.4);
+    min-width:calc(var(--space-w) * 1.4);
     padding:0;
   
-    height:60%;                 /* ✅ shorter than tile */
-    align-self:center;          /* ✅ vertically centered */
+    height:clamp(16px, 40%, 26px);
+    align-self:center;
   
     font-size:0;
     background:#e5e7eb;
