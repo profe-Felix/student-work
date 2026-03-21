@@ -1430,31 +1430,73 @@ function clearPreview(){
 function getNearestIndex(slot, clientX, movingEl){
 
   const tiles = [...slot.querySelectorAll('.tile')]
-    .filter(t => t !== movingEl);
+    .filter(t => t !== movingEl && !t.classList.contains('preview-ghost-in-slot'));
 
   if (!tiles.length) return 0;
 
   const slotRect = slot.getBoundingClientRect();
+  const END_BUFFER = 48;
 
-  // 🔥 EXPAND RIGHT EDGE HIT ZONE
-  const END_BUFFER = 40;
+  // --- find the row closest to pointer ---
+  const pointerY = drag.el.getBoundingClientRect().top + drag.el.offsetHeight / 2;
 
-  // if near right edge → treat as end insertion
-  if (clientX > slotRect.right - END_BUFFER){
-    return tiles.length;
+  let closestRowY = null;
+  let minDist = Infinity;
+
+  tiles.forEach(t=>{
+    const r = t.getBoundingClientRect();
+    const midY = r.top + r.height / 2;
+    const d = Math.abs(pointerY - midY);
+
+    if (d < minDist){
+      minDist = d;
+      closestRowY = midY;
+    }
+  });
+
+  slot.dataset.previewRowY = closestRowY;
+
+  // --- collect tiles in that visual row ---
+  const rowTiles = tiles.filter(t=>{
+    const r = t.getBoundingClientRect();
+    const midY = r.top + r.height / 2;
+    return Math.abs(midY - closestRowY) < r.height;
+  });
+
+  rowTiles.sort((a,b)=>
+    a.getBoundingClientRect().left - b.getBoundingClientRect().left
+  );
+
+  if (!rowTiles.length) return tiles.length;
+
+  const firstTile = rowTiles[0];
+  const lastTile  = rowTiles[rowTiles.length - 1];
+
+  const first = firstTile.getBoundingClientRect();
+  const last  = lastTile.getBoundingClientRect();
+
+  // left edge of current row
+  if (clientX < first.left){
+    return tiles.indexOf(firstTile);
   }
 
-  // normal behavior
-  for (let i = 0; i < tiles.length; i++){
-    const r = tiles[i].getBoundingClientRect();
-    const mid = r.left + r.width / 2;
+  // expanded end zone of current row
+  if (clientX > last.right - 4 || clientX > slotRect.right - END_BUFFER){
+    return tiles.indexOf(lastTile) + 1;
+  }
+
+  // between tiles in current row
+  for (let i = 0; i < rowTiles.length - 1; i++){
+    const a = rowTiles[i].getBoundingClientRect();
+    const b = rowTiles[i + 1].getBoundingClientRect();
+    const mid = (a.right + b.left) / 2;
 
     if (clientX < mid){
-      return i;
+      return tiles.indexOf(rowTiles[i]) + 1;
     }
   }
 
-  return tiles.length;
+  return tiles.indexOf(lastTile) + 1;
 }
 
 function applyPreview(slot, index, movingEl){
