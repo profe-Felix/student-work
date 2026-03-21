@@ -1532,31 +1532,33 @@ function applyPreview(slot, index, movingEl){
     return;
   }
 
-    const last = tiles[tiles.length - 1];
-    const slotRect = slot.getBoundingClientRect();
-    const movingRect = movingEl.getBoundingClientRect();
-    
-    // 🔥 ONLY trigger end preview if truly past last tile
-    if (index >= tiles.length && movingRect.left > last.getBoundingClientRect().right - 4){
+  const last = tiles[tiles.length - 1];
+  const lastRect = last.getBoundingClientRect();
+  const movingRect = movingEl.getBoundingClientRect();
+  
+  // 🔥 give a cushion so end preview is easy to trigger
+  const END_TRIGGER_ZONE = 24;
+  
+  if (index >= tiles.length && movingRect.left > lastRect.right - END_TRIGGER_ZONE){
     const ghost = movingEl.cloneNode(true);
     ghost.classList.add('preview-ghost-in-slot');
-
+  
     ghost.style.maxWidth = 'calc(100% - 12px)';
     ghost.style.boxSizing = 'border-box';
-
+  
     ghost.style.position = '';
     ghost.style.left = '';
     ghost.style.top = '';
     ghost.style.width = '';
-
+  
     ghost.style.pointerEvents = 'none';
     ghost.style.opacity = '0.5';
-
+  
     slot.appendChild(ghost);
-
+  
     relayoutSlot(slot);
     fitTextToSlot(null, slot);
-
+  
     activeInsert = { slot, index: tiles.length };
     return;
   }
