@@ -260,16 +260,20 @@
   }
   .tile.space::after{ content:"␣"; }
   .slot .tile.space.in-slot{
-    width:calc(var(--space-w) * 1.4);
-    min-width:calc(var(--space-w) * 1.4);
+    width:calc(var(--space-w) * 1.2);
+    min-width:calc(var(--space-w) * 1.2);
     padding:0;
   
-    height:0.7em;              /* ⭐ matches text height better */
-    align-self:baseline;       /* ⭐ THIS fixes the floating look */
+    height:1em;                /* 🔥 MATCH TEXT HEIGHT */
+    align-self:baseline;
   
-    background:#e5e7eb;
-    border:1px dashed #9ca3af;
-    border-radius:6px;         /* ⭐ not pill anymore */
+    background:transparent;    /* 🔥 NO GRAY FILL */
+    border-left:2px dotted #9ca3af;  /* 🔥 JUST A LINE */
+    border-right:none;
+    border-top:none;
+    border-bottom:none;
+  
+    border-radius:0;
   
     margin:0 calc(var(--inner-gap) * 0.6);
   }
