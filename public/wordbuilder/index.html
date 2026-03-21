@@ -1556,9 +1556,12 @@ function applyPreview(slot, index, movingEl){
   // 🔥 clamp gap so it never overflows visually
   const gapWidth = Math.max(0, Math.min(movingWidth, remaining));
   
-  target.classList.add('preview-after');
-  target.style.marginRight = gapWidth + 'px';
-  target.style.setProperty('--preview-gap', gapWidth + 'px');
+    target.classList.add('preview-after');
+    
+    target.style.marginRight = '0px';                 // ❌ kill external spacing
+    target.style.paddingRight = gapWidth + 'px';      // ✅ internal spacing instead
+    
+    target.style.setProperty('--preview-gap', gapWidth + 'px');
 
   activeInsert = { slot, index };
 }
