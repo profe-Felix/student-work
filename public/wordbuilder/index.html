@@ -124,13 +124,14 @@
     align-items:stretch;
     justify-content:flex-start;
   }
+ 
   .line{
     display:flex;
     gap:var(--gap);
     align-items:flex-start;
     justify-content:flex-start;
   
-    flex-wrap:wrap;
+    flex-wrap:nowrap;   /* 🔥 CRITICAL */
     min-width:0;
   }
 
@@ -144,7 +145,7 @@
     gap:0;
     align-items:center;
     justify-content:flex-start;
-    flex-wrap:wrap;
+    flex-wrap:nowrap;        /* 🔥 FORCE SINGLE LINE */
     align-content:flex-start;
   
     flex:0 1 auto;
@@ -268,12 +269,17 @@
 
   .tile.punc{
     min-width:auto;
-    padding:0 2px;
+    padding:0 8px;          /* 👈 bigger click area */
     font-size:inherit;
+  
     white-space:nowrap;
     flex-shrink:0;
+  
+    margin-left:-6px;       /* 👈 pulls it into the word */
   }
- 
+  .tile.punc + .tile{
+    margin-left:0;
+  }
   .tile.writegen{
     min-width:auto;
     padding:0 10px;
@@ -1287,7 +1293,17 @@ location.reload();
     }
   
     function isSingleLineFit(){
-      return slot.scrollWidth <= slot.clientWidth;
+      const rect = slot.getBoundingClientRect();
+    
+      let maxRight = 0;
+    
+      tiles.forEach(t=>{
+        const r = t.getBoundingClientRect();
+        const right = r.right - rect.left;
+        if (right > maxRight) maxRight = right;
+      });
+    
+      return maxRight <= rect.width;
     }
   
     clearWrapStyles();
@@ -1296,12 +1312,18 @@ location.reload();
     slot.style.flexWrap = 'nowrap';
   
     let size = START_FONT;
-
-    setFontSize(size);
-  
-    while (!isSingleLineFit() && size > MIN_FONT){
-      size -= 1;
+    
+    // 🔥 FORCE MULTIPLE CHECKS PER SIZE
+    while (size > MIN_FONT){
+    
       setFontSize(size);
+    
+      // force layout update (CRITICAL)
+      slot.offsetHeight;
+    
+      if (isSingleLineFit()) break;
+    
+      size -= 1;
     }
   
     if (!isSingleLineFit()){
