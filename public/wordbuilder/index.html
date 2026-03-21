@@ -1546,8 +1546,16 @@ function applyPreview(slot, index, movingEl){
   }
 
   const target = tiles[index - 1];
-  const gapWidth = movingEl.getBoundingClientRect().width;
-
+  const movingWidth = movingEl.getBoundingClientRect().width;
+  const slotRect = slot.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  
+  // 🔥 calculate remaining space inside slot
+  const remaining = slotRect.right - targetRect.right - 12;
+  
+  // 🔥 clamp gap so it never overflows visually
+  const gapWidth = Math.max(0, Math.min(movingWidth, remaining));
+  
   target.classList.add('preview-after');
   target.style.marginRight = gapWidth + 'px';
   target.style.setProperty('--preview-gap', gapWidth + 'px');
