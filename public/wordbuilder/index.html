@@ -152,9 +152,20 @@
     min-width:0;
     max-width:100%;
   
-    overflow:visible; /* 🔥 FIXES BLEEDING if hidden*/
+    overflow:hidden; /* ✅ keep content inside */
     position:relative;
     vertical-align:top;
+  }
+  
+  /* ✅ adds cushion at the end */
+  .slot::after{
+    content:"";
+    display:block;
+    flex:0 0 18px;
+    width:18px;
+    min-width:18px;
+    height:1px;
+    pointer-events:none;
   }
   .slot:empty::before{
     content:"";
