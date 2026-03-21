@@ -236,7 +236,7 @@
   .slot .tile.in-slot{
     flex:0 0 auto; min-width:0;
     height:clamp(40px, 6vh, 64px);
-    font-size:clamp(26px, 3.4vw, 56px);
+    font-size:inherit;
     padding:0;
     background:transparent; border:none; border-radius:0; box-shadow:none;
   }
@@ -268,11 +268,10 @@
 
   .tile.punc{
     min-width:auto;
-    padding:0 2px;              /* tighter spacing */
-    font-size:24px;
-  
-    white-space:nowrap;         /* ⭐ prevent splitting */
-    flex-shrink:0;              /* ⭐ don’t let it shrink weirdly */
+    padding:0 2px;
+    font-size:inherit;
+    white-space:nowrap;
+    flex-shrink:0;
   }
  
   .tile.writegen{
@@ -1203,38 +1202,17 @@ location.reload();
 
   function relayoutSlot(slot){
     const tiles = [...slot.querySelectorAll('.tile')];
-
-    // 🔥 GROUP punctuation with previous tile
-    for (let i = 1; i < tiles.length; i++){
-      const prev = tiles[i - 1];
-      const cur  = tiles[i];
-    
-      if (cur.dataset.kind === 'punc'){
-        // wrap both in a container so flex treats them as ONE unit
-        const wrapper = document.createElement('span');
-        wrapper.style.display = 'inline-flex';
-        wrapper.style.alignItems = 'center';
-        wrapper.style.whiteSpace = 'nowrap';
-    
-        // insert wrapper before prev
-        prev.parentNode.insertBefore(wrapper, prev);
-    
-        // move both inside
-        wrapper.appendChild(prev);
-        wrapper.appendChild(cur);
-      }
-    }
-   
+  
     tiles.forEach(t=>{
-    t.classList.add('in-slot');
-  
-    const inp = t.querySelector?.('.write-input');
-    if (inp){
-      inp.style.width = 'auto';          // ⭐ stop stretching
-      inp.style.whiteSpace = 'normal';   // ⭐ allow wrapping
-    }
-  
-    if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
+      t.classList.add('in-slot');
+    
+      const inp = t.querySelector?.('.write-input');
+      if (inp){
+        inp.style.width = 'auto';
+        inp.style.whiteSpace = 'normal';
+      }
+    });
+
     if (!slot._fitQueued){
       slot._fitQueued = true;
       requestAnimationFrame(()=>{
@@ -1244,8 +1222,6 @@ location.reload();
         });
       });
     }
-  }
-  });
   }
   function relayoutAllSlots(){
     document.querySelectorAll('.slot').forEach(relayoutSlot);
@@ -1257,7 +1233,7 @@ location.reload();
       .filter(t =>
         t.dataset.kind === 'text' ||
         t.dataset.kind === 'write' ||
-        t.dataset.kind === 'punc'   // ⭐ ADD THIS
+        t.dataset.kind === 'punc'
       );
   
     if (!tiles.length) return;
@@ -1273,9 +1249,7 @@ location.reload();
           el = t.querySelector('.write-input');
           if (!el) return;
         }
-        
-        // ⭐ IMPORTANT: punctuation uses the tile itself
-        // (this line stays the same for text + punc)
+
         el.style.fontSize = size + 'px';
       });
     }
@@ -1291,6 +1265,7 @@ location.reload();
   
         target.style.wordBreak = '';
         target.style.overflowWrap = '';
+        target.style.whiteSpace = 'nowrap';
         t.classList.remove('wrap-mode');
       });
     }
@@ -1306,6 +1281,7 @@ location.reload();
   
         target.style.wordBreak = 'break-word';
         target.style.overflowWrap = 'anywhere';
+        target.style.whiteSpace = 'normal';
         t.classList.add('wrap-mode');
       });
     }
@@ -1320,21 +1296,20 @@ location.reload();
     slot.style.flexWrap = 'nowrap';
   
     let size = START_FONT;
+
+    setFontSize(size);
   
-    while (size > MIN_FONT){
-      setFontSize(size);
-  
-      if (isSingleLineFit()) break;
-  
+    while (!isSingleLineFit() && size > MIN_FONT){
       size -= 1;
+      setFontSize(size);
     }
   
     if (!isSingleLineFit()){
       slot.style.flexWrap = 'wrap';
-      setFontSize(size);
       enableWrapStyles();
+      setFontSize(size);
     } else {
-      slot.style.flexWrap = 'wrap';
+      slot.style.flexWrap = 'nowrap';
       clearWrapStyles();
       setFontSize(size);
     }
