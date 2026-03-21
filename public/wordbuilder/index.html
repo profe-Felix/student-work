@@ -1223,9 +1223,6 @@ location.reload();
 
   function fitTextToSlot(tile, slot){
 
-    const maxWidth = Math.max(40, slot.clientWidth - 16);
-    if (maxWidth <= 40) return;
-  
     const tiles = [...slot.querySelectorAll('.tile')]
       .filter(t => t.dataset.kind === 'text' || t.dataset.kind === 'write');
   
@@ -1234,14 +1231,16 @@ location.reload();
     const START_FONT = 56;
     const MIN_FONT = 20;
   
-    let sharedSize = START_FONT;
+    function isOverflowing(){
+      return slot.scrollWidth > slot.clientWidth;
+    }
   
-    // force single line during measurement
+    let size = START_FONT;
+  
+    // Remove wrapping while shrinking
     tiles.forEach(t => t.classList.remove('wrap-mode'));
   
-    // measure total width
-    function getTotalWidth(size){
-      let total = 0;
+    while (size > MIN_FONT){
   
       tiles.forEach(t=>{
         let el = t;
@@ -1252,35 +1251,15 @@ location.reload();
         }
   
         el.style.fontSize = size + 'px';
-  
-        total += el.scrollWidth;
       });
   
-      return total;
-    }
+      if (!isOverflowing()) break;
   
-    let size = START_FONT;
-  
-    while (getTotalWidth(size) > maxWidth && size > MIN_FONT){
       size -= 1;
     }
   
-    sharedSize = size;
-  
-    // apply shared size
-    tiles.forEach(t=>{
-      let target = t;
-  
-      if (t.dataset.kind === 'write'){
-        target = t.querySelector('.write-input');
-        if (!target) return;
-      }
-  
-      target.style.fontSize = sharedSize + 'px';
-    });
-  
-    // if still too wide → wrap
-    if (getTotalWidth(sharedSize) > maxWidth){
+    // If still overflowing → THEN allow wrap
+    if (isOverflowing()){
   
       tiles.forEach(t=>{
         let target = t;
