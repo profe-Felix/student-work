@@ -139,20 +139,20 @@
     background:#fff;
     border:2px solid var(--drop-border);
     border-radius:12px;
-    padding:6px 18px;   /* 👈 more breathing room */
+    padding:6px 18px;
   
     display:inline-flex;
     gap:0;
     align-items:center;
     justify-content:flex-start;
-    flex-wrap:nowrap;        /* 🔥 FORCE SINGLE LINE */
+    flex-wrap:nowrap;
     align-content:flex-start;
   
     flex:0 1 auto;
     min-width:0;
     max-width:100%;
   
-    overflow:visible;
+    overflow:visible; /* 🔥 FIXES BLEEDING if hidden*/
     position:relative;
     vertical-align:top;
   }
