@@ -277,11 +277,10 @@
   }
   .slot .tile.space.in-slot::before{
     content:'';
-    display:block;
-  
-    height:100%;
-    width:0;
-  
+    position:absolute;
+    top:50%;
+    transform:translateY(-50%);
+    height:0.95em;
     border-left:2px dotted #9ca3af;
   }
 
@@ -1258,7 +1257,8 @@ location.reload();
       .filter(t =>
         t.dataset.kind === 'text' ||
         t.dataset.kind === 'write' ||
-        t.dataset.kind === 'punc'
+        t.dataset.kind === 'punc' ||
+        t.dataset.kind === 'space'
       );
   
     if (!tiles.length) return;
