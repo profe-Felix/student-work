@@ -348,9 +348,10 @@
  
    top:var(--preview-row-y);
    transform:translateY(-50%);
+   z-index:2;
  }
- .slot.preview-edge-left::before{ left:8px; }
- .slot.preview-edge-right::after{ right:8px; }
+ .slot.preview-edge-left::before{ left:18px; }
+ .slot.preview-edge-right::after{ right:18px; }
  
  /* Between-tiles insert: shift ONLY the tile after the insertion point */
  /* Between-tiles insert: open a real visible gap */
@@ -1673,26 +1674,35 @@ function applyPreview(slot, index, movingEl){
       drag.el.remove();
       if(prev?.classList.contains('slot')) relayoutSlot(prev);
 
-} else if (activeInsert && activeInsert.slot === slot) {
-  const { slot, index } = activeInsert;
-  const prev = drag.el.parentElement;
-
-  if (prev?.classList?.contains('slot')) {
-    try { prev.removeChild(drag.el); } catch {}
-  }
-
-  const tiles = [...slot.querySelectorAll('.tile')];
-  if (index >= tiles.length) {
-    slot.appendChild(drag.el);
-  } else {
-    slot.insertBefore(drag.el, tiles[index]);
-  }
-
-  relayoutSlot(slot);
-  if (prev && prev !== slot && prev.classList.contains('slot')) {
-    relayoutSlot(prev);
-  }
-}
+ } else if (activeInsert && activeInsert.slot === slot) {
+   const { slot, index } = activeInsert;
+   const prev = drag.el.parentElement;
+ 
+   if (prev?.classList?.contains('slot')) {
+     try { prev.removeChild(drag.el); } catch {}
+   }
+ 
+   const tiles = [...slot.querySelectorAll('.tile')];
+   if (index >= tiles.length) {
+     slot.appendChild(drag.el);
+   } else {
+     slot.insertBefore(drag.el, tiles[index]);
+   }
+ 
+   // 🔥 PRE-SHRINK BEFORE USER SEES IT
+   slot.style.visibility = 'hidden';
+ 
+   relayoutSlot(slot);
+ 
+   // force shrink immediately
+   fitTextToSlot(null, slot);
+ 
+   slot.style.visibility = '';
+ 
+   if (prev && prev !== slot && prev.classList.contains('slot')) {
+     relayoutSlot(prev);
+   }
+ }
  else {
       if(drag.fromPalette){
         drag.el.remove();
