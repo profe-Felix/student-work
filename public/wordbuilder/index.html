@@ -1209,12 +1209,16 @@ location.reload();
     }
   
     if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
-     requestAnimationFrame(()=>{
-       requestAnimationFrame(()=>{
-         fitTextToSlot(t, slot);
-       });
-     });
-   }
+    if (!slot._fitQueued){
+      slot._fitQueued = true;
+      requestAnimationFrame(()=>{
+        requestAnimationFrame(()=>{
+          fitTextToSlot(null, slot);
+          slot._fitQueued = false;
+        });
+      });
+    }
+  }
   });
   }
   function relayoutAllSlots(){
@@ -1231,17 +1235,7 @@ location.reload();
     const START_FONT = 56;
     const MIN_FONT = 20;
   
-    function isOverflowing(){
-      return slot.scrollWidth > slot.clientWidth;
-    }
-  
-    let size = START_FONT;
-  
-    // Remove wrapping while shrinking
-    tiles.forEach(t => t.classList.remove('wrap-mode'));
-  
-    while (size > MIN_FONT){
-  
+    function setFontSize(size){
       tiles.forEach(t=>{
         let el = t;
   
@@ -1252,31 +1246,9 @@ location.reload();
   
         el.style.fontSize = size + 'px';
       });
-  
-      if (!isOverflowing()) break;
-  
-      size -= 1;
     }
   
-    // If still overflowing → THEN allow wrap
-    if (isOverflowing()){
-  
-      tiles.forEach(t=>{
-        let target = t;
-  
-        if (t.dataset.kind === 'write'){
-          target = t.querySelector('.write-input');
-          if (!target) return;
-        }
-  
-        target.style.wordBreak = 'break-word';
-        target.style.overflowWrap = 'anywhere';
-  
-        t.classList.add('wrap-mode');
-      });
-  
-    } else {
-  
+    function clearWrapStyles(){
       tiles.forEach(t=>{
         let target = t;
   
@@ -1287,8 +1259,65 @@ location.reload();
   
         target.style.wordBreak = '';
         target.style.overflowWrap = '';
+        t.classList.remove('wrap-mode');
       });
+    }
   
+    function enableWrapStyles(){
+      tiles.forEach(t=>{
+        let target = t;
+  
+        if (t.dataset.kind === 'write'){
+          target = t.querySelector('.write-input');
+          if (!target) return;
+        }
+  
+        target.style.wordBreak = 'break-word';
+        target.style.overflowWrap = 'anywhere';
+        t.classList.add('wrap-mode');
+      });
+    }
+  
+    function isSingleLineFit(){
+      const firstTop = tiles[0].offsetTop;
+      const slotRight = slot.clientWidth - 2;
+  
+      for (const t of tiles){
+        if (t.offsetTop !== firstTop) return false;
+        if (t.offsetLeft + t.offsetWidth > slotRight) return false;
+      }
+      return true;
+    }
+  
+    clearWrapStyles();
+  
+    const oldFlexWrap = slot.style.flexWrap;
+    slot.style.flexWrap = 'nowrap';
+  
+    let size = START_FONT;
+  
+    while (size > MIN_FONT){
+      setFontSize(size);
+  
+      if (isSingleLineFit()) break;
+  
+      size -= 1;
+    }
+  
+    if (!isSingleLineFit()){
+      slot.style.flexWrap = 'wrap';
+      setFontSize(size);
+      enableWrapStyles();
+    } else {
+      slot.style.flexWrap = 'wrap';
+      clearWrapStyles();
+      setFontSize(size);
+    }
+  
+    if (oldFlexWrap){
+      slot.style.flexWrap = oldFlexWrap;
+    } else {
+      slot.style.removeProperty('flex-wrap');
     }
   }
 
