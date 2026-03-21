@@ -268,8 +268,11 @@
 
   .tile.punc{
     min-width:auto;
-    padding:0 8px;
+    padding:0 2px;              /* tighter spacing */
     font-size:24px;
+  
+    white-space:nowrap;         /* ⭐ prevent splitting */
+    flex-shrink:0;              /* ⭐ don’t let it shrink weirdly */
   }
  
   .tile.writegen{
@@ -283,6 +286,10 @@
   .slot .tile.punc.in-slot{
     padding:0;
     margin:0;
+  
+    margin-left:-6px;        /* ⭐ THIS is the important part */
+    white-space:nowrap;      /* ⭐ prevents breaking */
+    flex-shrink:0;           /* ⭐ keeps it attached */
   }
 
   .tile.captool,
