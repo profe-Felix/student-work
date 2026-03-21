@@ -124,13 +124,14 @@
     align-items:stretch;
     justify-content:flex-start;
   }
+ 
   .line{
     display:flex;
     gap:var(--gap);
     align-items:flex-start;
     justify-content:flex-start;
   
-    flex-wrap:wrap;
+    flex-wrap:nowrap;   /* 🔥 CRITICAL */
     min-width:0;
   }
 
@@ -138,20 +139,20 @@
     background:#fff;
     border:2px solid var(--drop-border);
     border-radius:12px;
-    padding:6px 8px;
+    padding:6px 18px;   /* 👈 more breathing room */
   
     display:inline-flex;
     gap:0;
     align-items:center;
     justify-content:flex-start;
-    flex-wrap:wrap;
+    flex-wrap:nowrap;        /* 🔥 FORCE SINGLE LINE */
     align-content:flex-start;
   
     flex:0 1 auto;
     min-width:0;
     max-width:100%;
   
-    overflow:hidden;
+    overflow:visible;
     position:relative;
     vertical-align:top;
   }
@@ -236,7 +237,7 @@
   .slot .tile.in-slot{
     flex:0 0 auto; min-width:0;
     height:clamp(40px, 6vh, 64px);
-    font-size:clamp(26px, 3.4vw, 56px);
+    font-size:inherit;
     padding:0;
     background:transparent; border:none; border-radius:0; box-shadow:none;
   }
@@ -268,10 +269,17 @@
 
   .tile.punc{
     min-width:auto;
-    padding:0 8px;
-    font-size:24px;
+    padding:0 8px;          /* 👈 bigger click area */
+    font-size:inherit;
+  
+    white-space:nowrap;
+    flex-shrink:0;
+  
+    margin-left:-6px;       /* 👈 pulls it into the word */
   }
- 
+  .tile.punc + .tile{
+    margin-left:0;
+  }
   .tile.writegen{
     min-width:auto;
     padding:0 10px;
@@ -283,6 +291,8 @@
   .slot .tile.punc.in-slot{
     padding:0;
     margin:0;
+    white-space:nowrap;      /* ⭐ prevents breaking */
+    flex-shrink:0;           /* ⭐ keeps it attached */
   }
 
   .tile.captool,
@@ -1200,111 +1210,136 @@ location.reload();
     const tiles = [...slot.querySelectorAll('.tile')];
   
     tiles.forEach(t=>{
-    t.classList.add('in-slot');
-  
-    const inp = t.querySelector?.('.write-input');
-    if (inp){
-      inp.style.width = 'auto';          // ⭐ stop stretching
-      inp.style.whiteSpace = 'normal';   // ⭐ allow wrapping
+      t.classList.add('in-slot');
+    
+      const inp = t.querySelector?.('.write-input');
+      if (inp){
+        inp.style.width = 'auto';
+        inp.style.whiteSpace = 'normal';
+      }
+    });
+
+    if (!slot._fitQueued){
+      slot._fitQueued = true;
+      requestAnimationFrame(()=>{
+        requestAnimationFrame(()=>{
+          fitTextToSlot(null, slot);
+          slot._fitQueued = false;
+        });
+      });
     }
-  
-    if (t.dataset.kind === 'text' || t.dataset.kind === 'write'){
-     requestAnimationFrame(()=>{
-       requestAnimationFrame(()=>{
-         fitTextToSlot(t, slot);
-       });
-     });
-   }
-  });
   }
   function relayoutAllSlots(){
     document.querySelectorAll('.slot').forEach(relayoutSlot);
   }
 
   function fitTextToSlot(tile, slot){
-  
-    const maxWidth = Math.max(40, slot.clientWidth - 16);
-    if (maxWidth <= 40) return;
-  
+
     const tiles = [...slot.querySelectorAll('.tile')]
-      .filter(t => t.dataset.kind === 'text' || t.dataset.kind === 'write');
+      .filter(t =>
+        t.dataset.kind === 'text' ||
+        t.dataset.kind === 'write' ||
+        t.dataset.kind === 'punc'
+      );
   
     if (!tiles.length) return;
   
     const START_FONT = 56;
     const MIN_FONT = 20;
   
-    let size = START_FONT;
-  
-    // FORCE single line for measuring
-    tiles.forEach(t => t.classList.remove('wrap-mode'));
-  
-    function getTotalWidth(fontSize){
-      let total = 0;
-  
+    function setFontSize(size){
       tiles.forEach(t=>{
         let el = t;
-  
+
         if (t.dataset.kind === 'write'){
           el = t.querySelector('.write-input');
           if (!el) return;
         }
-  
-        el.style.fontSize = fontSize + 'px';
-        total += el.scrollWidth;
+
+        el.style.fontSize = size + 'px';
       });
-  
-      return total;
     }
   
-    // SHRINK until it fits OR hits MIN
-    while (getTotalWidth(size) > maxWidth && size > MIN_FONT){
-      size--;
-    }
-  
-    // APPLY final size
-    tiles.forEach(t=>{
-      let el = t;
-  
-      if (t.dataset.kind === 'write'){
-        el = t.querySelector('.write-input');
-        if (!el) return;
-      }
-  
-      el.style.fontSize = size + 'px';
-    });
-  
-    // 🚨 ONLY WRAP if STILL too big at MIN
-    if (getTotalWidth(size) > maxWidth){
-  
+    function clearWrapStyles(){
       tiles.forEach(t=>{
-        let el = t;
+        let target = t;
   
         if (t.dataset.kind === 'write'){
-          el = t.querySelector('.write-input');
-          if (!el) return;
+          target = t.querySelector('.write-input');
+          if (!target) return;
         }
   
-        el.style.wordBreak = 'break-word';
-        el.style.overflowWrap = 'anywhere';
+        target.style.wordBreak = '';
+        target.style.overflowWrap = '';
+        target.style.whiteSpace = 'nowrap';
+        t.classList.remove('wrap-mode');
+      });
+    }
   
+    function enableWrapStyles(){
+      tiles.forEach(t=>{
+        let target = t;
+  
+        if (t.dataset.kind === 'write'){
+          target = t.querySelector('.write-input');
+          if (!target) return;
+        }
+  
+        target.style.wordBreak = 'break-word';
+        target.style.overflowWrap = 'anywhere';
+        target.style.whiteSpace = 'normal';
         t.classList.add('wrap-mode');
       });
+    }
   
-    } else {
-  
+    function isSingleLineFit(){
+      const rect = slot.getBoundingClientRect();
+    
+      let maxRight = 0;
+    
       tiles.forEach(t=>{
-        let el = t;
-  
-        if (t.dataset.kind === 'write'){
-          el = t.querySelector('.write-input');
-          if (!el) return;
-        }
-  
-        el.style.wordBreak = '';
-        el.style.overflowWrap = '';
+        const r = t.getBoundingClientRect();
+        const right = r.right - rect.left;
+        if (right > maxRight) maxRight = right;
       });
+    
+      return maxRight <= rect.width;
+    }
   
+    clearWrapStyles();
+  
+    const oldFlexWrap = slot.style.flexWrap;
+    slot.style.flexWrap = 'nowrap';
+  
+    let size = START_FONT;
+    
+    // 🔥 FORCE MULTIPLE CHECKS PER SIZE
+    while (size > MIN_FONT){
+    
+      setFontSize(size);
+    
+      // force layout update (CRITICAL)
+      slot.offsetHeight;
+    
+      if (isSingleLineFit()) break;
+    
+      size -= 1;
+    }
+  
+    if (!isSingleLineFit()){
+      slot.style.flexWrap = 'wrap';
+      enableWrapStyles();
+      setFontSize(size);
+    } else {
+      slot.style.flexWrap = 'nowrap';
+      clearWrapStyles();
+      setFontSize(size);
+    }
+  
+    if (oldFlexWrap){
+      slot.style.flexWrap = oldFlexWrap;
+    } else {
+      slot.style.removeProperty('flex-wrap');
     }
   }
 
