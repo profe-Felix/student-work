@@ -263,11 +263,15 @@
     width:var(--space-w);
     min-width:var(--space-w);
     padding:0;
-    height:clamp(40px, 6vh, 64px);
+  
+    height:60%;                 /* ✅ shorter than tile */
+    align-self:center;          /* ✅ vertically centered */
+  
     font-size:0;
     background:#e5e7eb;
     border:1px dashed #9ca3af;
     border-radius:999px;
+  
     margin:0 var(--inner-gap);
   }
 
