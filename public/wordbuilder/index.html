@@ -286,8 +286,6 @@
   .slot .tile.punc.in-slot{
     padding:0;
     margin:0;
-  
-    margin-left:-6px;        /* ⭐ THIS is the important part */
     white-space:nowrap;      /* ⭐ prevents breaking */
     flex-shrink:0;           /* ⭐ keeps it attached */
   }
@@ -1205,7 +1203,28 @@ location.reload();
 
   function relayoutSlot(slot){
     const tiles = [...slot.querySelectorAll('.tile')];
-  
+
+    // 🔥 GROUP punctuation with previous tile
+    for (let i = 1; i < tiles.length; i++){
+      const prev = tiles[i - 1];
+      const cur  = tiles[i];
+    
+      if (cur.dataset.kind === 'punc'){
+        // wrap both in a container so flex treats them as ONE unit
+        const wrapper = document.createElement('span');
+        wrapper.style.display = 'inline-flex';
+        wrapper.style.alignItems = 'center';
+        wrapper.style.whiteSpace = 'nowrap';
+    
+        // insert wrapper before prev
+        prev.parentNode.insertBefore(wrapper, prev);
+    
+        // move both inside
+        wrapper.appendChild(prev);
+        wrapper.appendChild(cur);
+      }
+    }
+   
     tiles.forEach(t=>{
     t.classList.add('in-slot');
   
