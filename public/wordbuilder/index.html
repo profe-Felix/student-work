@@ -1411,19 +1411,12 @@ function clearPreview(){
       'preview-edge-right',
       'preview-empty'
     );
-
-    const ghost = s.querySelector('.preview-ghost-in-slot');
-    if (ghost) ghost.remove();
-
-    relayoutSlot(s);
   });
-
   document.querySelectorAll('.tile.preview-after').forEach(t=>{
     t.classList.remove('preview-after');
     t.style.marginLeft = '';
     t.style.marginRight = '';
   });
-
   activeInsert = null;
 }
 
@@ -1490,56 +1483,40 @@ function getNearestIndex(slot, clientX, movingEl){
 }
 
 function applyPreview(slot, index, movingEl){
+
   clearPreview();
+  const rowY = parseFloat(slot.dataset.previewRowY || 0);
+  const slotRect = slot.getBoundingClientRect();
+  const offsetY = rowY - slotRect.top;
+  slot.style.setProperty('--preview-row-y', offsetY + 'px');
+  const tiles = [...slot.querySelectorAll('.tile')]
+    .filter(t => t !== movingEl);
 
-  if (!slot) return;
-
-  const tiles = [...slot.querySelectorAll('.tile')];
-  const hasTiles = tiles.length > 0;
-
-  if (!hasTiles){
-    slot.classList.add('preview-empty');
-    activeInsert = { slot, index: 0 };
-    return;
-  }
-
-  if (index <= 0){
-    slot.classList.add('preview-edge-left');
-    activeInsert = { slot, index: 0 };
-    return;
-  }
-
-  if (index >= tiles.length){
-    // 🔥 CREATE IN-SLOT PREVIEW (THIS IS THE KEY FIX)
-
-    const ghost = movingEl.cloneNode(true);
-    ghost.classList.add('preview-ghost-in-slot');
-
-    // remove drag styles
-    ghost.style.position = '';
-    ghost.style.left = '';
-    ghost.style.top = '';
-    ghost.style.width = '';
-
-    // make it non-interactive
-    ghost.style.pointerEvents = 'none';
-    ghost.style.opacity = '0.5';
-
-    slot.appendChild(ghost);
-
-    // 🔥 FORCE REAL LAYOUT PREVIEW
-    relayoutSlot(slot);
-    fitTextToSlot(null, slot);
-
-    activeInsert = { slot, index: tiles.length };
-
-    return;
-  }
-
-  const prev = tiles[index - 1];
-  prev.classList.add('preview-after');
+  const gapWidth = movingEl.getBoundingClientRect().width;
 
   activeInsert = { slot, index };
+
+  if (tiles.length === 0){
+    slot.classList.add('preview-empty');
+    return;
+  }
+
+  if (index === 0){
+    slot.classList.add('preview-edge-left');
+    return;
+  }
+
+  if (index === tiles.length){
+   slot.classList.add('preview-edge-right');
+   return;
+ }
+
+ const target = tiles[index - 1];
+
+  target.classList.add('preview-after');
+  
+  target.style.marginRight = gapWidth + 'px';
+  target.style.setProperty('--preview-gap', gapWidth + 'px');
 }
 
 
