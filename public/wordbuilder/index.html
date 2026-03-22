@@ -1551,10 +1551,10 @@ function applyPreview(slot, index, movingEl){
       ghost.style.opacity = '0.5';
   
       slot.appendChild(ghost);
-  
+      
+      // ✅ ONLY relayout (no shrinking during preview)
       relayoutSlot(slot);
-      fitTextToSlot(null, slot);
-  
+      
       return;
     }
   }
