@@ -1529,29 +1529,27 @@ function applyPreview(slot, index, movingEl){
 
   if (index === tiles.length){
   
-    // 🔥 hide original if it's inside this slot
-    if (movingEl.parentElement === slot){
-      movingEl.style.visibility = 'hidden';
-    }
-  
-    const ghost = movingEl.cloneNode(true);
-    ghost.classList.add('preview-ghost-in-slot');
-  
-    ghost.style.position = '';
-    ghost.style.left = '';
-    ghost.style.top = '';
-    ghost.style.width = '';
-    ghost.style.pointerEvents = 'none';
-    ghost.style.opacity = '0.5';
-  
-    slot.appendChild(ghost);
-  
-    relayoutSlot(slot);
-    
-    // 🔥 ONLY shrink if dragging from OUTSIDE the slot
+    // 🧠 ONLY show ghost if dragging from OUTSIDE
     if (movingEl.parentElement !== slot){
+  
+      const ghost = movingEl.cloneNode(true);
+      ghost.classList.add('preview-ghost-in-slot');
+  
+      ghost.style.position = '';
+      ghost.style.left = '';
+      ghost.style.top = '';
+      ghost.style.width = '';
+      ghost.style.pointerEvents = 'none';
+      ghost.style.opacity = '0.5';
+  
+      slot.appendChild(ghost);
+  
+      relayoutSlot(slot);
       fitTextToSlot(null, slot);
     }
+  
+    // 🚫 DO NOT hide original EVER
+    // 🚫 DO NOT create ghost when dragging inside
   
     return;
   }
