@@ -1420,12 +1420,17 @@ function clearPreview(){
       'preview-edge-right',
       'preview-empty'
     );
+
+    // 🔥 remove ghost previews
+    s.querySelectorAll('.preview-ghost-in-slot').forEach(g => g.remove());
   });
+
   document.querySelectorAll('.tile.preview-after').forEach(t=>{
     t.classList.remove('preview-after');
     t.style.marginLeft = '';
     t.style.marginRight = '';
   });
+
   activeInsert = null;
 }
 
@@ -1519,7 +1524,7 @@ function applyPreview(slot, index, movingEl){
 
     // 🔥 create ghost preview at the end
     const ghost = movingEl.cloneNode(true);
-    ghost.classList.add('preview-ghost');
+    ghost.classList.add('preview-ghost-in-slot');
   
     ghost.style.position = '';
     ghost.style.left = '';
