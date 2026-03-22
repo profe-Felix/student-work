@@ -1455,19 +1455,7 @@ function getNearestIndex(slot, clientX, movingEl){
 
   if (!tiles.length) return 0;
 
-  const slotRect = slot.getBoundingClientRect();
-
-  // 🔥 HARD RIGHT EDGE DETECTION (THE FIX)
-  if (clientX > slotRect.right - 20){
-    return tiles.length;
-  }
-
-  // 🔥 HARD LEFT EDGE DETECTION (just for consistency)
-  if (clientX < slotRect.left + 20){
-    return 0;
-  }
-
-  // --- existing row logic ---
+  // --- find the row closest to pointer ---
   const pointerY = drag.el.getBoundingClientRect().top + drag.el.offsetHeight / 2;
 
   let closestRowY = null;
@@ -1483,9 +1471,8 @@ function getNearestIndex(slot, clientX, movingEl){
       closestRowY = midY;
     }
   });
-
   slot.dataset.previewRowY = closestRowY;
-
+  // --- collect tiles in that visual row ---
   const rowTiles = tiles.filter(t=>{
     const r = t.getBoundingClientRect();
     const midY = r.top + r.height / 2;
@@ -1498,14 +1485,15 @@ function getNearestIndex(slot, clientX, movingEl){
 
   const firstTile = rowTiles[0];
   const lastTile  = rowTiles[rowTiles.length - 1];
-
+  
   const first = firstTile.getBoundingClientRect();
   const last  = lastTile.getBoundingClientRect();
-
+  
   if (clientX < first.left)
     return tiles.indexOf(firstTile);
-
-  if (clientX > last.right - 12){
+  
+  if (clientX > last.right){
+    // treat as insert after last tile of THIS ROW
     const globalIndex = tiles.indexOf(lastTile);
     return globalIndex + 1;
   }
@@ -1548,33 +1536,29 @@ function applyPreview(slot, index, movingEl){
 
   if (index === tiles.length){
   
-    if (movingEl.parentElement === slot){
-  
-      // hide original ONLY (no shrink, no relayout)
-      movingEl.style.visibility = 'hidden';
-      return;
+   if (movingEl.parentElement === slot){
+   
+     // ✅ ONLY hide original — DO NOT add spacer
+     movingEl.style.visibility = 'hidden';
+   
+     return;
   
     } else {
   
       const ghost = movingEl.cloneNode(true);
       ghost.classList.add('preview-ghost-in-slot');
   
-      // 🔥 FLOAT IT (DO NOT AFFECT LAYOUT)
-      ghost.style.position = 'absolute';
+      ghost.style.position = '';
+      ghost.style.left = '';
+      ghost.style.top = '';
+      ghost.style.width = '';
       ghost.style.pointerEvents = 'none';
       ghost.style.opacity = '0.5';
   
-      const slotRect = slot.getBoundingClientRect();
-      const gRect = ghost.getBoundingClientRect();
-  
-      ghost.style.left = (slotRect.width - gRect.width - 12) + 'px';
-      ghost.style.top = '50%';
-      ghost.style.transform = 'translateY(-50%)';
-  
       slot.appendChild(ghost);
   
-      // ❌ NO relayout
-      // ❌ NO fitTextToSlot
+      relayoutSlot(slot);
+      fitTextToSlot(null, slot);
     }
   
     return;
@@ -1678,8 +1662,7 @@ function applyPreview(slot, index, movingEl){
     clearPreview();
   
     const virtualY = e.clientY - DRAG_Y_OFFSET;
-    const virtualX = e.clientX - 24;
-    const t = document.elementFromPoint(virtualX, virtualY);
+    const t = document.elementFromPoint(e.clientX, virtualY);
 
     const slot = t?.closest?.('.slot');
     const kind = drag.el.dataset.kind;
@@ -1703,8 +1686,7 @@ function applyPreview(slot, index, movingEl){
   function onUp(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
     const virtualY = e.clientY - DRAG_Y_OFFSET;
-    const virtualX = e.clientX - 24;
-    const t = document.elementFromPoint(virtualX, virtualY);
+    const t = document.elementFromPoint(e.clientX, virtualY);
 
     const kind = drag.el.dataset.kind;
 
