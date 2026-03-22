@@ -1344,15 +1344,22 @@ location.reload();
     setFontSize(size);
     slot.offsetHeight;
   
-    if (!isSingleLineFit()){
-      slot.style.flexWrap = 'wrap';
-      enableWrapStyles();
-      setFontSize(size);
-    } else {
-      slot.style.flexWrap = 'nowrap';
-      clearWrapStyles();
-      setFontSize(size);
-    }
+  if (!isSingleLineFit()){
+    slot.style.flexWrap = 'wrap';
+    enableWrapStyles();
+    setFontSize(size);
+  
+    // ✅ LOCK HEIGHT so drag math doesn't break
+    slot.style.height = slot.scrollHeight + 'px';
+  
+  } else {
+    slot.style.flexWrap = 'nowrap';
+    clearWrapStyles();
+    setFontSize(size);
+  
+    // ✅ reset height when not wrapped
+    slot.style.height = '';
+  }
   }
 
   // ===== Prefill helpers (per-box) =====
