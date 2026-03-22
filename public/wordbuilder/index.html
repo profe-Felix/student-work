@@ -1349,15 +1349,13 @@ location.reload();
     enableWrapStyles();
     setFontSize(size);
   
-    // ✅ LOCK HEIGHT so drag math doesn't break
-    slot.style.height = slot.scrollHeight + 'px';
+    // ❌ REMOVE height locking completely
   
   } else {
     slot.style.flexWrap = 'nowrap';
     clearWrapStyles();
     setFontSize(size);
   
-    // ✅ reset height when not wrapped
     slot.style.height = '';
   }
   }
