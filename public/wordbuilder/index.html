@@ -1545,7 +1545,11 @@ function applyPreview(slot, index, movingEl){
     slot.appendChild(ghost);
   
     relayoutSlot(slot);
-    fitTextToSlot(null, slot);
+    
+    // 🔥 ONLY shrink if dragging from OUTSIDE the slot
+    if (movingEl.parentElement !== slot){
+      fitTextToSlot(null, slot);
+    }
   
     return;
   }
