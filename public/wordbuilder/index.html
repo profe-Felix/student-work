@@ -1516,9 +1516,26 @@ function applyPreview(slot, index, movingEl){
   }
 
   if (index === tiles.length){
-   slot.classList.add('preview-edge-right');
-   return;
- }
+
+    // 🔥 create ghost preview at the end
+    const ghost = movingEl.cloneNode(true);
+    ghost.classList.add('preview-ghost');
+  
+    ghost.style.position = '';
+    ghost.style.left = '';
+    ghost.style.top = '';
+    ghost.style.width = '';
+    ghost.style.pointerEvents = 'none';
+    ghost.style.opacity = '0.5';
+  
+    slot.appendChild(ghost);
+  
+    // 🔥 force real layout (so shrink + wrap happens)
+    relayoutSlot(slot);
+    fitTextToSlot(null, slot);
+  
+    return;
+  }
 
  const target = tiles[index - 1];
 
