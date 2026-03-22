@@ -1534,30 +1534,18 @@ function applyPreview(slot, index, movingEl){
     return;
   }
 
-  if (index === tiles.length){
-  
-    if (movingEl.parentElement === slot){
-      return;
-    } else {
-  
-      const ghost = movingEl.cloneNode(true);
-      ghost.classList.add('preview-ghost-in-slot');
-  
-      ghost.style.position = '';
-      ghost.style.left = '';
-      ghost.style.top = '';
-      ghost.style.width = '';
-      ghost.style.pointerEvents = 'none';
-      ghost.style.opacity = '0.5';
-  
-      slot.appendChild(ghost);
-      
-      // ✅ ONLY relayout (no shrinking during preview)
-      relayoutSlot(slot);
-      
-      return;
-    }
-  }
+ if (index === tiles.length){
+ 
+   // 🔥 DO NOTHING if dragging inside same slot
+   if (movingEl.parentElement === slot){
+     return;
+   }
+ 
+   // 🔥 SIMPLE VISUAL PREVIEW ONLY (NO DOM CHANGES)
+   slot.classList.add('preview-edge-right');
+ 
+   return;
+ }
 
  const target = tiles[index - 1];
 
