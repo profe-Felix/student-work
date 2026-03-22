@@ -1455,7 +1455,19 @@ function getNearestIndex(slot, clientX, movingEl){
 
   if (!tiles.length) return 0;
 
-  // --- find the row closest to pointer ---
+  const slotRect = slot.getBoundingClientRect();
+
+  // 🔥 HARD RIGHT EDGE DETECTION (THE FIX)
+  if (clientX > slotRect.right - 20){
+    return tiles.length;
+  }
+
+  // 🔥 HARD LEFT EDGE DETECTION (just for consistency)
+  if (clientX < slotRect.left + 20){
+    return 0;
+  }
+
+  // --- existing row logic ---
   const pointerY = drag.el.getBoundingClientRect().top + drag.el.offsetHeight / 2;
 
   let closestRowY = null;
@@ -1471,8 +1483,9 @@ function getNearestIndex(slot, clientX, movingEl){
       closestRowY = midY;
     }
   });
+
   slot.dataset.previewRowY = closestRowY;
-  // --- collect tiles in that visual row ---
+
   const rowTiles = tiles.filter(t=>{
     const r = t.getBoundingClientRect();
     const midY = r.top + r.height / 2;
@@ -1485,15 +1498,14 @@ function getNearestIndex(slot, clientX, movingEl){
 
   const firstTile = rowTiles[0];
   const lastTile  = rowTiles[rowTiles.length - 1];
-  
+
   const first = firstTile.getBoundingClientRect();
   const last  = lastTile.getBoundingClientRect();
-  
+
   if (clientX < first.left)
     return tiles.indexOf(firstTile);
-  
+
   if (clientX > last.right){
-    // treat as insert after last tile of THIS ROW
     const globalIndex = tiles.indexOf(lastTile);
     return globalIndex + 1;
   }
