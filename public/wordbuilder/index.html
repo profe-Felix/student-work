@@ -1536,29 +1536,33 @@ function applyPreview(slot, index, movingEl){
 
   if (index === tiles.length){
   
-   if (movingEl.parentElement === slot){
-   
-     // ✅ ONLY hide original — DO NOT add spacer
-     movingEl.style.visibility = 'hidden';
-   
-     return;
+    if (movingEl.parentElement === slot){
+  
+      // hide original ONLY (no shrink, no relayout)
+      movingEl.style.visibility = 'hidden';
+      return;
   
     } else {
   
       const ghost = movingEl.cloneNode(true);
       ghost.classList.add('preview-ghost-in-slot');
   
-      ghost.style.position = '';
-      ghost.style.left = '';
-      ghost.style.top = '';
-      ghost.style.width = '';
+      // 🔥 FLOAT IT (DO NOT AFFECT LAYOUT)
+      ghost.style.position = 'absolute';
       ghost.style.pointerEvents = 'none';
       ghost.style.opacity = '0.5';
   
+      const slotRect = slot.getBoundingClientRect();
+      const gRect = ghost.getBoundingClientRect();
+  
+      ghost.style.left = (slotRect.width - gRect.width - 12) + 'px';
+      ghost.style.top = '50%';
+      ghost.style.transform = 'translateY(-50%)';
+  
       slot.appendChild(ghost);
   
-      relayoutSlot(slot);
-      fitTextToSlot(null, slot);
+      // ❌ NO relayout
+      // ❌ NO fitTextToSlot
     }
   
     return;
@@ -1662,7 +1666,8 @@ function applyPreview(slot, index, movingEl){
     clearPreview();
   
     const virtualY = e.clientY - DRAG_Y_OFFSET;
-    const t = document.elementFromPoint(e.clientX, virtualY);
+    const virtualX = e.clientX - 24;
+    const t = document.elementFromPoint(virtualX, virtualY);
 
     const slot = t?.closest?.('.slot');
     const kind = drag.el.dataset.kind;
@@ -1686,7 +1691,8 @@ function applyPreview(slot, index, movingEl){
   function onUp(e){
     if(!drag || e.pointerId!==drag.pointerId) return;
     const virtualY = e.clientY - DRAG_Y_OFFSET;
-    const t = document.elementFromPoint(e.clientX, virtualY);
+    const virtualX = e.clientX - 24;
+    const t = document.elementFromPoint(virtualX, virtualY);
 
     const kind = drag.el.dataset.kind;
 
