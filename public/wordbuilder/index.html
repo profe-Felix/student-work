@@ -1438,6 +1438,9 @@ function clearPreview(){
     t.style.marginRight = '';
   });
 
+  // ✅ ADD THIS RIGHT HERE
+  document.querySelectorAll('.tile-spacer').forEach(s => s.remove());
+
   activeInsert = null;
 }
 
@@ -1529,8 +1532,19 @@ function applyPreview(slot, index, movingEl){
 
   if (index === tiles.length){
   
-    // 🧠 ONLY show ghost if dragging from OUTSIDE
-    if (movingEl.parentElement !== slot){
+    if (movingEl.parentElement === slot){
+  
+      // 🧠 reserve space so slot doesn't shrink
+      const spacer = document.createElement('div');
+      spacer.className = 'tile-spacer';
+      spacer.style.width = movingEl.offsetWidth + 'px';
+      spacer.style.height = movingEl.offsetHeight + 'px';
+      spacer.style.flex = '0 0 auto';
+  
+      slot.appendChild(spacer);
+      relayoutSlot(slot);
+  
+    } else {
   
       const ghost = movingEl.cloneNode(true);
       ghost.classList.add('preview-ghost-in-slot');
@@ -1547,9 +1561,6 @@ function applyPreview(slot, index, movingEl){
       relayoutSlot(slot);
       fitTextToSlot(null, slot);
     }
-  
-    // 🚫 DO NOT hide original EVER
-    // 🚫 DO NOT create ghost when dragging inside
   
     return;
   }
