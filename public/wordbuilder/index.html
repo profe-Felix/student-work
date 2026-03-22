@@ -1423,6 +1423,11 @@ function clearPreview(){
 
     // 🔥 remove ghost previews
     s.querySelectorAll('.preview-ghost-in-slot').forEach(g => g.remove());
+
+    // 🔥 RESTORE any hidden tiles
+    s.querySelectorAll('.tile').forEach(t=>{
+      t.style.visibility = '';
+    });
   });
 
   document.querySelectorAll('.tile.preview-after').forEach(t=>{
@@ -1521,8 +1526,12 @@ function applyPreview(slot, index, movingEl){
   }
 
   if (index === tiles.length){
-
-    // 🔥 create ghost preview at the end
+  
+    // 🔥 hide original if it's inside this slot
+    if (movingEl.parentElement === slot){
+      movingEl.style.visibility = 'hidden';
+    }
+  
     const ghost = movingEl.cloneNode(true);
     ghost.classList.add('preview-ghost-in-slot');
   
@@ -1535,7 +1544,6 @@ function applyPreview(slot, index, movingEl){
   
     slot.appendChild(ghost);
   
-    // 🔥 force real layout (so shrink + wrap happens)
     relayoutSlot(slot);
     fitTextToSlot(null, slot);
   
