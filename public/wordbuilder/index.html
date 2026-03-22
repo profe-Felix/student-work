@@ -1537,13 +1537,7 @@ function applyPreview(slot, index, movingEl){
   if (index === tiles.length){
   
     if (movingEl.parentElement === slot){
-  
-      // 🔥 FORCE SHRINK EVEN WHEN MOVING INSIDE
-      relayoutSlot(slot);
-      fitTextToSlot(null, slot);
-  
       return;
-  
     } else {
   
       const ghost = movingEl.cloneNode(true);
