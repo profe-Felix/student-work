@@ -1538,7 +1538,10 @@ function applyPreview(slot, index, movingEl){
   
     if (movingEl.parentElement === slot){
   
-      // 🔥 DO NOTHING — keep original visible
+      // 🔥 FORCE SHRINK EVEN WHEN MOVING INSIDE
+      relayoutSlot(slot);
+      fitTextToSlot(null, slot);
+  
       return;
   
     } else {
