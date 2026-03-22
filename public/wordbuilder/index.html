@@ -1536,12 +1536,10 @@ function applyPreview(slot, index, movingEl){
 
   if (index === tiles.length){
   
-   if (movingEl.parentElement === slot){
-   
-     // ✅ ONLY hide original — DO NOT add spacer
-     movingEl.style.visibility = 'hidden';
-   
-     return;
+    if (movingEl.parentElement === slot){
+  
+      // 🔥 DO NOTHING — keep original visible
+      return;
   
     } else {
   
@@ -1559,9 +1557,9 @@ function applyPreview(slot, index, movingEl){
   
       relayoutSlot(slot);
       fitTextToSlot(null, slot);
-    }
   
-    return;
+      return;
+    }
   }
 
  const target = tiles[index - 1];
