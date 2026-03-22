@@ -1537,17 +1537,12 @@ function applyPreview(slot, index, movingEl){
 
   if (index === tiles.length){
   
-    if (movingEl.parentElement === slot){
-  
-      // 🧠 reserve space so slot doesn't shrink
-      const spacer = document.createElement('div');
-      spacer.className = 'tile-spacer';
-      spacer.style.width = movingEl.offsetWidth + 'px';
-      spacer.style.height = movingEl.offsetHeight + 'px';
-      spacer.style.flex = '0 0 auto';
-  
-      slot.appendChild(spacer);
-      relayoutSlot(slot);
+   if (movingEl.parentElement === slot){
+   
+     // ✅ ONLY hide original — DO NOT add spacer
+     movingEl.style.visibility = 'hidden';
+   
+     return;
   
     } else {
   
@@ -1733,35 +1728,28 @@ function applyPreview(slot, index, movingEl){
       drag.el.remove();
       if(prev?.classList.contains('slot')) relayoutSlot(prev);
 
- } else if (activeInsert && activeInsert.slot === slot) {
-   const { slot, index } = activeInsert;
-   const prev = drag.el.parentElement;
- 
-   if (prev?.classList?.contains('slot')) {
-     try { prev.removeChild(drag.el); } catch {}
-   }
- 
-   const tiles = [...slot.querySelectorAll('.tile')];
-   if (index >= tiles.length) {
-     slot.appendChild(drag.el);
-   } else {
-     slot.insertBefore(drag.el, tiles[index]);
-   }
- 
-   // 🔥 PRE-SHRINK BEFORE USER SEES IT
-   slot.style.visibility = 'hidden';
- 
-   relayoutSlot(slot);
- 
-   // force shrink immediately
-   fitTextToSlot(null, slot);
- 
-   slot.style.visibility = '';
- 
-   if (prev && prev !== slot && prev.classList.contains('slot')) {
-     relayoutSlot(prev);
-   }
- }
+} else if (activeInsert && activeInsert.slot === slot) {
+  const { slot, index } = activeInsert;
+  const prev = drag.el.parentElement;
+
+  // ❌ DO NOT remove tile early → this causes shrink bug
+  // let the DOM move it naturally
+
+  const tiles = [...slot.querySelectorAll('.tile')].filter(t => t !== drag.el);
+
+  if (index >= tiles.length) {
+    slot.appendChild(drag.el);
+  } else {
+    slot.insertBefore(drag.el, tiles[index]);
+  }
+
+  // ✅ normal relayout only
+  relayoutSlot(slot);
+
+  if (prev && prev !== slot && prev.classList.contains('slot')) {
+    relayoutSlot(prev);
+  }
+}
  else {
       if(drag.fromPalette){
         drag.el.remove();
