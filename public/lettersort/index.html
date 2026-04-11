@@ -473,7 +473,13 @@
     const serialize = (k, v) => {
   
       // 👇 THIS is the missing piece for rowsyll presets
-      if (k === 'rows' && Array.isArray(v)) {
+      if (
+        k === 'rows' &&
+        Array.isArray(v) &&
+        v.length &&
+        typeof v[0] === 'object' &&
+        v[0] !== null
+      ) {
         return v
           .map(r => {
             const prompt = (r?.pattern ?? r?.prompt ?? '').toString().trim();
