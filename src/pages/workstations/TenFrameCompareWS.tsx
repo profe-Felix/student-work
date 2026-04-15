@@ -159,18 +159,37 @@ export default function TenFrameCompareWS() {
   const [searchParams, setSearchParams] = useSearchParams()
   const role = searchParams.get('role') || 'teacher'
 
-  const teacherValue = Number(searchParams.get('t'))
-  const studentValue = Number(searchParams.get('s'))
-
+  const teacherParam = searchParams.get('t')
+  const studentParam = searchParams.get('s')
+  
+  const teacherValue = teacherParam === null ? null : Number(teacherParam)
+  const studentValue = studentParam === null ? null : Number(studentParam)
+  
   const initialPair = useMemo(() => {
-    if (Number.isFinite(teacherValue) && Number.isFinite(studentValue)) {
+    const hasTeacher = teacherValue !== null && Number.isFinite(teacherValue)
+    const hasStudent = studentValue !== null && Number.isFinite(studentValue)
+  
+    // TEACHER MODE → normal behavior
+    if (role === 'teacher') {
+      if (hasTeacher && hasStudent) {
+        return {
+          teacher: teacherValue as number,
+          student: studentValue as number,
+        }
+      }
+      return makeComparisonPair()
+    }
+  
+    // STUDENT MODE → shared teacher, unique student
+    if (hasTeacher) {
       return {
-        teacher: teacherValue,
-        student: studentValue,
+        teacher: teacherValue as number,
+        student: randInt(0, 20), // 🔥 each device gets different number
       }
     }
+  
     return makeComparisonPair()
-  }, [teacherValue, studentValue])
+  }, [role, teacherValue, studentValue])
 
   const [teacher, setTeacher] = useState(initialPair.teacher)
   const [student, setStudent] = useState(initialPair.student)
@@ -197,7 +216,7 @@ export default function TenFrameCompareWS() {
   }
 
   const teacherLink = `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare?role=teacher&t=${teacher}&s=${student}`
-  const studentLink = `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare?role=student&t=${teacher}&s=${student}`
+  const studentLink = `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare?role=student&t=${teacher}`
 
   if (role === 'student') {
     return (
