@@ -1,249 +1,336 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
-type Difficulty = 'far' | 'close' | 'equal'
 type Answer = 'greater' | 'less' | 'equal'
 
-type RoundData = {
-  left: number
-  right: number
-  leftSeed: number
-  rightSeed: number
-  difficulty: Difficulty
-  answer: Answer
-  showAnswer: boolean
+function randInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-function mulberry32(a: number) {
-  return function () {
-    let t = (a += 0x6d2b79f5)
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
+function pickOne<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)]
 }
 
-function shuffleWithSeed<T>(arr: T[], seed: number): T[] {
-  const out = [...arr]
-  const rand = mulberry32(seed)
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1))
-    ;[out[i], out[j]] = [out[j], out[i]]
-  }
-  return out
-}
+function makeComparisonPair() {
+  const mode = pickOne(['far', 'close', 'equal'] as const)
 
-function randInt(min: number, max: number, rand = Math.random) {
-  return Math.floor(rand() * (max - min + 1)) + min
-}
+  let teacher = 0
+  let student = 0
 
-function randomSeed() {
-  return Math.floor(Math.random() * 1000000)
-}
-
-function makePair(type: Difficulty): Omit<RoundData, 'showAnswer'> {
-  let left = 0
-  let right = 0
-
-  if (type === 'equal') {
-    left = randInt(0, 20)
-    right = left
-  } else if (type === 'far') {
-    left = randInt(0, 20)
+  if (mode === 'equal') {
+    teacher = randInt(0, 20)
+    student = teacher
+  } else if (mode === 'far') {
+    teacher = randInt(0, 20)
     do {
-      right = randInt(0, 20)
-    } while (Math.abs(left - right) < 4)
+      student = randInt(0, 20)
+    } while (Math.abs(teacher - student) < 4)
   } else {
-    left = randInt(0, 19)
-    const diff = [1, 2, 3][randInt(0, 2)]
-    right = Math.min(20, left + diff)
-    if (Math.random() < 0.5) [left, right] = [right, left]
+    teacher = randInt(0, 19)
+    const diff = pickOne([1, 2, 3])
+    student = Math.min(20, teacher + diff)
+    if (Math.random() < 0.5) [teacher, student] = [student, teacher]
   }
 
-  let answer: Answer = 'equal'
-  if (left > right) answer = 'greater'
-  else if (left < right) answer = 'less'
-
-  return {
-    left,
-    right,
-    leftSeed: randomSeed(),
-    rightSeed: randomSeed(),
-    difficulty: type,
-    answer,
-  }
+  return { teacher, student, mode }
 }
 
-function buildRoundFromQuery(searchParams: URLSearchParams): RoundData | null {
-  const left = Number(searchParams.get('l'))
-  const right = Number(searchParams.get('r'))
-  const leftSeed = Number(searchParams.get('ls'))
-  const rightSeed = Number(searchParams.get('rs'))
-  const difficulty = (searchParams.get('d') || '') as Difficulty
-  const answer = (searchParams.get('a') || '') as Answer
-  const showAnswer = searchParams.get('show') === '1'
-
-  const ok =
-    Number.isFinite(left) &&
-    Number.isFinite(right) &&
-    Number.isFinite(leftSeed) &&
-    Number.isFinite(rightSeed) &&
-    ['far', 'close', 'equal'].includes(difficulty) &&
-    ['greater', 'less', 'equal'].includes(answer)
-
-  if (!ok) return null
-
-  return { left, right, leftSeed, rightSeed, difficulty, answer, showAnswer }
+function compareStudentToTeacher(student: number, teacher: number): Answer {
+  if (student > teacher) return 'greater'
+  if (student < teacher) return 'less'
+  return 'equal'
 }
 
-function writeRoundToQuery(round: RoundData, setSearchParams: ReturnType<typeof useSearchParams>[1]) {
-  setSearchParams({
-    l: String(round.left),
-    r: String(round.right),
-    ls: String(round.leftSeed),
-    rs: String(round.rightSeed),
-    d: round.difficulty,
-    a: round.answer,
-    show: round.showAnswer ? '1' : '0',
-  })
+function Frame10({ value }: { value: number }) {
+  const cells = Array.from({ length: 10 }, (_, i) => i)
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(5, 1fr)',
+        gap: 10,
+        background: '#fff',
+        border: '4px solid #334155',
+        borderRadius: 16,
+        padding: 12,
+        width: 'min(92vw, 340px)',
+        boxSizing: 'border-box',
+      }}
+    >
+      {cells.map((i) => {
+        const filled = i < value
+        return (
+          <div
+            key={i}
+            style={{
+              aspectRatio: '1 / 1',
+              borderRadius: 12,
+              border: '3px solid #94a3b8',
+              background: filled ? '#2563eb' : '#ffffff',
+              boxSizing: 'border-box',
+            }}
+          />
+        )
+      })}
+    </div>
+  )
 }
 
-function DotFrame({
-  value,
-  seed,
-  label,
-}: {
-  value: number
-  seed: number
-  label: string
-}) {
-  const filled = useMemo(() => {
-    const order = shuffleWithSeed(
-      Array.from({ length: 20 }, (_, i) => i),
-      seed
-    )
-    return new Set(order.slice(0, value))
-  }, [value, seed])
-
-  const cells = Array.from({ length: 20 }, (_, i) => i)
+function DoubleTenFrame({ value, title }: { value: number; title: string }) {
+  const top = Math.min(value, 10)
+  const bottom = Math.max(0, value - 10)
 
   return (
     <div
       style={{
-        background: '#fff',
-        borderRadius: 24,
+        background: 'rgba(255,255,255,0.88)',
+        borderRadius: 28,
         padding: 20,
         boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
-        border: '2px solid #dbeafe',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 14,
       }}
     >
       <div
         style={{
-          textAlign: 'center',
+          fontSize: 30,
           fontWeight: 900,
-          fontSize: 28,
-          color: '#1d4ed8',
-          marginBottom: 12,
+          color: '#166534',
+          textAlign: 'center',
         }}
       >
-        {label}
+        {title}
       </div>
+
+      <Frame10 value={top} />
+      <Frame10 value={bottom} />
 
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(5, 1fr)',
-          gap: 10,
-          maxWidth: 340,
-          margin: '0 auto',
+          fontSize: 22,
+          fontWeight: 900,
+          color: '#1f2937',
+          background: '#ffffff',
+          borderRadius: 14,
+          padding: '8px 14px',
         }}
       >
-        {cells.map((i) => {
-          const isFilled = filled.has(i)
-          const isDivider = i === 10
-          return (
-            <div
-              key={i}
-              style={{
-                width: 46,
-                height: 46,
-                borderRadius: '999px',
-                background: isFilled ? '#2563eb' : '#e5e7eb',
-                border: '3px solid #94a3b8',
-                marginTop: isDivider ? 10 : 0,
-                justifySelf: 'center',
-              }}
-            />
-          )
-        })}
+        {value}
       </div>
     </div>
   )
 }
 
+function BigChoiceButton({
+  label,
+  symbol,
+  selected,
+  onClick,
+}: {
+  label: string
+  symbol: string
+  selected: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        border: selected ? '5px solid #2563eb' : '4px solid #cbd5e1',
+        background: selected ? '#dbeafe' : '#ffffff',
+        color: '#1f2937',
+        borderRadius: 28,
+        padding: '20px 16px',
+        minWidth: 180,
+        cursor: 'pointer',
+        boxShadow: '0 8px 20px rgba(0,0,0,0.08)',
+        fontWeight: 900,
+      }}
+    >
+      <div style={{ fontSize: 54, lineHeight: 1, marginBottom: 10 }}>{symbol}</div>
+      <div style={{ fontSize: 26 }}>{label}</div>
+    </button>
+  )
+}
+
 export default function TenFrameCompareWS() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [roundIndex, setRoundIndex] = useState(0)
+  const role = searchParams.get('role') || 'teacher'
 
-  const [round, setRound] = useState<RoundData>(() => {
-    const fromQuery = buildRoundFromQuery(new URLSearchParams(window.location.search))
-    if (fromQuery) return fromQuery
-    return {
-      ...makePair('far'),
-      showAnswer: false,
-    }
-  })
+  const teacherValue = Number(searchParams.get('t'))
+  const studentValue = Number(searchParams.get('s'))
 
-  useEffect(() => {
-    const fromQuery = buildRoundFromQuery(searchParams)
-    if (fromQuery) {
-      setRound(fromQuery)
-      return
+  const initialPair = useMemo(() => {
+    if (Number.isFinite(teacherValue) && Number.isFinite(studentValue)) {
+      return {
+        teacher: teacherValue,
+        student: studentValue,
+      }
     }
-    writeRoundToQuery(round, setSearchParams)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    return makeComparisonPair()
+  }, [teacherValue, studentValue])
 
-  const nextRound = () => {
-    const sequence: Difficulty[] = ['far', 'far', 'close', 'close', 'equal', 'close', 'far', 'equal']
-    const difficulty = sequence[roundIndex % sequence.length]
-    const next: RoundData = {
-      ...makePair(difficulty),
-      showAnswer: false,
-    }
-    setRound(next)
-    setRoundIndex((n) => n + 1)
-    writeRoundToQuery(next, setSearchParams)
+  const [teacher, setTeacher] = useState(initialPair.teacher)
+  const [student, setStudent] = useState(initialPair.student)
+  const [selected, setSelected] = useState<Answer | null>(null)
+  const [revealed, setRevealed] = useState(false)
+
+  const correct = compareStudentToTeacher(student, teacher)
+
+  function updateUrl(nextTeacher: number, nextStudent: number, nextRole = role) {
+    setSearchParams({
+      role: nextRole,
+      t: String(nextTeacher),
+      s: String(nextStudent),
+    })
   }
 
-  const toggleAnswer = () => {
-    const next = { ...round, showAnswer: !round.showAnswer }
-    setRound(next)
-    writeRoundToQuery(next, setSearchParams)
+  function nextRound() {
+    const next = makeComparisonPair()
+    setTeacher(next.teacher)
+    setStudent(next.student)
+    setSelected(null)
+    setRevealed(false)
+    updateUrl(next.teacher, next.student, role)
   }
 
-  const revealText =
-    round.answer === 'greater'
-      ? 'The left frame is greater than the right frame.'
-      : round.answer === 'less'
-      ? 'The left frame is less than the right frame.'
-      : 'The two frames are equal.'
+  const teacherLink = `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare?role=teacher&t=${teacher}&s=${student}`
+  const studentLink = `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare?role=student&t=${teacher}&s=${student}`
+
+  if (role === 'student') {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          background: 'linear-gradient(180deg, #dbeafe 0%, #e0f2fe 55%, #dcfce7 100%)',
+          padding: 16,
+          boxSizing: 'border-box',
+        }}
+      >
+        <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+          <div
+            style={{
+              textAlign: 'center',
+              fontSize: 40,
+              fontWeight: 900,
+              color: '#166534',
+              marginBottom: 8,
+            }}
+          >
+            Compare My Ten Frame
+          </div>
+
+          <div
+            style={{
+              textAlign: 'center',
+              fontSize: 24,
+              color: '#374151',
+              marginBottom: 18,
+              fontWeight: 700,
+            }}
+          >
+            My ten frame is…
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 22 }}>
+            <DoubleTenFrame value={student} title="My Ten Frame" />
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              gap: 16,
+              flexWrap: 'wrap',
+              marginBottom: 20,
+            }}
+          >
+            <BigChoiceButton
+              label="Greater"
+              symbol=">"
+              selected={selected === 'greater'}
+              onClick={() => {
+                setSelected('greater')
+                setRevealed(true)
+              }}
+            />
+            <BigChoiceButton
+              label="Less"
+              symbol="<"
+              selected={selected === 'less'}
+              onClick={() => {
+                setSelected('less')
+                setRevealed(true)
+              }}
+            />
+            <BigChoiceButton
+              label="Equal"
+              symbol="="
+              selected={selected === 'equal'}
+              onClick={() => {
+                setSelected('equal')
+                setRevealed(true)
+              }}
+            />
+          </div>
+
+          {revealed && selected && (
+            <div
+              style={{
+                maxWidth: 760,
+                margin: '0 auto',
+                background: '#ffffff',
+                borderRadius: 24,
+                padding: 20,
+                textAlign: 'center',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 34,
+                  fontWeight: 900,
+                  color: selected === correct ? '#16a34a' : '#dc2626',
+                  marginBottom: 10,
+                }}
+              >
+                {selected === correct ? 'Correct!' : 'Try Again'}
+              </div>
+
+              <div
+                style={{
+                  fontSize: 24,
+                  color: '#374151',
+                  fontWeight: 700,
+                }}
+              >
+                My ten frame is <span style={{ color: '#2563eb' }}>{correct}</span> than the teacher’s ten frame.
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
       style={{
         minHeight: '100vh',
-        background: 'linear-gradient(180deg, #dbeafe 0%, #e0f2fe 55%, #dcfce7 100%)',
+        background: 'linear-gradient(180deg, #ede9fe 0%, #dbeafe 50%, #dcfce7 100%)',
         padding: 16,
+        boxSizing: 'border-box',
       }}
     >
-      <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
         <div
           style={{
             display: 'flex',
-            flexWrap: 'wrap',
-            gap: 10,
             justifyContent: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
             marginBottom: 16,
           }}
         >
@@ -264,7 +351,7 @@ export default function TenFrameCompareWS() {
           </button>
 
           <button
-            onClick={toggleAnswer}
+            onClick={() => navigator.clipboard.writeText(studentLink)}
             style={{
               border: 0,
               borderRadius: 16,
@@ -276,31 +363,48 @@ export default function TenFrameCompareWS() {
               cursor: 'pointer',
             }}
           >
-            {round.showAnswer ? 'Hide Answer' : 'Show Answer'}
+            Copy Student Link
+          </button>
+
+          <button
+            onClick={() => navigator.clipboard.writeText(teacherLink)}
+            style={{
+              border: 0,
+              borderRadius: 16,
+              padding: '14px 22px',
+              fontWeight: 900,
+              fontSize: 18,
+              background: '#7c3aed',
+              color: '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            Copy Teacher Link
           </button>
         </div>
 
         <div
           style={{
             textAlign: 'center',
+            fontSize: 38,
             fontWeight: 900,
-            fontSize: 40,
             color: '#166534',
             marginBottom: 8,
           }}
         >
-          Compare the Ten Frames
+          Ten Frame Compare — Teacher
         </div>
 
         <div
           style={{
             textAlign: 'center',
-            fontSize: 18,
+            fontSize: 20,
             color: '#374151',
             marginBottom: 18,
+            fontWeight: 700,
           }}
         >
-          Choose: greater than, less than, or equal to
+          Project your frame. Students open their link and compare theirs to yours.
         </div>
 
         <div
@@ -311,66 +415,44 @@ export default function TenFrameCompareWS() {
             alignItems: 'start',
           }}
         >
-          <DotFrame value={round.left} seed={round.leftSeed} label="Left" />
-          <DotFrame value={round.right} seed={round.rightSeed} label="Right" />
+          <DoubleTenFrame value={teacher} title="Teacher Frame" />
+          <DoubleTenFrame value={student} title="Student Frame" />
         </div>
 
         <div
           style={{
-            marginTop: 18,
-            display: 'flex',
-            justifyContent: 'center',
-            gap: 12,
-            flexWrap: 'wrap',
+            marginTop: 20,
+            background: '#ffffff',
+            borderRadius: 22,
+            padding: 18,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
           }}
         >
-          <div
-            style={{
-              background: 'rgba(255,255,255,0.85)',
-              borderRadius: 16,
-              padding: '10px 16px',
-              fontWeight: 800,
-            }}
-          >
-            Difficulty: {round.difficulty}
+          <div style={{ fontWeight: 900, fontSize: 22, marginBottom: 10, color: '#1f2937' }}>
+            Current links
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontWeight: 800, marginBottom: 4 }}>Teacher link</div>
+            <div style={{ wordBreak: 'break-all', color: '#334155' }}>{teacherLink}</div>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 800, marginBottom: 4 }}>Student link</div>
+            <div style={{ wordBreak: 'break-all', color: '#334155' }}>{studentLink}</div>
           </div>
 
           <div
             style={{
-              background: 'rgba(255,255,255,0.85)',
-              borderRadius: 16,
-              padding: '10px 16px',
+              marginTop: 14,
+              fontSize: 20,
               fontWeight: 800,
+              color: '#2563eb',
             }}
           >
-            Shared link updates automatically
+            Correct answer: Student is {correct} than teacher
           </div>
         </div>
-
-        {round.showAnswer && (
-          <div
-            style={{
-              marginTop: 20,
-              background: '#ffffff',
-              borderRadius: 20,
-              padding: 20,
-              textAlign: 'center',
-              boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
-            }}
-          >
-            <div
-              style={{
-                fontWeight: 900,
-                fontSize: 28,
-                color: '#7c3aed',
-                marginBottom: 8,
-              }}
-            >
-              Answer: {round.answer}
-            </div>
-            <div style={{ fontSize: 20, color: '#374151' }}>{revealText}</div>
-          </div>
-        )}
       </div>
     </div>
   )
