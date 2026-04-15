@@ -426,50 +426,26 @@ export default function TenFrameCompareWS() {
           Project your frame. Students open their link and compare theirs to yours.
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-            gap: 20,
-            alignItems: 'start',
-          }}
-        >
-          <DoubleTenFrame value={teacher} title="Teacher Frame" />
-          <DoubleTenFrame value={student} title="Student Frame" />
-        </div>
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                  <DoubleTenFrame value={teacher} title="Teacher Frame" />
+                </div>
 
-        <div
+                <div
           style={{
             marginTop: 20,
             background: '#ffffff',
             borderRadius: 22,
             padding: 18,
             boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
+            textAlign: 'center',
           }}
         >
           <div style={{ fontWeight: 900, fontSize: 22, marginBottom: 10, color: '#1f2937' }}>
-            Current links
+            Links ready
           </div>
 
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 800, marginBottom: 4 }}>Teacher link</div>
-            <div style={{ wordBreak: 'break-all', color: '#334155' }}>{teacherLink}</div>
-          </div>
-
-          <div>
-            <div style={{ fontWeight: 800, marginBottom: 4 }}>Student link</div>
-            <div style={{ wordBreak: 'break-all', color: '#334155' }}>{studentLink}</div>
-          </div>
-
-          <div
-            style={{
-              marginTop: 14,
-              fontSize: 20,
-              fontWeight: 800,
-              color: '#2563eb',
-            }}
-          >
-            Correct answer: Student is {correct} than teacher
+          <div style={{ color: '#334155', fontSize: 18, fontWeight: 700 }}>
+            Use the buttons above to copy the teacher and student links.
           </div>
         </div>
       </div>
