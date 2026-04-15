@@ -8,8 +8,8 @@ import StudentAssignment from './pages/student/assignment'
 import Start from './pages/start'
 import Teacher from './pages/teacher'
 import InsideOutsideWS from './pages/workstations/InsideOutsideWS'
-import GelBagWS from './pages/workstations/GelBagWS'   // ← NEW
-
+import GelBagWS from './pages/workstations/GelBagWS'
+import TenFrameCompareWS from './pages/workstations/TenFrameCompareWS'
 // Base styles (optional)
 const appStyle: React.CSSProperties = {
   fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
@@ -38,11 +38,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
           {/* Virtual Workstations */}
           <Route path="/ws/inside-outside" element={<InsideOutsideWS />} />
-          <Route path="/ws/gel-bag" element={<GelBagWS />} />               {/* ← NEW */}
+          <Route path="/ws/gel-bag" element={<GelBagWS />} />
+          <Route path="/ws/ten-frame-compare" element={<TenFrameCompareWS />} />
 
           {/* Shortcuts / legacy redirects (preserve query) */}
           <Route path="/inside-outside" element={<RedirectWithQuery to="/ws/inside-outside" />} />
-          <Route path="/gel-bag" element={<RedirectWithQuery to="/ws/gel-bag" />} /> {/* ← NEW */}
+          <Route path="/gel-bag" element={<RedirectWithQuery to="/ws/gel-bag" />} />
+          <Route path="/ten-frame-compare" element={<RedirectWithQuery to="/ws/ten-frame-compare" />} />
+          
           <Route path="/student" element={<RedirectWithQuery to="/start" />} />
           <Route path="/student/start" element={<RedirectWithQuery to="/start" />} />
 
