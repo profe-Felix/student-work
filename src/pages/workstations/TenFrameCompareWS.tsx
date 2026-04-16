@@ -335,15 +335,25 @@ export default function TenFrameCompareWS() {
   const teacherValue = teacherParam === null ? null : Number(teacherParam)
   const roundValue = roundParam === null ? null : Number(roundParam)
 
-  const initial = useMemo(() => {
-    if (role === 'teacher' && teacherValue !== null && Number.isFinite(teacherValue) && roundValue !== null && Number.isFinite(roundValue)) {
+  const initial = useMemo<{
+    teacher: number
+    round: number
+    teacherDisplay: DisplayMode
+  }>(() => {
+    if (
+      role === 'teacher' &&
+      teacherValue !== null &&
+      Number.isFinite(teacherValue) &&
+      roundValue !== null &&
+      Number.isFinite(roundValue)
+    ) {
       return {
         teacher: teacherValue,
         round: roundValue,
         teacherDisplay: teacherDisplayParam === 'numeral' ? 'numeral' : 'tenframe',
       }
     }
-
+  
     const made = makeComparisonPair()
     return {
       teacher: made.teacher,
