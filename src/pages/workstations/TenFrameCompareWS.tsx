@@ -312,10 +312,17 @@ export default function TenFrameCompareWS() {
 
   const [deviceId, setDeviceId] = useState('boot')
 
-  const teacherFromUrl = Number(searchParams.get('t'))
-  const roundFromUrl = Number(searchParams.get('round'))
-  const teacherDisplayFromUrl =
-    searchParams.get('td') === 'numeral' ? 'numeral' : 'tenframe'
+  const teacherRaw = searchParams.get('t')
+  const roundRaw = searchParams.get('round')
+  const teacherDisplayRaw = searchParams.get('td')
+
+  const teacherFromUrl =
+    teacherRaw !== null && teacherRaw.trim() !== '' ? Number(teacherRaw) : NaN
+  const roundFromUrl =
+    roundRaw !== null && roundRaw.trim() !== '' ? Number(roundRaw) : NaN
+
+  const teacherDisplayFromUrl: DisplayMode =
+    teacherDisplayRaw === 'numeral' ? 'numeral' : 'tenframe'
 
   const hasValidTeacherState =
     Number.isFinite(teacherFromUrl) &&
@@ -391,7 +398,85 @@ export default function TenFrameCompareWS() {
     `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare` +
     `?role=student&t=${teacher}&round=${round}&td=${teacherDisplay}`
 
-  if (!hasValidTeacherState || (role === 'student' && deviceId === 'boot')) {
+  if (role === 'teacher' && !hasValidTeacherState) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'linear-gradient(180deg, #ede9fe 0%, #dbeafe 50%, #dcfce7 100%)',
+          padding: 16,
+          boxSizing: 'border-box',
+        }}
+      >
+        <div
+          style={{
+            background: '#ffffff',
+            borderRadius: 24,
+            padding: 24,
+            fontSize: 24,
+            fontWeight: 800,
+            color: '#374151',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
+          }}
+        >
+          Loading round…
+        </div>
+      </div>
+    )
+  }
+
+  if (role === 'student' && !hasValidTeacherState) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'linear-gradient(180deg, #dbeafe 0%, #e0f2fe 55%, #dcfce7 100%)',
+          padding: 16,
+          boxSizing: 'border-box',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 760,
+            background: '#ffffff',
+            borderRadius: 24,
+            padding: 24,
+            textAlign: 'center',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 34,
+              fontWeight: 900,
+              color: '#166534',
+              marginBottom: 12,
+            }}
+          >
+            Waiting for teacher link
+          </div>
+
+          <div
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: '#374151',
+            }}
+          >
+            Open the student link copied from the teacher page.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (role === 'student' && deviceId === 'boot') {
     return (
       <div
         style={{
