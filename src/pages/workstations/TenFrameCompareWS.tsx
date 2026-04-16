@@ -60,12 +60,14 @@ function seededShuffle(arr: number[], seed: number) {
 }
 
 function getOrCreateDeviceId() {
+  if (typeof window === 'undefined') return 'server'
+
   const key = 'ten-frame-compare-device-id'
-  const existing = localStorage.getItem(key)
+  const existing = window.localStorage.getItem(key)
   if (existing) return existing
 
   const fresh = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  localStorage.setItem(key, fresh)
+  window.localStorage.setItem(key, fresh)
   return fresh
 }
 
@@ -95,9 +97,10 @@ function computeStudentValue(teacher: number, round: number, deviceId: string) {
   const diff = seededPick(`${deviceId}-${teacher}-${round}-diff`, [1, 2, 3] as const)
   const direction = seededPick(`${deviceId}-${teacher}-${round}-dir`, ['up', 'down'] as const)
 
-  let candidate = direction === 'up'
-    ? Math.min(20, teacher + diff)
-    : Math.max(0, teacher - diff)
+  let candidate =
+    direction === 'up'
+      ? Math.min(20, teacher + diff)
+      : Math.max(0, teacher - diff)
 
   if (candidate === teacher) {
     candidate = teacher < 20 ? teacher + 1 : teacher - 1
@@ -307,11 +310,12 @@ export default function TenFrameCompareWS() {
   const [searchParams, setSearchParams] = useSearchParams()
   const role = searchParams.get('role') || 'teacher'
 
-  const deviceId = useMemo(() => getOrCreateDeviceId(), [])
+  const [deviceId, setDeviceId] = useState('boot')
 
   const teacherFromUrl = Number(searchParams.get('t'))
   const roundFromUrl = Number(searchParams.get('round'))
-  const teacherDisplayFromUrl = searchParams.get('td') === 'numeral' ? 'numeral' : 'tenframe'
+  const teacherDisplayFromUrl =
+    searchParams.get('td') === 'numeral' ? 'numeral' : 'tenframe'
 
   const hasValidTeacherState =
     Number.isFinite(teacherFromUrl) &&
@@ -324,16 +328,23 @@ export default function TenFrameCompareWS() {
   const [revealed, setRevealed] = useState(false)
 
   useEffect(() => {
+    setDeviceId(getOrCreateDeviceId())
+  }, [])
+
+  useEffect(() => {
     if (role !== 'teacher') return
     if (hasValidTeacherState) return
 
     const fresh = makeTeacherRound()
-    setSearchParams({
-      role: 'teacher',
-      t: String(fresh.teacher),
-      round: String(fresh.round),
-      td: fresh.teacherDisplay,
-    }, { replace: true })
+    setSearchParams(
+      {
+        role: 'teacher',
+        t: String(fresh.teacher),
+        round: String(fresh.round),
+        td: fresh.teacherDisplay,
+      },
+      { replace: true }
+    )
   }, [role, hasValidTeacherState, setSearchParams])
 
   useEffect(() => {
@@ -347,11 +358,13 @@ export default function TenFrameCompareWS() {
 
   const student = useMemo(() => {
     if (!hasValidTeacherState) return 0
+    if (deviceId === 'boot') return 0
     return computeStudentValue(teacher, round, deviceId)
   }, [hasValidTeacherState, teacher, round, deviceId])
 
   const studentDisplay = useMemo<DisplayMode>(() => {
     if (!hasValidTeacherState) return 'tenframe'
+    if (deviceId === 'boot') return 'tenframe'
     return seededPick<DisplayMode>(
       `${deviceId}-${teacher}-${round}-student-display`,
       ['tenframe', 'numeral']
@@ -378,7 +391,7 @@ export default function TenFrameCompareWS() {
     `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare` +
     `?role=student&t=${teacher}&round=${round}&td=${teacherDisplay}`
 
-  if (!hasValidTeacherState) {
+  if (!hasValidTeacherState || (role === 'student' && deviceId === 'boot')) {
     return (
       <div
         style={{
