@@ -4,6 +4,18 @@ import { useSearchParams } from 'react-router-dom'
 type Answer = 'greater' | 'less' | 'equal'
 type DisplayMode = 'tenframe' | 'numeral'
 
+type LessonRecord = {
+  className: string
+  status: 'waiting' | 'active'
+  teacherNumber: number | null
+  teacherDisplay: DisplayMode
+  roundNumber: number
+  roundSeed: number
+  updatedAt: number
+}
+
+const DEFAULT_CLASS = 'A'
+
 function randInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
@@ -33,7 +45,7 @@ function mulberry32(seed: number) {
     a |= 0
     a = (a + 0x6d2b79f5) | 0
     let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    t = Math.imul(t ^ (t >>> 7), 61 | t) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }
@@ -61,41 +73,106 @@ function seededShuffle(arr: number[], seed: number) {
 
 function getOrCreateDeviceId() {
   if (typeof window === 'undefined') return 'server'
-
   const key = 'ten-frame-compare-device-id'
   const existing = window.localStorage.getItem(key)
   if (existing) return existing
-
   const fresh = `${Date.now()}-${Math.random().toString(36).slice(2)}`
   window.localStorage.setItem(key, fresh)
   return fresh
 }
 
-function makeTeacherRound() {
+function lessonStorageKey(className: string) {
+  return `ten-frame-compare-lesson:${className}`
+}
+
+function emptyLesson(className: string): LessonRecord {
   return {
-    teacher: randInt(0, 20),
-    round: Date.now(),
-    teacherDisplay: pickOne<DisplayMode>(['tenframe', 'numeral']),
+    className,
+    status: 'waiting',
+    teacherNumber: null,
+    teacherDisplay: 'tenframe',
+    roundNumber: 0,
+    roundSeed: 0,
+    updatedAt: Date.now(),
   }
 }
 
-function computeStudentValue(teacher: number, round: number, deviceId: string) {
-  const mode = seededPick(`${deviceId}-${teacher}-${round}-mode`, ['far', 'close', 'equal'] as const)
+function readLesson(className: string): LessonRecord {
+  if (typeof window === 'undefined') return emptyLesson(className)
+
+  try {
+    const raw = window.localStorage.getItem(lessonStorageKey(className))
+    if (!raw) return emptyLesson(className)
+    const parsed = JSON.parse(raw) as LessonRecord
+    return {
+      className,
+      status: parsed.status === 'active' ? 'active' : 'waiting',
+      teacherNumber:
+        typeof parsed.teacherNumber === 'number' &&
+        parsed.teacherNumber >= 0 &&
+        parsed.teacherNumber <= 20
+          ? parsed.teacherNumber
+          : null,
+      teacherDisplay: parsed.teacherDisplay === 'numeral' ? 'numeral' : 'tenframe',
+      roundNumber: Number.isFinite(parsed.roundNumber) ? parsed.roundNumber : 0,
+      roundSeed: Number.isFinite(parsed.roundSeed) ? parsed.roundSeed : 0,
+      updatedAt: Number.isFinite(parsed.updatedAt) ? parsed.updatedAt : Date.now(),
+    }
+  } catch {
+    return emptyLesson(className)
+  }
+}
+
+function writeLesson(className: string, lesson: LessonRecord) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(lessonStorageKey(className), JSON.stringify(lesson))
+}
+
+function makeNextLesson(className: string, previous: LessonRecord | null): LessonRecord {
+  return {
+    className,
+    status: 'active',
+    teacherNumber: randInt(0, 20),
+    teacherDisplay: pickOne<DisplayMode>(['tenframe', 'numeral']),
+    roundNumber: (previous?.roundNumber || 0) + 1,
+    roundSeed: randInt(1, 1000000000),
+    updatedAt: Date.now(),
+  }
+}
+
+function computeStudentValue(
+  teacher: number,
+  roundSeed: number,
+  roundNumber: number,
+  studentKey: string
+) {
+  const mode = seededPick(
+    `${studentKey}-${teacher}-${roundSeed}-${roundNumber}-mode`,
+    ['far', 'close', 'equal'] as const
+  )
 
   if (mode === 'equal') return teacher
 
   if (mode === 'far') {
-    let tries = 0
-    while (tries < 25) {
-      const candidate = seededInt(`${deviceId}-${teacher}-${round}-far-${tries}`, 0, 20)
+    for (let tries = 0; tries < 25; tries++) {
+      const candidate = seededInt(
+        `${studentKey}-${teacher}-${roundSeed}-${roundNumber}-far-${tries}`,
+        0,
+        20
+      )
       if (Math.abs(candidate - teacher) >= 4) return candidate
-      tries++
     }
     return teacher <= 10 ? Math.min(20, teacher + 5) : Math.max(0, teacher - 5)
   }
 
-  const diff = seededPick(`${deviceId}-${teacher}-${round}-diff`, [1, 2, 3] as const)
-  const direction = seededPick(`${deviceId}-${teacher}-${round}-dir`, ['up', 'down'] as const)
+  const diff = seededPick(
+    `${studentKey}-${teacher}-${roundSeed}-${roundNumber}-diff`,
+    [1, 2, 3] as const
+  )
+  const direction = seededPick(
+    `${studentKey}-${teacher}-${roundSeed}-${roundNumber}-dir`,
+    ['up', 'down'] as const
+  )
 
   let candidate =
     direction === 'up'
@@ -309,126 +386,120 @@ function BigChoiceButton({
 export default function TenFrameCompareWS() {
   const [searchParams, setSearchParams] = useSearchParams()
   const role = searchParams.get('role') || 'teacher'
+  const className = searchParams.get('class') || DEFAULT_CLASS
+  const studentParam = searchParams.get('student') || ''
 
   const [deviceId, setDeviceId] = useState('boot')
-
-  const teacherRaw = searchParams.get('t')
-  const roundRaw = searchParams.get('round')
-  const teacherDisplayRaw = searchParams.get('td')
-
-  const teacherFromUrl =
-    teacherRaw !== null && teacherRaw.trim() !== '' ? Number(teacherRaw) : NaN
-  const roundFromUrl =
-    roundRaw !== null && roundRaw.trim() !== '' ? Number(roundRaw) : NaN
-
-  const teacherDisplayFromUrl: DisplayMode =
-    teacherDisplayRaw === 'numeral' ? 'numeral' : 'tenframe'
-
-  const hasValidTeacherState =
-    Number.isFinite(teacherFromUrl) &&
-    teacherFromUrl >= 0 &&
-    teacherFromUrl <= 20 &&
-    Number.isFinite(roundFromUrl) &&
-    roundFromUrl > 0
-
+  const [lesson, setLesson] = useState<LessonRecord>(() => emptyLesson(className))
   const [selected, setSelected] = useState<Answer | null>(null)
   const [revealed, setRevealed] = useState(false)
 
+  const studentKey = useMemo(() => {
+    if (studentParam.trim()) return `student:${className}:${studentParam.trim()}`
+    return `device:${className}:${deviceId}`
+  }, [studentParam, className, deviceId])
+
+  useEffect(() => {
+    if (!searchParams.get('class')) {
+      const next = new URLSearchParams(searchParams)
+      next.set('class', className)
+      if (!next.get('role')) next.set('role', role)
+      setSearchParams(next, { replace: true })
+    }
+  }, [searchParams, setSearchParams, className, role])
+
   useEffect(() => {
     setDeviceId(getOrCreateDeviceId())
-  }, [])
+    setLesson(readLesson(className))
+  }, [className])
 
   useEffect(() => {
-    if (role !== 'teacher') return
-    if (hasValidTeacherState) return
+    const sync = () => setLesson(readLesson(className))
 
-    const fresh = makeTeacherRound()
-    setSearchParams(
-      {
-        role: 'teacher',
-        t: String(fresh.teacher),
-        round: String(fresh.round),
-        td: fresh.teacherDisplay,
-      },
-      { replace: true }
-    )
-  }, [role, hasValidTeacherState, setSearchParams])
+    sync()
+
+    const interval = window.setInterval(sync, 1000)
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === lessonStorageKey(className)) sync()
+    }
+
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [className])
 
   useEffect(() => {
     setSelected(null)
     setRevealed(false)
-  }, [roundFromUrl])
+  }, [lesson.roundNumber, className])
 
-  const teacher = hasValidTeacherState ? teacherFromUrl : 0
-  const round = hasValidTeacherState ? roundFromUrl : 0
-  const teacherDisplay: DisplayMode = teacherDisplayFromUrl
+  function startNewRound() {
+    const current = readLesson(className)
+    const next = makeNextLesson(className, current)
+    writeLesson(className, next)
+    setLesson(next)
+  }
 
-  const student = useMemo(() => {
-    if (!hasValidTeacherState) return 0
-    if (deviceId === 'boot') return 0
-    return computeStudentValue(teacher, round, deviceId)
-  }, [hasValidTeacherState, teacher, round, deviceId])
+  function endLesson() {
+    const next = {
+      ...readLesson(className),
+      status: 'waiting' as const,
+      updatedAt: Date.now(),
+    }
+    writeLesson(className, next)
+    setLesson(next)
+  }
+
+  const teacherNumber =
+    typeof lesson.teacherNumber === 'number' ? lesson.teacherNumber : null
+
+  const studentValue = useMemo(() => {
+    if (lesson.status !== 'active') return null
+    if (teacherNumber === null) return null
+    if (deviceId === 'boot' && !studentParam.trim()) return null
+
+    return computeStudentValue(
+      teacherNumber,
+      lesson.roundSeed,
+      lesson.roundNumber,
+      studentKey
+    )
+  }, [
+    lesson.status,
+    teacherNumber,
+    lesson.roundSeed,
+    lesson.roundNumber,
+    studentKey,
+    deviceId,
+    studentParam,
+  ])
 
   const studentDisplay = useMemo<DisplayMode>(() => {
-    if (!hasValidTeacherState) return 'tenframe'
-    if (deviceId === 'boot') return 'tenframe'
+    if (lesson.status !== 'active') return 'tenframe'
+    if (deviceId === 'boot' && !studentParam.trim()) return 'tenframe'
     return seededPick<DisplayMode>(
-      `${deviceId}-${teacher}-${round}-student-display`,
+      `${studentKey}-${lesson.roundSeed}-${lesson.roundNumber}-display`,
       ['tenframe', 'numeral']
     )
-  }, [hasValidTeacherState, deviceId, teacher, round])
+  }, [lesson.status, studentKey, lesson.roundSeed, lesson.roundNumber, deviceId, studentParam])
 
-  const correct = compareStudentToTeacher(student, teacher)
-
-  function nextRound() {
-    const fresh = makeTeacherRound()
-    setSearchParams({
-      role: 'teacher',
-      t: String(fresh.teacher),
-      round: String(fresh.round),
-      td: fresh.teacherDisplay,
-    })
-  }
+  const correct =
+    studentValue !== null && teacherNumber !== null
+      ? compareStudentToTeacher(studentValue, teacherNumber)
+      : null
 
   const teacherLink =
     `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare` +
-    `?role=teacher&t=${teacher}&round=${round}&td=${teacherDisplay}`
+    `?role=teacher&class=${encodeURIComponent(className)}`
 
   const studentLink =
     `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare` +
-    `?role=student&t=${teacher}&round=${round}&td=${teacherDisplay}`
+    `?role=student&class=${encodeURIComponent(className)}`
 
-  if (role === 'teacher' && !hasValidTeacherState) {
-    return (
-      <div
-        style={{
-          minHeight: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'linear-gradient(180deg, #ede9fe 0%, #dbeafe 50%, #dcfce7 100%)',
-          padding: 16,
-          boxSizing: 'border-box',
-        }}
-      >
-        <div
-          style={{
-            background: '#ffffff',
-            borderRadius: 24,
-            padding: 24,
-            fontSize: 24,
-            fontWeight: 800,
-            color: '#374151',
-            boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
-          }}
-        >
-          Loading round…
-        </div>
-      </div>
-    )
-  }
-
-  if (role === 'student' && !hasValidTeacherState) {
+  if (role === 'student' && lesson.status !== 'active') {
     return (
       <div
         style={{
@@ -459,7 +530,7 @@ export default function TenFrameCompareWS() {
               marginBottom: 12,
             }}
           >
-            Waiting for teacher link
+            Waiting for teacher…
           </div>
 
           <div
@@ -469,14 +540,17 @@ export default function TenFrameCompareWS() {
               color: '#374151',
             }}
           >
-            Open the student link copied from the teacher page.
+            Class {className}
           </div>
         </div>
       </div>
     )
   }
 
-  if (role === 'student' && deviceId === 'boot') {
+  if (
+    role === 'student' &&
+    (deviceId === 'boot' && !studentParam.trim() || teacherNumber === null || studentValue === null || correct === null)
+  ) {
     return (
       <div
         style={{
@@ -553,17 +627,17 @@ export default function TenFrameCompareWS() {
             }}
           >
             <RepresentationCard
-              value={student}
+              value={studentValue!}
               title="My Number"
               display={studentDisplay}
-              seedBase={hashString(`student-${student}-${round}`)}
+              seedBase={hashString(`student-${studentValue}-${lesson.roundNumber}-${lesson.roundSeed}`)}
             />
 
             <RepresentationCard
-              value={teacher}
+              value={teacherNumber!}
               title="Teacher Number"
-              display={teacherDisplay}
-              seedBase={hashString(`teacher-${teacher}-${round}`)}
+              display={lesson.teacherDisplay}
+              seedBase={hashString(`teacher-${teacherNumber}-${lesson.roundNumber}-${lesson.roundSeed}`)}
             />
           </div>
 
@@ -670,7 +744,7 @@ export default function TenFrameCompareWS() {
           }}
         >
           <button
-            onClick={nextRound}
+            onClick={startNewRound}
             style={{
               border: 0,
               borderRadius: 16,
@@ -683,6 +757,22 @@ export default function TenFrameCompareWS() {
             }}
           >
             Start New Round
+          </button>
+
+          <button
+            onClick={endLesson}
+            style={{
+              border: 0,
+              borderRadius: 16,
+              padding: '14px 22px',
+              fontWeight: 900,
+              fontSize: 18,
+              background: '#ef4444',
+              color: '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            End Lesson
           </button>
 
           <button
@@ -735,6 +825,18 @@ export default function TenFrameCompareWS() {
             textAlign: 'center',
             fontSize: 20,
             color: '#374151',
+            marginBottom: 8,
+            fontWeight: 700,
+          }}
+        >
+          Class {className}
+        </div>
+
+        <div
+          style={{
+            textAlign: 'center',
+            fontSize: 20,
+            color: '#374151',
             marginBottom: 18,
             fontWeight: 700,
           }}
@@ -742,14 +844,33 @@ export default function TenFrameCompareWS() {
           Project your number. Students compare theirs to yours.
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <RepresentationCard
-            value={teacher}
-            title="Teacher Number"
-            display={teacherDisplay}
-            seedBase={hashString(`teacher-${teacher}-${round}`)}
-          />
-        </div>
+        {lesson.status === 'active' && teacherNumber !== null ? (
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <RepresentationCard
+              value={teacherNumber}
+              title="Teacher Number"
+              display={lesson.teacherDisplay}
+              seedBase={hashString(`teacher-${teacherNumber}-${lesson.roundNumber}-${lesson.roundSeed}`)}
+            />
+          </div>
+        ) : (
+          <div
+            style={{
+              margin: '0 auto',
+              maxWidth: 700,
+              background: '#ffffff',
+              borderRadius: 22,
+              padding: 24,
+              boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
+              textAlign: 'center',
+              fontSize: 28,
+              fontWeight: 900,
+              color: '#374151',
+            }}
+          >
+            Waiting to start…
+          </div>
+        )}
 
         <div
           style={{
@@ -766,7 +887,11 @@ export default function TenFrameCompareWS() {
           </div>
 
           <div style={{ color: '#334155', fontSize: 18, fontWeight: 700 }}>
-            Use the buttons above to copy the teacher and student links.
+            Teacher: <span style={{ wordBreak: 'break-all' }}>{teacherLink}</span>
+          </div>
+
+          <div style={{ color: '#334155', fontSize: 18, fontWeight: 700, marginTop: 8 }}>
+            Student: <span style={{ wordBreak: 'break-all' }}>{studentLink}</span>
           </div>
         </div>
       </div>
