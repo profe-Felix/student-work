@@ -8,7 +8,7 @@ function randInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-function pickOne<T>(arr: T[]): T {
+function pickOne<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
 }
 
@@ -18,40 +18,6 @@ function compareStudentToTeacher(student: number, teacher: number): Answer {
   return 'equal'
 }
 
-function makeComparisonPair() {
-  const mode = pickOne(['far', 'close', 'equal'] as const)
-
-  let teacher = 0
-  let student = 0
-
-  if (mode === 'equal') {
-    teacher = randInt(0, 20)
-    student = teacher
-  } else if (mode === 'far') {
-    teacher = randInt(0, 20)
-    do {
-      student = randInt(0, 20)
-    } while (Math.abs(teacher - student) < 4)
-  } else {
-    teacher = randInt(0, 19)
-    const diff = pickOne([1, 2, 3])
-    student = Math.min(20, teacher + diff)
-    if (Math.random() < 0.5) [teacher, student] = [student, teacher]
-  }
-
-  return {
-    teacher,
-    student,
-    teacherDisplay: pickOne<DisplayMode>(['tenframe', 'numeral']),
-    studentDisplay: pickOne<DisplayMode>(['tenframe', 'numeral']),
-  }
-}
-
-/**
- * Small seeded helpers so:
- * - each student device gets its own stable value for a given round
- * - display modes can also be stable for a given round
- */
 function hashString(str: string) {
   let h = 2166136261
   for (let i = 0; i < str.length; i++) {
@@ -77,7 +43,7 @@ function seededInt(seedStr: string, min: number, max: number) {
   return Math.floor(rng() * (max - min + 1)) + min
 }
 
-function seededPick<T>(seedStr: string, arr: T[]): T {
+function seededPick<T>(seedStr: string, arr: readonly T[]): T {
   const rng = mulberry32(hashString(seedStr))
   return arr[Math.floor(rng() * arr.length)]
 }
@@ -95,12 +61,49 @@ function seededShuffle(arr: number[], seed: number) {
 
 function getOrCreateDeviceId() {
   const key = 'ten-frame-compare-device-id'
-  const existing = sessionStorage.getItem(key)
+  const existing = localStorage.getItem(key)
   if (existing) return existing
 
   const fresh = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  sessionStorage.setItem(key, fresh)
+  localStorage.setItem(key, fresh)
   return fresh
+}
+
+function makeTeacherRound() {
+  return {
+    teacher: randInt(0, 20),
+    round: Date.now(),
+    teacherDisplay: pickOne<DisplayMode>(['tenframe', 'numeral']),
+  }
+}
+
+function computeStudentValue(teacher: number, round: number, deviceId: string) {
+  const mode = seededPick(`${deviceId}-${teacher}-${round}-mode`, ['far', 'close', 'equal'] as const)
+
+  if (mode === 'equal') return teacher
+
+  if (mode === 'far') {
+    let tries = 0
+    while (tries < 25) {
+      const candidate = seededInt(`${deviceId}-${teacher}-${round}-far-${tries}`, 0, 20)
+      if (Math.abs(candidate - teacher) >= 4) return candidate
+      tries++
+    }
+    return teacher <= 10 ? Math.min(20, teacher + 5) : Math.max(0, teacher - 5)
+  }
+
+  const diff = seededPick(`${deviceId}-${teacher}-${round}-diff`, [1, 2, 3] as const)
+  const direction = seededPick(`${deviceId}-${teacher}-${round}-dir`, ['up', 'down'] as const)
+
+  let candidate = direction === 'up'
+    ? Math.min(20, teacher + diff)
+    : Math.max(0, teacher - diff)
+
+  if (candidate === teacher) {
+    candidate = teacher < 20 ? teacher + 1 : teacher - 1
+  }
+
+  return candidate
 }
 
 function Frame10({ value, seed }: { value: number; seed: number }) {
@@ -157,13 +160,11 @@ function Frame10({ value, seed }: { value: number; seed: number }) {
 function DoubleTenFrame({
   value,
   title,
-  hideTotal = true,
-  seedBase = 1,
+  seedBase,
 }: {
   value: number
   title: string
-  hideTotal?: boolean
-  seedBase?: number
+  seedBase: number
 }) {
   const top = Math.min(value, 10)
   const bottom = Math.max(0, value - 10)
@@ -195,21 +196,6 @@ function DoubleTenFrame({
 
       <Frame10 value={top} seed={seedBase + 11} />
       <Frame10 value={bottom} seed={seedBase + 29} />
-
-      {!hideTotal && (
-        <div
-          style={{
-            fontSize: 22,
-            fontWeight: 900,
-            color: '#1f2937',
-            background: '#ffffff',
-            borderRadius: 14,
-            padding: '8px 14px',
-          }}
-        >
-          {value}
-        </div>
-      )}
     </div>
   )
 }
@@ -278,14 +264,7 @@ function RepresentationCard({
     return <NumeralCard value={value} title={title} />
   }
 
-  return (
-    <DoubleTenFrame
-      value={value}
-      title={title}
-      hideTotal={true}
-      seedBase={seedBase}
-    />
-  )
+  return <DoubleTenFrame value={value} title={title} seedBase={seedBase} />
 }
 
 function BigChoiceButton({
@@ -328,134 +307,67 @@ export default function TenFrameCompareWS() {
   const [searchParams, setSearchParams] = useSearchParams()
   const role = searchParams.get('role') || 'teacher'
 
-  const teacherParam = searchParams.get('t')
-  const roundParam = searchParams.get('round')
-  const teacherDisplayParam = searchParams.get('td') as DisplayMode | null
+  const deviceId = useMemo(() => getOrCreateDeviceId(), [])
 
-  const teacherValue = teacherParam === null ? null : Number(teacherParam)
-  const roundValue = roundParam === null ? null : Number(roundParam)
+  const teacherFromUrl = Number(searchParams.get('t'))
+  const roundFromUrl = Number(searchParams.get('round'))
+  const teacherDisplayFromUrl = searchParams.get('td') === 'numeral' ? 'numeral' : 'tenframe'
 
-  const initial = useMemo<{
-    teacher: number
-    round: number
-    teacherDisplay: DisplayMode
-  }>(() => {
-    if (
-      role === 'teacher' &&
-      teacherValue !== null &&
-      Number.isFinite(teacherValue) &&
-      roundValue !== null &&
-      Number.isFinite(roundValue)
-    ) {
-      return {
-        teacher: teacherValue,
-        round: roundValue,
-        teacherDisplay: teacherDisplayParam === 'numeral' ? 'numeral' : 'tenframe',
-      }
-    }
-  
-    const made = makeComparisonPair()
-    return {
-      teacher: made.teacher,
-      round: Date.now(),
-      teacherDisplay: made.teacherDisplay,
-    }
-  }, [role, teacherValue, roundValue, teacherDisplayParam])
-
-  const [teacher, setTeacher] = useState(initial.teacher)
-  const [round, setRound] = useState(initial.round)
-  const [teacherDisplay, setTeacherDisplay] = useState<DisplayMode>(initial.teacherDisplay)
-
-  const [student, setStudent] = useState(0)
-  const [studentDisplay, setStudentDisplay] = useState<DisplayMode>('tenframe')
+  const hasValidTeacherState =
+    Number.isFinite(teacherFromUrl) &&
+    teacherFromUrl >= 0 &&
+    teacherFromUrl <= 20 &&
+    Number.isFinite(roundFromUrl) &&
+    roundFromUrl > 0
 
   const [selected, setSelected] = useState<Answer | null>(null)
   const [revealed, setRevealed] = useState(false)
 
-  // Keep teacher state in sync with URL if teacher page is opened directly
   useEffect(() => {
     if (role !== 'teacher') return
-    if (teacherValue === null || !Number.isFinite(teacherValue)) return
-    if (roundValue === null || !Number.isFinite(roundValue)) return
+    if (hasValidTeacherState) return
 
-    setTeacher(teacherValue)
-    setRound(roundValue)
-    setTeacherDisplay(teacherDisplayParam === 'numeral' ? 'numeral' : 'tenframe')
+    const fresh = makeTeacherRound()
+    setSearchParams({
+      role: 'teacher',
+      t: String(fresh.teacher),
+      round: String(fresh.round),
+      td: fresh.teacherDisplay,
+    }, { replace: true })
+  }, [role, hasValidTeacherState, setSearchParams])
+
+  useEffect(() => {
     setSelected(null)
     setRevealed(false)
-  }, [role, teacherValue, roundValue, teacherDisplayParam])
+  }, [roundFromUrl])
 
-  // Student device gets its own stable value every time the teacher round changes
-  useEffect(() => {
-    if (role !== 'student') return
-    if (teacherValue === null || !Number.isFinite(teacherValue)) return
-    if (roundValue === null || !Number.isFinite(roundValue)) return
+  const teacher = hasValidTeacherState ? teacherFromUrl : 0
+  const round = hasValidTeacherState ? roundFromUrl : 0
+  const teacherDisplay: DisplayMode = teacherDisplayFromUrl
 
-    const deviceId = getOrCreateDeviceId()
+  const student = useMemo(() => {
+    if (!hasValidTeacherState) return 0
+    return computeStudentValue(teacher, round, deviceId)
+  }, [hasValidTeacherState, teacher, round, deviceId])
 
-    let nextStudent = 0
-    const pattern = seededPick(`${deviceId}-${roundValue}-pattern`, ['far', 'close', 'equal'] as const)
-
-    if (pattern === 'equal') {
-      nextStudent = teacherValue
-    } else if (pattern === 'far') {
-      let tries = 0
-      do {
-        nextStudent = seededInt(`${deviceId}-${roundValue}-far-${tries}`, 0, 20)
-        tries++
-      } while (Math.abs(nextStudent - teacherValue) < 4 && tries < 20)
-
-      if (Math.abs(nextStudent - teacherValue) < 4) {
-        nextStudent = teacherValue <= 10 ? Math.min(20, teacherValue + 5) : Math.max(0, teacherValue - 5)
-      }
-    } else {
-      const diff = seededPick(`${deviceId}-${roundValue}-diff`, [1, 2, 3])
-      const goUp = seededPick(`${deviceId}-${roundValue}-dir`, [true, false])
-
-      if (goUp) nextStudent = Math.min(20, teacherValue + diff)
-      else nextStudent = Math.max(0, teacherValue - diff)
-
-      if (nextStudent === teacherValue) {
-        nextStudent = teacherValue < 20 ? teacherValue + 1 : teacherValue - 1
-      }
-    }
-
-    const nextStudentDisplay = seededPick<DisplayMode>(
-      `${deviceId}-${roundValue}-display`,
+  const studentDisplay = useMemo<DisplayMode>(() => {
+    if (!hasValidTeacherState) return 'tenframe'
+    return seededPick<DisplayMode>(
+      `${deviceId}-${teacher}-${round}-student-display`,
       ['tenframe', 'numeral']
     )
-
-    setTeacher(teacherValue)
-    setRound(roundValue)
-    setTeacherDisplay(teacherDisplayParam === 'numeral' ? 'numeral' : 'tenframe')
-    setStudent(nextStudent)
-    setStudentDisplay(nextStudentDisplay)
-    setSelected(null)
-    setRevealed(false)
-  }, [role, teacherValue, roundValue, teacherDisplayParam])
+  }, [hasValidTeacherState, deviceId, teacher, round])
 
   const correct = compareStudentToTeacher(student, teacher)
 
-  function updateTeacherUrl(nextTeacher: number, nextRound: number, nextTeacherDisplay: DisplayMode) {
+  function nextRound() {
+    const fresh = makeTeacherRound()
     setSearchParams({
       role: 'teacher',
-      t: String(nextTeacher),
-      round: String(nextRound),
-      td: nextTeacherDisplay,
+      t: String(fresh.teacher),
+      round: String(fresh.round),
+      td: fresh.teacherDisplay,
     })
-  }
-
-  function nextRound() {
-    const next = makeComparisonPair()
-    const nextRoundValue = Date.now() + Math.floor(Math.random() * 1000)
-
-    setTeacher(next.teacher)
-    setTeacherDisplay(next.teacherDisplay)
-    setRound(nextRoundValue)
-    setSelected(null)
-    setRevealed(false)
-
-    updateTeacherUrl(next.teacher, nextRoundValue, next.teacherDisplay)
   }
 
   const teacherLink =
@@ -465,6 +377,36 @@ export default function TenFrameCompareWS() {
   const studentLink =
     `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare` +
     `?role=student&t=${teacher}&round=${round}&td=${teacherDisplay}`
+
+  if (!hasValidTeacherState) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'linear-gradient(180deg, #dbeafe 0%, #e0f2fe 55%, #dcfce7 100%)',
+          padding: 16,
+          boxSizing: 'border-box',
+        }}
+      >
+        <div
+          style={{
+            background: '#ffffff',
+            borderRadius: 24,
+            padding: 24,
+            fontSize: 24,
+            fontWeight: 800,
+            color: '#374151',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.10)',
+          }}
+        >
+          Loading round…
+        </div>
+      </div>
+    )
+  }
 
   if (role === 'student') {
     const answerLocked = revealed
@@ -478,7 +420,7 @@ export default function TenFrameCompareWS() {
           boxSizing: 'border-box',
         }}
       >
-        <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div
             style={{
               textAlign: 'center',
@@ -500,7 +442,7 @@ export default function TenFrameCompareWS() {
               fontWeight: 700,
             }}
           >
-            Is my number greater than, less than, or equal to the teacher’s number?
+            My number is greater than, less than, or equal to the teacher&apos;s number.
           </div>
 
           <div
@@ -513,17 +455,17 @@ export default function TenFrameCompareWS() {
             }}
           >
             <RepresentationCard
-              value={teacher}
-              title="Teacher"
-              display={teacherDisplay}
-              seedBase={hashString(`teacher-${teacher}-${round}`)}
+              value={student}
+              title="My Number"
+              display={studentDisplay}
+              seedBase={hashString(`student-${student}-${round}`)}
             />
 
             <RepresentationCard
-              value={student}
-              title="Mine"
-              display={studentDisplay}
-              seedBase={hashString(`student-${student}-${round}`)}
+              value={teacher}
+              title="Teacher Number"
+              display={teacherDisplay}
+              seedBase={hashString(`teacher-${teacher}-${round}`)}
             />
           </div>
 
@@ -547,7 +489,6 @@ export default function TenFrameCompareWS() {
                 setRevealed(true)
               }}
             />
-
             <BigChoiceButton
               label="Less"
               symbol="<"
@@ -559,7 +500,6 @@ export default function TenFrameCompareWS() {
                 setRevealed(true)
               }}
             />
-
             <BigChoiceButton
               label="Equal"
               symbol="="
@@ -603,7 +543,7 @@ export default function TenFrameCompareWS() {
                   fontWeight: 700,
                 }}
               >
-                Wait for the teacher’s next round.
+                Wait for the teacher to start a new round.
               </div>
             </div>
           )}
@@ -644,7 +584,7 @@ export default function TenFrameCompareWS() {
               cursor: 'pointer',
             }}
           >
-            Next Round
+            Start New Round
           </button>
 
           <button
@@ -707,7 +647,7 @@ export default function TenFrameCompareWS() {
         <div style={{ display: 'flex', justifyContent: 'center' }}>
           <RepresentationCard
             value={teacher}
-            title="Teacher"
+            title="Teacher Number"
             display={teacherDisplay}
             seedBase={hashString(`teacher-${teacher}-${round}`)}
           />
