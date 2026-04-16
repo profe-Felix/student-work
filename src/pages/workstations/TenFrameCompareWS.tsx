@@ -71,18 +71,12 @@ function seededShuffle(arr: number[], seed: number) {
   return a
 }
 
-function getOrCreateDeviceId() {
-  if (typeof window === 'undefined') return 'server'
-  const key = 'ten-frame-compare-device-id'
-  const existing = window.localStorage.getItem(key)
-  if (existing) return existing
-  const fresh = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  window.localStorage.setItem(key, fresh)
-  return fresh
-}
-
 function lessonStorageKey(className: string) {
   return `ten-frame-compare-lesson:${className}`
+}
+
+function studentChoiceStorageKey(className: string) {
+  return `ten-frame-compare-student-choice:${className}`
 }
 
 function emptyLesson(className: string): LessonRecord {
@@ -103,6 +97,7 @@ function readLesson(className: string): LessonRecord {
   try {
     const raw = window.localStorage.getItem(lessonStorageKey(className))
     if (!raw) return emptyLesson(className)
+
     const parsed = JSON.parse(raw) as LessonRecord
     return {
       className,
@@ -126,6 +121,16 @@ function readLesson(className: string): LessonRecord {
 function writeLesson(className: string, lesson: LessonRecord) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(lessonStorageKey(className), JSON.stringify(lesson))
+}
+
+function readSavedStudentChoice(className: string) {
+  if (typeof window === 'undefined') return ''
+  return window.localStorage.getItem(studentChoiceStorageKey(className)) || ''
+}
+
+function saveStudentChoice(className: string, student: string) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(studentChoiceStorageKey(className), student)
 }
 
 function makeNextLesson(className: string, previous: LessonRecord | null): LessonRecord {
@@ -383,21 +388,90 @@ function BigChoiceButton({
   )
 }
 
+function StudentChooser({
+  className,
+  onPick,
+}: {
+  className: string
+  onPick: (student: string) => void
+}) {
+  const numbers = Array.from({ length: 30 }, (_, i) => String(i + 1))
+
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(180deg, #dbeafe 0%, #e0f2fe 55%, #dcfce7 100%)',
+        padding: 16,
+        boxSizing: 'border-box',
+      }}
+    >
+      <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+        <div
+          style={{
+            textAlign: 'center',
+            fontSize: 40,
+            fontWeight: 900,
+            color: '#166534',
+            marginBottom: 8,
+          }}
+        >
+          Choose Your Number
+        </div>
+
+        <div
+          style={{
+            textAlign: 'center',
+            fontSize: 24,
+            color: '#374151',
+            marginBottom: 24,
+            fontWeight: 700,
+          }}
+        >
+          Class {className}
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))',
+            gap: 14,
+          }}
+        >
+          {numbers.map((n) => (
+            <button
+              key={n}
+              onClick={() => onPick(n)}
+              style={{
+                border: '4px solid #cbd5e1',
+                background: '#ffffff',
+                color: '#1f2937',
+                borderRadius: 22,
+                padding: '20px 10px',
+                cursor: 'pointer',
+                boxShadow: '0 8px 20px rgba(0,0,0,0.08)',
+                fontWeight: 900,
+                fontSize: 30,
+              }}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function TenFrameCompareWS() {
   const [searchParams, setSearchParams] = useSearchParams()
   const role = searchParams.get('role') || 'teacher'
   const className = searchParams.get('class') || DEFAULT_CLASS
-  const studentParam = searchParams.get('student') || ''
+  const studentParam = (searchParams.get('student') || '').trim()
 
-  const [deviceId, setDeviceId] = useState('boot')
   const [lesson, setLesson] = useState<LessonRecord>(() => emptyLesson(className))
   const [selected, setSelected] = useState<Answer | null>(null)
   const [revealed, setRevealed] = useState(false)
-
-  const studentKey = useMemo(() => {
-    if (studentParam.trim()) return `student:${className}:${studentParam.trim()}`
-    return `device:${className}:${deviceId}`
-  }, [studentParam, className, deviceId])
 
   useEffect(() => {
     if (!searchParams.get('class')) {
@@ -409,7 +483,20 @@ export default function TenFrameCompareWS() {
   }, [searchParams, setSearchParams, className, role])
 
   useEffect(() => {
-    setDeviceId(getOrCreateDeviceId())
+    if (role !== 'student') return
+    if (studentParam) return
+
+    const saved = readSavedStudentChoice(className)
+    if (!saved) return
+
+    const next = new URLSearchParams(searchParams)
+    next.set('role', 'student')
+    next.set('class', className)
+    next.set('student', saved)
+    setSearchParams(next, { replace: true })
+  }, [role, studentParam, className, searchParams, setSearchParams])
+
+  useEffect(() => {
     setLesson(readLesson(className))
   }, [className])
 
@@ -434,7 +521,7 @@ export default function TenFrameCompareWS() {
   useEffect(() => {
     setSelected(null)
     setRevealed(false)
-  }, [lesson.roundNumber, className])
+  }, [lesson.roundNumber, className, studentParam])
 
   function startNewRound() {
     const current = readLesson(className)
@@ -453,13 +540,28 @@ export default function TenFrameCompareWS() {
     setLesson(next)
   }
 
+  function chooseStudent(student: string) {
+    saveStudentChoice(className, student)
+
+    const next = new URLSearchParams(searchParams)
+    next.set('role', 'student')
+    next.set('class', className)
+    next.set('student', student)
+    setSearchParams(next, { replace: true })
+  }
+
   const teacherNumber =
     typeof lesson.teacherNumber === 'number' ? lesson.teacherNumber : null
+
+  const studentKey = useMemo(() => {
+    if (!studentParam) return ''
+    return `student:${className}:${studentParam}`
+  }, [className, studentParam])
 
   const studentValue = useMemo(() => {
     if (lesson.status !== 'active') return null
     if (teacherNumber === null) return null
-    if (deviceId === 'boot' && !studentParam.trim()) return null
+    if (!studentKey) return null
 
     return computeStudentValue(
       teacherNumber,
@@ -467,24 +569,16 @@ export default function TenFrameCompareWS() {
       lesson.roundNumber,
       studentKey
     )
-  }, [
-    lesson.status,
-    teacherNumber,
-    lesson.roundSeed,
-    lesson.roundNumber,
-    studentKey,
-    deviceId,
-    studentParam,
-  ])
+  }, [lesson.status, teacherNumber, lesson.roundSeed, lesson.roundNumber, studentKey])
 
   const studentDisplay = useMemo<DisplayMode>(() => {
     if (lesson.status !== 'active') return 'tenframe'
-    if (deviceId === 'boot' && !studentParam.trim()) return 'tenframe'
+    if (!studentKey) return 'tenframe'
     return seededPick<DisplayMode>(
       `${studentKey}-${lesson.roundSeed}-${lesson.roundNumber}-display`,
       ['tenframe', 'numeral']
     )
-  }, [lesson.status, studentKey, lesson.roundSeed, lesson.roundNumber, deviceId, studentParam])
+  }, [lesson.status, studentKey, lesson.roundSeed, lesson.roundNumber])
 
   const correct =
     studentValue !== null && teacherNumber !== null
@@ -498,6 +592,10 @@ export default function TenFrameCompareWS() {
   const studentLink =
     `https://profe-felix.github.io/student-work/#/ws/ten-frame-compare` +
     `?role=student&class=${encodeURIComponent(className)}`
+
+  if (role === 'student' && !studentParam) {
+    return <StudentChooser className={className} onPick={chooseStudent} />
+  }
 
   if (role === 'student' && lesson.status !== 'active') {
     return (
@@ -542,15 +640,23 @@ export default function TenFrameCompareWS() {
           >
             Class {className}
           </div>
+
+          <div
+            style={{
+              fontSize: 20,
+              fontWeight: 700,
+              color: '#64748b',
+              marginTop: 8,
+            }}
+          >
+            Student {studentParam}
+          </div>
         </div>
       </div>
     )
   }
 
-  if (
-    role === 'student' &&
-    (deviceId === 'boot' && !studentParam.trim() || teacherNumber === null || studentValue === null || correct === null)
-  ) {
+  if (role === 'student' && (teacherNumber === null || studentValue === null || correct === null)) {
     return (
       <div
         style={{
@@ -610,6 +716,18 @@ export default function TenFrameCompareWS() {
               textAlign: 'center',
               fontSize: 24,
               color: '#374151',
+              marginBottom: 10,
+              fontWeight: 700,
+            }}
+          >
+            Student {studentParam}
+          </div>
+
+          <div
+            style={{
+              textAlign: 'center',
+              fontSize: 24,
+              color: '#374151',
               marginBottom: 18,
               fontWeight: 700,
             }}
@@ -627,14 +745,14 @@ export default function TenFrameCompareWS() {
             }}
           >
             <RepresentationCard
-              value={studentValue!}
+              value={studentValue}
               title="My Number"
               display={studentDisplay}
               seedBase={hashString(`student-${studentValue}-${lesson.roundNumber}-${lesson.roundSeed}`)}
             />
 
             <RepresentationCard
-              value={teacherNumber!}
+              value={teacherNumber}
               title="Teacher Number"
               display={lesson.teacherDisplay}
               seedBase={hashString(`teacher-${teacherNumber}-${lesson.roundNumber}-${lesson.roundSeed}`)}
