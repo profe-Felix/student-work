@@ -745,17 +745,17 @@ export default function TenFrameCompareWS() {
             }}
           >
             <RepresentationCard
-              value={studentValue}
+              value={studentValue!}
               title="My Number"
               display={studentDisplay}
-              seedBase={hashString(`student-${studentValue}-${lesson.roundNumber}-${lesson.roundSeed}`)}
+              seedBase={hashString(`student-${studentValue!}-${lesson.roundNumber}-${lesson.roundSeed}`)}
             />
-
+            
             <RepresentationCard
-              value={teacherNumber}
+              value={teacherNumber!}
               title="Teacher Number"
               display={lesson.teacherDisplay}
-              seedBase={hashString(`teacher-${teacherNumber}-${lesson.roundNumber}-${lesson.roundSeed}`)}
+              seedBase={hashString(`teacher-${teacherNumber!}-${lesson.roundNumber}-${lesson.roundSeed}`)}
             />
           </div>
 
