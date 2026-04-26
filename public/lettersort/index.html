@@ -357,7 +357,7 @@
       border-radius:14px;
       padding:16px 18px;
       box-shadow:0 6px 20px rgba(0,0,0,.05);
-      align-items:center;
+    
       line-height:1.4;
     }
     
@@ -366,19 +366,18 @@
     }
     
     .generateRiddleHidden{
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      min-width:72px;
-      height:44px;
-      padding:4px 12px;
+      display:inline-block;
+    
+      padding:2px 6px;
+      margin:0;                 /* no spacing */
+    
       background:#f59e0b;
       color:#f59e0b;
-      border-radius:10px;
+    
+      border-radius:6px;
       font-weight:700;
-      white-space:nowrap;
-      overflow:hidden;
-      vertical-align:middle;
+    
+      vertical-align:baseline;
     }
     .generateRiddleHidden{
       cursor:pointer;
@@ -2790,8 +2789,7 @@ function buildGenerateMode(){
       riddleHeader.style.fontSize = '32px';
       riddleHeader.style.display = 'flex';
       riddleHeader.style.flexWrap = 'wrap';
-      riddleHeader.style.gap = '8px';
-  
+      
       columnsEl.appendChild(riddleHeader);
     }
   }
