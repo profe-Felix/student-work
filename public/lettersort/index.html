@@ -349,6 +349,45 @@
       width:auto;
       object-fit:contain;
     }
+    .generateRiddleBox{
+      grid-column: 1 / -1;
+      width:100%;
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:14px;
+      padding:16px 18px;
+      box-shadow:0 6px 20px rgba(0,0,0,.05);
+      align-items:center;
+      line-height:1.4;
+    }
+    
+    .generateRiddleText{
+      display:inline;
+    }
+    
+    .generateRiddleHidden{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width:72px;
+      height:44px;
+      padding:4px 12px;
+      background:#f59e0b;
+      color:#f59e0b;
+      border-radius:10px;
+      font-weight:700;
+      white-space:nowrap;
+      overflow:hidden;
+      vertical-align:middle;
+    }
+    .generateRiddleHidden{
+      cursor:pointer;
+    }
+    
+    .generateRiddleHidden.revealed{
+      color:#111;
+      background:#fbbf24;
+    }
   </style>
 </head>
 <body>
@@ -834,8 +873,10 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         const ROWSYLL_COLS = qs.get('rowsyll') || '';
         const SYLLGROUPS_RAW = qs.get('groups') || qs.get('syllgroups') || '';
         const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
-    
+
+        
         // Generate mode params
+        const GENERATE_RIDDLE = qs.get('riddle') || '';
         const GENERATE_COLUMNS = (qs.get('columns') || '')
           .split(',')
           .map(s => s.trim())
@@ -857,6 +898,98 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
           if (!GENERATE_ROWS.length) return 4;
           if (GENERATE_ROWS.length === 1) return GENERATE_ROWS[0];
           return GENERATE_ROWS[index] || GENERATE_ROWS[GENERATE_ROWS.length - 1] || 4;
+        }
+
+        function shrinkTextToFit(el, maxPx = 28, minPx = 12){
+          el.style.fontSize = maxPx + 'px';
+        
+          requestAnimationFrame(() => {
+            let size = maxPx;
+        
+            while (el.scrollWidth > el.clientWidth && size > minPx) {
+              size -= 1;
+              el.style.fontSize = size + 'px';
+            }
+          });
+        }
+        function buildGenerateRiddleHeader(){
+          if (!GENERATE_RIDDLE) return null;
+        
+          const parsed = parseGenerateRiddle(GENERATE_RIDDLE);
+        
+          const box = document.createElement('div');
+          box.className = 'generateRiddleBox';
+        
+          parsed.parts.forEach(part => {
+            if (part.type === 'hidden') {
+              const hiddenBox = document.createElement('span');
+              hiddenBox.className = 'generateRiddleHidden';
+              hiddenBox.textContent = part.text;
+              hiddenBox.title = 'Tocar para revelar';
+              hiddenBox.addEventListener('click', () => {
+                hiddenBox.classList.toggle('revealed');
+              });
+              box.appendChild(hiddenBox);
+              shrinkTextToFit(hiddenBox, 30, 12);
+            } else {
+              const textSpan = document.createElement('span');
+              textSpan.className = 'generateRiddleText';
+              textSpan.textContent = part.text;
+              box.appendChild(textSpan);
+            }
+          });
+        
+          return box;
+        }
+        function parseGenerateRiddle(raw){
+          const parts = [];
+          const answers = [];
+          const text = raw || '';
+        
+          let current = '';
+          let hidden = false;
+        
+          for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+        
+            if (ch === '|') {
+              if (hidden) {
+                answers.push(current);
+                parts.push({ type: 'hidden', text: current });
+              } else if (current) {
+                parts.push({ type: 'text', text: current });
+              }
+        
+              current = '';
+              hidden = !hidden;
+              continue;
+            }
+        
+            current += ch;
+          }
+        
+          if (current) {
+            parts.push({ type: hidden ? 'hidden' : 'text', text: current });
+            if (hidden) answers.push(current);
+          }
+        
+          return { parts, answers };
+        }
+        function makeGenerateInput(){
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.placeholder = '';
+        
+          input.style.fontSize = '28px';
+          input.style.textAlign = 'center';
+          input.style.height = '64px';
+          input.style.borderRadius = '10px';
+        
+          input.addEventListener('input', () => {
+            shrinkTextToFit(input, 28, 12);
+          });
+        
+          return input;
         }
     // Force SOLO by default unless ?sync=true
     const SYNC = (qs.get('sync') || '').toLowerCase() === 'true';
@@ -2648,6 +2781,21 @@ function buildGenerateMode(){
 
   columnsEl.innerHTML = '';
 
+  // 🔹 RIDDLE HEADER (only if provided)
+  if (GENERATE_RIDDLE) {
+    const riddleHeader = buildGenerateRiddleHeader();
+  
+    if (riddleHeader) {
+      riddleHeader.style.marginBottom = '16px';
+      riddleHeader.style.fontSize = '32px';
+      riddleHeader.style.display = 'flex';
+      riddleHeader.style.flexWrap = 'wrap';
+      riddleHeader.style.gap = '8px';
+  
+      columnsEl.appendChild(riddleHeader);
+    }
+  }
+  
   const cols = GENERATE_COLUMNS.length ? GENERATE_COLUMNS : ['A','B'];
 
   setOneRowGrid(cols.length);
@@ -2678,13 +2826,7 @@ function buildGenerateMode(){
     
       for (let s = 0; s < GENERATE_SLOTS; s++) {
     
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.placeholder = '';
-    
-        input.style.fontSize = '28px';
-        input.style.textAlign = 'center';
-    
+        const input = makeGenerateInput();
         row.appendChild(input);
     
       }
@@ -2693,7 +2835,9 @@ function buildGenerateMode(){
     
     }
 
-    col.appendChild(header);
+    if (!GENERATE_RIDDLE) {
+      col.appendChild(header);
+    }
     col.appendChild(drop);
 
     columnsEl.appendChild(col);
