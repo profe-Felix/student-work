@@ -218,6 +218,18 @@
 
     /* ---------- Row Picture Modes ---------- */
     #rowMode{margin-top:14px;display:grid;gap:14px}
+    #rowMode.rowsyllColsTopGrid{
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      align-items:stretch;
+    }
+    
+    #rowMode.rowsyllColsTopGrid .rowLine.topLayout{
+      height:100%;
+    }
+    
+    #rowMode.rowsyllColsTopGrid .rowDrop{
+      min-height:260px;
+    }
 
     .rowLine{
       display:grid;
@@ -2796,6 +2808,13 @@ async function buildRowSyllColsMode(){
   rowData = [];
   rowModeEl.innerHTML = '';
   rackEl.innerHTML = '';
+  
+  // 🔥 apply horizontal header grid ONLY for rowsyllcols
+  if (ROWSYLL_LAYOUT === 'top') {
+    rowModeEl.classList.add('rowsyllColsTopGrid');
+  } else {
+    rowModeEl.classList.remove('rowsyllColsTopGrid');
+  }
 
   // CARD TYPE:
   // cardtype=word  -> word tiles
