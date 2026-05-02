@@ -387,6 +387,73 @@
       color:#111;
       background:#fbbf24;
     }
+
+    /* ---------- Sort / ranking mode ---------- */
+    .sortMode{
+      margin-top:16px;
+      display:flex;
+      justify-content:center;
+    }
+    .sortBoard{
+      width:100%;
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:16px;
+      box-shadow:0 6px 20px rgba(0,0,0,.05);
+      padding:14px;
+    }
+    .sortBoard.sort-vertical{
+      max-width:560px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .sortBoard.sort-horizontal{
+      max-width:1100px;
+      display:grid;
+      grid-template-columns:auto 1fr auto;
+      gap:12px;
+      align-items:center;
+    }
+    .sortLabel{
+      font-size:clamp(18px, 2.1vw, 30px);
+      font-weight:700;
+      text-align:center;
+    }
+    .sortSlots{
+      display:flex;
+      gap:10px;
+      width:100%;
+    }
+    .sort-vertical .sortSlots{ flex-direction:column; }
+    .sort-horizontal .sortSlots{ flex-direction:row; }
+
+    .sortSlot{
+      min-height:76px;
+      background:var(--drop);
+      border:2px dashed #c7d2fe;
+      border-radius:14px;
+      padding:8px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      flex:1;
+      min-width:120px;
+    }
+    .sortSlot .chip{
+      width:100%;
+      max-width:none;
+    }
+    .sortStatus{
+      margin-top:12px;
+      text-align:center;
+      font-size:clamp(20px, 2.4vw, 34px);
+      font-weight:700;
+      min-height:1.4em;
+    }
+    .sortStatus.ok{ color:var(--ok); }
+    .sortStatus.bad{ color:var(--bad); }
+    body.sort-mode #rack{ justify-content:center; }
   </style>
 </head>
 <body>
@@ -607,6 +674,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         soloPrefix: 'Modo individual:',
         soloMode: {
           generate: 'generar palabras',
+          sort: 'ordenar palabras',
           randinit: 'sonido inicial aleatorio',   /* ✅ NEW */
           row: 'modo filas',
           rowalli: 'aliteración por filas',
@@ -660,6 +728,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         soloPrefix: 'Solo mode:',
         soloMode: {
           generate: 'generate words',
+          sort: 'sort words',
           randinit: 'random initial sound',       /* ✅ NEW */
           row: 'row mode',
           rowalli: 'row alliteration',
@@ -892,6 +961,14 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
     
         const GENERATE_ROWS = parseGenerateRows(qs.get('rows') || '');
         const GENERATE_SLOTS = Math.max(1, parseInt(qs.get('slots') || '1', 10));
+        // ---------- SORT MODE PARAMS ----------
+        const SORT_LAYOUT = (qs.get('layout') || 'vertical').toLowerCase();
+        const SORT_DIRECTION = (qs.get('direction') || (SORT_LAYOUT === 'horizontal' ? 'left-right' : 'bottom-up')).toLowerCase();
+        
+        const SORT_LABEL_BOTTOM = qs.get('bottom') || 'menos';
+        const SORT_LABEL_TOP = qs.get('top') || 'más';
+        const SORT_LABEL_LEFT = qs.get('left') || 'menos';
+        const SORT_LABEL_RIGHT = qs.get('right') || 'más';
     
         function getGenerateRowCountForCol(index){
           if (!GENERATE_ROWS.length) return 4;
@@ -1004,6 +1081,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
     const SOLO_MODE =
       !SYNC ||
       MODE === 'generate' ||
+      MODE === 'sort' ||
       MODE === 'randinit' ||
       MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'rowsyllcols' || MODE === 'syllgroups' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
       (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0) || (SOLO_PHONEMES.length > 0) || (SOLO_STRESSPOS.length > 0);
@@ -1058,7 +1136,9 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
 
     // Row mode state
     let rowData = []; // generic holder for any row-mode
-
+    // Sort mode state
+    let sortExpectedIds = [];
+    let sortStatusEl = null;
     /******** Helpers ********/
     function markersToPretty(s){
       return (s||'')
@@ -1498,7 +1578,7 @@ function syllabifyEn(wordRaw){
       try{
         imageFiles = [];
 
-        if (TILES_ONLY && SOLO_WORDS.length > 0 &&
+        if ((TILES_ONLY || MODE==='sort') && SOLO_WORDS.length > 0 &&
             MODE!=='row' && MODE!=='rowalli' && MODE!=='allisort' &&
             MODE!=='allisyll' && MODE!=='rowsyll' && MODE!=='syllcount' && MODE!=='stressreveal') {
           if (storageWarn) storageWarn.style.display = 'none';
@@ -2241,6 +2321,23 @@ function syllabifyEn(wordRaw){
     }
 
     function resetRoundPlacements(){
+      if (currentMode === 'sort') {
+        document.querySelectorAll('.sortSlot').forEach(s => s.innerHTML = '');
+    
+        rackEl.innerHTML = '';
+        rackEl.classList.add('chips');
+    
+        [...currentCards]
+          .sort(()=>Math.random()-0.5)
+          .forEach(c => rackEl.appendChild(renderChip(c.word, c.id)));
+    
+        if (sortStatusEl){
+          sortStatusEl.textContent = '';
+          sortStatusEl.className = 'sortStatus';
+        }
+    
+        return;
+      }
       document.querySelectorAll('.card, .chip').forEach(c=> c.classList.remove('ok','bad','locked') );
       if (currentMode==='row' || currentMode==='rowalli' || currentMode==='allisyll' || currentMode==='rowsyll' || currentMode==='rowsyllcols'){
         rowData.forEach((r)=>{ r.dropEl.innerHTML=''; });
@@ -2843,7 +2940,152 @@ function buildGenerateMode(){
   });
 
 }
-    
+// =====================
+// SORT MODE
+// =====================
+function buildSortMode(){
+  currentMode = 'sort';
+  document.body.classList.add('sort-mode');
+
+  columnsEl.className = 'sortMode';
+  columnsEl.innerHTML = '';
+
+  // words
+  const words = (SOLO_WORDS.length ? SOLO_WORDS : ['pequeño','mediano','grande'])
+    .map(w => String(w).trim())
+    .filter(Boolean);
+
+  currentCards = words.map(word => ({
+    id: crypto.randomUUID(),
+    word,
+    coreRaw: word
+  }));
+
+  // correct order (based on input order)
+  sortExpectedIds = currentCards.map(c => c.id);
+
+  const isHorizontal = SORT_LAYOUT === 'horizontal';
+
+  const board = document.createElement('div');
+  board.className = `sortBoard ${isHorizontal ? 'sort-horizontal' : 'sort-vertical'}`;
+
+  const slotsWrap = document.createElement('div');
+  slotsWrap.className = 'sortSlots';
+
+  currentCards.forEach((_, idx) => {
+    const slot = document.createElement('div');
+    slot.className = 'sortSlot';
+    slotsWrap.appendChild(slot);
+  });
+
+  const labelA = document.createElement('div');
+  const labelB = document.createElement('div');
+  labelA.className = 'sortLabel';
+  labelB.className = 'sortLabel';
+
+  if (isHorizontal) {
+    labelA.textContent = SORT_LABEL_LEFT;
+    labelB.textContent = SORT_LABEL_RIGHT;
+    board.appendChild(labelA);
+    board.appendChild(slotsWrap);
+    board.appendChild(labelB);
+  } else {
+    labelA.textContent = SORT_LABEL_TOP;
+    labelB.textContent = SORT_LABEL_BOTTOM;
+    board.appendChild(labelA);
+    board.appendChild(slotsWrap);
+    board.appendChild(labelB);
+  }
+
+  sortStatusEl = document.createElement('div');
+  sortStatusEl.className = 'sortStatus';
+  board.appendChild(sortStatusEl);
+
+  columnsEl.appendChild(board);
+
+  // build bank
+  rackEl.innerHTML = '';
+  rackEl.classList.add('chips');
+
+  [...currentCards]
+    .sort(()=>Math.random()-0.5)
+    .forEach(c => rackEl.appendChild(renderChip(c.word, c.id)));
+}
+function handleSortDrop(drop, el){
+  if (!drop) {
+    drag.originParent.appendChild(el);
+    return;
+  }
+
+  // allow dragging back to the word bank
+  if (drop.id === 'rack' || drop.classList.contains('rack')) {
+    drop.appendChild(el);
+    if (sortStatusEl){
+      sortStatusEl.textContent = '';
+      sortStatusEl.className = 'sortStatus';
+    }
+    return;
+  }
+
+  // only sort slots are allowed in sort mode
+  if (!drop.classList.contains('sortSlot')) {
+    drag.originParent.appendChild(el);
+    return;
+  }
+
+  const origin = drag.originParent;
+  const occupying = [...drop.children].find(child => child !== el);
+
+  // if slot already has a word, swap it back to the original slot/bank
+  if (occupying) {
+    if (origin && origin.classList && origin.classList.contains('sortSlot')) {
+      origin.appendChild(occupying);
+    } else {
+      rackEl.appendChild(occupying);
+    }
+  }
+
+  drop.appendChild(el);
+
+  if (sortStatusEl){
+    sortStatusEl.textContent = '';
+    sortStatusEl.className = 'sortStatus';
+  }
+}
+function sortVisualIndexToExpectedIndex(visualIndex, total){
+  const reverse =
+    SORT_DIRECTION === 'bottom-up' ||
+    SORT_DIRECTION === 'right-left' ||
+    SORT_DIRECTION === 'right-to-left' ||
+    SORT_DIRECTION === 'bottom-to-top';
+
+  return reverse ? (total - 1 - visualIndex) : visualIndex;
+}
+
+function verifySortMode(){
+  const slots = [...document.querySelectorAll('.sortSlot')];
+  let ok = slots.length === sortExpectedIds.length;
+
+  for (let visualIndex = 0; visualIndex < slots.length; visualIndex++) {
+    const expectedIndex = sortVisualIndexToExpectedIndex(visualIndex, slots.length);
+    const expectedId = sortExpectedIds[expectedIndex];
+    const placed = slots[visualIndex].querySelector('.chip');
+
+    if (!placed || placed.dataset.id !== expectedId) {
+      ok = false;
+      break;
+    }
+  }
+
+  if (!sortStatusEl) return;
+
+  sortStatusEl.className = 'sortStatus ' + (ok ? 'ok' : 'bad');
+  sortStatusEl.textContent = ok
+    ? (LANG === 'en' ? 'Correct!' : '¡Correcto!')
+    : (LANG === 'en' ? 'Try again.' : 'Intenta otra vez.');
+
+  if (ok) celebrate();
+}
 function everythingCorrect(){
   // ---------- ROWSYLL / ROWSYLLCOLS (chips in rowDrop) ----------
   if (currentMode === 'rowsyll' || currentMode === 'rowsyllcols' || currentMode === 'syllgroups') {
@@ -2936,6 +3178,10 @@ function everythingCorrect(){
 }
 
     function verifyNow(fromBroadcast){
+      if (currentMode === 'sort') {
+        verifySortMode();
+        return;
+      }  
       if (currentMode==='row'){
         rowData.forEach((r)=>{
           const dropped = r.dropEl.querySelector('.card');
@@ -3201,7 +3447,9 @@ function everythingCorrect(){
       document.body.classList.toggle('one-per', perCol === 1);
 
       if (drop) {
-        if (drop.classList.contains('rowDrop')) {
+        if (currentMode === 'sort') {
+          handleSortDrop(drop, el);
+        } else if (drop.classList.contains('rowDrop')) {
           if (currentMode === 'row' && drop.children.length >= 1) {
             drag.originParent.appendChild(el);
           } else {
@@ -3236,7 +3484,7 @@ function everythingCorrect(){
       el.style.width=''; el.style.height='';
     }
     function hitTestDrop(x, y, rowScope){
-      const zones = Array.from(document.querySelectorAll('.drop, .rowDrop, .rack, .rowRack'));
+      const zones = Array.from(document.querySelectorAll('.drop, .rowDrop, .sortSlot, .rack, .rowRack'));
       for (const d of zones){
         if (rowScope != null && d.dataset.row && d.dataset.row !== rowScope) continue;
         const r = d.getBoundingClientRect();
@@ -3332,7 +3580,8 @@ function everythingCorrect(){
       document.body.classList.toggle('one-per', (SOLO_PER || 4) === 1);
 
       const modeTxt =
-        (MODE==='generate')  ? T.soloMode.generate :
+        (MODE==='generate') ? T.soloMode.generate :
+        (MODE==='sort')     ? T.soloMode.sort :
         (MODE==='randinit')  ? T.soloMode.randinit :  /* ✅ NEW */
         (MODE==='row')       ? T.soloMode.row :
         (MODE==='rowalli' || MODE==='allisort') ? T.soloMode.rowalli :
@@ -3357,8 +3606,11 @@ function everythingCorrect(){
     function startSoloRound(){
       usedSet = new Set();
       rackEl.classList.remove('chips');
+      document.body.classList.remove('sort-mode');
+      if (columnsEl.classList.contains('sortMode')) columnsEl.className = 'columns';
       
       if (MODE==='generate'){ buildGenerateMode(); return; }
+      if (MODE==='sort'){ buildSortMode(); return; }
       if (MODE==='row'){ buildRowMode(); return; }
       if (MODE==='rowalli' || MODE==='allisort'){ buildRowAlliMode(); return; }
       if (MODE==='allisyll'){ buildRowAlliSyllMode(); return; }
