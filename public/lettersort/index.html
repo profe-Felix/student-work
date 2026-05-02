@@ -232,7 +232,20 @@
       grid-template-columns: minmax(220px, max-content) 1fr;
       align-items:start;
     }
-
+    .rowLine.topLayout{
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr;
+    }
+    
+    .rowLine.topLayout .rowPrompt{
+      justify-content: center;
+      align-items: center;
+      display:flex;
+    }
+    
+    .rowLine.topLayout .rowDrop{
+      width:100%;
+    }
     .rowDrop{
       min-height:160px;
       background:var(--drop);
@@ -946,6 +959,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         const ROWSYLL_HEADER_TYPE = (qs.get('headertype') || 'image').toLowerCase(); // image | text
         const ROWSYLL_CARD_TYPE = (qs.get('cardtype') || 'word').toLowerCase();      // word | image
         const ROWSYLL_MATCH = (qs.get('match') || 'syllable-start').toLowerCase();   // syllable-start | contains | word-contains
+        const ROWSYLL_LAYOUT = (qs.get('layout') || 'side').toLowerCase(); // side | top
 
         
         // Generate mode params
@@ -2816,7 +2830,7 @@ async function buildRowSyllColsMode(){
   for(let i=0;i<cols.length;i++){
 
     const line=document.createElement('div');
-    line.className='rowLine twoCols';
+    line.className = 'rowLine ' + (ROWSYLL_LAYOUT === 'top' ? 'topLayout' : 'twoCols');
 
     const promptWrap=document.createElement('div');
     promptWrap.className='rowPrompt';
@@ -2836,6 +2850,18 @@ async function buildRowSyllColsMode(){
       const { data } = client.storage.from(IB).getPublicUrl(path);
       img.src = data?.publicUrl || '';
       img.className='headerImg';
+      img.style.cursor = 'pointer';
+      
+      const headerFile = HEADER_IMAGES[i] || '';
+      const headerName = headerFile.split('/').pop() || '';
+      const headerStem = stemOf(headerName);
+      const headerRawCore = stripImageSuffix(headerStem);
+      
+      img.title = 'Tocar para escuchar';
+      img.addEventListener('click', () => {
+        playWordAudio(headerRawCore);
+      });
+      
       promptWrap.appendChild(img);
     }
 
@@ -3500,9 +3526,12 @@ function everythingCorrect(){
         return;
       }
 
-      resetDraggedStyles(el);
+      const rect = el.getBoundingClientRect();
+      const dropX = rect.left + rect.width / 2;
+      const dropY = rect.top + rect.height / 2;
+      const drop = hitTestDrop(dropX, dropY, drag.rowScope);
 
-      const drop = hitTestDrop(e.clientX, e.clientY, drag.rowScope);
+      resetDraggedStyles(el);
 
       const perCol = Math.max(1, Math.min(8, parseInt(cardsPerColEl.value || '4', 10)));
       document.body.classList.toggle('one-per', perCol === 1);
