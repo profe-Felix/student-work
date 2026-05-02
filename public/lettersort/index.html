@@ -1518,7 +1518,72 @@ function syllabifyEn(wordRaw){
       return null;
     }
 
+    function rowsyllItemMatchesTargets(rawWord, targets){
+  const wordNorm = stripDiacritics(normalizeMarkers(rawWord));
+  const syls = syllablesNormalized(rawWord);
 
+  return targets.some(target => {
+    const t = stripDiacritics(normalizeMarkers(target));
+
+    if (ROWSYLL_MATCH === 'word-contains') {
+      return wordNorm.includes(t);
+    }
+
+    if (ROWSYLL_MATCH === 'contains') {
+      return syls.some(syl => stripDiacritics(syl).includes(t));
+    }
+
+    // default: syllable-start
+    return syls.some(syl => stripDiacritics(syl).startsWith(t));
+  });
+}
+
+async function resolveRowsyllHeaderImage(cols, index){
+  const targets = cols[index] || [];
+
+  // 1. Manual header image wins.
+  let headerFile = HEADER_IMAGES[index] || '';
+  if (headerFile) {
+    const parts = headerFile.split('/');
+    const name = parts.pop() || '';
+    const stem = stemOf(name);
+    const markerStem = displayToMarker(stripImageSuffix(stem));
+    const fixedFile = markerStem + '_pic.jpg';
+    const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
+    const path = `${prefix}${fixedFile}`;
+    const url = await publicUrlIfExists(IB, path);
+
+    if (url) {
+      return {
+        url,
+        rawCore: stripImageSuffix(stemOf(fixedFile))
+      };
+    }
+  }
+
+  // 2. Try a matching word from this preset.
+  const matchingWord = SOLO_WORDS.find(w => rowsyllItemMatchesTargets(w, targets));
+  if (matchingWord) {
+    const img = await resolveImageForWord(matchingWord);
+    if (img) {
+      return {
+        url: img.url,
+        rawCore: img.rawCore
+      };
+    }
+  }
+
+  // 3. Search already-loaded Supabase image list for any image that fits this group.
+  const fallback = imageFiles.find(f => rowsyllItemMatchesTargets(f.rawCore, targets));
+  if (fallback) {
+    return {
+      url: fallback.url,
+      rawCore: fallback.rawCore
+    };
+  }
+
+  return null;
+}
 
     async function listAll(bucket, prefix) {
       const path = prefix && prefix.trim() !== "" ? prefix : undefined;
@@ -1616,7 +1681,7 @@ function syllabifyEn(wordRaw){
           return;
         }
 
-        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort' || MODE==='allisyll' || MODE==='rowsyll' || MODE==='syllcount'){
+        if (MODE==='row' || MODE==='rowalli' || MODE==='allisort' || MODE==='allisyll' || MODE==='rowsyll' || MODE==='rowsyllcols' || MODE==='syllcount'){
           imageFiles = await listAllImagesJpg();
         } else if (SOLO_WORDS.length && MODE!=='rowsyllcols'){
           const found = [];
@@ -2863,67 +2928,24 @@ async function buildRowSyllColsMode(){
       title.textContent = markersToPretty(cols[i][0] || '');
       promptWrap.appendChild(title);
     } else {
-      const img = document.createElement('img');
-      const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
-      
-      // 1) Use manually provided header image if available.
-      // 2) Otherwise auto-pick the first word that matches this column/group.
-      let headerWord = '';
-      let headerFile = HEADER_IMAGES[i] || '';
-      
-      if (!headerFile) {
-        const targets = cols[i] || [];
-      
-        headerWord = SOLO_WORDS.find(w => {
-          const wordNorm = stripDiacritics(normalizeMarkers(w));
-          const syls = syllablesNormalized(w);
-      
-          return targets.some(target => {
-            const t = stripDiacritics(normalizeMarkers(target));
-      
-            if (ROWSYLL_MATCH === 'word-contains') {
-              return wordNorm.includes(t);
-            }
-      
-            if (ROWSYLL_MATCH === 'contains') {
-              return syls.some(syl => stripDiacritics(syl).includes(t));
-            }
-      
-            return syls.some(syl => stripDiacritics(syl).startsWith(t));
-          });
-        }) || '';
-      }
-      
-      // manual header image path
-      if (headerFile) {
-        const parts = headerFile.split('/');
-        const name = parts.pop() || '';
-        const stem = stemOf(name);
-        const markerStem = displayToMarker(stripImageSuffix(stem));
-        headerFile = markerStem + '_pic.jpg';
-      }
-      
-      // auto-generated from matching word
-      if (!headerFile && headerWord) {
-        headerFile = displayToMarker(headerWord) + '_pic.jpg';
-      }
-      
-      const path = `${prefix}${headerFile}`;
-      const { data } = client.storage.from(IB).getPublicUrl(path);
-      
-      img.src = data?.publicUrl || '';
-      img.className = 'headerImg';
-      img.style.cursor = 'pointer';
-      
-      const headerStem = stemOf(headerFile);
-      const headerRawCore = stripImageSuffix(headerStem);
-      
-      img.title = 'Tocar para escuchar';
-      img.addEventListener('click', () => {
-        playWordAudio(headerRawCore);
-      });
-      
-      promptWrap.appendChild(img);
+    	const headerImg = await resolveRowsyllHeaderImage(cols, i);
+    
+    	if (headerImg) {
+    		const img = document.createElement('img');
+    		img.src = headerImg.url;
+    		img.className = 'headerImg';
+    		img.style.cursor = 'pointer';
+    		img.title = 'Tocar para escuchar';
+    		img.addEventListener('click', () => {
+    			playWordAudio(headerImg.rawCore);
+    		});
+    		promptWrap.appendChild(img);
+    	} else {
+    		const title = document.createElement('div');
+    		title.className = 'syllTile';
+    		title.textContent = markersToPretty(cols[i][0] || '');
+    		promptWrap.appendChild(title);
+    	}
     }
 
     const drop=document.createElement('div');
