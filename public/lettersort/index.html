@@ -938,9 +938,14 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
 
         // Row modes params
         const ROWS_RAW   = qs.get('rows') || '';
-        const ROWSYLL_COLS = qs.get('rowsyll') || '';
+        const ROWSYLL_COLS = qs.get('rowsyll') || qs.get('groups') || '';
         const SYLLGROUPS_RAW = qs.get('groups') || qs.get('syllgroups') || '';
         const ROW_TITLE  = (qs.get('rowtitle') || '').toLowerCase() === 'true';
+        
+        // rowsyllcols display controls
+        const ROWSYLL_HEADER_TYPE = (qs.get('headertype') || 'image').toLowerCase(); // image | text
+        const ROWSYLL_CARD_TYPE = (qs.get('cardtype') || 'word').toLowerCase();      // word | image
+        const ROWSYLL_MATCH = (qs.get('match') || 'syllable-start').toLowerCase();   // syllable-start | contains | word-contains
 
         
         // Generate mode params
@@ -2772,15 +2777,41 @@ async function buildRowSyllColsMode(){
   rowModeEl.classList.remove('hidden');
   rackSectionEl.classList.remove('hidden');
 
-  rackEl.innerHTML='';
-  rackEl.classList.add('chips');
-
-  SOLO_WORDS.forEach(w => rackEl.appendChild(renderChip(w)));
-
   const cols = parseRowsyllCols(ROWSYLL_COLS);
 
-  rowData=[];
-  rowModeEl.innerHTML='';
+  rowData = [];
+  rowModeEl.innerHTML = '';
+  rackEl.innerHTML = '';
+
+  // CARD TYPE:
+  // cardtype=word  -> word tiles
+  // cardtype=image -> picture cards
+  if (ROWSYLL_CARD_TYPE === 'image') {
+    rackEl.classList.remove('chips');
+
+    const cards = [];
+    for (const w of SOLO_WORDS) {
+      const f = await resolveImageForWord(w);
+      if (!f) continue;
+
+      cards.push({
+        id: crypto.randomUUID(),
+        imgUrl: f.url,
+        word: '',
+        coreRaw: f.rawCore
+      });
+    }
+
+    currentCards = cards;
+    currentCards
+      .sort(()=>Math.random()-0.5)
+      .forEach(c => rackEl.appendChild(renderCard(c)));
+  } else {
+    rackEl.classList.add('chips');
+
+    const shuffledWords = [...SOLO_WORDS].sort(()=>Math.random()-0.5);
+    shuffledWords.forEach(w => rackEl.appendChild(renderChip(w)));
+  }
 
   for(let i=0;i<cols.length;i++){
 
@@ -2790,14 +2821,23 @@ async function buildRowSyllColsMode(){
     const promptWrap=document.createElement('div');
     promptWrap.className='rowPrompt';
 
-    const img=document.createElement('img');
-    const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
-    const path = `${prefix}${HEADER_IMAGES[i] || ''}`;
-    const { data } = client.storage.from(IB).getPublicUrl(path);
-    img.src = data?.publicUrl || '';
-    img.className='headerImg';
-
-    promptWrap.appendChild(img);
+    // HEADER TYPE:
+    // headertype=image -> picture header
+    // headertype=text  -> word/text header
+    if (ROWSYLL_HEADER_TYPE === 'text') {
+      const title = document.createElement('div');
+      title.className = 'syllTile';
+      title.textContent = markersToPretty(cols[i][0] || '');
+      promptWrap.appendChild(title);
+    } else {
+      const img=document.createElement('img');
+      const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
+      const path = `${prefix}${HEADER_IMAGES[i] || ''}`;
+      const { data } = client.storage.from(IB).getPublicUrl(path);
+      img.src = data?.publicUrl || '';
+      img.className='headerImg';
+      promptWrap.appendChild(img);
+    }
 
     const drop=document.createElement('div');
     drop.className='rowDrop';
@@ -3242,28 +3282,49 @@ function everythingCorrect(){
 
         rowData.forEach(r=>{
       
-          [...r.dropEl.children].forEach(chip=>{
+          [...r.dropEl.children].forEach(item=>{
       
-            const text=(chip.textContent||'').toLowerCase();
-            const syls = syllablesNormalized(text);
+            let raw = '';
+
+            if (item.classList.contains('card')) {
+              const card = currentCards.find(c => c.id === item.dataset.id);
+              raw = card?.coreRaw || '';
+            } else {
+              raw = (item.textContent || '').toLowerCase();
+            }
+
+            const wordNorm = stripDiacritics(normalizeMarkers(raw));
+            const syls = syllablesNormalized(raw);
             
-            const ok = syls.some(syl => {
-              const s = stripDiacritics(syl);
-              return r.syllables.some(target => {
-                const t = stripDiacritics(normalizeMarkers(target));
-                return s.startsWith(t);
-              });
+            const ok = r.syllables.some(target => {
+              const t = stripDiacritics(normalizeMarkers(target));
+
+              if (ROWSYLL_MATCH === 'word-contains') {
+                return wordNorm.includes(t);
+              }
+
+              if (ROWSYLL_MATCH === 'contains') {
+                return syls.some(syl => stripDiacritics(syl).includes(t));
+              }
+
+              // default: syllable-start
+              return syls.some(syl => stripDiacritics(syl).startsWith(t));
             });
       
-            chip.classList.remove('ok','bad');
+            item.classList.remove('ok','bad');
 
             if(ok){
-              chip.classList.add('ok','locked');
+              item.classList.add('ok','locked');
+
+              if (item.classList.contains('card')) {
+                const card = currentCards.find(c => c.id === item.dataset.id);
+                if (card) lockCard(item, card);
+              }
             }else{
-              chip.classList.add('bad');
+              item.classList.add('bad');
               setTimeout(()=>{
-                chip.classList.remove('bad');
-                rackEl.appendChild(chip);
+                item.classList.remove('bad');
+                rackEl.appendChild(item);
               },300);
             }
       
