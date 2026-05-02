@@ -2844,17 +2844,59 @@ async function buildRowSyllColsMode(){
       title.textContent = markersToPretty(cols[i][0] || '');
       promptWrap.appendChild(title);
     } else {
-      const img=document.createElement('img');
+      const img = document.createElement('img');
       const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
-      const path = `${prefix}${HEADER_IMAGES[i] || ''}`;
+      
+      // 1) Use manually provided header image if available.
+      // 2) Otherwise auto-pick the first word that matches this column/group.
+      let headerWord = '';
+      let headerFile = HEADER_IMAGES[i] || '';
+      
+      if (!headerFile) {
+        const targets = cols[i] || [];
+      
+        headerWord = SOLO_WORDS.find(w => {
+          const wordNorm = stripDiacritics(normalizeMarkers(w));
+          const syls = syllablesNormalized(w);
+      
+          return targets.some(target => {
+            const t = stripDiacritics(normalizeMarkers(target));
+      
+            if (ROWSYLL_MATCH === 'word-contains') {
+              return wordNorm.includes(t);
+            }
+      
+            if (ROWSYLL_MATCH === 'contains') {
+              return syls.some(syl => stripDiacritics(syl).includes(t));
+            }
+      
+            return syls.some(syl => stripDiacritics(syl).startsWith(t));
+          });
+        }) || '';
+      }
+      
+      // manual header image path
+      if (headerFile) {
+        const parts = headerFile.split('/');
+        const name = parts.pop() || '';
+        const stem = stemOf(name);
+        const markerStem = displayToMarker(stripImageSuffix(stem));
+        headerFile = markerStem + '_pic.jpg';
+      }
+      
+      // auto-generated from matching word
+      if (!headerFile && headerWord) {
+        headerFile = displayToMarker(headerWord) + '_pic.jpg';
+      }
+      
+      const path = `${prefix}${headerFile}`;
       const { data } = client.storage.from(IB).getPublicUrl(path);
+      
       img.src = data?.publicUrl || '';
-      img.className='headerImg';
+      img.className = 'headerImg';
       img.style.cursor = 'pointer';
       
-      const headerFile = HEADER_IMAGES[i] || '';
-      const headerName = headerFile.split('/').pop() || '';
-      const headerStem = stemOf(headerName);
+      const headerStem = stemOf(headerFile);
       const headerRawCore = stripImageSuffix(headerStem);
       
       img.title = 'Tocar para escuchar';
