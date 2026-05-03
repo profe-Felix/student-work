@@ -453,15 +453,16 @@
 	  width:100%;
 	  max-width:none;
 	  display:grid;
-	  grid-template-columns:auto minmax(0, 1fr) auto;
+	  grid-template-columns: minmax(120px, 0.6fr) 3fr minmax(120px, 0.6fr);
 	  gap:18px;
 	  align-items:center;
 	}
     .sortLabel{
-      font-size:clamp(18px, 2.1vw, 30px);
-      font-weight:700;
-      text-align:center;
-    }
+	  font-weight:700;
+	  font-size:clamp(18px, 1.8vw, 32px);
+	  text-align:center;
+	  white-space:nowrap;
+	}
     .sortSlots{
 	  display:grid;
 	  gap:10px;
