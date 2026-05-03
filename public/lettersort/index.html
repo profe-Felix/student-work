@@ -3481,13 +3481,15 @@ function buildSortMode(){
 function handleSortDrop(drop, el){
   if (!drop) {
     drag.originParent.appendChild(el);
+    requestAnimationFrame(() => fitChipText(el));
     return;
   }
 
   // allow dragging back to the word bank
   if (drop.id === 'rack' || drop.classList.contains('rack')) {
     drop.appendChild(el);
-	requestAnimationFrame(() => fitChipText(el));
+    requestAnimationFrame(() => fitChipText(el));
+
     if (sortStatusEl){
       sortStatusEl.textContent = '';
       sortStatusEl.className = 'sortStatus';
@@ -3498,6 +3500,7 @@ function handleSortDrop(drop, el){
   // only sort slots are allowed in sort mode
   if (!drop.classList.contains('sortSlot')) {
     drag.originParent.appendChild(el);
+    requestAnimationFrame(() => fitChipText(el));
     return;
   }
 
@@ -3508,13 +3511,15 @@ function handleSortDrop(drop, el){
   if (occupying) {
     if (origin && origin.classList && origin.classList.contains('sortSlot')) {
       origin.appendChild(occupying);
+      requestAnimationFrame(() => fitChipText(occupying));
     } else {
       rackEl.appendChild(occupying);
+      requestAnimationFrame(() => fitChipText(occupying));
     }
   }
 
   drop.appendChild(el);
-	requestAnimationFrame(() => fitChipText(el));
+  requestAnimationFrame(() => fitChipText(el));
 
   if (sortStatusEl){
     sortStatusEl.textContent = '';
