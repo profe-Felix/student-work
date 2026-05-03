@@ -972,6 +972,7 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         const ROWSYLL_CARD_TYPE = (qs.get('cardtype') || 'word').toLowerCase();      // word | image
         const ROWSYLL_MATCH = (qs.get('match') || 'syllable-start').toLowerCase();   // syllable-start | contains | word-contains
         const ROWSYLL_LAYOUT = (qs.get('layout') || 'side').toLowerCase(); // side | top
+        const ROWSYLL_DISTRACTORS = Math.max(0, parseInt(qs.get('distractors') || '0', 10) || 0);
 
         
         // Generate mode params
@@ -1583,6 +1584,50 @@ async function resolveRowsyllHeaderImage(cols, index){
   }
 
   return null;
+}
+function pickRowsyllAutoImageCards(cols){
+	const allTargets = cols.flat();
+
+	const usedPaths = new Set();
+	const picked = [];
+
+	// Pick matching images for each group/column.
+	for (const targets of cols) {
+		const matches = imageFiles
+			.filter(f => !usedPaths.has(f.path))
+			.filter(f => rowsyllItemMatchesTargets(f.rawCore, targets))
+			.sort(() => Math.random() - 0.5);
+
+		const takeCount = SOLO_PER || 3;
+
+		matches.slice(0, takeCount).forEach(f => {
+			usedPaths.add(f.path);
+			picked.push(f);
+		});
+	}
+
+	// Add distractors that do NOT match any group.
+	if (ROWSYLL_DISTRACTORS > 0) {
+		const distractors = imageFiles
+			.filter(f => !usedPaths.has(f.path))
+			.filter(f => !rowsyllItemMatchesTargets(f.rawCore, allTargets))
+			.sort(() => Math.random() - 0.5)
+			.slice(0, ROWSYLL_DISTRACTORS);
+
+		distractors.forEach(f => {
+			usedPaths.add(f.path);
+			picked.push(f);
+		});
+	}
+
+	return picked
+		.sort(() => Math.random() - 0.5)
+		.map(f => ({
+			id: crypto.randomUUID(),
+			imgUrl: f.url,
+			word: '',
+			coreRaw: f.rawCore
+		}));
 }
 
     async function listAll(bucket, prefix) {
@@ -2885,25 +2930,30 @@ async function buildRowSyllColsMode(){
   // cardtype=word  -> word tiles
   // cardtype=image -> picture cards
   if (ROWSYLL_CARD_TYPE === 'image') {
-    rackEl.classList.remove('chips');
-
-    const cards = [];
-    for (const w of SOLO_WORDS) {
-      const f = await resolveImageForWord(w);
-      if (!f) continue;
-
-      cards.push({
-        id: crypto.randomUUID(),
-        imgUrl: f.url,
-        word: '',
-        coreRaw: f.rawCore
-      });
-    }
-
-    currentCards = cards;
-    currentCards
-      .sort(()=>Math.random()-0.5)
-      .forEach(c => rackEl.appendChild(renderCard(c)));
+  	rackEl.classList.remove('chips');
+  
+  	let cards = [];
+  
+  	if (SOLO_WORDS.length) {
+  		for (const w of SOLO_WORDS) {
+  			const f = await resolveImageForWord(w);
+  			if (!f) continue;
+  
+  			cards.push({
+  				id: crypto.randomUUID(),
+  				imgUrl: f.url,
+  				word: '',
+  				coreRaw: f.rawCore
+  			});
+  		}
+  	} else {
+  		cards = pickRowsyllAutoImageCards(cols);
+  	}
+  
+  	currentCards = cards;
+  	currentCards
+  		.sort(()=>Math.random()-0.5)
+  		.forEach(c => rackEl.appendChild(renderCard(c)));
   } else {
     rackEl.classList.add('chips');
 
