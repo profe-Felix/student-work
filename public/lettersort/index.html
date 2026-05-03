@@ -542,10 +542,11 @@
   <main class="wrap">
     <!-- SOLO TOOLBAR -->
     <div id="soloBar" class="soloBar hidden">
-      <button id="soloNewRound" class="btn">Nueva ronda</button>
-      <button id="soloVerify" class="btn outline">Verificar</button>
-      <button id="soloReset" class="btn ghost">Reiniciar ronda</button>
-    </div>
+	  <button id="soloNewRound" class="btn">Nueva ronda</button>
+	  <button id="soloVerify" class="btn outline">Verificar</button>
+	  <button id="soloReset" class="btn ghost">Reiniciar ronda</button>
+	  <span id="scorePill" class="pill">Puntos: 0</span>
+	</div>
     
     <!-- Classic columns container -->
     <div id="columns" class="columns"></div>
@@ -1169,8 +1170,40 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
     // Row mode state
     let rowData = []; // generic holder for any row-mode
     // Sort mode state
-    let sortExpectedIds = [];
-    let sortStatusEl = null;
+	let sortExpectedIds = [];
+	let sortStatusEl = null;
+	
+	// Score state
+	let score = 0;
+	const SCORE_CORRECT = 10;
+	const SCORE_WRONG = -5;
+
+	function updateScore(delta){
+	  score += delta;
+	  const el = document.getElementById('scorePill');
+	  if (el) el.textContent = `Puntos: ${score}`;
+	}
+	
+	function resetScore(){
+	  score = 0;
+	  const el = document.getElementById('scorePill');
+	  if (el) el.textContent = 'Puntos: 0';
+	}
+	
+	function markScored(el){
+	  if (!el) return false;
+	  if (el.dataset.scored === '1') return false;
+	  el.dataset.scored = '1';
+	  return true;
+	}
+	
+	function scoreCorrect(el){
+	  if (markScored(el)) updateScore(SCORE_CORRECT);
+	}
+	
+	function scoreWrong(el){
+	  updateScore(SCORE_WRONG);
+	}
     /******** Helpers ********/
     function markersToPretty(s){
       return (s||'')
@@ -3314,25 +3347,34 @@ function verifySortMode(){
   if (ok) celebrate();
 }
 function everythingCorrect(){
-  // ---------- ROWSYLL / ROWSYLLCOLS (chips in rowDrop) ----------
+  // ---------- ROWSYLL / ROWSYLLCOLS / SYLLGROUPS ----------
   if (currentMode === 'rowsyll' || currentMode === 'rowsyllcols' || currentMode === 'syllgroups') {
 
-    if (document.querySelector('.rowDrop .chip.bad')) return false;
-  
-    const rackChips = rackEl.querySelectorAll('.chip').length;
-    const placed = document.querySelectorAll('.rowDrop .chip').length;
-    const locked = document.querySelectorAll('.rowDrop .chip.locked').length;
-  
-    const totalWords = document.querySelectorAll('.rowDrop .chip').length + rackChips;
-  
-    // if there are no distractors, rack must be empty
-    if (totalWords === placed && rackChips > 0) return false;
-  
-    // all placed chips must be correct
+    if (document.querySelector('.rowDrop .chip.bad, .rowDrop .card.bad')) return false;
+
+    const rackItems = rackEl.querySelectorAll('.chip, .card').length;
+    const placed = document.querySelectorAll('.rowDrop .chip, .rowDrop .card').length;
+    const locked = document.querySelectorAll('.rowDrop .chip.locked, .rowDrop .card.locked').length;
+
+    const totalItems = placed + rackItems;
+
+    if (totalItems === 0) return false;
+
+    // all placed items must be verified correct
     if (placed !== locked) return false;
-  
-    // all valid words must be placed
-    return locked === totalWords;
+
+    // all usable cards/tiles from the bank must be sorted before confetti
+    if (rackItems > 0) return false;
+
+    // every group/column must have at least one correct item
+    if (currentMode === 'rowsyllcols' || currentMode === 'syllgroups') {
+      const everyGroupHasOne = rowData.every(r =>
+        r.dropEl.querySelector('.chip.locked, .card.locked')
+      );
+      if (!everyGroupHasOne) return false;
+    }
+
+    return locked === totalItems;
   }
 
   // ---------- ROW / ROWALLI / ALLISYLL (cards in rowDrop) ----------
@@ -3499,21 +3541,22 @@ function everythingCorrect(){
             });
       
             item.classList.remove('ok','bad');
-
-            if(ok){
-              item.classList.add('ok','locked');
-
-              if (item.classList.contains('card')) {
-                const card = currentCards.find(c => c.id === item.dataset.id);
-                if (card) lockCard(item, card);
-              }
-            }else{
-              item.classList.add('bad');
-              setTimeout(()=>{
-                item.classList.remove('bad');
-                rackEl.appendChild(item);
-              },300);
-            }
+			if(ok){
+			  item.classList.add('ok','locked');
+			  scoreCorrect(item);
+			
+			  if (item.classList.contains('card')) {
+			    const card = currentCards.find(c => c.id === item.dataset.id);
+			    if (card) lockCard(item, card);
+			  }
+			}else{
+			  scoreWrong(item);
+			  item.classList.add('bad');
+			  setTimeout(()=>{
+			    item.classList.remove('bad');
+			    rackEl.appendChild(item);
+			  },300);
+			}
       
           });
       
@@ -3560,14 +3603,16 @@ function everythingCorrect(){
             chipEl.classList.remove('ok','bad');
 
             if (ok){
-              chipEl.classList.add('ok','locked');
-            } else {
-              chipEl.classList.add('bad');
-              setTimeout(()=>{
-                chipEl.classList.remove('bad');
-                rackEl.appendChild(chipEl);
-              },300);
-            }
+			  chipEl.classList.add('ok','locked');
+			  scoreCorrect(chipEl);
+			} else {
+			  scoreWrong(chipEl);
+			  chipEl.classList.add('bad');
+			  setTimeout(()=>{
+			    chipEl.classList.remove('bad');
+			    rackEl.appendChild(chipEl);
+			  },300);
+			}
           });
         });
 
