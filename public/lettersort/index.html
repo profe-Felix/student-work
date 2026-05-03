@@ -1002,7 +1002,50 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
         const SORT_LABEL_TOP = qs.get('top') || 'más';
         const SORT_LABEL_LEFT = qs.get('left') || 'menos';
         const SORT_LABEL_RIGHT = qs.get('right') || 'más';
-    
+
+	  	// ---------- MANUAL SORT MODE PARAMS ----------
+		// Example:
+		// ?mode=manualsort
+		// &headers=perro,gato
+		// &answers=perro:collar,hueso,casa|gato:leche,ratón,bola
+		const MANUALSORT_HEADERS = (qs.get('headers') || '')
+		  .split(',')
+		  .map(s => s.trim())
+		  .filter(Boolean);
+		
+		const MANUALSORT_ANSWERS_RAW = qs.get('answers') || '';
+
+		function parseManualSortAnswers(raw){
+			const out = [];
+		
+			(raw || '').split('|').forEach(groupText => {
+				const [headerRaw, wordsRaw] = groupText.split(':');
+				const header = (headerRaw || '').trim();
+		
+				if (!header) return;
+		
+				const words = parseWordsParam(wordsRaw || '');
+		
+				out.push({
+					header,
+					words
+				});
+			});
+		
+			return out;
+		}
+		
+		function manualSortGroups(){
+			const parsed = parseManualSortAnswers(MANUALSORT_ANSWERS_RAW);
+		
+			if (parsed.length) return parsed;
+		
+			return MANUALSORT_HEADERS.map(h => ({
+				header: h,
+				words: []
+			}));
+		}
+	  	
         function getGenerateRowCountForCol(index){
           if (!GENERATE_ROWS.length) return 4;
           if (GENERATE_ROWS.length === 1) return GENERATE_ROWS[0];
@@ -1112,10 +1155,11 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
 
     // SOLO conditions
     const SOLO_MODE =
-      !SYNC ||
-      MODE === 'generate' ||
-      MODE === 'sort' ||
-      MODE === 'randinit' ||
+	  !SYNC ||
+	  MODE === 'generate' ||
+	  MODE === 'sort' ||
+	  MODE === 'manualsort' ||
+	  MODE === 'randinit' ||
       MODE === 'row' || MODE === 'rowalli' || MODE === 'allisort' || MODE === 'allisyll' || MODE === 'rowsyll' || MODE === 'rowsyllcols' || MODE === 'syllgroups' || MODE === 'syllcount' || MODE === 'stress' || MODE === 'stressreveal' ||
       (SOLO_LETTERS.length > 0) || (SOLO_SYLLABLES.length > 0) || (SOLO_WORDS.length > 0) || (SOLO_SYLLCOUNT.length > 0) || (SOLO_PHONEMES.length > 0) || (SOLO_STRESSPOS.length > 0);
 
@@ -2965,6 +3009,115 @@ function pickRowsyllAutoImageCards(cols){
         });
       }
     }
+
+async function buildManualSort(){
+
+	resetScore();
+
+	currentMode = 'manualsort';
+
+	document.body.classList.remove('row-compact');
+	document.body.classList.remove('sort-mode');
+
+	columnsEl.classList.add('hidden');
+	rowModeEl.classList.remove('hidden');
+	rackSectionEl.classList.remove('hidden');
+
+	rowModeEl.innerHTML = '';
+	rackEl.innerHTML = '';
+
+	if (ROWSYLL_LAYOUT === 'top') {
+		rowModeEl.classList.add('rowsyllColsTopGrid');
+	} else {
+		rowModeEl.classList.remove('rowsyllColsTopGrid');
+	}
+
+	const groups = manualSortGroups();
+
+	rowData = groups.map(g => {
+		const rowLine = document.createElement('div');
+		rowLine.className = ROWSYLL_LAYOUT === 'top'
+			? 'rowLine topLayout'
+			: 'rowLine twoCols';
+
+		const promptWrap = document.createElement('div');
+		promptWrap.className = 'rowPrompt';
+
+		if (ROWSYLL_HEADER_TYPE === 'image') {
+			const headerBox = document.createElement('div');
+			headerBox.className = 'headerImgWrap';
+
+			const img = document.createElement('img');
+			img.className = 'headerImg';
+			img.alt = '';
+
+			resolveImageForWord(g.header).then(imgData => {
+				if (imgData) img.src = imgData.url;
+			});
+
+			headerBox.appendChild(img);
+			promptWrap.appendChild(headerBox);
+		} else {
+			const label = document.createElement('div');
+			label.className = 'syllTile';
+			label.textContent = markersToPretty(g.header);
+			promptWrap.appendChild(label);
+		}
+
+		const drop = document.createElement('div');
+		drop.className = 'rowDrop';
+
+		rowLine.appendChild(promptWrap);
+		rowLine.appendChild(drop);
+		rowModeEl.appendChild(rowLine);
+
+		return {
+			type: 'manualsort',
+			header: g.header,
+			answers: g.words.map(w => normalizeMarkers(w)),
+			dropEl: drop
+		};
+	});
+
+	let cards = [];
+
+	for (const g of groups) {
+		for (const w of g.words) {
+			if (ROWSYLL_CARD_TYPE === 'image') {
+				const imgData = await resolveImageForWord(w);
+				if (!imgData) continue;
+
+				cards.push({
+					id: crypto.randomUUID(),
+					imgUrl: imgData.url,
+					word: '',
+					coreRaw: imgData.rawCore
+				});
+			} else {
+				cards.push({
+					id: crypto.randomUUID(),
+					word: w,
+					coreRaw: normalizeMarkers(w)
+				});
+			}
+		}
+	}
+
+	currentCards = cards;
+
+	if (ROWSYLL_CARD_TYPE === 'image') {
+		rackEl.classList.remove('chips');
+		currentCards
+			.sort(()=>Math.random()-0.5)
+			.forEach(c => rackEl.appendChild(renderCard(c)));
+	} else {
+		rackEl.classList.add('chips');
+		currentCards
+			.sort(()=>Math.random()-0.5)
+			.forEach(c => rackEl.appendChild(renderChip(c.word, c.id)));
+	}
+}
+
 async function buildRowSyllColsMode(){
 
   currentMode = 'rowsyllcols';
@@ -3347,6 +3500,33 @@ function verifySortMode(){
   if (ok) celebrate();
 }
 function everythingCorrect(){
+  // ---------- MANUAL SORT ----------
+  if (currentMode === 'manualsort') {
+
+    if (document.querySelector('.rowDrop .bad')) return false;
+
+    const placed = document.querySelectorAll('.rowDrop .card, .rowDrop .chip').length;
+    const locked = document.querySelectorAll('.rowDrop .locked').length;
+
+    if (placed === 0) return false;
+    if (placed !== locked) return false;
+
+    // correct manual-sort items cannot be left in the bank
+    const leftover = [...rackEl.querySelectorAll('.card, .chip')];
+
+    const hasValidLeftover = leftover.some(item=>{
+      const card = currentCards.find(c => c.id === item.dataset.id);
+      const raw = card?.coreRaw || item.textContent || '';
+      const norm = normalizeMarkers(raw);
+
+      return rowData.some(r => r.answers.includes(norm));
+    });
+
+    if (hasValidLeftover) return false;
+
+    return true;
+  }
+
   // ---------- ROWSYLL / ROWSYLLCOLS / SYLLGROUPS ----------
   if (currentMode === 'rowsyll' || currentMode === 'rowsyllcols' || currentMode === 'syllgroups') {
 
@@ -3514,6 +3694,50 @@ function everythingCorrect(){
         if (everythingCorrect()) celebrate();
         return;
       }
+
+	if(currentMode === 'manualsort'){
+
+		rowData.forEach(r=>{
+			[...r.dropEl.children].forEach(item=>{
+				if (item.classList.contains('locked')) return;
+	
+				let raw = '';
+	
+				if (item.classList.contains('card')) {
+					const card = currentCards.find(c => c.id === item.dataset.id);
+					raw = card?.coreRaw || '';
+				} else {
+					raw = item.textContent || '';
+				}
+	
+				const norm = normalizeMarkers(raw);
+				const ok = r.answers.includes(norm);
+	
+				item.classList.remove('ok','bad');
+	
+				if(ok){
+					item.classList.add('ok','locked');
+					scoreCorrect(item);
+	
+					if (item.classList.contains('card')) {
+						const card = currentCards.find(c => c.id === item.dataset.id);
+						if (card) lockCard(item, card);
+					}
+				}else{
+					scoreWrong(item);
+					item.classList.add('bad');
+					setTimeout(()=>{
+						item.classList.remove('bad');
+						rackEl.appendChild(item);
+					},300);
+				}
+			});
+		});
+	
+		if (everythingCorrect()) celebrate();
+		return;
+	}
+	
       if(currentMode==='rowsyllcols' || currentMode==='syllgroups'){
 
         rowData.forEach(r=>{
@@ -3914,8 +4138,9 @@ function everythingCorrect(){
       if (columnsEl.classList.contains('sortMode')) columnsEl.className = 'columns';
       
       if (MODE==='generate'){ buildGenerateMode(); return; }
-      if (MODE==='sort'){ buildSortMode(); return; }
-      if (MODE==='row'){ buildRowMode(); return; }
+	  if (MODE==='sort'){ buildSortMode(); return; }
+	  if (MODE==='manualsort'){ await buildManualSort(); return; }
+  	  if (MODE==='row'){ buildRowMode(); return; }
       if (MODE==='rowalli' || MODE==='allisort'){ buildRowAlliMode(); return; }
       if (MODE==='allisyll'){ buildRowAlliSyllMode(); return; }
       if (MODE==='rowsyllcols'){ buildRowSyllColsMode(); return; }
