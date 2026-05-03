@@ -3518,7 +3518,8 @@ function everythingCorrect(){
 
         rowData.forEach(r=>{
       
-          [...r.dropEl.children].forEach(item=>{
+        [...r.dropEl.children].forEach(item=>{
+		  if (item.classList.contains('locked')) return;
       
             let raw = '';
 
