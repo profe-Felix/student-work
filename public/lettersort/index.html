@@ -462,14 +462,21 @@
       text-align:center;
     }
     .sortSlots{
-      display:flex;
-      gap:10px;
-      width:100%;
-    }
-    .sort-vertical .sortSlots{ flex-direction:column; }
-    .sort-horizontal .sortSlots{ flex-direction:row; }
-
-    .sortSlot{
+	  display:grid;
+	  gap:10px;
+	  width:100%;
+	  min-width:0;
+	}
+	
+	.sort-vertical .sortSlots{
+	  grid-template-columns:1fr;
+	}
+	
+	.sort-horizontal .sortSlots{
+	  grid-template-columns:repeat(var(--sort-count, 4), minmax(0, 1fr));
+	}
+	
+	.sortSlot{
 	  min-height:76px;
 	  background:var(--drop);
 	  border:2px dashed #c7d2fe;
@@ -478,14 +485,16 @@
 	  display:flex;
 	  align-items:center;
 	  justify-content:center;
-	  flex:1;
-	  min-width:170px;
+	  min-width:0;
+	  overflow:hidden;
 	}
-    .sortSlot .chip{
-	  width:auto;
+	
+	.sortSlot .chip{
+	  width:100%;
 	  min-width:0;
 	  max-width:100%;
-	  white-space:nowrap;
+	  height:56px;
+	  padding:4px 6px;
 	}
     .sortStatus{
       margin-top:12px;
@@ -1094,12 +1103,14 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
 		  span.style.fontSize = '40px';
 		
 		  requestAnimationFrame(() => {
-		    const available = el.clientWidth - 12;
-		    const needed = span.scrollWidth;
+		    let size = 40;
 		
-		    if (needed > available) {
-		      const scale = Math.max(0.45, available / needed);
-		      span.style.transform = `scale(${scale})`;
+		    while (
+		      (span.scrollWidth > el.clientWidth - 12 || span.scrollHeight > el.clientHeight - 8) &&
+		      size > 10
+		    ) {
+		      size -= 1;
+		      span.style.fontSize = size + 'px';
 		    }
 		  });
 		}
@@ -3427,7 +3438,7 @@ function buildSortMode(){
 
   const slotsWrap = document.createElement('div');
   slotsWrap.className = 'sortSlots';
-
+  slotsWrap.style.setProperty('--sort-count', String(currentCards.length));
   currentCards.forEach((_, idx) => {
     const slot = document.createElement('div');
     slot.className = 'sortSlot';
@@ -3503,6 +3514,7 @@ function handleSortDrop(drop, el){
   }
 
   drop.appendChild(el);
+	requestAnimationFrame(() => fitChipText(el));
 
   if (sortStatusEl){
     sortStatusEl.textContent = '';
