@@ -131,22 +131,32 @@
 
     /* Word chip for rowsyll mode — keep a wide, non-shrinking basis */
     .chip{
-      user-select:none; touch-action:none; cursor:grab;
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      padding:6px 12px;
-      border:1px solid #d1d5db;
-      border-radius:14px;
-      background:var(--drop);
-      font-size:clamp(24px, 2.8vw, 40px);
-      line-height:1.1;
-      min-height:48px;
-      flex:0 1 auto;
-      max-width:26ch;
-      white-space:normal;
-      word-break:break-word;
-    }
+	  user-select:none; 
+	  touch-action:none; 
+	  cursor:grab;
+	
+	  display:inline-flex;
+	  align-items:center;
+	  justify-content:center;
+	
+	  padding:6px 12px;
+	  border:1px solid #d1d5db;
+	  border-radius:14px;
+	  background:var(--drop);
+	
+	  font-size:clamp(24px, 2.8vw, 40px);
+	  line-height:1.1;
+	
+	  min-height:48px;
+	  flex:0 1 auto;
+	
+	  max-width:26ch;
+	
+	  /* 🔥 KEY FIXES */
+	  white-space:nowrap;     /* no wrapping */
+	  overflow:hidden;        /* prevent spill */
+	  text-overflow:ellipsis; /* optional safety */
+	}
     .chip:active{cursor:grabbing}
     .chip.ok{outline:3px solid var(--ok)}
     .chip.bad{outline:3px solid var(--bad)}
@@ -2544,18 +2554,22 @@ function pickRowsyllAutoImageCards(cols){
     }
 
     function renderChip(word, id){
-      const el = document.createElement('div');
-      el.className = 'chip';
-      el.dataset.id = id || crypto.randomUUID();
-      el.textContent = markersToPretty(word);
-      el.setAttribute('tabindex','0');
-
-      el.classList.add('wordTile');
-      if (HIDE_WORDS) attachWordCover(el);
-
-      makeDraggable(el, null);
-      return el;
-    }
+	  const el = document.createElement('div');
+	  el.className = 'chip';
+	  el.dataset.id = id || crypto.randomUUID();
+	  el.textContent = markersToPretty(word);
+	  el.setAttribute('tabindex','0');
+	
+	  el.classList.add('wordTile');
+	  if (HIDE_WORDS) attachWordCover(el);
+	
+	  requestAnimationFrame(() => {
+	    shrinkTextToFit(el, 40, 16);
+	  });
+	
+	  makeDraggable(el, null);
+	  return el;
+	}
 
     function clearAllPlacements(){
       document.querySelectorAll('.drop').forEach(d=>d.innerHTML='');
