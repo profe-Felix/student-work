@@ -464,21 +464,23 @@
     .sort-horizontal .sortSlots{ flex-direction:row; }
 
     .sortSlot{
-      min-height:76px;
-      background:var(--drop);
-      border:2px dashed #c7d2fe;
-      border-radius:14px;
-      padding:8px;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      flex:1;
-      min-width:120px;
-    }
+	  min-height:76px;
+	  background:var(--drop);
+	  border:2px dashed #c7d2fe;
+	  border-radius:14px;
+	  padding:8px;
+	  display:flex;
+	  align-items:center;
+	  justify-content:center;
+	  flex:1;
+	  min-width:170px;
+	}
     .sortSlot .chip{
-      width:100%;
-      max-width:none;
-    }
+	  width:auto;
+	  min-width:0;
+	  max-width:100%;
+	  white-space:nowrap;
+	}
     .sortStatus{
       margin-top:12px;
       text-align:center;
@@ -1062,18 +1064,22 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
           return GENERATE_ROWS[index] || GENERATE_ROWS[GENERATE_ROWS.length - 1] || 4;
         }
 
-        function shrinkTextToFit(el, maxPx = 28, minPx = 12){
-          el.style.fontSize = maxPx + 'px';
-        
-          requestAnimationFrame(() => {
-            let size = maxPx;
-        
-            while (el.scrollWidth > el.clientWidth && size > minPx) {
-              size -= 1;
-              el.style.fontSize = size + 'px';
-            }
-          });
-        }
+        function shrinkTextToFit(el, maxPx = 40, minPx = 10){
+		  el.style.fontSize = maxPx + 'px';
+		  el.style.whiteSpace = 'nowrap';
+		
+		  requestAnimationFrame(() => {
+		    let size = maxPx;
+		
+		    while (
+		      (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight) &&
+		      size > minPx
+		    ) {
+		      size -= 1;
+		      el.style.fontSize = size + 'px';
+		    }
+		  });
+		}
         function buildGenerateRiddleHeader(){
           if (!GENERATE_RIDDLE) return null;
         
@@ -2564,7 +2570,7 @@ function pickRowsyllAutoImageCards(cols){
 	  if (HIDE_WORDS) attachWordCover(el);
 	
 	  requestAnimationFrame(() => {
-	    shrinkTextToFit(el, 40, 16);
+	    shrinkTextToFit(el, 40, 10);
 	  });
 	
 	  makeDraggable(el, null);
