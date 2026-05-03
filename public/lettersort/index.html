@@ -157,6 +157,12 @@
 	  overflow:hidden;        /* prevent spill */
 	  text-overflow:ellipsis; /* optional safety */
 	}
+	.chipText{
+	  display:inline-block;
+	  white-space:nowrap;
+	  line-height:1;
+	  transform-origin:center center;
+	}
     .chip:active{cursor:grabbing}
     .chip.ok{outline:3px solid var(--ok)}
     .chip.bad{outline:3px solid var(--bad)}
@@ -1077,6 +1083,23 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
 		    ) {
 		      size -= 1;
 		      el.style.fontSize = size + 'px';
+		    }
+		  });
+		}
+	  function fitChipText(el){
+		  const span = el.querySelector('.chipText');
+		  if (!span) return;
+		
+		  span.style.transform = '';
+		  span.style.fontSize = '40px';
+		
+		  requestAnimationFrame(() => {
+		    const available = el.clientWidth - 12;
+		    const needed = span.scrollWidth;
+		
+		    if (needed > available) {
+		      const scale = Math.max(0.45, available / needed);
+		      span.style.transform = `scale(${scale})`;
 		    }
 		  });
 		}
@@ -2563,15 +2586,15 @@ function pickRowsyllAutoImageCards(cols){
 	  const el = document.createElement('div');
 	  el.className = 'chip';
 	  el.dataset.id = id || crypto.randomUUID();
-	  el.textContent = markersToPretty(word);
 	  el.setAttribute('tabindex','0');
+	
+	  const span = document.createElement('span');
+	  span.className = 'chipText';
+	  span.textContent = markersToPretty(word);
+	  el.appendChild(span);
 	
 	  el.classList.add('wordTile');
 	  if (HIDE_WORDS) attachWordCover(el);
-	
-	  requestAnimationFrame(() => {
-	    shrinkTextToFit(el, 40, 10);
-	  });
 	
 	  makeDraggable(el, null);
 	  return el;
@@ -3453,6 +3476,7 @@ function handleSortDrop(drop, el){
   // allow dragging back to the word bank
   if (drop.id === 'rack' || drop.classList.contains('rack')) {
     drop.appendChild(el);
+	requestAnimationFrame(() => fitChipText(el));
     if (sortStatusEl){
       sortStatusEl.textContent = '';
       sortStatusEl.className = 'sortStatus';
