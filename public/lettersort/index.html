@@ -1183,6 +1183,19 @@ if (sessionStorage.getItem('__presetExpanded') === '1') {
     function extOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i+1).toLowerCase() : ''; }
     function stemOf(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(0,i) : name; }
     function stripImageSuffix(t){ return t.replace(/_(pic|img|image|foto)$/i,''); }
+	function imagePriority(f){
+	  const name = (f.name || '').toLowerCase();
+	  const ext = extOf(name);
+	
+	  const isPic = /_pic\./.test(name);
+	
+	  if (isPic && ext === 'jpg') return 1;
+	  if (isPic && ext === 'png') return 2;
+	  if (!isPic && ext === 'jpg') return 3;
+	  if (!isPic && ext === 'png') return 4;
+	
+	  return 99;
+	}
     function normalizeMarkers(s){
       return (s || '')
         .toLowerCase()
@@ -1465,18 +1478,29 @@ function syllabifyEn(wordRaw){
       } catch {}
       return null;
     }
-    function jpgCandidatesForWord(word){
-      const wMarker = (word||'').toLowerCase();
-      const wPretty = markersToPretty(word||'').toLowerCase();
-      const wPlain  = stripDiacritics(wPretty);
-      const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
-      const names = [
-        `${wMarker}_pic.jpg`,
-        `${wPretty}_pic.jpg`,
-        `${wPlain}_pic.jpg`,
-      ];
-      return names.map(n => `${prefix}${n}`);
-    }
+    function imageCandidatesForWord(word){
+	  const wMarker = (word||'').toLowerCase();
+	  const wPretty = markersToPretty(word||'').toLowerCase();
+	  const wPlain  = stripDiacritics(wPretty);
+	
+	  const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
+	
+	  const bases = [wMarker, wPretty, wPlain];
+	
+	  const out = [];
+	
+	  for (const b of bases) {
+	    // preferred pattern
+	    out.push(`${prefix}${b}_pic.jpg`);
+	    out.push(`${prefix}${b}_pic.png`);
+	
+	    // fallback (no suffix)
+	    out.push(`${prefix}${b}.jpg`);
+	    out.push(`${prefix}${b}.png`);
+	  }
+	
+	  return out;
+	}
     function displayToMarker(word){
       if(!word) return "";
     
@@ -1496,7 +1520,7 @@ function syllabifyEn(wordRaw){
       // 🔴 convert display word → storage marker version
       const storageWord = displayToMarker(word);
     
-      for(const p of jpgCandidatesForWord(storageWord)){
+      for(const p of imageCandidatesForWord(storageWord)){
         const url = await publicUrlIfExists(IB, p);
     
         if (url) {
@@ -1549,17 +1573,18 @@ async function resolveRowsyllHeaderImage(cols, index){
     const name = parts.pop() || '';
     const stem = stemOf(name);
     const markerStem = displayToMarker(stripImageSuffix(stem));
-    const fixedFile = markerStem + '_pic.jpg';
-    const prefix = IP ? `${IP.replace(/\/$/,'')}/` : '';
-    const path = `${prefix}${fixedFile}`;
-    const url = await publicUrlIfExists(IB, path);
-
-    if (url) {
-      return {
-        url,
-        rawCore: stripImageSuffix(stemOf(fixedFile))
-      };
-    }
+    const candidates = imageCandidatesForWord(markerStem);
+	
+	for (const p of candidates) {
+	  const url = await publicUrlIfExists(IB, p);
+	  if (url) {
+	    const name = p.split('/').pop();
+	    return {
+	      url,
+	      rawCore: stripImageSuffix(stemOf(name))
+	    };
+	  }
+	}
   }
 
   // 2. Try a matching word from this preset.
@@ -1575,14 +1600,16 @@ async function resolveRowsyllHeaderImage(cols, index){
   }
 
   // 3. Search already-loaded Supabase image list for any image that fits this group.
-  const fallback = imageFiles.find(f => rowsyllItemMatchesTargets(f.rawCore, targets));
-  if (fallback) {
-    return {
-      url: fallback.url,
-      rawCore: fallback.rawCore
-    };
-  }
-
+  const fallback = imageFiles
+		.filter(f => rowsyllItemMatchesTargets(f.rawCore, targets))
+		.sort((a, b) => imagePriority(a) - imagePriority(b) || Math.random() - 0.5)[0];
+	
+	if (fallback) {
+		return {
+			url: fallback.url,
+			rawCore: fallback.rawCore
+		};
+	}
   return null;
 }
 function pickRowsyllAutoImageCards(cols){
@@ -1594,9 +1621,9 @@ function pickRowsyllAutoImageCards(cols){
 	// Pick matching images for each group/column.
 	for (const targets of cols) {
 		const matches = imageFiles
-			.filter(f => !usedPaths.has(f.path))
-			.filter(f => rowsyllItemMatchesTargets(f.rawCore, targets))
-			.sort(() => Math.random() - 0.5);
+		.filter(f => !usedPaths.has(f.path))
+		.filter(f => rowsyllItemMatchesTargets(f.rawCore, targets))
+		.sort((a, b) => imagePriority(a) - imagePriority(b) || Math.random() - 0.5);
 
 		const takeCount = SOLO_PER || 3;
 
@@ -1657,7 +1684,8 @@ function pickRowsyllAutoImageCards(cols){
       const out = [];
       for (const f of files){
         const base = f.fullpath.split('/').pop() || f.fullpath;
-        if (extOf(base) !== 'jpg') continue;
+        const ext = extOf(base);
+		if (ext !== 'jpg' && ext !== 'png') continue;
         const { data } = client.storage.from(IB).getPublicUrl(f.fullpath);
         if (data?.publicUrl){
           const stem = stemOf(base);
